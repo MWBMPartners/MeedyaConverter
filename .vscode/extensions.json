@@ -1,0 +1,16 @@
+// File: .vscode/extensions.json
+// Purpose: Recommend VS Code extensions for Swift, FFmpeg, and cross-platform dev
+// (C) 2025–2025 MWBM Partners Ltd (d/b/a MW Services)
+
+{
+    "recommendations": [
+      "sswg.swift-lang",
+      "vadimcn.vscode-lldb",
+      "ms-vscode.cpptools",
+      "ms-azuretools.vscode-docker",
+      "yzhang.markdown-all-in-one",
+      "gruntfuggly.todo-tree",
+      "esbenp.prettier-vscode",
+      "foxundermoon.shell-format"
+    ]
+  }
