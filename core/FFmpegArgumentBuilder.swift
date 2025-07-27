@@ -105,4 +105,6 @@ struct FFmpegArgumentBuilder {
     }
 }
 
-// 
+// 📑 See: https://ffmpeg.org/ffmpeg-codecs.html for supported codecs
+// 🔸 Use one function at a time in separate FFmpeg calls for separate outputs
+// 🪙 Pipe-based progress monitoring is managed by FFmpegController.swift
