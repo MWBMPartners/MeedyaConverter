@@ -245,4 +245,241 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertFalse(SubtitleFormat.srt.isBitmap)
         XCTAssertTrue(SubtitleFormat.srt.isText)
     }
+
+    // -----------------------------------------------------------------
+    // MARK: - Feature Gating Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies that DefaultFeatureGate unlocks all features at Studio tier.
+    func test_featureGate_studioUnlocksAll() {
+        let gate = DefaultFeatureGate(tier: .studio)
+        XCTAssertTrue(gate.isAvailable(.basicEncoding))
+        XCTAssertTrue(gate.isAvailable(.hdrProcessing))
+        XCTAssertTrue(gate.isAvailable(.discRipping))
+        XCTAssertTrue(gate.isAvailable(.aiFeatures))
+    }
+
+    /// Verifies that free tier gates pro and studio features.
+    func test_featureGate_freeGatesProFeatures() {
+        let gate = DefaultFeatureGate(tier: .free)
+        XCTAssertTrue(gate.isAvailable(.basicEncoding)) // Free feature
+        XCTAssertFalse(gate.isAvailable(.hdrProcessing)) // Pro feature
+        XCTAssertFalse(gate.isAvailable(.discRipping)) // Studio feature
+    }
+
+    /// Verifies tier comparison works correctly.
+    func test_productTier_comparison() {
+        XCTAssertTrue(ProductTier.free < ProductTier.pro)
+        XCTAssertTrue(ProductTier.pro < ProductTier.studio)
+        XCTAssertFalse(ProductTier.studio < ProductTier.pro)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - FFmpeg Argument Builder Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies basic argument building with H.265/AAC.
+    func test_argumentBuilder_basicH265() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/output.mp4")
+        builder.videoCodec = .h265
+        builder.videoCRF = 22
+        builder.audioCodec = .aacLC
+        builder.audioBitrate = 160_000
+
+        let args = builder.build()
+
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("libx265"))
+        XCTAssertTrue(args.contains("-crf"))
+        XCTAssertTrue(args.contains("22"))
+        XCTAssertTrue(args.contains("aac"))
+        XCTAssertTrue(args.contains("160k"))
+    }
+
+    /// Verifies passthrough arguments.
+    func test_argumentBuilder_passthrough() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/output.mkv")
+        builder.videoPassthrough = true
+        builder.audioPassthrough = true
+
+        let args = builder.build()
+
+        // Should contain "-c:v copy" and "-c:a copy"
+        let argStr = args.joined(separator: " ")
+        XCTAssertTrue(argStr.contains("-c:v copy"))
+        XCTAssertTrue(argStr.contains("-c:a copy"))
+        // Should NOT contain any codec-specific args
+        XCTAssertFalse(argStr.contains("libx26"))
+    }
+
+    /// Verifies hardware encoding arguments for VideoToolbox.
+    func test_argumentBuilder_hardwareEncoding() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/output.mp4")
+        builder.videoCodec = .h265
+        builder.useHardwareEncoding = true
+        builder.videoCRF = 25
+
+        let args = builder.build()
+
+        XCTAssertTrue(args.contains("hevc_videotoolbox"))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Encoding Profile Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies built-in profiles exist and have valid settings.
+    func test_builtInProfiles_exist() {
+        let profiles = EncodingProfile.builtInProfiles
+        XCTAssertGreaterThanOrEqual(profiles.count, 7)
+
+        // All built-in profiles should be marked as built-in
+        for profile in profiles {
+            XCTAssertTrue(profile.isBuiltIn, "\(profile.name) should be marked as built-in")
+        }
+    }
+
+    /// Verifies profile-to-argument conversion works.
+    func test_profile_toArgumentBuilder() {
+        let inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        let outputURL = URL(fileURLWithPath: "/tmp/output.mp4")
+        let builder = EncodingProfile.webStandard.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
+        let args = builder.build()
+
+        XCTAssertTrue(args.contains("libx264"))
+        XCTAssertTrue(args.contains("-crf"))
+    }
+
+    /// Verifies profile JSON serialisation round-trip.
+    func test_profile_jsonRoundTrip() throws {
+        let original = EncodingProfile.webHighQuality
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(EncodingProfile.self, from: data)
+
+        XCTAssertEqual(original.name, decoded.name)
+        XCTAssertEqual(original.videoCodec, decoded.videoCodec)
+        XCTAssertEqual(original.videoCRF, decoded.videoCRF)
+        XCTAssertEqual(original.audioCodec, decoded.audioCodec)
+        XCTAssertEqual(original.containerFormat, decoded.containerFormat)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Encoding Queue Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies job queue add and count.
+    func test_encodingQueue_addJob() {
+        let queue = EncodingQueue()
+        let config = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputURL: URL(fileURLWithPath: "/tmp/output.mp4"),
+            profile: .webStandard
+        )
+
+        let jobState = queue.addJob(config)
+
+        XCTAssertEqual(queue.totalCount, 1)
+        XCTAssertEqual(queue.pendingCount, 1)
+        XCTAssertEqual(jobState.status, .queued)
+    }
+
+    /// Verifies job queue priority ordering.
+    func test_encodingQueue_priorityOrdering() {
+        let queue = EncodingQueue()
+        let lowPriority = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/low.mkv"),
+            outputURL: URL(fileURLWithPath: "/tmp/low.mp4"),
+            profile: .webStandard,
+            priority: 0
+        )
+        let highPriority = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/high.mkv"),
+            outputURL: URL(fileURLWithPath: "/tmp/high.mp4"),
+            profile: .webStandard,
+            priority: 10
+        )
+
+        queue.addJob(lowPriority)
+        queue.addJob(highPriority)
+
+        // High priority job should be first
+        let next = queue.nextPendingJob()
+        XCTAssertEqual(next?.config.priority, 10)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Temp File Manager Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies temp directory creation and cleanup.
+    func test_tempManager_createAndCleanup() throws {
+        let tempManager = TempFileManager()
+        let jobID = UUID()
+
+        let dir = try tempManager.createJobDirectory(for: jobID)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.path))
+
+        // Subdirectories should exist
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("demux").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("multipass").path))
+
+        // Cleanup should remove the directory
+        tempManager.cleanupJob(jobID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    }
+
+    /// Verifies disk space check returns a reasonable value.
+    func test_tempManager_availableSpace() throws {
+        let tempManager = TempFileManager()
+        let space = try tempManager.availableSpace()
+        XCTAssertGreaterThan(space, 0, "Available space should be > 0")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - HDR Format Detection Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies HDR detection in video streams.
+    func test_mediaStream_hdrDetection() {
+        let hdrStream = MediaStream(
+            streamIndex: 0,
+            streamType: .video,
+            hdrFormats: [.hdr10, .dolbyVision]
+        )
+        let sdrStream = MediaStream(streamIndex: 1, streamType: .video)
+
+        let url = URL(fileURLWithPath: "/tmp/test.mkv")
+        let file = MediaFile(fileURL: url, streams: [hdrStream, sdrStream])
+
+        XCTAssertTrue(file.hasHDR)
+        XCTAssertTrue(file.hasDolbyVision)
+        XCTAssertFalse(file.hasHLG)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Channel Layout Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies channel layout properties.
+    func test_channelLayout_properties() {
+        let stereo = ChannelLayout(channelCount: 2, layoutName: "stereo")
+        XCTAssertFalse(stereo.isSurround)
+        XCTAssertTrue(stereo.canUpmix)
+        XCTAssertEqual(stereo.displayName, "Stereo (2.0)")
+
+        let surround = ChannelLayout(channelCount: 6, layoutName: "5.1")
+        XCTAssertTrue(surround.isSurround)
+        XCTAssertEqual(surround.displayName, "5.1 Surround")
+
+        let mono = ChannelLayout(channelCount: 1)
+        XCTAssertFalse(mono.canUpmix) // Mono should not offer upmix
+    }
 }
