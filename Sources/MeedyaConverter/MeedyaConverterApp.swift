@@ -10,14 +10,11 @@
 // ---------------------------------------------------------------------------
 // This file defines the `@main` entry point for the MeedyaConverter macOS
 // application. It sets up the SwiftUI `App` lifecycle, declares the primary
-// window group, and will eventually configure:
+// window group, and configures:
 //
 //   - The main encoding-queue window (ContentView)
-//   - A Settings window (Preferences, profile management)
-//   - A media inspector panel (metadata, stream details, HDR info)
-//   - Menu bar commands (File > Open, Encode > Start, Window > Inspector)
 //   - App-level state injection via @Environment and @Observable
-//   - Sparkle auto-update integration (DIRECT builds only)
+//   - Window sizing and default configuration
 //
 // ### Architecture
 // The app follows the MVVM pattern:
@@ -40,6 +37,7 @@
 // ---------------------------------------------------------------------------
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // ---------------------------------------------------------------------------
@@ -47,116 +45,70 @@ import ConverterEngine
 // ---------------------------------------------------------------------------
 /// The application-level entry point for MeedyaConverter.
 ///
-/// `MeedyaConverterApp` conforms to the SwiftUI `App` protocol, which
-/// provides the cross-platform (well, macOS-only in our case) application
-/// lifecycle. The `@main` attribute tells the Swift compiler to generate
-/// the `main()` entry point that boots the run loop and initialises the
-/// app delegate shim behind the scenes.
+/// `MeedyaConverterApp` conforms to the SwiftUI `App` protocol, providing
+/// the macOS application lifecycle. The `@main` attribute generates the
+/// `main()` entry point that boots the run loop.
 ///
 /// ### Scenes
-/// SwiftUI apps declare their window hierarchy via the `body` property,
-/// which returns one or more `Scene` values:
-///
-///   - **`WindowGroup`** — The primary window showing the encoding queue
-///     and file-drop zone. Multiple windows can be opened (Cmd+N) to
-///     manage separate encoding sessions.
-///
-///   - **`Settings`** (planned) — The Preferences window, accessible via
-///     Cmd+Comma. Will host profile management, FFmpeg path configuration,
-///     cloud credentials, and update settings.
-///
-///   - **`Window`** (planned) — A singleton inspector panel toggled from
-///     the Window menu, showing detailed metadata for the selected media
-///     file.
+/// - **`WindowGroup`** — The primary window showing the encoding workflow
+///   with sidebar navigation, source import, stream inspection, output
+///   settings, job queue, and activity log.
 ///
 /// ### State Management
-/// Top-level application state (the encoding queue, global preferences,
-/// the active encoding backend) will be injected into the environment
-/// using `@Observable` model objects and the `.environment()` modifier.
-/// This keeps the `App` struct itself stateless and testable.
+/// The `AppViewModel` (@Observable) is injected into the environment
+/// so all child views can access the shared encoding engine, source
+/// files, queue, and UI state.
 // ---------------------------------------------------------------------------
 @main
 struct MeedyaConverterApp: App {
 
-    // ---------------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // MARK: - Application State
+    // -----------------------------------------------------------------
+    /// The shared application view model, injected into the environment.
+    /// Contains the encoding engine, source files, queue, and UI state.
+    @State private var appViewModel = AppViewModel()
+
+    // -----------------------------------------------------------------
     // MARK: - Scene Declaration
-    // ---------------------------------------------------------------------
-    /// The application's scene hierarchy.
-    ///
-    /// Currently declares a single `WindowGroup` with a placeholder
-    /// `ContentView`. As the UI is built out, additional scenes will be
-    /// added:
-    ///
-    /// ```swift
-    /// var body: some Scene {
-    ///     WindowGroup {
-    ///         ContentView()
-    ///             .environment(encodingQueue)
-    ///             .environment(preferencesStore)
-    ///     }
-    ///
-    ///     Settings {
-    ///         PreferencesView()
-    ///     }
-    ///
-    ///     Window("Media Inspector", id: "inspector") {
-    ///         MediaInspectorView()
-    ///     }
-    /// }
-    /// ```
-    // ---------------------------------------------------------------------
+    // -----------------------------------------------------------------
     var body: some Scene {
-        // -----------------------------------------------------------------
         // Primary Window Group
-        // -----------------------------------------------------------------
-        // `WindowGroup` creates a multi-window scene. Each window instance
-        // gets its own copy of the view hierarchy (and, by extension, its
-        // own SwiftUI state graph). The `title` is shown in the title bar
-        // and in the Window menu.
-        //
-        // The trailing closure contains the root view. `ContentView` will
-        // be defined in `Sources/MeedyaConverter/Views/ContentView.swift`
-        // once the UI scaffolding is in place. For now, a placeholder
-        // VStack displays the engine version to confirm that the app
-        // launches and the ConverterEngine module links correctly.
-        // -----------------------------------------------------------------
         WindowGroup {
-            // -------------------------------------------------------------
-            // Placeholder Root View
-            // -------------------------------------------------------------
-            // This inline view will be replaced by a dedicated
-            // `ContentView` struct. It serves as a build-verification
-            // smoke test: if this text appears in the window, the app
-            // launched, SwiftUI rendered, and ConverterEngine linked.
-            // -------------------------------------------------------------
-            VStack(spacing: 16) {
-                // App icon placeholder — will be replaced by the branded
-                // asset from Resources/Assets.xcassets.
-                Image(systemName: "film.stack")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.secondary)
-
-                // App name — uses the large title style for visual
-                // hierarchy and accessibility.
-                Text("MeedyaConverter")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-
-                // Engine version — confirms the ConverterEngine module
-                // is linked and its version constant is accessible.
-                Text("Engine \(ConverterEngine.version)")
-                    .font(.subheadline)
-                    .foregroundStyle(.tertiary)
-
-                // Build identifier — the full "ConverterEngine/0.1.0"
-                // string, useful for diagnostic screenshots.
-                Text(ConverterEngine.buildIdentifier)
-                    .font(.caption)
-                    .monospaced()
-                    .foregroundStyle(.quaternary)
+            ContentView()
+                .environment(appViewModel)
+        }
+        .defaultSize(width: 1100, height: 700)
+        .commands {
+            // File menu customisation
+            CommandGroup(after: .newItem) {
+                Button("Import Media Files...") {
+                    openFilePicker()
+                }
+                .keyboardShortcut("o", modifiers: .command)
             }
-            .padding(40)
-            .frame(minWidth: 600, minHeight: 400)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - File Picker
+    // -----------------------------------------------------------------
+    /// Open a file picker from the menu bar command.
+    private func openFilePicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Media Files"
+        panel.message = "Select one or more media files to convert."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [
+            .movie, .video, .audio, .mpeg4Movie, .quickTimeMovie, .avi, .mpeg2Video
+        ]
+
+        guard panel.runModal() == .OK else { return }
+
+        Task {
+            await appViewModel.importFiles(panel.urls)
         }
     }
 }

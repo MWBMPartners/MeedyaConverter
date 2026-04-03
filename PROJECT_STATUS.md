@@ -10,11 +10,11 @@
 
 | Metric | Value |
 | ------ | ----- |
-| **Current Phase** | Phase 0 — Project Setup & Architecture |
+| **Current Phase** | Phase 2 — macOS SwiftUI Application (MVP) |
 | **Next Target** | Alpha 0.1 (Phases 0 + 1 + 2) |
-| **Overall Completion** | ░░░░░░░░░░░░░░░░░░░░ 3% |
-| **Phases Complete** | 0 / 19 (Phases 0–18) |
-| **Active Work** | Project planning, documentation, architecture, repo setup |
+| **Overall Completion** | ▓▓░░░░░░░░░░░░░░░░░░ 10% |
+| **Phases Complete** | 1 / 19 (Phase 1 complete) |
+| **Active Work** | Phase 2 — macOS SwiftUI application shell, navigation, source import, stream inspector |
 
 ---
 
@@ -40,9 +40,9 @@
 
 | Phase | Name | Status | Progress | Release |
 | ----- | ---- | ------ | -------- | ------- |
-| **0** | Project Setup & Architecture | 🚧 In Progress | ▓▓▓▓▓▓▓░░░ 70% | — |
-| **1** | Core Engine Foundation | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.1 |
-| **2** | macOS SwiftUI Application (MVP) | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.1 |
+| **0** | Project Setup & Architecture | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | — |
+| **1** | Core Engine Foundation | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | Alpha 0.1 |
+| **2** | macOS SwiftUI Application (MVP) | 🚧 In Progress | ▓▓░░░░░░░░ 20% | Alpha 0.1 |
 | **3** | Essential Encoding & Passthrough | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.2 |
 | **4** | CLI Tool | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.2 |
 | **5** | Subtitles & Core Audio Processing | ⏳ Planned | ░░░░░░░░░░ 0% | Beta 0.5 |
@@ -78,26 +78,54 @@
 
 ---
 
+## ✅ Phase 1: Core Engine Foundation — Detail
+
+| # | Task | Status | Notes |
+| - | ---- | ------ | ----- |
+| 1.1 | FFmpeg bundle manager | ✅ Complete | Binary discovery, version detection, validation, caching |
+| 1.2 | FFmpeg process controller | ✅ Complete | Start, pause, resume, stop with progress monitoring |
+| 1.3 | Media file probing (FFprobe) | ✅ Complete | Streams, HDR, chapters, metadata |
+| 1.4 | Data models | ✅ Complete | MediaFile, MediaStream, VideoCodec, AudioCodec, ContainerFormat, SubtitleFormat |
+| 1.5 | FFmpeg argument builder | ✅ Complete | Translates encoding settings to FFmpeg CLI arguments |
+| 1.6 | Encoding profile system | ✅ Complete | Presets, CRUD, JSON persistence, 7 built-in profiles |
+| 1.7 | Encoding job & queue | ✅ Complete | Job config, state tracking, priority queue management |
+| 1.7a | Temp file management | ✅ Complete | Per-job directories, cleanup, disk space monitoring |
+| 1.8/1.9 | Encoding engine | ✅ Complete | Video & audio encoding orchestration, multipass support |
+| 1.10 | Unit tests | ✅ Complete | 30 tests covering all Phase 1 components |
+| 1.11 | Feature gating system | ✅ Complete | ProductTier, Feature, FeatureGateProtocol |
+
+---
+
 ## ✅ What's Complete
 
 - 📋 Project plan with 19 phases (0-18), release gates, feature gating, and 215+ tasks
 - 📝 Full documentation suite (README, Plan, Status, Changelog, 7 help docs)
 - 🏗️ Architecture: ConverterEngine + meedya-convert + MeedyaConverter
-- 🔧 SPM package with 3 targets — builds and tests pass (10/10)
+- 🔧 SPM package with 3 targets — builds and tests pass (30/30)
 - 🔀 Hybrid encoding engine designed (FFmpeg subprocess + AVFoundation/FFmpegKit)
 - 🔄 Dual update strategy (Sparkle 2 direct + Apple-managed App Store)
 - 🔒 Three-tier file access for App Store sandbox
 - 📡 GitHub: 19 milestones, 26+ labels, 246 issues, project board, 9 wiki pages
 - 🔄 CI/CD: 3 GitHub Actions workflows (build, release, beta/alpha)
 - 📋 Issue templates, security policy, CODEOWNERS, PR template, LICENSE
+- 🔧 FFmpeg bundle manager with binary discovery and version validation
+- 🎛️ FFmpeg process controller with pause/resume/stop and progress monitoring
+- 🔍 Media probing via FFprobe — streams, HDR detection, chapters, metadata
+- 📦 Complete data models — MediaFile, MediaStream, 16 video codecs, 30+ audio codecs, 25+ containers
+- 🏗️ FFmpeg argument builder — translates encoding settings to CLI arguments
+- 🎬 Encoding profile system with 7 built-in presets and JSON persistence
+- 📋 Job queue with priority ordering, state tracking, batch management
+- 🗂️ Temp file management with per-job directories and disk monitoring
+- 🎞️ Encoding engine orchestrating full video/audio conversion pipeline
+- ✅ 30 unit tests covering all Phase 1 components
+- 🔐 Feature gating system (free/pro/studio tiers)
 
 ---
 
 ## 🔜 What's Next (Alpha 0.1 Path)
 
-1. **Phase 1** — FFmpeg integration, media probing (with MediaInfo), encoding profiles, job queue
-2. **Phase 2** — macOS SwiftUI app shell, source import, output settings, encoding workflow
-3. First testable build targeting basic H.264/H.265/AAC encoding
+1. **Phase 2** — macOS SwiftUI app shell, source import, stream inspector, output settings, encoding workflow
+2. First testable build targeting basic H.264/H.265/AAC encoding
 
 ---
 
