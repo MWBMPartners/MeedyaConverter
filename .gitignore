@@ -252,3 +252,4 @@ Tools/mp4box
 coverage/
 lcov.info
 .nyc_output/
+.DS_Store
