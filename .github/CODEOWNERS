@@ -1,0 +1,16 @@
+# MeedyaConverter Code Owners
+#
+# Each line defines a file pattern and the GitHub user(s) or team(s)
+# who are the default reviewers for matching files.
+#
+# Order matters — later patterns take precedence over earlier ones.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for all files
+*                               @MWBMPartners
+
+# Core conversion engine
+Sources/ConverterEngine/        @MWBMPartners/core
+
+# GitHub configuration and CI/CD
+.github/                        @MWBMPartners/maintainers

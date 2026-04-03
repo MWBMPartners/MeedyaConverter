@@ -1,0 +1,37 @@
+PROPRIETARY LICENSE
+
+Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+
+This software and its associated documentation files (the "Software") are the
+exclusive property of MWBM Partners Ltd. No permission is granted to any person
+or entity to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, in whole or in part, without the prior written
+consent of MWBM Partners Ltd.
+
+Unauthorized use, reproduction, or distribution of this Software, or any
+portion thereof, may result in civil and criminal penalties and will be
+prosecuted to the maximum extent permitted by law.
+
+THIRD-PARTY COMPONENTS
+
+This Software may incorporate or depend on third-party open-source components,
+each of which retains its own license terms. These components include, but are
+not limited to:
+
+  - FFmpeg (https://ffmpeg.org) — Licensed under the GNU Lesser General Public
+    License (LGPL) version 2.1 or later, or the GNU General Public License
+    (GPL) version 2 or later, depending on configuration.
+
+  - dovi_tool (https://github.com/quietvoid/dovi_tool) — Licensed under the
+    MIT License.
+
+The inclusion of these third-party components does not alter the proprietary
+nature of MeedyaConverter itself. Users are responsible for complying with the
+license terms of any third-party components they use.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+MWBM PARTNERS LTD BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

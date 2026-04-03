@@ -1,0 +1,180 @@
+# =============================================================================
+# MeedyaConverter -- CI Build & Test Workflow
+# =============================================================================
+#
+# Purpose:
+#   Builds the Swift package and runs all tests on every push or pull request
+#   targeting the main, beta, or alpha branches. Also runs SwiftLint for code
+#   style enforcement when available.
+#
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: CI Build & Test
+
+# ---------------------------------------------------------------------------
+# Trigger configuration
+# ---------------------------------------------------------------------------
+# This workflow runs on:
+#   - Direct pushes to main, beta, or alpha branches
+#   - Pull requests targeting any of those branches
+# This ensures that both feature branches (via PRs) and direct commits are
+# validated before code lands on a release-track branch.
+# ---------------------------------------------------------------------------
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - alpha
+  pull_request:
+    branches:
+      - main
+      - beta
+      - alpha
+
+# ---------------------------------------------------------------------------
+# Concurrency configuration
+# ---------------------------------------------------------------------------
+# Group runs by branch and workflow so that pushes to the same branch cancel
+# any in-progress run for that branch. This prevents wasted runner minutes
+# when multiple commits are pushed in quick succession. Pull request runs
+# use the PR number as the group key so each PR gets its own concurrency
+# lane and new pushes to the PR branch cancel the previous run.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Environment-level permissions
+# ---------------------------------------------------------------------------
+# Read-only access to repository contents is sufficient for building and
+# testing. No write permissions are needed.
+# ---------------------------------------------------------------------------
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    # -----------------------------------------------------------------------
+    # Runner selection
+    # -----------------------------------------------------------------------
+    # macOS 15 (Sequoia) runner provides Xcode 16.3+ which ships with
+    # Swift 6.3. Apple Silicon runners are preferred for performance.
+    # -----------------------------------------------------------------------
+    name: Build & Test (macOS)
+    runs-on: macos-15
+
+    # -----------------------------------------------------------------------
+    # Timeout: prevent stuck builds from consuming runner minutes indefinitely
+    # -----------------------------------------------------------------------
+    timeout-minutes: 30
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Step 1: Check out the repository
+      # ---------------------------------------------------------------------
+      # Fetch the full source tree so that SPM can resolve local package
+      # dependencies and git-based version info is available.
+      # ---------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------
+      # Step 2: Set up Swift 6.3
+      # ---------------------------------------------------------------------
+      # Uses the official swift-actions/setup-swift action to install or
+      # select the desired Swift toolchain. On macOS runners that already
+      # ship with Swift 6.3 via Xcode 16.3, this step primarily ensures
+      # the correct version is active and on PATH.
+      # ---------------------------------------------------------------------
+      - name: Set up Swift 6.3
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3"
+
+      # ---------------------------------------------------------------------
+      # Step 3: Verify Swift version
+      # ---------------------------------------------------------------------
+      # Print the active Swift version for debugging CI failures and to
+      # confirm the setup step selected the correct toolchain.
+      # ---------------------------------------------------------------------
+      - name: Verify Swift version
+        run: swift --version
+
+      # ---------------------------------------------------------------------
+      # Step 4: Cache Swift Package Manager dependencies
+      # ---------------------------------------------------------------------
+      # SPM downloads and builds resolved dependencies into .build/.
+      # Caching this directory avoids redundant network fetches and
+      # recompilation across runs when Package.resolved has not changed.
+      #
+      # The cache key includes the OS and the hash of Package.resolved so
+      # that a new cache entry is created whenever dependencies change.
+      # A restore-key fallback allows partial cache hits when only some
+      # dependencies have changed.
+      # ---------------------------------------------------------------------
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      # ---------------------------------------------------------------------
+      # Step 5: Resolve dependencies
+      # ---------------------------------------------------------------------
+      # Explicitly resolve package dependencies before building. This makes
+      # it easier to spot dependency resolution failures separately from
+      # build failures in the CI logs.
+      # ---------------------------------------------------------------------
+      - name: Resolve package dependencies
+        run: swift package resolve
+
+      # ---------------------------------------------------------------------
+      # Step 6: Build the project (debug configuration)
+      # ---------------------------------------------------------------------
+      # Build all targets in the package in debug mode. Debug builds are
+      # faster than release builds and are sufficient for CI validation.
+      # The --verbose flag is omitted by default to keep logs clean; add
+      # it here if you need detailed build output for troubleshooting.
+      # ---------------------------------------------------------------------
+      - name: Build (debug)
+        run: swift build
+
+      # ---------------------------------------------------------------------
+      # Step 7: Run tests
+      # ---------------------------------------------------------------------
+      # Execute all test targets defined in Package.swift. The --parallel
+      # flag runs test cases concurrently for faster feedback.
+      # ---------------------------------------------------------------------
+      - name: Run tests
+        run: swift test --parallel
+
+      # ---------------------------------------------------------------------
+      # Step 8: SwiftLint (optional)
+      # ---------------------------------------------------------------------
+      # Run SwiftLint to enforce code style and catch common issues. This
+      # step uses "continue-on-error" so that lint warnings do not block
+      # the build -- the team can promote this to a hard failure once the
+      # codebase fully conforms to the lint rules.
+      #
+      # SwiftLint is installed via Homebrew if not already present on the
+      # runner image. The "|| true" on the install command prevents the
+      # step from failing if Homebrew is unavailable.
+      # ---------------------------------------------------------------------
+      - name: Install SwiftLint
+        run: brew install swiftlint || true
+        continue-on-error: true
+
+      - name: Run SwiftLint
+        run: |
+          if command -v swiftlint &> /dev/null; then
+            echo "SwiftLint found -- running lint..."
+            swiftlint lint --reporter github-actions-logging --quiet || true
+          else
+            echo "SwiftLint not available -- skipping."
+          fi
+        continue-on-error: true

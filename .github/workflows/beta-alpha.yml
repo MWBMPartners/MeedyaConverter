@@ -1,0 +1,326 @@
+# =============================================================================
+# MeedyaConverter -- Beta & Alpha Pre-Release Workflow
+# =============================================================================
+#
+# Purpose:
+#   Automatically creates pre-release builds when code is pushed to the beta
+#   or alpha branches. Each push generates a uniquely versioned pre-release
+#   tag and publishes it as a GitHub pre-release.
+#
+# Tagging convention:
+#   - Beta releases:  vX.Y.Z-beta.N   (e.g. v1.2.0-beta.3)
+#   - Alpha releases: vX.Y.Z-alpha.N  (e.g. v1.2.0-alpha.7)
+#
+# The base version (X.Y.Z) is read from a VERSION file in the repository
+# root, or defaults to 0.0.0 if no VERSION file exists. The build number
+# (N) is auto-incremented based on existing tags for the same base version
+# and channel.
+#
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: "Beta & Alpha Pre-Release"
+
+# ---------------------------------------------------------------------------
+# Trigger configuration
+# ---------------------------------------------------------------------------
+# This workflow runs on pushes to the beta and alpha branches. These are
+# long-lived branches that track pre-release development:
+#   - alpha: Early development builds, potentially unstable
+#   - beta:  Feature-complete builds undergoing final testing
+# ---------------------------------------------------------------------------
+on:
+  push:
+    branches:
+      - beta
+      - alpha
+
+# ---------------------------------------------------------------------------
+# Concurrency configuration
+# ---------------------------------------------------------------------------
+# Each branch (beta, alpha) gets its own concurrency group. If multiple
+# commits are pushed rapidly to the same branch, only the latest run
+# proceeds -- earlier runs are cancelled to avoid publishing stale builds.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: pre-release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+# Write access to contents is required to:
+#   - Create and push git tags for the pre-release version
+#   - Create the GitHub Release and upload assets
+# ---------------------------------------------------------------------------
+permissions:
+  contents: write
+
+jobs:
+  pre-release:
+    name: Build & Publish Pre-Release
+    runs-on: macos-15
+
+    # -----------------------------------------------------------------------
+    # Timeout: pre-release builds should complete well within this limit
+    # -----------------------------------------------------------------------
+    timeout-minutes: 45
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Step 1: Check out the repository
+      # ---------------------------------------------------------------------
+      # fetch-depth: 0 fetches all history and tags so we can:
+      #   - Determine the next pre-release build number
+      #   - Generate a changelog from recent commits
+      # ---------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------------
+      # Step 2: Set up Swift 6.3
+      # ---------------------------------------------------------------------
+      - name: Set up Swift 6.3
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3"
+
+      # ---------------------------------------------------------------------
+      # Step 3: Verify Swift version
+      # ---------------------------------------------------------------------
+      - name: Verify Swift version
+        run: swift --version
+
+      # ---------------------------------------------------------------------
+      # Step 4: Cache SPM dependencies
+      # ---------------------------------------------------------------------
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-prerelease-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-prerelease-
+            ${{ runner.os }}-spm-
+
+      # ---------------------------------------------------------------------
+      # Step 5: Resolve dependencies
+      # ---------------------------------------------------------------------
+      - name: Resolve package dependencies
+        run: swift package resolve
+
+      # ---------------------------------------------------------------------
+      # Step 6: Build in release configuration
+      # ---------------------------------------------------------------------
+      # Pre-release builds use release optimisation so testers evaluate
+      # real-world performance, not debug-mode behaviour.
+      # ---------------------------------------------------------------------
+      - name: Build (release)
+        run: swift build -c release
+
+      # ---------------------------------------------------------------------
+      # Step 7: Run tests
+      # ---------------------------------------------------------------------
+      # All tests must pass before a pre-release is published. This ensures
+      # beta and alpha testers receive builds that meet a minimum quality bar.
+      # ---------------------------------------------------------------------
+      - name: Run tests
+        run: swift test --parallel
+
+      # ---------------------------------------------------------------------
+      # Step 8: Determine release channel and labels
+      # ---------------------------------------------------------------------
+      # Set environment variables based on which branch triggered the
+      # workflow:
+      #   - CHANNEL: "beta" or "alpha" (used in tag and title)
+      #   - RELEASE_LABEL: Human-readable label for the release title
+      #
+      # These are exported via GITHUB_OUTPUT so subsequent steps can use
+      # them as expression values.
+      # ---------------------------------------------------------------------
+      - name: Determine release channel
+        id: channel
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+
+          if [ "$BRANCH" = "beta" ]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+            echo "label=Beta Release" >> "$GITHUB_OUTPUT"
+            echo "Channel: beta (Beta Release)"
+          elif [ "$BRANCH" = "alpha" ]; then
+            echo "channel=alpha" >> "$GITHUB_OUTPUT"
+            echo "label=Alpha/Dev Release" >> "$GITHUB_OUTPUT"
+            echo "Channel: alpha (Alpha/Dev Release)"
+          else
+            echo "::error::Unexpected branch '${BRANCH}' -- expected 'beta' or 'alpha'"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------
+      # Step 9: Compute the next pre-release version tag
+      # ---------------------------------------------------------------------
+      # Version numbering strategy:
+      #   1. Read the base version (X.Y.Z) from a VERSION file in the repo
+      #      root, or default to "0.0.0" if no such file exists.
+      #   2. List all existing tags matching vX.Y.Z-<channel>.N
+      #   3. Find the highest N, then increment it by 1
+      #   4. Produce the new tag: vX.Y.Z-<channel>.(N+1)
+      #
+      # Example progression:
+      #   v1.2.0-beta.1 -> v1.2.0-beta.2 -> v1.2.0-beta.3
+      # ---------------------------------------------------------------------
+      - name: Compute pre-release version
+        id: version
+        run: |
+          CHANNEL="${{ steps.channel.outputs.channel }}"
+
+          # Read base version from VERSION file, or default to 0.0.0
+          if [ -f VERSION ]; then
+            BASE_VERSION=$(cat VERSION | tr -d '[:space:]')
+            echo "Read base version from VERSION file: ${BASE_VERSION}"
+          else
+            BASE_VERSION="0.0.0"
+            echo "No VERSION file found -- using default: ${BASE_VERSION}"
+          fi
+
+          # Find the highest existing build number for this version + channel
+          TAG_PATTERN="v${BASE_VERSION}-${CHANNEL}."
+          echo "Looking for existing tags matching: ${TAG_PATTERN}*"
+
+          HIGHEST_N=0
+          for TAG in $(git tag --list "${TAG_PATTERN}*" | sort -V); do
+            # Extract the build number N from vX.Y.Z-channel.N
+            N="${TAG##*.}"
+            if [ "$N" -gt "$HIGHEST_N" ] 2>/dev/null; then
+              HIGHEST_N="$N"
+            fi
+          done
+
+          # Increment to get the next build number
+          NEXT_N=$((HIGHEST_N + 1))
+          NEW_TAG="v${BASE_VERSION}-${CHANNEL}.${NEXT_N}"
+
+          echo "Previous highest build number: ${HIGHEST_N}"
+          echo "New pre-release tag: ${NEW_TAG}"
+
+          echo "tag=${NEW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${NEXT_N}" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Step 10: Create and push the git tag
+      # ---------------------------------------------------------------------
+      # Tag the current commit with the computed pre-release version. The
+      # tag is pushed to the remote so it appears in the repository's tag
+      # list and can be referenced by the GitHub Release.
+      # ---------------------------------------------------------------------
+      - name: Create git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "${{ steps.channel.outputs.label }}: ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      # ---------------------------------------------------------------------
+      # Step 11: Package release artifacts
+      # ---------------------------------------------------------------------
+      # Create a compressed archive of the release binary for attachment
+      # to the GitHub Release. This follows the same placeholder pattern
+      # as the production release workflow until the full .app bundle and
+      # DMG pipeline is implemented.
+      # ---------------------------------------------------------------------
+      - name: Package release artifacts
+        run: |
+          CHANNEL="${{ steps.channel.outputs.channel }}"
+          VERSION="${{ steps.version.outputs.tag }}"
+
+          mkdir -p release-artifacts
+
+          # Copy the release binary if it exists
+          if [ -f .build/release/meedya-convert ]; then
+            cp .build/release/meedya-convert release-artifacts/
+            echo "Copied meedya-convert CLI binary to release-artifacts/"
+          else
+            echo "No CLI binary found -- creating placeholder artifact"
+            echo "MeedyaConverter ${VERSION} (${CHANNEL})" > release-artifacts/VERSION.txt
+          fi
+
+          # Create compressed archive
+          ARTIFACT_NAME="MeedyaConverter-${VERSION}-macOS-${CHANNEL}.tar.gz"
+          tar -czf "${ARTIFACT_NAME}" -C release-artifacts .
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_ENV"
+          echo "Release artifact created: ${ARTIFACT_NAME}"
+
+      # ---------------------------------------------------------------------
+      # Step 12: Generate changelog
+      # ---------------------------------------------------------------------
+      # Generate a changelog showing commits since the previous pre-release
+      # tag on this channel, or since the last production tag if no prior
+      # pre-release exists for this channel.
+      # ---------------------------------------------------------------------
+      - name: Generate changelog
+        run: |
+          CHANNEL="${{ steps.channel.outputs.channel }}"
+          CURRENT_TAG="${{ steps.version.outputs.tag }}"
+
+          # Find the previous tag for this channel
+          PREVIOUS_TAG=$(git tag --sort=-creatordate \
+            | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-${CHANNEL}\." \
+            | grep -v "^${CURRENT_TAG}$" \
+            | head -n 1)
+
+          # Fall back to the latest production tag if no prior pre-release exists
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git tag --sort=-creatordate \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -n 1)
+          fi
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Generating changelog from ${PREVIOUS_TAG} to HEAD..."
+            CHANGELOG=$(git log "${PREVIOUS_TAG}..HEAD" \
+              --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "No previous tag found -- including recent commits."
+            CHANGELOG=$(git log --max-count=50 \
+              --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Build the release notes with header and channel info
+          {
+            echo "## ${{ steps.channel.outputs.label }}"
+            echo ""
+            echo "**Channel:** \`${CHANNEL}\`"
+            echo "**Version:** \`${CURRENT_TAG}\`"
+            echo "**Build:** #${{ steps.version.outputs.build_number }}"
+            echo ""
+            echo "> This is a pre-release build intended for testing. It may contain bugs or incomplete features."
+            echo ""
+            echo "### Changes"
+            echo ""
+            echo "$CHANGELOG"
+          } > RELEASE_CHANGELOG.md
+
+          echo "Changelog written to RELEASE_CHANGELOG.md"
+
+      # ---------------------------------------------------------------------
+      # Step 13: Create GitHub Pre-Release
+      # ---------------------------------------------------------------------
+      # Publish a GitHub Release marked as a pre-release. Pre-releases:
+      #   - Are visually distinguished from production releases on GitHub
+      #   - Do not appear as the "latest" release
+      #   - Include the channel label (Beta/Alpha) in the title
+      #   - Have the release artifact attached for download
+      # ---------------------------------------------------------------------
+      - name: Create GitHub Pre-Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.channel.outputs.label }} ${{ steps.version.outputs.tag }}" \
+            --notes-file RELEASE_CHANGELOG.md \
+            --prerelease \
+            "${artifact_name}#MeedyaConverter ${{ steps.version.outputs.tag }} (macOS)"

@@ -1,0 +1,37 @@
+# ============================================================================
+# MeedyaConverter — Dependency Review
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Reviews dependency changes in PRs for known vulnerabilities,
+# license compliance issues, and supply chain risks.
+# ============================================================================
+
+name: "Dependency Review"
+
+on:
+  pull_request:
+    branches: [main, beta, alpha]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Review Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Scan dependency changes for vulnerabilities and license issues
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail on high/critical severity vulnerabilities
+          fail-on-severity: high
+          # Flag licenses incompatible with proprietary software
+          deny-licenses: GPL-3.0-only, AGPL-3.0-only
+          # Allow known GPL-2.0 dependencies (FFmpeg subprocess, not linked)
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, LGPL-2.1-only, LGPL-2.1-or-later, GPL-2.0-only, GPL-2.0-or-later
+          comment-summary-in-pr: always

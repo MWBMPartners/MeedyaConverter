@@ -1,0 +1,238 @@
+# =============================================================================
+# MeedyaConverter -- Production Release Workflow
+# =============================================================================
+#
+# Purpose:
+#   Builds a release-optimised binary, packages it into a DMG, and publishes
+#   a GitHub Release whenever a version tag (e.g. v1.0.0) is pushed to the
+#   main branch.
+#
+# Trigger:
+#   Push a tag matching the pattern "v*" on the main branch, for example:
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: "Production Release"
+
+# ---------------------------------------------------------------------------
+# Trigger configuration
+# ---------------------------------------------------------------------------
+# This workflow only runs when a tag starting with "v" is pushed. Tags are
+# expected to follow semantic versioning: v1.0.0, v2.3.1, etc.
+#
+# The branch filter on push/tags ensures this fires only for version tags
+# and not for arbitrary branch pushes.
+# ---------------------------------------------------------------------------
+on:
+  push:
+    tags:
+      - "v*"
+
+# ---------------------------------------------------------------------------
+# Concurrency configuration
+# ---------------------------------------------------------------------------
+# Only one production release should run at a time. If a second tag is pushed
+# while a release is in progress, the earlier run is cancelled to avoid
+# publishing stale artifacts.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: production-release
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+# Write access to contents is required to create a GitHub Release and upload
+# release assets (the DMG file).
+# ---------------------------------------------------------------------------
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Production Release
+    runs-on: macos-15
+
+    # -----------------------------------------------------------------------
+    # Timeout: release builds and packaging should complete well within this
+    # -----------------------------------------------------------------------
+    timeout-minutes: 45
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Step 1: Check out the repository at the tagged commit
+      # ---------------------------------------------------------------------
+      # fetch-depth: 0 fetches the entire history so we can generate a
+      # changelog from commit messages between the previous tag and this one.
+      # ---------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------------
+      # Step 2: Set up Swift 6.3
+      # ---------------------------------------------------------------------
+      # Ensure the correct Swift toolchain is active for the release build.
+      # ---------------------------------------------------------------------
+      - name: Set up Swift 6.3
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3"
+
+      # ---------------------------------------------------------------------
+      # Step 3: Verify Swift version
+      # ---------------------------------------------------------------------
+      - name: Verify Swift version
+        run: swift --version
+
+      # ---------------------------------------------------------------------
+      # Step 4: Cache SPM dependencies
+      # ---------------------------------------------------------------------
+      # Reuse cached dependencies to speed up the release build.
+      # ---------------------------------------------------------------------
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-release-
+            ${{ runner.os }}-spm-
+
+      # ---------------------------------------------------------------------
+      # Step 5: Resolve dependencies
+      # ---------------------------------------------------------------------
+      - name: Resolve package dependencies
+        run: swift package resolve
+
+      # ---------------------------------------------------------------------
+      # Step 6: Build in release configuration
+      # ---------------------------------------------------------------------
+      # Release builds enable full optimisations (-O) producing smaller and
+      # faster binaries suitable for distribution.
+      # ---------------------------------------------------------------------
+      - name: Build (release)
+        run: swift build -c release
+
+      # ---------------------------------------------------------------------
+      # Step 7: Run tests against the release build
+      # ---------------------------------------------------------------------
+      # Verify that the release-optimised binary passes all tests. Release
+      # builds can occasionally surface issues that debug builds hide (e.g.
+      # uninitialised memory, optimiser-related bugs).
+      # ---------------------------------------------------------------------
+      - name: Run tests (release)
+        run: swift test -c release --parallel
+
+      # ---------------------------------------------------------------------
+      # Step 8: Extract version from the git tag
+      # ---------------------------------------------------------------------
+      # Strip the leading "v" from the tag (e.g. v1.0.0 -> 1.0.0) and
+      # export it as an environment variable for use in later steps.
+      # Also capture the full tag name for the release title.
+      # ---------------------------------------------------------------------
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG_NAME#v}"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION} (tag: ${TAG_NAME})"
+
+      # ---------------------------------------------------------------------
+      # Step 9: Create DMG (placeholder)
+      # ---------------------------------------------------------------------
+      # TODO: Replace this placeholder with actual DMG creation once the
+      # macOS SwiftUI application target is in place. The final step will:
+      #   1. Build the .app bundle via xcodebuild
+      #   2. Code-sign with Developer ID
+      #   3. Notarise with Apple
+      #   4. Package into a DMG using create-dmg or hdiutil
+      #
+      # For now, this step packages the release CLI binary as a placeholder
+      # to validate the rest of the pipeline.
+      # ---------------------------------------------------------------------
+      - name: Package release artifacts (placeholder DMG)
+        run: |
+          echo "=== DMG Packaging Placeholder ==="
+          echo ""
+          echo "TODO: Implement full DMG creation pipeline:"
+          echo "  1. Build .app bundle (xcodebuild)"
+          echo "  2. Code-sign with Developer ID"
+          echo "  3. Notarise with Apple (xcrun notarytool)"
+          echo "  4. Create DMG (hdiutil / create-dmg)"
+          echo ""
+          echo "For now, packaging the release CLI binary..."
+
+          # Create a staging directory for the release artifact
+          mkdir -p release-artifacts
+
+          # Copy the release binary (if it exists) into the staging area
+          if [ -f .build/release/meedya-convert ]; then
+            cp .build/release/meedya-convert release-artifacts/
+            echo "Copied meedya-convert CLI binary to release-artifacts/"
+          else
+            echo "No CLI binary found -- creating placeholder artifact"
+            echo "MeedyaConverter ${{ steps.version.outputs.version }}" > release-artifacts/VERSION.txt
+          fi
+
+          # Create a compressed archive as the release asset
+          tar -czf "MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz" \
+            -C release-artifacts .
+
+          echo "Release artifact created: MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz"
+
+      # ---------------------------------------------------------------------
+      # Step 10: Generate changelog
+      # ---------------------------------------------------------------------
+      # Build a changelog from commit messages between the previous tag and
+      # the current tag. If no previous tag exists (first release), include
+      # all commits. The changelog is written to a temporary file for use
+      # in the GitHub Release body.
+      # ---------------------------------------------------------------------
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find the previous tag (the most recent tag before the current one)
+          PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | sed -n '2p')
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Generating changelog from ${PREVIOUS_TAG} to ${{ steps.version.outputs.tag }}..."
+            CHANGELOG=$(git log "${PREVIOUS_TAG}..${{ steps.version.outputs.tag }}" \
+              --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "No previous tag found -- including all commits in changelog."
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Write changelog to a file (multi-line output is tricky with GITHUB_OUTPUT)
+          echo "$CHANGELOG" > RELEASE_CHANGELOG.md
+
+          echo "Changelog generated with $(echo "$CHANGELOG" | wc -l | tr -d ' ') entries."
+
+      # ---------------------------------------------------------------------
+      # Step 11: Create GitHub Release
+      # ---------------------------------------------------------------------
+      # Publish a GitHub Release with:
+      #   - The version tag as the release name
+      #   - The auto-generated changelog as the release body
+      #   - The packaged artifact attached as a release asset
+      #   - Marked as a full (non-pre-release) production release
+      #
+      # Uses the GitHub CLI (gh) which is pre-installed on GitHub-hosted
+      # runners and automatically authenticated via GITHUB_TOKEN.
+      # ---------------------------------------------------------------------
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "Production Release ${{ steps.version.outputs.tag }}" \
+            --notes-file RELEASE_CHANGELOG.md \
+            --latest \
+            "MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz#MeedyaConverter ${{ steps.version.outputs.version }} (macOS)"

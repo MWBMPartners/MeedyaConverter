@@ -1,0 +1,189 @@
+I would like to have a crossplatform tool (with modern user friendly UI) that can be used to input convert audio/video files from one format (container or individual codecss) to another.
+
+Think of it in a similar kind of feature set as Handbrake, but more modern, with more features and more flexibility (we'd allow passthrough of audio, video, subtitles, mediadata or other content within containers wherever supported.). We also want native ability to prepare a single input file for Multi-bitrate HLS and MPEG-DASH Stream (on demand only of course, not live)
+
+Ultimately, the tool would target users on Windows (x86, x86 AND ARM), MacOS (Apple Silicon first, then x64) and (lower priority) Linux based (x86, x86, x86-64, ARM, ARMv7, ARM64 including Raspberry Pi OS). However initial focus will be MacOS with other platforms to follow.
+
+The idea is the user inputs their source files, selects their output preferences (though we will offer some initial "profiles" for easy/quick start also), and then start the encode process. 
+
+Supported features that Handbrake doesnt support (key differentiators):
+ * Passthrough of video (handbrake forces re-encoding of video, and doesnt offer video passthrough)
+ * Passthrough of subtitles if subtitle format is supported by output container (Handbrake almost always coverts subtitles to srt)
+ * passthrough of CC708 & CC708 Closed Captions to supported output formats/containers in addition to adding additional subtitle/captop formats
+ * If a input file contains multiple video streams, Allow the ability to convert each when converting, with the ability to specificy different encoding settings for each video stream (Handbrake only handles encoding/inclusion of one video stream per output file)
+ * Setting detailed metadata for each audio/video/subtitle stream (Title, Language - including script region and similar designation, Default, Enabled, Forced, Secondary, Fallback streaam etc), and file as a whole.
+ * Apply volume normalisation and/or volume normalisation (ReplayGain, where each audio stream in the file is considered a track in an 'album' for ReplayGain Album metadata analysis). etc
+
+Video encoding can use libraries such as FFMPEG and other libraries/codecs (all of which MUST be included in the download/application package or, as a fallback, have integrated downloadability within the app). 
+
+Encoding of video can use FFMPEG and should retain HDR (HDR10+, HDR10, HLG or Dolby Vision, just as Handbrake can) if required by the preset profiles/formats/quality settings selected. Input files that ONLY include HDR10+ (and no Dolby Vision) should automatically (though with appropriate setting to enable/disable) create and embed Dolby Vision in addition to keeping the HDR10+), perhaps integrating/using DDVT (GitHub Repo: https://github.com/DonaldFaQ/DDVT) and/or dovi_tool (GitHub Repo: https://github.com/quietvoid/dovi_tool) which should also be embedded into the application/packaging.
+
+All features of Handbrake MUST be supported and all containers and formats supported by FFmpeg natively as well as, AT A BARE MINIMUM...
+
+=======
+FEATURES
+=======
+
+------
+OUTPUT CONTAINERS
+------
+ * MP4-family (MP4, M4V, M4A, m4b, m4p, aac)
+ * Matroska Family (MKV, MKA, MKS, MK3D)
+ * Quicktime Family (mov)
+ * WebM (webm)
+ * Adaptive Streaming (HLS, MPEG-DASH, MPD)
+
+------
+Output Video formats (incl Encoding & Passthrough)
+------
+ * ProRes
+ * MPEG-2
+ * MPEG-4
+ * H.264/x264
+ * H.265/HEVC
+ * VP8
+ * VP9
+ * AV1
+ * DNxHR
+ * Theora
+
+------
+Output Audio Formats (incl Encoding & Passthrough)
+------
+ * PCM
+ * AAC-Family (incl AAC, HE-AAC/AACplus, HE-AACv2 etc)
+ * Dolby Digital (Dolby Digital AC-3, Dolby Digital Plus E-AC3, Dolby Digital Plus with Dolby Atmos, Dolby Surround mixdown, Dolby Pro Logic mixdown, Dolby Prologic II mixdown, Dolby TrueHD, Dolby TrueHD with Dolby Atmos, Dolby AC4)
+ * DTS (DTS, DTS-HD, DTS:X)
+ * MP3
+ * MP2
+ * FLAC
+ * ALAC
+ * Opus
+ * OGG
+ * Vorbis
+
+------
+Closed Caption/Subtitle Formats (incl Conversion & Passthrough)
+------
+ * CC607
+ * CC708
+ * DVB-SUB
+ * SRT (including rich formatting)
+ * TTML
+ * WebVVT
+ * Sub StationAlpha (SSA, AAS)
+ * SAMI
+ * LRC (including Enhanced LRC & Walaoke LRC)
+
+
+------
+Adaptive Streaaming Prepataion (HLS/MPEG-DASH/MPD)
+------
+ For HLS and/or MPEG-DASH conversion/preparation, the encode process will encode video into separate files from the audio files, with all files being output into a specified output directory. A suitable HL7 & DASH manifest file should then also be created. Audio files will be encoded separately. This allows easier dynamic switching of either audio for video (including various video formats) by the player as browser/player support and bandwidth requires.
+
+    * Source files containing multiple audio tracks should encode all audio tracks and name them using the applicable language code in the filename (ie en-GB)
+    * Embedded/integrated support should be included for creating simple/generic DRM using free mechanisms, such as AES-128 Encryption (HLS) and prepare the pre-shared secret keys where necessary (acknowledge this is not the most full-proof solution, but it provides something. Happy to also include any support for more robust systems if possible.
+
+In addition to software based support, hardware encoding must also be supported for each application
+
+Also include the following additional (nice to have) functionality (possibly planned for future milestones?):
+
+* Invisible Forensic watermarking (via toggle to enable/disable this feature)
+* Automated keyframe alignment
+* HDR preservation (as already discussed, based on selected profiles/formats/quality options etc).
+* Audio Normalization to specified levels (via toggle to enable/disable this feature and setting for normalization target, to peak dB, EBU R128 standards or ReplayGain for example)
+* Automatic thumbnail preview sprite sheet generation for preview scrubbing as supported by players like VideoJS, Shaka player etc
+* Multipass encoding support (via toggle to enable/disable this feature)
+* Encryption key management (as discussed already)
+* Automated language/metadata  tagging of video, audio, subtitle tracks for metadata such as title, language for better player UX
+* Profiles/PResets for streaming platfrms, including:
+ - Apple HLS requirements
+ - MPEG-DASH common profiles
+ - YouTube-like ABR ladder
+* CLI mode or the ability to add custom CLI parameters
+* Integrated validation of generated HLS/DASH MPD manifest files
+* Generate a report after processing including: bitrate ladder summary, audio track summary, subtitle languages, manifest ref checks
+* Cloud (S3, Dropbox, CloudFront, AzureBlob, Cloudflare Stream) upload support
+* (S)FTP upload support directly to web server host
+* Notify of job completion
+* Visual Encoding Graphs
+* Analytics integration
+
+The idea is, this should be an easy to use application for website owners to generate files for on-demand audio/video streaming. Note it may be needed that we only import a audio file for encoding, not video - this should also be supported!
+
+The application should provide in-app documentation, and should support all advanced and other native features for each platform (ie Dynamic Island on Apple, notifications, touchbar etc)
+
+The application should (on each platform) support running via Command Line Interface, to allow it to be called by other applications, via an advanced CLI-based API.
+API documentation should also be generated in detail, and available both in-app and also online via GitHub Wiki and be kept up-to-date as we progress.
+
+Please can this project be planned into milestones/phases. Please generate the relevant README.md and a project roadmap tracking facility (perhaps via a PROJECT_PROGRESS.md_ for GitHub Repo. please also guide on setting up project tracking/management and release workflows within GitHub Repo.
+
+The app should also fully support dark/light UI modes, either specifically defined, or based on system config. 
+
+ App/Developer-level API keys for third-party systems should be stored securely in GitHub repo Secrets (or the app itself if a 'universal' API Keys can be used and are within the third-party service ToS). We should perhaps also allow the end user to insert their own APIs to use over any 'centrally'/'universal' provided API keys? In cases where its against the ToS of a service to (or advised against) use a single API Key for all end-users, then the central should not be used by end users in the packaged version, and is only for use by developer. Perhaps include an easy to use 'toggle' for each API key on whether or not it should be included in the packaging.
+
+Please also include the ability for GitHub to auto-create packages for each platform.
+
+Can we also add one final milestone (at the very end), in this order
+* Ability to choose whether or not to also export/copy of the media files media hosting services including:
+    * CloudFlare Stream
+    * Microsoft Azure
+    * AWS
+    * Akamai
+    * SharePoint
+    * OneDrive/OneDrive for Business
+    * iCloud
+    * Dropbox
+    * Google Drive
+    * Mega.nz
+    * Mux (mux.com)
+
+Can the project plan and outline be updated again accordingly before we get started, as a 'sense-check'?
+
+Any code should be produced with full DETAILED Annotations and comments to assisst with understanding what each line/block of code does, help with debugging, learning and future expansion. Code blocks not use shorted annotation, but rather full code to assist further with code reading and understanding.
+
+This repo may include code from a earlier implementation, PLEASE FEEL FREE TO START FRORM SCRATCH AND DELETE ANY FILES/FOLDERS NO LONGER NEEDED
+
+Code and project progress is to be uploaded and managed in a GitHub Repo. The Repo may include code from previous/earlier iterations, but we're happy to replace all of this. Any files no longer needed in this new implementation MUST be deleted.
+
+To assist with future development and maintenance, a modularised development architecture is preferred.
+
+PLease produce ALL code with user-readable code formatting (linebrakes, indentation etc), and include DETAILED comments/annotations for code (if possible every line of code) to assist with learning, future code maintenance and code understanding.
+
+Please also include comments in the code including license/copyright and author info.
+License should be in line with proprietary with the exceptions of third-party external components (like FFmpeg, whos own licenses still applies. We do not want this project to conflict with any of those.
+Copyright year in source code (comments) should be automated, and start in 2026, endind in the <current year> with the current year being added/automated in all code without manual intervention.
+Copyright should be held with MWBM Partners Ltd.
+
+Please devise a project plan, and detail this in the Project_Plan.md, and include this plan/overview in README.md
+Also create a PROJECT_STATUS.md which will be the go-to place to get the current status, including what's complete, what's still to be worked on etc
+Also create a CHANGELOG.md which lists, in detail, every change made, including the date of the change being made and the release date/version number. THis should also be automated, and not need manual intervention.
+
+Markdown (.md) files should be layed-out well and easy to read. Please use text formatting, and even graphics via emojis to help with user-friendly readability.
+
+We also want to create detailed usage documentation, including troubleshooting steps and FAQs. The documentation should be in help/ in Markdown (.md) formaat, but should also have embedded help in the application on each OS platform, in a native way.
+
+Please also keep a record of all CLAUDE prompts, context, memory etc as well as this project brief in .claude/ so that this is retaained and can allow us to pick up where we left off, keeping project requirements and plan. Claude Memory must also be in .claude/ so that it can be included in the repo and available to other developers
+
+Claude files, as well as any .md markdown files (including, but not limited to Project_Plan.md, README.md & CHANGELOG.md) being updated at/after every command/code change automatically to keep project status/to-do lists etc ALWAYS up-to-date. Please also maintain a gitignore that is appropriate.
+
+
+Please can you generate a project outline before we begin, including coding language, third-party components/libraries. As we progress, please also produce regular project progress checks. (Happy to use Emojis to help make things stand-out/more appealing)
+
+
+
+Please also keep a record of all CLAUDE prompts, context etc as well as this project brief in .claude so that this is retaained and can allow us to pick up where we left off, keeping project requirements and plan.
+
+Claude files, as well as any .md markdown files (including, but not limited to Project_Plan.md, README.md & CHANGELOG.md) being updated at/after every command/code change automatically to keep project status/to-do lists etc ALWAYS up-to-date
+
+Add the following Standing Tasks which should be AUTOMATICALLY Carried out after all prompts/Tasks
+* Before actioning a prompt, once plan identified, create a GitHub Issue/task (or, if applicable Sub-issue/sub-task) for that action. Once actioned, mark said GitHub Issue/task as complete). This is to keep acurate track of the task
+* Run all code through thorough syntax/link/secruity checks, fixing ALL issues including fatal errors, warnings, notifications, recommendations, even fo pre-existing issues. We want clean/compliant code.
+* Applications should be accessibility compliant
+* Apple version should be native Swift 6.3 (released 24 March 2026)/SwiftUI, and wherever possible meet App Store distribution guidelines as well as able to be downloaded/distributed separately. (if App Store distribution guidelines cannot be supported, please call this out explicitly. In such caes we'd distribute ourselves)
+* Apple packages must be suitably signed and notarised (we have a paid Apple Developer Programme account)
+* Build in application (and component) update checking and ability to auto-update should be supported.
+* Update in-app help documentation, Repo documentation (README.md, CHANGELOG.md, PROJECT_Status.md, DEV_NOTES.md), GitHub Issues, GitHub Project, GitHub Wiki, and .claude/ memory, prompt and context info.
+* Update the gitignore for the project, but consider most dev work will be done using VSCode, Xcode on MacOS, Windows or Raspberry Pi
+* COMMIT changes, but do not PUSH. We'll push manually
+* Cleanup temp dev files after each promp to ensure we efficiently make use of disk space

@@ -1,0 +1,188 @@
+# ============================================================================
+# MeedyaConverter CLI API — OpenAPI Specification
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+#
+# This document describes the meedya-convert CLI tool's command structure,
+# arguments, options, and JSON schemas in OpenAPI-compatible format.
+# Updated automatically as CLI features are implemented.
+# ============================================================================
+
+openapi: 3.1.0
+info:
+  title: meedya-convert CLI API
+  version: 0.1.0-alpha
+  description: |
+    Command-line interface for MeedyaConverter media conversion toolkit.
+    This spec documents all CLI commands, options, and JSON job file schemas.
+  contact:
+    name: MWBM Partners Ltd
+    url: https://github.com/MWBMPartners/MeedyaConverter
+  license:
+    name: Proprietary
+    url: https://github.com/MWBMPartners/MeedyaConverter/blob/main/LICENSE
+
+# CLI commands documented as "paths" for structured reference
+paths:
+  /encode:
+    post:
+      summary: Encode media files
+      description: |
+        Convert audio/video files using specified profile or custom settings.
+        Usage: meedya-convert encode <input> [options]
+      parameters:
+        - name: input
+          in: path
+          required: true
+          description: Path to input media file
+          schema:
+            type: string
+        - name: --output
+          in: query
+          description: Output file path
+          schema:
+            type: string
+        - name: --profile
+          in: query
+          description: Named encoding profile to use
+          schema:
+            type: string
+        - name: --video-codec
+          in: query
+          description: Video codec (h264, h265, av1, vp9, etc.)
+          schema:
+            type: string
+        - name: --audio-codec
+          in: query
+          description: Audio codec (aac, ac3, eac3, flac, etc.)
+          schema:
+            type: string
+        - name: --crf
+          in: query
+          description: Constant Rate Factor (quality)
+          schema:
+            type: integer
+        - name: --job
+          in: query
+          description: Path to JSON job definition file
+          schema:
+            type: string
+        - name: --temp-dir
+          in: query
+          description: Temporary file directory (default is system temp)
+          schema:
+            type: string
+      responses:
+        '0':
+          description: Success
+        '1':
+          description: General error
+        '5':
+          description: Encoding failed
+
+  /probe:
+    get:
+      summary: Inspect media files
+      description: |
+        Analyse and display media file information (streams, codecs, metadata).
+        Uses both ffprobe and MediaInfo for comprehensive analysis.
+        Usage: meedya-convert probe <input> [--json]
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: --json
+          in: query
+          description: Output in JSON format
+          schema:
+            type: boolean
+
+  /profile:
+    get:
+      summary: Manage encoding profiles
+      description: |
+        List, show, export, or import encoding profiles.
+        Usage: meedya-convert profile <subcommand>
+      parameters:
+        - name: subcommand
+          in: path
+          required: true
+          description: "list | show <name> | export <name> | import <file>"
+          schema:
+            type: string
+
+  /manifest:
+    post:
+      summary: Generate streaming manifests
+      description: |
+        Generate HLS (.m3u8) and/or MPEG-DASH (.mpd) manifests.
+        Usage: meedya-convert manifest <input-dir> [options]
+
+  /validate:
+    get:
+      summary: Validate manifest files
+      description: |
+        Validate HLS or DASH manifest files for spec compliance.
+        Usage: meedya-convert validate <manifest-file>
+
+# JSON Job File Schema
+components:
+  schemas:
+    EncodingJob:
+      type: object
+      description: JSON job definition for complex encoding workflows
+      required:
+        - input
+        - output
+      properties:
+        input:
+          type: string
+          description: Path to source media file
+        output:
+          type: string
+          description: Output directory or file path
+        profile:
+          type: string
+          description: Named encoding profile
+        temp_dir:
+          type: string
+          description: Temporary file directory
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/StreamConfig'
+
+    StreamConfig:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [video, audio, subtitle]
+        index:
+          type: integer
+          description: Stream index in source file
+        codec:
+          type: string
+          description: Output codec
+        mode:
+          type: string
+          enum: [encode, passthrough, disable]
+        bitrate:
+          type: string
+          description: "Target bitrate (e.g., '128k', '4M')"
+        crf:
+          type: integer
+          description: Constant Rate Factor
+
+    ExitCodes:
+      type: object
+      description: CLI exit codes
+      properties:
+        '0': { description: Success }
+        '1': { description: General error }
+        '2': { description: Invalid arguments }
+        '3': { description: Input file not found }
+        '4': { description: Output write error }
+        '5': { description: Encoding failed }
+        '6': { description: FFmpeg not found }

@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MeedyaConverter}",
+            "name": "Debug meedya-convert",
+            "target": "meedya-convert",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug meedya-convert"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MeedyaConverter}",
+            "name": "Release meedya-convert",
+            "target": "meedya-convert",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release meedya-convert"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MeedyaConverter}",
+            "name": "Debug MeedyaConverter",
+            "target": "MeedyaConverter",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug MeedyaConverter"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MeedyaConverter}",
+            "name": "Release MeedyaConverter",
+            "target": "MeedyaConverter",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release MeedyaConverter"
+        }
+    ]
+}

@@ -1,0 +1,71 @@
+# ============================================================================
+# MeedyaConverter — CodeQL Security Analysis
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Runs GitHub CodeQL static analysis to detect security vulnerabilities,
+# code quality issues, and potential bugs in the Swift codebase.
+# ============================================================================
+
+name: "CodeQL Security Analysis"
+
+# Run on pushes to protected branches and on PRs targeting them.
+# Also run weekly to catch newly discovered vulnerability patterns.
+on:
+  push:
+    branches: [main, beta, alpha]
+  pull_request:
+    branches: [main, beta, alpha]
+  schedule:
+    # Run every Monday at 06:00 UTC for ongoing security monitoring
+    - cron: '0 6 * * 1'
+
+# Prevent duplicate runs on the same PR
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # Required for CodeQL to upload results
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze Swift
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # CodeQL supports: cpp, csharp, go, java, javascript, python, ruby, swift
+        language: ['swift']
+
+    steps:
+      # Step 1: Check out the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Initialize CodeQL for the specified language
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Use extended security queries for comprehensive analysis
+          queries: security-extended
+
+      # Step 3: Build the project (CodeQL needs to observe the build)
+      - name: Setup Swift 6.3
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3"
+
+      - name: Build for CodeQL analysis
+        run: swift build
+
+      # Step 4: Run CodeQL analysis
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
