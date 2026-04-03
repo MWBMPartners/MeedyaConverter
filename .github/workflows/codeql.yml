@@ -33,13 +33,13 @@ permissions:
 jobs:
   analyze:
     name: Analyze Swift
+    # macOS 15 runner already has Swift 6.3 preinstalled — no setup-swift needed
     runs-on: macos-15
     timeout-minutes: 45
 
     strategy:
       fail-fast: false
       matrix:
-        # CodeQL supports: cpp, csharp, go, java, javascript, python, ruby, swift
         language: ['swift']
 
     steps:
@@ -47,25 +47,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Initialize CodeQL for the specified language
+      # Step 2: Verify Swift version (already installed on runner)
+      - name: Verify Swift version
+        run: swift --version
+
+      # Step 3: Initialize CodeQL for the specified language
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # Use extended security queries for comprehensive analysis
           queries: security-extended
 
-      # Step 3: Build the project (CodeQL needs to observe the build)
-      - name: Setup Swift 6.3
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.3"
-
+      # Step 4: Build the project (CodeQL needs to observe the build)
       - name: Build for CodeQL analysis
         run: swift build
 
-      # Step 4: Run CodeQL analysis
+      # Step 5: Run CodeQL analysis
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
