@@ -1,6 +1,6 @@
 // ============================================================================
 // MeedyaConverter — CLI tool entry point
-// Copyright (c) 2026-2026 MWBM Partners Ltd. All rights reserved.
+// Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 // Proprietary and confidential. Unauthorized copying or distribution
 // of this file, via any medium, is strictly prohibited.
 // ============================================================================
