@@ -28,7 +28,7 @@ MeedyaConverter is a proprietary product by MWBM Partners Ltd. Licensing details
 
 ### What platforms are supported?
 
-- **macOS** (Apple Silicon and Intel) — primary platform
+- **macOS** (Apple Silicon only) — primary platform
 - **Windows** (x86, x64, ARM) — planned
 - **Linux** (x86, x64, ARM, Raspberry Pi) — planned
 

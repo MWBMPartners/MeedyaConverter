@@ -19,7 +19,7 @@ MeedyaConverter is a professional-grade, cross-platform media conversion applica
 
 | Platform | UI Framework | Priority | Status |
 | -------- | ----------- | -------- | ------ |
-| **macOS** (Apple Silicon, then x64) | Swift 6.3 / SwiftUI | 🔴 Primary | Phase 2 |
+| **macOS** (Apple Silicon only) | Swift 6.3 / SwiftUI | 🔴 Primary | Phase 2 |
 | **Windows** (x86, x64, ARM) | Swift + WinUI 3 / WinAppSDK | 🟡 Secondary | Phase 8 |
 | **Linux** (x86, x64, ARM, ARMv7, ARM64, RPi OS) | Swift + GTK4 | 🟢 Tertiary | Phase 9 |
 | **CLI** (all platforms) | Swift ArgumentParser | 🔴 Primary | Phase 6 |

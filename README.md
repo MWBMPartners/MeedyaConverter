@@ -103,7 +103,7 @@ Audio CD, SACD, Hybrid SACD, SHM-SACD, SHM-CD, Blu-spec CD, HDCD, DTS CD, CD-MID
 
 | Platform | Architecture | UI Framework | Priority |
 | -------- | ----------- | ----------- | -------- |
-| **macOS** | Apple Silicon (M1+), Intel x64 | Swift 6.3 / SwiftUI | 🔴 Primary |
+| **macOS** | Apple Silicon (M1+) | Swift 6.3 / SwiftUI | 🔴 Primary |
 | **Windows** | x86, x64, ARM | WinUI 3 | 🟡 Secondary |
 | **Linux** | x86, x64, ARM, ARMv7, ARM64 | GTK4 | 🟢 Tertiary |
 | **CLI** | All platforms | Swift ArgumentParser | 🔴 Primary |
