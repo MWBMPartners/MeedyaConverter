@@ -199,12 +199,12 @@ public enum VideoCodec: String, Codable, Sendable, CaseIterable, Identifiable {
     /// Whether this codec supports lossless encoding mode.
     public var supportsLossless: Bool {
         switch self {
-        case .ffv1, .jpeg2000, .prores:
-            return true
-        case .h264, .h265:
-            return true // CRF 0 / lossless mode
-        default:
-            return false
+            case .ffv1, .jpeg2000, .prores:
+                return true
+            case .h264, .h265:
+                return true // CRF 0 / lossless mode
+            default:
+                return false
         }
     }
 
