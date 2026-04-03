@@ -110,40 +110,11 @@ public struct EncodingResult: Sendable {
 }
 
 // ---------------------------------------------------------------------------
-// MARK: - MediaFile
-// ---------------------------------------------------------------------------
-/// A value type that represents the metadata of a probed media file.
-///
-/// When the backend's `probe(file:)` method inspects a media file (via
-/// FFprobe or AVAsset), it returns a `MediaFile` containing:
-///
-///   - Container format (e.g., MOV, MKV, MP4)
-///   - Duration, overall bitrate, file size
-///   - An ordered list of streams (video, audio, subtitle, data)
-///   - Per-stream details (codec, resolution, frame rate, channels, etc.)
-///   - HDR metadata (color primaries, transfer function, mastering display)
-///   - Chapter markers, if present
-///
-/// ### Future Properties (to be added)
-/// ```
-/// public let url: URL
-/// public let container: String
-/// public let duration: TimeInterval
-/// public let fileSize: Int64
-/// public let streams: [MediaStream]
-/// public let chapters: [Chapter]
-/// ```
-// ---------------------------------------------------------------------------
-public struct MediaFile: Sendable {
-    /// Creates a new media file metadata placeholder.
-    ///
-    /// Will be expanded to accept probed metadata once the FFprobe
-    /// integration is complete.
-    public init() {}
-}
-
-// ---------------------------------------------------------------------------
 // MARK: - EncodingBackend Protocol
+//
+// NOTE: MediaFile is now defined in Models/MediaFile.swift with full
+// stream, codec, HDR, and chapter support. The placeholder that was
+// here has been removed.
 // ---------------------------------------------------------------------------
 /// The fundamental protocol that all media-processing backends must conform
 /// to within the ConverterEngine.

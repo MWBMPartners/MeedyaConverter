@@ -185,13 +185,64 @@ final class ConverterEngineTests: XCTestCase {
         _ = result
     }
 
-    /// Verifies that `MediaFile` can be instantiated.
-    ///
-    /// This is a minimal existence check — expanded tests will verify
-    /// metadata fields once the type gains properties.
+    /// Verifies that `MediaFile` can be instantiated with required properties.
     func test_mediaFile_canBeCreated() {
-        let file = MediaFile()
-        // If we reach here, the type is publicly visible and constructible.
-        _ = file
+        let url = URL(fileURLWithPath: "/tmp/test.mkv")
+        let file = MediaFile(fileURL: url)
+        XCTAssertEqual(file.fileName, "test.mkv")
+        XCTAssertTrue(file.streams.isEmpty)
+        XCTAssertFalse(file.hasVideo)
+        XCTAssertFalse(file.hasAudio)
+    }
+
+    /// Verifies MediaFile stream filtering works correctly.
+    func test_mediaFile_streamFiltering() {
+        let url = URL(fileURLWithPath: "/tmp/test.mkv")
+        let videoStream = MediaStream(streamIndex: 0, streamType: .video, codecName: "hevc")
+        let audioStream = MediaStream(streamIndex: 1, streamType: .audio, codecName: "aac")
+        let subStream = MediaStream(streamIndex: 2, streamType: .subtitle, codecName: "srt")
+        let file = MediaFile(fileURL: url, streams: [videoStream, audioStream, subStream])
+
+        XCTAssertEqual(file.videoStreams.count, 1)
+        XCTAssertEqual(file.audioStreams.count, 1)
+        XCTAssertEqual(file.subtitleStreams.count, 1)
+        XCTAssertTrue(file.hasVideo)
+        XCTAssertTrue(file.hasAudio)
+        XCTAssertFalse(file.isAudioOnly)
+    }
+
+    /// Verifies ContainerFormat file extension lookup works.
+    func test_containerFormat_fromExtension() {
+        XCTAssertEqual(ContainerFormat.from(fileExtension: "mkv"), .mkv)
+        XCTAssertEqual(ContainerFormat.from(fileExtension: "mp4"), .mp4)
+        XCTAssertEqual(ContainerFormat.from(fileExtension: "ts"), .mpegTS)
+        XCTAssertNil(ContainerFormat.from(fileExtension: "xyz"))
+    }
+
+    /// Verifies VideoCodec properties are consistent.
+    func test_videoCodec_properties() {
+        XCTAssertTrue(VideoCodec.h265.supportsHDR)
+        XCTAssertFalse(VideoCodec.h264.supportsHDR)
+        XCTAssertTrue(VideoCodec.h264.canEncode)
+        XCTAssertFalse(VideoCodec.av2.isEncoderStable)
+        XCTAssertNotNil(VideoCodec.h264.ffmpegEncoder)
+    }
+
+    /// Verifies AudioCodec properties are consistent.
+    func test_audioCodec_properties() {
+        XCTAssertTrue(AudioCodec.flac.isLossless)
+        XCTAssertFalse(AudioCodec.aacLC.isLossless)
+        XCTAssertEqual(AudioCodec.ac3.maxChannels, 6) // 5.1
+        XCTAssertEqual(AudioCodec.eac3.maxChannels, 8) // 7.1
+        XCTAssertTrue(AudioCodec.aacLC.supportsVBR)
+        XCTAssertFalse(AudioCodec.ac3.supportsVBR)
+    }
+
+    /// Verifies SubtitleFormat bitmap detection.
+    func test_subtitleFormat_bitmapDetection() {
+        XCTAssertTrue(SubtitleFormat.pgs.isBitmap)
+        XCTAssertTrue(SubtitleFormat.vobSub.isBitmap)
+        XCTAssertFalse(SubtitleFormat.srt.isBitmap)
+        XCTAssertTrue(SubtitleFormat.srt.isText)
     }
 }
