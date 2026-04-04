@@ -8068,4 +8068,347 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(CommonAspectRatio.ratio_4_3.numericValue, 4.0 / 3.0, accuracy: 0.001)
         XCTAssertEqual(CommonAspectRatio.ratio_2_39_1.numericValue, 2.39, accuracy: 0.001)
     }
+
+    // MARK: - CodecMetadataPreserver Tests
+
+    /// Verifies CodecParameterSet default init.
+    func test_codecParameterSet_defaultInit() {
+        let params = CodecParameterSet()
+        XCTAssertNil(params.colorPrimaries)
+        XCTAssertNil(params.transferCharacteristics)
+        XCTAssertNil(params.pixelFormat)
+        XCTAssertNil(params.rotationDegrees)
+    }
+
+    /// Verifies preservation arguments include colour description.
+    func test_codecMetadataPreserver_buildPreservationArguments_colorDescription() {
+        let params = CodecParameterSet(
+            colorPrimaries: "bt2020",
+            transferCharacteristics: "smpte2084",
+            colorMatrix: "bt2020nc",
+            colorRange: "tv"
+        )
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertTrue(args.contains("-color_primaries"))
+        XCTAssertTrue(args.contains("bt2020"))
+        XCTAssertTrue(args.contains("-color_trc"))
+        XCTAssertTrue(args.contains("smpte2084"))
+        XCTAssertTrue(args.contains("-colorspace"))
+        XCTAssertTrue(args.contains("bt2020nc"))
+        XCTAssertTrue(args.contains("-color_range"))
+        XCTAssertTrue(args.contains("tv"))
+    }
+
+    /// Verifies preservation includes HDR mastering display metadata.
+    func test_codecMetadataPreserver_buildPreservationArguments_hdrMetadata() {
+        let params = CodecParameterSet(
+            masteringDisplayColorVolume: "G(0.265,0.690)B(0.150,0.060)R(0.680,0.320)WP(0.313,0.329)L(1000,0.0001)",
+            contentLightLevel: "1000,400"
+        )
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertTrue(args.contains("-master_disp"))
+        XCTAssertTrue(args.contains("-max_cll"))
+        XCTAssertTrue(args.contains("1000,400"))
+    }
+
+    /// Verifies preservation includes pixel format.
+    func test_codecMetadataPreserver_buildPreservationArguments_pixelFormat() {
+        let params = CodecParameterSet(pixelFormat: "yuv420p10le")
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertTrue(args.contains("-pix_fmt"))
+        XCTAssertTrue(args.contains("yuv420p10le"))
+    }
+
+    /// Verifies preservation includes field order for interlaced.
+    func test_codecMetadataPreserver_buildPreservationArguments_interlaced() {
+        let params = CodecParameterSet(fieldOrder: "tt")
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertTrue(args.contains("-field_order"))
+        XCTAssertTrue(args.contains("tt"))
+    }
+
+    /// Verifies progressive field order is not emitted.
+    func test_codecMetadataPreserver_buildPreservationArguments_progressiveSkipped() {
+        let params = CodecParameterSet(fieldOrder: "progressive")
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertFalse(args.contains("-field_order"))
+    }
+
+    /// Verifies rotation metadata preservation.
+    func test_codecMetadataPreserver_buildPreservationArguments_rotation() {
+        let params = CodecParameterSet(rotationDegrees: 90)
+        let args = CodecMetadataPreserver.buildPreservationArguments(params: params)
+        XCTAssertTrue(args.contains { $0.contains("rotate=90") })
+    }
+
+    /// Verifies dynamic AR preservation with AFD.
+    func test_codecMetadataPreserver_buildDynamicARPreservation_withAFD() {
+        let info = DynamicAspectRatioInfo(
+            afdCode: 10,
+            hasBarData: true,
+            detectedRatios: ["16:9", "4:3"],
+            usesDynamicAR: true
+        )
+        let args = CodecMetadataPreserver.buildDynamicARPreservationArguments(info: info)
+        XCTAssertTrue(args.contains("-copy_unknown"))
+        XCTAssertTrue(args.contains("-bsf:v"))
+    }
+
+    /// Verifies no args when dynamic AR not used.
+    func test_codecMetadataPreserver_buildDynamicARPreservation_noAFD() {
+        let args = CodecMetadataPreserver.buildDynamicARPreservationArguments(info: nil)
+        XCTAssertTrue(args.isEmpty)
+    }
+
+    /// Verifies AFD detection arguments.
+    func test_codecMetadataPreserver_buildAFDDetectionArguments() {
+        let args = CodecMetadataPreserver.buildAFDDetectionArguments(inputPath: "/video.ts")
+        XCTAssertTrue(args.contains("-vf"))
+        XCTAssertTrue(args.contains("showinfo"))
+        XCTAssertTrue(args.contains("/video.ts"))
+    }
+
+    /// Verifies FFprobe stream parsing.
+    func test_codecMetadataPreserver_parseFromFFprobeStream() {
+        let stream: [String: Any] = [
+            "color_primaries": "bt709",
+            "color_transfer": "bt709",
+            "color_space": "bt709",
+            "color_range": "tv",
+            "pix_fmt": "yuv420p",
+            "field_order": "progressive",
+            "display_aspect_ratio": "16:9",
+        ]
+        let params = CodecMetadataPreserver.parseFromFFprobeStream(stream)
+        XCTAssertEqual(params.colorPrimaries, "bt709")
+        XCTAssertEqual(params.transferCharacteristics, "bt709")
+        XCTAssertEqual(params.colorMatrix, "bt709")
+        XCTAssertEqual(params.pixelFormat, "yuv420p")
+        XCTAssertEqual(params.displayAspectRatio, "16:9")
+    }
+
+    /// Verifies parameter validation catches HDR with wrong primaries.
+    func test_codecMetadataPreserver_validateParameters_hdrWithWrongPrimaries() {
+        let params = CodecParameterSet(
+            colorPrimaries: "bt709",
+            transferCharacteristics: "smpte2084"
+        )
+        let warnings = CodecMetadataPreserver.validateParameters(params)
+        XCTAssertFalse(warnings.isEmpty)
+    }
+
+    /// Verifies parameter validation passes for valid HDR.
+    func test_codecMetadataPreserver_validateParameters_validHDR() {
+        let params = CodecParameterSet(
+            colorPrimaries: "bt2020",
+            transferCharacteristics: "smpte2084",
+            bitDepth: 10
+        )
+        let warnings = CodecMetadataPreserver.validateParameters(params)
+        XCTAssertTrue(warnings.isEmpty)
+    }
+
+    // MARK: - ToolUpdateChecker Tests
+
+    /// Verifies ToolUpdateStatus display names.
+    func test_toolUpdateStatus_displayNames() {
+        XCTAssertEqual(ToolUpdateStatus.upToDate.displayName, "Up to Date")
+        XCTAssertEqual(ToolUpdateStatus.updateAvailable.displayName, "Update Available")
+        XCTAssertEqual(ToolUpdateStatus.checkFailed.displayName, "Check Failed")
+    }
+
+    /// Verifies ToolUpdateConfig defaults.
+    func test_toolUpdateConfig_defaults() {
+        let config = ToolUpdateConfig()
+        XCTAssertTrue(config.autoCheckEnabled)
+        XCTAssertEqual(config.checkIntervalSeconds, 604800)
+        XCTAssertFalse(config.includePreRelease)
+        XCTAssertFalse(config.autoDownload)
+    }
+
+    /// Verifies URL building for latest release.
+    func test_toolUpdateChecker_buildLatestReleaseURL() {
+        let tool = BundledTool(
+            id: "test",
+            name: "Test",
+            version: "1.0.0",
+            sourceURL: "https://github.com/owner/repo",
+            lastUpdated: "2026-01-01",
+            binaryName: "test",
+            description: "Test tool",
+            license: "MIT"
+        )
+        let url = ToolUpdateChecker.buildLatestReleaseURL(tool: tool)
+        XCTAssertEqual(url, "https://api.github.com/repos/owner/repo/releases/latest")
+    }
+
+    /// Verifies all releases URL building.
+    func test_toolUpdateChecker_buildAllReleasesURL() {
+        let tool = BundledTool(
+            id: "test",
+            name: "Test",
+            version: "1.0.0",
+            sourceURL: "https://github.com/owner/repo",
+            lastUpdated: "2026-01-01",
+            binaryName: "test",
+            description: "Test tool",
+            license: "MIT"
+        )
+        let url = ToolUpdateChecker.buildAllReleasesURL(tool: tool)
+        XCTAssertNotNil(url)
+        XCTAssertTrue(url!.contains("releases?per_page=10"))
+    }
+
+    /// Verifies version comparison.
+    func test_toolUpdateChecker_compareVersions() {
+        XCTAssertEqual(
+            ToolUpdateChecker.compareVersions(installed: "1.0.0", latest: "1.1.0"),
+            .updateAvailable
+        )
+        XCTAssertEqual(
+            ToolUpdateChecker.compareVersions(installed: "2.0.0", latest: "2.0.0"),
+            .upToDate
+        )
+        XCTAssertEqual(
+            ToolUpdateChecker.compareVersions(installed: "2.1.0", latest: "2.0.0"),
+            .upToDate
+        )
+    }
+
+    /// Verifies result building.
+    func test_toolUpdateChecker_buildResult_updateAvailable() {
+        let tool = BundledTool(
+            id: "dovi_tool",
+            name: "dovi_tool",
+            version: "2.1.2",
+            sourceURL: "https://github.com/quietvoid/dovi_tool",
+            lastUpdated: "2026-04-01",
+            binaryName: "dovi_tool",
+            description: "Dolby Vision tool",
+            license: "MIT"
+        )
+        let result = ToolUpdateChecker.buildResult(
+            tool: tool,
+            latestVersion: "2.2.0",
+            downloadURL: "https://example.com/download"
+        )
+        XCTAssertEqual(result.status, .updateAvailable)
+        XCTAssertTrue(result.hasUpdate)
+        XCTAssertEqual(result.installedVersion, "2.1.2")
+        XCTAssertEqual(result.latestVersion, "2.2.0")
+    }
+
+    /// Verifies error result building.
+    func test_toolUpdateChecker_buildErrorResult() {
+        let tool = BundledTool(
+            id: "test",
+            name: "Test",
+            version: "1.0.0",
+            sourceURL: "https://github.com/owner/repo",
+            lastUpdated: "2026-01-01",
+            binaryName: "test",
+            description: "Test",
+            license: "MIT"
+        )
+        let result = ToolUpdateChecker.buildErrorResult(tool: tool)
+        XCTAssertEqual(result.status, .checkFailed)
+        XCTAssertFalse(result.hasUpdate)
+    }
+
+    /// Verifies check scheduling.
+    func test_toolUpdateChecker_isCheckDue() {
+        // Never checked — should be due
+        XCTAssertTrue(ToolUpdateChecker.isCheckDue(lastCheckDate: nil))
+
+        // Checked just now — not due
+        XCTAssertFalse(ToolUpdateChecker.isCheckDue(lastCheckDate: Date()))
+
+        // Checked 8 days ago — due (default interval is 7 days)
+        let eightDaysAgo = Date(timeIntervalSinceNow: -691200)
+        XCTAssertTrue(ToolUpdateChecker.isCheckDue(lastCheckDate: eightDaysAgo))
+
+        // Auto-check disabled — not due
+        let config = ToolUpdateConfig(autoCheckEnabled: false)
+        XCTAssertFalse(ToolUpdateChecker.isCheckDue(lastCheckDate: nil, config: config))
+    }
+
+    /// Verifies results Codable round-trip.
+    func test_toolUpdateChecker_resultsRoundTrip() throws {
+        let results = [
+            ToolUpdateResult(
+                toolId: "test",
+                toolName: "Test Tool",
+                installedVersion: "1.0.0",
+                latestVersion: "1.1.0",
+                status: .updateAvailable
+            )
+        ]
+        let data = try ToolUpdateChecker.encodeResults(results)
+        let decoded = try ToolUpdateChecker.decodeResults(data)
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].toolId, "test")
+        XCTAssertEqual(decoded[0].status, .updateAvailable)
+    }
+
+    // MARK: - AdditionalEncodingProfiles Tests
+
+    /// Verifies AV1 profiles have correct codec.
+    func test_additionalProfiles_av1_correctCodec() {
+        XCTAssertEqual(EncodingProfile.av1_1080p.videoCodec, .av1)
+        XCTAssertEqual(EncodingProfile.av1_4K.videoCodec, .av1)
+        XCTAssertEqual(EncodingProfile.av1_4KHDR.videoCodec, .av1)
+    }
+
+    /// Verifies AV1 4K HDR preserves HDR.
+    func test_additionalProfiles_av1_4KHDR_preservesHDR() {
+        XCTAssertTrue(EncodingProfile.av1_4KHDR.preserveHDR)
+        XCTAssertEqual(EncodingProfile.av1_4KHDR.pixelFormat, "yuv420p10le")
+    }
+
+    /// Verifies H.265 extended profiles.
+    func test_additionalProfiles_h265_variants() {
+        XCTAssertEqual(EncodingProfile.h265_720p.outputWidth, 1280)
+        XCTAssertEqual(EncodingProfile.h265_720p.outputHeight, 720)
+        XCTAssertEqual(EncodingProfile.h265_1080pHQ.videoPreset, "slow")
+        XCTAssertEqual(EncodingProfile.h265_8K.outputWidth, 7680)
+    }
+
+    /// Verifies VP9 profiles use WebM container.
+    func test_additionalProfiles_vp9_usesWebM() {
+        XCTAssertEqual(EncodingProfile.vp9_1080p.containerFormat, .webm)
+        XCTAssertEqual(EncodingProfile.vp9_4K.containerFormat, .webm)
+    }
+
+    /// Verifies surround profiles have correct channel counts.
+    func test_additionalProfiles_surround_channelCounts() {
+        XCTAssertEqual(EncodingProfile.h265_1080p_surround.audioChannels, 6)
+        XCTAssertEqual(EncodingProfile.h265_4K_dolby.audioChannels, 8)
+    }
+
+    /// Verifies audio-only profiles.
+    func test_additionalProfiles_audioOnly() {
+        XCTAssertEqual(EncodingProfile.audioMP3_HQ.audioBitrate, 320_000)
+        XCTAssertEqual(EncodingProfile.audioOpus_voice.audioBitrate, 64_000)
+        XCTAssertNil(EncodingProfile.audioFLAC.audioBitrate) // Lossless has no bitrate
+    }
+
+    /// Verifies social media profiles have appropriate frame rates.
+    func test_additionalProfiles_social_frameRates() {
+        XCTAssertEqual(EncodingProfile.socialTwitter.outputFrameRate, 30.0)
+        XCTAssertEqual(EncodingProfile.socialInstagram.outputFrameRate, 30.0)
+    }
+
+    /// Verifies YouTube profile uses slow preset for quality.
+    func test_additionalProfiles_youtube_slowPreset() {
+        XCTAssertEqual(EncodingProfile.socialYouTube.videoPreset, "slow")
+        XCTAssertEqual(EncodingProfile.socialYouTube.videoCRF, 18)
+    }
+
+    /// Verifies all additional profiles list is complete.
+    func test_additionalProfiles_allAdditionalProfiles_count() {
+        let profiles = EncodingProfile.allAdditionalProfiles
+        XCTAssertEqual(profiles.count, 18)
+        // All should be built-in
+        XCTAssertTrue(profiles.allSatisfy { $0.isBuiltIn })
+    }
 }
