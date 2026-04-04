@@ -199,3 +199,47 @@ Implemented Phase 3 (Essential Encoding & Passthrough):
 - **Metadata passthrough by default**: All source metadata copied via `-map_metadata 0` and `-map_chapters 0`. UI overrides apply on top, not replace.
 - **HDR auto-trigger**: When HDR source + incompatible output (non-HDR codec, 8-bit, non-HDR container), tone mapping auto-enabled with user notification.
 - **Environment limitation**: Linux x86_64 without Swift compiler — all code verified by review only, cannot build/test.
+
+### Prompt 15: PQ→HLG Conversion & Combined PQ→DV+HLG Pipeline
+
+Implemented PQ HDR → HLG conversion with dual-path approach:
+
+**HlgToolsWrapper** (new file):
+- Wraps external `pq2hlg` binary from hlg-tools (Apache 2.0)
+- Binary discovery: Homebrew, /usr/local/bin, /usr/bin, which(1)
+- Async Process execution, version detection
+- Preferred method; FFmpeg zscale as fallback
+
+**FFmpeg zscale fallback**:
+- `zscale=tin=smpte2084:t=linear:pin=bt2020:p=bt2020` → `zscale=t=arib-std-b67:p=bt2020:m=bt2020nc`
+- Mutually exclusive with tone mapping (PQ→HLG stays HDR, tone map goes SDR)
+
+**Combined PQ→DV+HLG pipeline** (issue #255):
+- PQ→HLG (zscale/hlg-tools) → encode HEVC → dovi_tool generate (Profile 8.4 RPU) → inject → remux
+- Three-tier playback: Dolby Vision → HLG → SDR fallback from single stream
+- Graceful degradation: if dovi_tool fails, output still has valid HLG
+
+**Built-in profiles**: Added `pqToHLG` and `pqToDVHLG` (now 25 total)
+
+**UI**: PQ→HLG controls in OutputSettingsView with hlg-tools status, DV+HLG toggle, three-tier badge
+
+**GitHub Issues**: #254 (PQ→HLG), #255 (combined PQ→DV+HLG)
+
+### Prompt 16: Tool Bundling & Distribution Strategy
+
+Designed packaging strategy for hlg-tools and dovi_tool:
+- **Direct distribution** (Sparkle 2): Bundle binaries in app package for all platforms
+- **App Store**: Exclude tools (sandbox restrictions), graceful fallback to FFmpeg-only paths
+- Auto-update checks for third-party tools via GitHub Releases API
+- Version pinning and hash verification for security
+
+**GitHub Issues**: #256 (tool bundling), #257 (auto-update checks)
+
+### Prompt 17: .claude/ Context Updates
+
+Updated project_brief.md with Phase 3 completion, HlgToolsWrapper architecture, tool bundling strategy, hlg-tools licensing.
+Updated PROJECT_STATUS.md with Phase 3 additions, 25 built-in profiles.
+
+### Prompt 18: Milestone Assignment (Pending)
+
+User requested review of all 233+ GitHub issues and creation/assignment of GitHub Milestones matching the 19-phase structure. GitHub MCP server disconnected before this could be completed. All issues currently have no milestone assigned.

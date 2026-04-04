@@ -15,8 +15,9 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 - **Phase 0**: Complete (project setup, architecture)
 - **Phase 1**: Complete (core engine: FFmpeg bundle manager, process controller, probe, argument builder, encoding profiles, temp files, feature gating, 30 unit tests)
 - **Phase 2**: Complete (macOS SwiftUI app: NavigationSplitView, source import with drag-drop, stream inspector with HDR/DV badges, output settings, profile management, encoding queue with controls, unified activity log, settings, notifications, help, about)
-- **Phase 3**: ~90% complete (passthrough toggles, stream selection, metadata editor, HDR warnings, hardware encoder detection, crop detection, Dolby Vision dovi_tool wrapper, container-codec compatibility matrix, 23 built-in profiles, tone mapping, auto-trigger, container validation, disposition enforcement)
-- **Overall**: ~28% of 19 phases
+- **Phase 3**: Complete (passthrough, stream selection, metadata editor, HDR warnings, hardware encoder detection, crop detection, DV dovi_tool pipeline, container-codec compatibility matrix, 25 built-in profiles, tone mapping, auto-trigger, PQ→HLG via hlg-tools/zscale, PQ→DV+HLG Profile 8.4 combined conversion, disposition enforcement)
+- **Phase 4**: Next — CLI tool (meedya-convert)
+- **Overall**: ~30% of 19 phases
 
 ## Key Requirements
 
@@ -56,7 +57,7 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
   - Direct distribution: FFmpeg as subprocess (full GPL, libx264/libx265)
   - App Store: AVFoundation/VideoToolbox + FFmpegKit (LGPL linked)
 - Media Analysis: ffprobe + libmediainfo (BSD-2-Clause)
-- HDR: dovi_tool (DoviToolWrapper), DDVT (bundled)
+- HDR: dovi_tool (DoviToolWrapper), hlg-tools/pq2hlg (HlgToolsWrapper), DDVT (bundled)
 - Package Manager: Swift Package Manager
 - CI/CD: GitHub Actions (build, release, beta/alpha)
 - Auto-Update: Sparkle 2 (direct distribution); Apple-managed (App Store)
@@ -72,7 +73,8 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 - `FFmpegArgumentBuilder` for translating settings to CLI args
 - `HardwareEncoderDetector` for runtime VideoToolbox/NVENC/QSV discovery
 - `CropDetector` for automatic black bar detection via cropdetect filter
-- `DoviToolWrapper` for Dolby Vision RPU extraction/injection/conversion
+- `DoviToolWrapper` for Dolby Vision RPU extraction/injection/conversion/generation
+- `HlgToolsWrapper` for PQ→HLG conversion via external hlg-tools binary (preferred over FFmpeg zscale)
 - `ContainerFormat.supportedVideoCodecs/supportedAudioCodecs` for codec-container validation
 - Feature gating: ProductTier (free/pro/studio) with FeatureGateProtocol
 
@@ -81,6 +83,9 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 - **Metadata passthrough by default**: `-map_metadata 0` and `-map_chapters 0` always emitted
 - **TrueHD in MP4**: Allowed but MUST NOT be default audio stream (MP4-family only). All other containers: no restriction. See issue #253.
 - **HDR auto-trigger**: When HDR source + incompatible output settings, tone mapping auto-enabled with notification
+- **PQ→HLG**: hlg-tools preferred when available, FFmpeg zscale fallback. `useHlgTools` defaults to true.
+- **PQ→DV+HLG**: Chains PQ→HLG with DV Profile 8.4 RPU generation via dovi_tool for three-tier playback (DV→HLG→SDR)
+- **Tool bundling**: hlg-tools and dovi_tool bundled in direct-distribution builds; excluded from App Store (graceful fallback). See #256, #257.
 
 ### Apple Dual Distribution Strategy
 
@@ -150,6 +155,7 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 - FFmpeg: LGPL/GPL (subprocess for direct, FFmpegKit LGPL for App Store)
 - libmediainfo: BSD-2-Clause
 - dovi_tool: MIT
+- hlg-tools: Apache 2.0
 - DDVT: MIT
 - Tesseract OCR: Apache 2.0
 

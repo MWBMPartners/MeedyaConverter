@@ -1,6 +1,6 @@
 # 📊 MeedyaConverter — Project Status
 
-> **Last Updated:** 2026-04-03
+> **Last Updated:** 2026-04-04
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -113,12 +113,23 @@
 - 🔍 Media probing via FFprobe — streams, HDR detection, chapters, metadata
 - 📦 Complete data models — MediaFile, MediaStream, 16 video codecs, 30+ audio codecs, 25+ containers
 - 🏗️ FFmpeg argument builder — translates encoding settings to CLI arguments
-- 🎬 Encoding profile system with 7 built-in presets and JSON persistence
+- 🎬 Encoding profile system with 25 built-in presets and JSON persistence
 - 📋 Job queue with priority ordering, state tracking, batch management
 - 🗂️ Temp file management with per-job directories and disk monitoring
 - 🎞️ Encoding engine orchestrating full video/audio conversion pipeline
 - ✅ 30 unit tests covering all Phase 1 components
 - 🔐 Feature gating system (free/pro/studio tiers)
+- 🎨 Full macOS SwiftUI app: sidebar navigation, source import, stream inspector, output settings, queue, log
+- 🔄 Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
+- 🌈 HDR→SDR tone mapping (hable/reinhard/mobius/bt2390/clip), auto-trigger for incompatible settings
+- 🎯 PQ→HLG conversion via hlg-tools (preferred) or FFmpeg zscale fallback (#254)
+- 🎯 PQ→DV Profile 8.4 + HLG combined conversion: three-tier DV→HLG→SDR fallback (#255)
+- 🔮 Dolby Vision preservation pipeline: RPU extract → encode → inject via dovi_tool (#44)
+- 🔮 HLG→DV auto-conversion via dovi_tool generate (Profile 8.4)
+- 📦 Container-codec compatibility matrix with validation and UI warnings
+- ✂️ Automatic black bar crop detection via FFmpeg cropdetect
+- ⚡ Hardware encoder detection (VideoToolbox/NVENC/QSV/AMF/VA-API)
+- 📖 In-app help system, settings view, profile management
 
 ---
 
@@ -145,7 +156,7 @@
 | Metric | Count |
 | ------ | ----- |
 | Total tasks across all phases | 215+ |
-| GitHub Issues | 246 |
+| GitHub Issues | 257+ |
 | Supported video codecs | 16 |
 | Supported audio codecs | 30+ (incl. spatial) |
 | Supported subtitle formats | 14+ |
