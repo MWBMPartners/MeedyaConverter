@@ -5154,4 +5154,273 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertFalse(config.swapEyes)
         XCTAssertTrue(config.preserveHDR)
     }
+
+    // =========================================================================
+    // MARK: - Phase 5: Surround Upmixing
+    // =========================================================================
+
+    /// Verifies UpmixAlgorithm properties.
+    func test_upmixAlgorithm_properties() {
+        XCTAssertTrue(UpmixAlgorithm.proLogicII.isMatrixDecode)
+        XCTAssertTrue(UpmixAlgorithm.dtsNeo6.isMatrixDecode)
+        XCTAssertFalse(UpmixAlgorithm.virtualSurround.isMatrixDecode)
+        XCTAssertEqual(UpmixAlgorithm.proLogicII.displayName, "Dolby Pro Logic II Decode")
+    }
+
+    /// Verifies UpmixTarget properties.
+    func test_upmixTarget_properties() {
+        XCTAssertEqual(UpmixTarget.surround51.channelCount, 6)
+        XCTAssertEqual(UpmixTarget.surround71.channelCount, 8)
+        XCTAssertEqual(UpmixTarget.surround51.ffmpegLayout, "5.1")
+    }
+
+    /// Verifies virtual surround 5.1 filter.
+    func test_surroundUpmixer_virtual51() {
+        let filter = SurroundUpmixer.buildVirtualSurround51Filter()
+        XCTAssertTrue(filter.contains("pan=5.1"))
+        XCTAssertTrue(filter.contains("FL="))
+        XCTAssertTrue(filter.contains("LFE="))
+        XCTAssertTrue(filter.contains("lowpass"))
+    }
+
+    /// Verifies virtual surround 7.1 filter.
+    func test_surroundUpmixer_virtual71() {
+        let filter = SurroundUpmixer.buildVirtualSurround71Filter()
+        XCTAssertTrue(filter.contains("pan=7.1"))
+        XCTAssertTrue(filter.contains("SL="))
+        XCTAssertTrue(filter.contains("SR="))
+    }
+
+    /// Verifies Pro Logic II decode filter.
+    func test_surroundUpmixer_proLogicII() {
+        let filter = SurroundUpmixer.buildProLogicIIDecodeFilter()
+        XCTAssertTrue(filter.contains("pan=5.1"))
+        XCTAssertTrue(filter.contains("0.707"))
+        XCTAssertTrue(filter.contains("lowpass"))
+    }
+
+    /// Verifies DTS Neo:6 decode filter.
+    func test_surroundUpmixer_dtsNeo6() {
+        let filter = SurroundUpmixer.buildDTSNeo6DecodeFilter()
+        XCTAssertTrue(filter.contains("pan=5.1"))
+        XCTAssertTrue(filter.contains("lowpass"))
+    }
+
+    /// Verifies upmix arguments.
+    func test_surroundUpmixer_arguments() {
+        let config = UpmixConfig(algorithm: .virtualSurround, target: .surround51)
+        let args = SurroundUpmixer.buildUpmixArguments(
+            inputPath: "/tmp/stereo.flac",
+            outputPath: "/tmp/surround.m4a",
+            config: config,
+            audioCodec: "aac",
+            bitrate: 384
+        )
+        XCTAssertTrue(args.contains("-af"))
+        XCTAssertTrue(args.contains("aac"))
+        XCTAssertTrue(args.contains("384k"))
+    }
+
+    /// Verifies downmix filter.
+    func test_surroundUpmixer_downmix() {
+        let filter = SurroundUpmixer.buildDownmixFilter(sourceLayout: "5.1")
+        XCTAssertTrue(filter.contains("pan=stereo"))
+        XCTAssertTrue(filter.contains("FC"))
+    }
+
+    /// Verifies downmix arguments.
+    func test_surroundUpmixer_downmixArguments() {
+        let args = SurroundUpmixer.buildDownmixArguments(
+            inputPath: "/tmp/surround.mkv",
+            outputPath: "/tmp/stereo.mkv"
+        )
+        XCTAssertTrue(args.contains("-ac"))
+        XCTAssertTrue(args.contains("2"))
+    }
+
+    /// Verifies UpmixConfig defaults.
+    func test_upmixConfig_defaults() {
+        let config = UpmixConfig()
+        XCTAssertEqual(config.algorithm, .virtualSurround)
+        XCTAssertEqual(config.target, .surround51)
+        XCTAssertEqual(config.lfeCrossover, 120)
+        XCTAssertEqual(config.surroundDelayMs, 20)
+    }
+
+    // =========================================================================
+    // MARK: - Phase 3.25: Extended Subtitle Formats
+    // =========================================================================
+
+    /// Verifies ExtendedSubtitleFormat properties.
+    func test_extendedSubtitle_properties() {
+        XCTAssertEqual(ExtendedSubtitleFormat.ebuSTL.fileExtension, "stl")
+        XCTAssertEqual(ExtendedSubtitleFormat.scc.fileExtension, "scc")
+        XCTAssertEqual(ExtendedSubtitleFormat.pgs.fileExtension, "sup")
+        XCTAssertTrue(ExtendedSubtitleFormat.pgs.isBitmap)
+        XCTAssertTrue(ExtendedSubtitleFormat.vobsub.isBitmap)
+        XCTAssertTrue(ExtendedSubtitleFormat.ebuSTL.isText)
+        XCTAssertTrue(ExtendedSubtitleFormat.scc.isText)
+    }
+
+    /// Verifies subtitle display names.
+    func test_extendedSubtitle_displayNames() {
+        XCTAssertTrue(ExtendedSubtitleFormat.ebuSTL.displayName.contains("EBU"))
+        XCTAssertTrue(ExtendedSubtitleFormat.scc.displayName.contains("SCC"))
+        XCTAssertTrue(ExtendedSubtitleFormat.ttml.displayName.contains("TTML"))
+    }
+
+    /// Verifies subtitle conversion paths.
+    func test_subtitleConversionPath_canConvert() {
+        // Text-to-text: yes
+        XCTAssertTrue(SubtitleConversionPath.canConvert(from: .ebuSTL, to: .scc))
+        XCTAssertTrue(SubtitleConversionPath.canConvert(from: .scc, to: .ttml))
+
+        // Bitmap-to-text: no (needs OCR)
+        XCTAssertFalse(SubtitleConversionPath.canConvert(from: .pgs, to: .scc))
+        XCTAssertTrue(SubtitleConversionPath.needsOCR(from: .pgs, to: .scc))
+
+        // Text-to-bitmap: no
+        XCTAssertFalse(SubtitleConversionPath.canConvert(from: .scc, to: .pgs))
+    }
+
+    /// Verifies subtitle extraction arguments.
+    func test_extendedSubtitleBuilder_extract() {
+        let args = ExtendedSubtitleBuilder.buildExtractArguments(
+            inputPath: "/tmp/movie.mkv",
+            outputPath: "/tmp/subs.srt",
+            streamIndex: 1
+        )
+        XCTAssertTrue(args.contains("0:s:1"))
+        XCTAssertTrue(args.contains("copy"))
+    }
+
+    /// Verifies SCC embed arguments.
+    func test_extendedSubtitleBuilder_sccEmbed() {
+        let args = ExtendedSubtitleBuilder.buildSCCEmbedArguments(
+            inputPath: "/tmp/movie.mp4",
+            sccPath: "/tmp/captions.scc",
+            outputPath: "/tmp/output.mp4"
+        )
+        XCTAssertTrue(args.contains("/tmp/captions.scc"))
+        XCTAssertTrue(args.contains("mov_text"))
+    }
+
+    /// Verifies teletext extraction arguments.
+    func test_extendedSubtitleBuilder_teletext() {
+        let args = ExtendedSubtitleBuilder.buildTeletextExtractArguments(
+            inputPath: "/tmp/broadcast.ts",
+            outputPath: "/tmp/subs.srt",
+            teletextPage: 888
+        )
+        XCTAssertTrue(args.contains("-txt_page"))
+        XCTAssertTrue(args.contains("888"))
+        XCTAssertTrue(args.contains("srt"))
+    }
+
+    /// Verifies burn-in filter.
+    func test_extendedSubtitleBuilder_burnIn() {
+        let filter = ExtendedSubtitleBuilder.buildBurnInFilter(streamIndex: 0)
+        XCTAssertTrue(filter.contains("subtitles"))
+    }
+
+    /// Verifies bitmap overlay filter.
+    func test_extendedSubtitleBuilder_bitmapOverlay() {
+        let filter = ExtendedSubtitleBuilder.buildBitmapOverlayFilter(streamIndex: 1)
+        XCTAssertTrue(filter.contains("overlay"))
+        XCTAssertTrue(filter.contains("[0:s:1]"))
+    }
+
+    // =========================================================================
+    // MARK: - Phase 3.21-22: Extended Audio Codecs
+    // =========================================================================
+
+    /// Verifies ExtendedAudioCodecType properties.
+    func test_extendedAudioCodec_properties() {
+        XCTAssertTrue(ExtendedAudioCodecType.dtsxIMAX.isImmersive)
+        XCTAssertTrue(ExtendedAudioCodecType.iamf.isImmersive)
+        XCTAssertTrue(ExtendedAudioCodecType.mp3surround.isImmersive)
+        XCTAssertFalse(ExtendedAudioCodecType.amrNB.isImmersive)
+        XCTAssertTrue(ExtendedAudioCodecType.wmaLossless.isLossless)
+        XCTAssertTrue(ExtendedAudioCodecType.mp3hd.isLossless)
+    }
+
+    /// Verifies encode/decode capabilities.
+    func test_extendedAudioCodec_capabilities() {
+        XCTAssertTrue(ExtendedAudioCodecType.amrNB.canEncode)
+        XCTAssertTrue(ExtendedAudioCodecType.amrNB.canDecode)
+        XCTAssertTrue(ExtendedAudioCodecType.speex.canEncode)
+        XCTAssertFalse(ExtendedAudioCodecType.dtsxIMAX.canEncode)
+        XCTAssertTrue(ExtendedAudioCodecType.dtsxIMAX.canDecode)
+        XCTAssertFalse(ExtendedAudioCodecType.iamf.canDecode)
+    }
+
+    /// Verifies channel counts.
+    func test_extendedAudioCodec_channels() {
+        XCTAssertEqual(ExtendedAudioCodecType.amrNB.maxChannels, 1)
+        XCTAssertEqual(ExtendedAudioCodecType.mp3surround.maxChannels, 6)
+        XCTAssertEqual(ExtendedAudioCodecType.dtsxIMAX.maxChannels, 32)
+    }
+
+    /// Verifies AMR-NB encoding arguments.
+    func test_extendedAudioCodecBuilder_amrNB() {
+        let args = ExtendedAudioCodecBuilder.buildAMRNBEncodeArguments(
+            inputPath: "/tmp/voice.wav",
+            outputPath: "/tmp/voice.amr"
+        )
+        XCTAssertTrue(args.contains("libopencore_amrnb"))
+        XCTAssertTrue(args.contains("8000"))
+        XCTAssertTrue(args.contains("1"))
+    }
+
+    /// Verifies AMR-WB encoding arguments.
+    func test_extendedAudioCodecBuilder_amrWB() {
+        let args = ExtendedAudioCodecBuilder.buildAMRWBEncodeArguments(
+            inputPath: "/tmp/voice.wav",
+            outputPath: "/tmp/voice.3gp"
+        )
+        XCTAssertTrue(args.contains("libvo_amrwbenc"))
+        XCTAssertTrue(args.contains("16000"))
+    }
+
+    /// Verifies Speex encoding arguments.
+    func test_extendedAudioCodecBuilder_speex() {
+        let args = ExtendedAudioCodecBuilder.buildSpeexEncodeArguments(
+            inputPath: "/tmp/voice.wav",
+            outputPath: "/tmp/voice.ogg"
+        )
+        XCTAssertTrue(args.contains("libspeex"))
+        XCTAssertTrue(args.contains("16000"))
+    }
+
+    /// Verifies DTS:X passthrough arguments.
+    func test_extendedAudioCodecBuilder_dtsxPassthrough() {
+        let args = ExtendedAudioCodecBuilder.buildDTSXPassthroughArguments(
+            inputPath: "/tmp/imax.mkv",
+            outputPath: "/tmp/output.mkv"
+        )
+        XCTAssertTrue(args.contains("copy"))
+    }
+
+    /// Verifies extended codec detection.
+    func test_extendedAudioCodecBuilder_detect() {
+        XCTAssertEqual(ExtendedAudioCodecBuilder.detectExtendedCodec("wmapro"), .wmaPro)
+        XCTAssertEqual(ExtendedAudioCodecBuilder.detectExtendedCodec("amrnb"), .amrNB)
+        XCTAssertEqual(ExtendedAudioCodecBuilder.detectExtendedCodec("speex"), .speex)
+        XCTAssertNil(ExtendedAudioCodecBuilder.detectExtendedCodec("aac"))
+    }
+
+    /// Verifies transcode arguments.
+    func test_extendedAudioCodecBuilder_transcode() {
+        let args = ExtendedAudioCodecBuilder.buildTranscodeArguments(
+            inputPath: "/tmp/wma.wmv",
+            outputPath: "/tmp/output.m4a",
+            targetCodec: "aac",
+            bitrate: 256,
+            channels: 2
+        )
+        XCTAssertTrue(args.contains("aac"))
+        XCTAssertTrue(args.contains("256k"))
+        XCTAssertTrue(args.contains("-ac"))
+        XCTAssertTrue(args.contains("2"))
+    }
 }
