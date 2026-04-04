@@ -96,10 +96,20 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// When false or hlg-tools unavailable, falls back to FFmpeg zscale filter.
     public var useHlgTools: Bool
 
+    /// Peak brightness of the source in nits for tone mapping. Nil means auto-detect.
+    public var toneMapPeakNits: Double?
+
+    /// Desaturation strength for tone mapping (0.0 = none, 1.0 = full).
+    public var toneMapDesaturation: Double?
+
     /// Whether to convert PQ (HDR10) to Dolby Vision Profile 8.4 + HLG.
     /// Chains PQ→HLG conversion with DV RPU generation for three-tier playback:
     /// Dolby Vision → HLG → SDR fallback from a single stream.
     public var convertPQToDVHLG: Bool
+
+    /// Display aspect ratio override (e.g., "16:9", "2.35:1").
+    /// When set, applies -aspect to the output. When nil, preserves source aspect ratio.
+    public var displayAspectRatio: String?
 
     // MARK: - Audio Settings
 
@@ -163,7 +173,10 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         toneMapAlgorithm: String? = nil,
         convertPQToHLG: Bool = false,
         useHlgTools: Bool = false,
+        toneMapPeakNits: Double? = nil,
+        toneMapDesaturation: Double? = nil,
         convertPQToDVHLG: Bool = false,
+        displayAspectRatio: String? = nil,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
@@ -198,7 +211,10 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.toneMapAlgorithm = toneMapAlgorithm
         self.convertPQToHLG = convertPQToHLG
         self.useHlgTools = useHlgTools
+        self.toneMapPeakNits = toneMapPeakNits
+        self.toneMapDesaturation = toneMapDesaturation
         self.convertPQToDVHLG = convertPQToDVHLG
+        self.displayAspectRatio = displayAspectRatio
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
@@ -261,9 +277,14 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
            let tmAlgo = FFmpegArgumentBuilder.ToneMapAlgorithm(rawValue: algorithm) {
             builder.toneMapAlgorithm = tmAlgo
         }
+        builder.toneMapPeakNits = toneMapPeakNits
+        builder.toneMapDesaturation = toneMapDesaturation
 
         // PQ → HLG conversion
         builder.convertPQToHLG = convertPQToHLG
+
+        // Display aspect ratio
+        builder.displayAspectRatio = displayAspectRatio
 
         // Subtitles
         builder.subtitlePassthrough = subtitlePassthrough
@@ -866,6 +887,10 @@ public final class EncodingProfileStore: @unchecked Sendable {
             toneMapAlgorithm: profile.toneMapAlgorithm,
             convertPQToHLG: profile.convertPQToHLG,
             useHlgTools: profile.useHlgTools,
+            toneMapPeakNits: profile.toneMapPeakNits,
+            toneMapDesaturation: profile.toneMapDesaturation,
+            convertPQToDVHLG: profile.convertPQToDVHLG,
+            displayAspectRatio: profile.displayAspectRatio,
             audioCodec: profile.audioCodec,
             audioPassthrough: profile.audioPassthrough,
             audioBitrate: profile.audioBitrate,

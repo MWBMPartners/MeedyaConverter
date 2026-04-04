@@ -271,15 +271,53 @@ public final class EncodingEngine: @unchecked Sendable {
             try? FileManager.default.removeItem(at: hevcES)
         }
 
+        // Automatic HDR-to-SDR tone mapping trigger (Phase 3.9c / Issue #248)
+        // When the source is HDR but the output codec or container cannot carry HDR,
+        // automatically enable tone mapping to prevent washed-out colours.
+        var enrichedJob = job
+        if let sourceInfo, sourceInfo.hasHDR,
+           !job.profile.videoPassthrough,
+           !job.profile.toneMapToSDR,
+           !job.profile.convertPQToHLG {
+            let codecSupportsHDR = job.profile.videoCodec?.supportsHDR ?? false
+            let containerSupportsHDR = job.profile.containerFormat.supportsHDR
+            if !codecSupportsHDR || !containerSupportsHDR {
+                // Auto-enable tone mapping — output cannot carry HDR
+                enrichedJob.profile.toneMapToSDR = true
+                if enrichedJob.profile.toneMapAlgorithm == nil {
+                    enrichedJob.profile.toneMapAlgorithm = "hable"
+                }
+                enrichedJob.profile.preserveHDR = false
+            }
+        }
+
+        // Automatic hlg-tools routing for PQ→HLG (Issue #256)
+        // When PQ→HLG conversion is requested and hlg-tools is available, prefer it.
+        if enrichedJob.profile.convertPQToHLG,
+           !enrichedJob.profile.useHlgTools,
+           hlgTools.isAvailable {
+            enrichedJob.profile.useHlgTools = true
+        }
+
+        // HLG metadata preservation signalling (Issue #245)
+        // When source is HLG and we're preserving HDR (not tone mapping or converting),
+        // ensure the output gets correct HLG colour signalling.
+        if let sourceInfo, sourceInfo.hasHLG,
+           !enrichedJob.profile.videoPassthrough,
+           enrichedJob.profile.preserveHDR,
+           !enrichedJob.profile.toneMapToSDR,
+           !enrichedJob.profile.convertPQToHLG {
+            enrichedJob.hdrTransferFunction = .hlg
+        }
+
         // Inject HDR10 metadata from source into the job's argument builder
         // This ensures MDCV/CLL metadata is carried through to the output when
         // re-encoding HDR content (Phase 3.7 / Issue #43, #245).
-        var enrichedJob = job
         if let sourceInfo,
            let video = sourceInfo.primaryVideoStream,
-           !job.profile.videoPassthrough,
-           job.profile.preserveHDR,
-           !job.profile.toneMapToSDR {
+           !enrichedJob.profile.videoPassthrough,
+           enrichedJob.profile.preserveHDR,
+           !enrichedJob.profile.toneMapToSDR {
             if let cp = video.colourProperties {
                 enrichedJob.hdrMaxCLL = cp.maxCLL
                 enrichedJob.hdrMaxFALL = cp.maxFALL

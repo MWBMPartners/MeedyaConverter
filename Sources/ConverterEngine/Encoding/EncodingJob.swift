@@ -8,6 +8,17 @@
 import Foundation
 import Combine
 
+// MARK: - HDRTransferFunction
+
+/// The HDR transfer function detected in the source stream.
+/// Used by the encoding pipeline to apply correct colour signalling to the output.
+public enum HDRTransferFunction: String, Codable, Sendable {
+    /// SMPTE ST 2084 (Perceptual Quantizer) — HDR10, HDR10+, Dolby Vision.
+    case pq
+    /// ARIB STD-B67 (Hybrid Log-Gamma) — broadcast HDR.
+    case hlg
+}
+
 // MARK: - EncodingJobStatus
 
 /// The current status of an encoding job in the queue.
@@ -95,6 +106,11 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// Mastering display minimum luminance in nits (from source probe).
     public var hdrMasteringDisplayMinLuminance: Int?
 
+    /// The HDR transfer function of the source, set by EncodingEngine for colour signalling.
+    /// When `.hlg`, HLG-specific colour metadata is applied to the output.
+    /// When `.pq`, PQ/HDR10 colour metadata is applied.
+    public var hdrTransferFunction: HDRTransferFunction?
+
     /// Timestamp when this job was created.
     public var createdAt: Date
 
@@ -160,6 +176,12 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.masteringDisplay = hdrMasteringDisplay
         builder.maxCLL = hdrMaxCLL
         builder.maxFALL = hdrMaxFALL
+
+        // Apply HLG-specific colour signalling when source is HLG
+        if hdrTransferFunction == .hlg {
+            let hlgArgs = builder.buildHLGPreservationArguments()
+            builder.extraArguments.append(contentsOf: hlgArgs)
+        }
 
         // Apply extra arguments
         builder.extraArguments = extraArguments
