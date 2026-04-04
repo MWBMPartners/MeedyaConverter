@@ -193,9 +193,56 @@ Implemented Phase 3 (Essential Encoding & Passthrough):
 - #252: Chapter passthrough (updated)
 - #253: TrueHD in MP4 policy (created)
 
+### Prompt 15: PQ → HLG Conversion (hlg-tools)
+
+Implemented PQ (ST 2084) → HLG (ARIB STD-B67) conversion with dual-path approach:
+
+- **HlgToolsWrapper**: New wrapper for external `pq2hlg` binary from hlg-tools project
+  - Binary discovery across Homebrew, /usr/local/bin, /usr/bin, which(1) fallback
+  - Async execution, version detection, availability check
+- **FFmpeg zscale fallback**: `zscale=tin=smpte2084:t=linear` → `zscale=t=arib-std-b67` filter chain
+- **EncodingProfile**: Added `convertPQToHLG`, `useHlgTools` (default: true) properties
+- **OutputSettingsView**: PQ→HLG toggle, hlg-tools status indicator, "Force FFmpeg zscale" option
+- **Built-in profile**: "PQ → HLG (Broadcast)" — H.265 CRF 18, 10-bit, E-AC-3 5.1, MKV
+- GitHub Issue: #254
+
+### Prompt 16: Combined PQ → DV Profile 8.4 + HLG
+
+Combined PQ→HLG (#254) with HLG→DV (#246) for three-tier playback (DV→HLG→SDR):
+
+- **EncodingEngine**: PQ→DV+HLG pipeline: PQ→HLG encode → dovi_tool generate (Profile 8.4 RPU) → inject → remux
+- **EncodingProfile**: Added `convertPQToDVHLG` property
+- **MediaFile**: Added `hasPQ` computed property
+- **OutputSettingsView**: DV+HLG toggle, dovi_tool availability warning, three-tier badge
+- **Built-in profile**: "PQ → DV+HLG (Max Compat)" — H.265 CRF 18, 10-bit, E-AC-3 7.1, MKV
+- Total built-in profiles: 25
+- GitHub Issue: #255
+
+### Prompt 17: Tool Bundling & Auto-Updates
+
+Strategy for bundling hlg-tools and dovi_tool:
+
+- **Direct distribution**: Bundle binaries, check GitHub Releases API for updates
+- **App Store**: Exclude tools (sandbox), graceful fallback to FFmpeg-only paths
+- GitHub Issues: #256 (bundling), #257 (auto-update checks)
+
+### Prompt 18: Context Updates & Issue Review
+
+- Updated .claude/project_brief.md with Phase 3 completion, tool bundling policies
+- Updated PROJECT_STATUS.md with all Phase 3 additions, profile count (25)
+- Commented on implemented Phase 3 issues: #251, #252, #253, #247, #248, #240, #241, #244, #243
+
+### Prompt 19: GitHub Milestones Assignment
+
+User requested review of ALL GitHub issues and creation/assignment of milestones matching
+the 19-phase project structure.
+
 ### Key Decisions Made
 
 - **TrueHD in MP4**: Allowed but must NOT be default audio stream in MP4-family containers only. All other containers (MKV etc.) have no restriction. See issue #253.
 - **Metadata passthrough by default**: All source metadata copied via `-map_metadata 0` and `-map_chapters 0`. UI overrides apply on top, not replace.
 - **HDR auto-trigger**: When HDR source + incompatible output (non-HDR codec, 8-bit, non-HDR container), tone mapping auto-enabled with user notification.
+- **PQ→HLG**: hlg-tools preferred when available, FFmpeg zscale fallback. `useHlgTools` defaults to true.
+- **PQ→DV+HLG**: Chains PQ→HLG with DV Profile 8.4 RPU generation for three-tier playback (DV→HLG→SDR).
+- **Tool bundling**: hlg-tools and dovi_tool bundled in direct distribution; excluded from App Store with graceful fallback.
 - **Environment limitation**: Linux x86_64 without Swift compiler — all code verified by review only, cannot build/test.

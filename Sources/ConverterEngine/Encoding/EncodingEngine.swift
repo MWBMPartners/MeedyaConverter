@@ -458,10 +458,10 @@ public final class EncodingEngine: @unchecked Sendable {
 
         // Extract HDR metadata from the source for RPU generation
         // MaxCLL/MaxFALL come from the stream's content light level metadata
-        let maxCLL = video.maxCLL
-        let maxFALL = video.maxFALL
-        let maxLuminance = video.masteringDisplayMaxLuminance
-        let minLuminance = video.masteringDisplayMinLuminance
+        let maxCLL = video.colourProperties?.maxCLL
+        let maxFALL = video.colourProperties?.maxFALL
+        let maxLuminance = video.colourProperties?.masteringDisplayMaxLuminance
+        let minLuminance = video.colourProperties?.masteringDisplayMinLuminance
 
         try await doviTool.generateRPU(
             outputPath: outputPath,
