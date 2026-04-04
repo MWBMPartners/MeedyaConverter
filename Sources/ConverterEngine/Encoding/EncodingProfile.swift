@@ -128,6 +128,12 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Number of audio channels. Nil means match source.
     public var audioChannels: Int?
 
+    /// Loudness normalization standard. Nil means no normalization.
+    public var loudnessNormalization: String?
+
+    /// Whether to apply peak limiting to the audio output.
+    public var applyPeakLimiter: Bool
+
     // MARK: - Subtitle Settings
 
     /// Whether to passthrough subtitles.
@@ -182,6 +188,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         audioBitrate: Int? = 160_000,
         audioSampleRate: Int? = nil,
         audioChannels: Int? = nil,
+        loudnessNormalization: String? = nil,
+        applyPeakLimiter: Bool = false,
         subtitlePassthrough: Bool = true,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
@@ -220,6 +228,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.audioBitrate = audioBitrate
         self.audioSampleRate = audioSampleRate
         self.audioChannels = audioChannels
+        self.loudnessNormalization = loudnessNormalization
+        self.applyPeakLimiter = applyPeakLimiter
         self.subtitlePassthrough = subtitlePassthrough
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
@@ -279,6 +289,19 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         }
         builder.toneMapPeakNits = toneMapPeakNits
         builder.toneMapDesaturation = toneMapDesaturation
+
+        // Audio normalization (Phase 5)
+        if let normStd = loudnessNormalization,
+           let standard = LoudnessStandard(rawValue: normStd) {
+            let chain = AudioProcessor.buildProcessingChain(
+                normalize: true,
+                standard: standard,
+                limit: applyPeakLimiter
+            )
+            builder.audioFilterChain = chain
+        } else if applyPeakLimiter {
+            builder.audioFilterChain = AudioProcessor.buildPeakLimiterFilter()
+        }
 
         // PQ → HLG conversion
         builder.convertPQToHLG = convertPQToHLG
@@ -896,6 +919,8 @@ public final class EncodingProfileStore: @unchecked Sendable {
             audioBitrate: profile.audioBitrate,
             audioSampleRate: profile.audioSampleRate,
             audioChannels: profile.audioChannels,
+            loudnessNormalization: profile.loudnessNormalization,
+            applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,
