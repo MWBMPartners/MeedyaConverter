@@ -288,7 +288,11 @@ public enum ContainerFormat: String, Codable, Sendable, CaseIterable, Identifiab
     public var supportedAudioCodecs: [AudioCodec] {
         switch self {
         case .mp4, .m4v, .m4a, .m4b, .m4p:
-            return [.aacLC, .heAAC, .heAACv2, .xheAAC, .ac3, .eac3, .alac, .opus, .flac, .mp3]
+            // TrueHD is not officially part of the MP4 spec but is supported by
+            // most major players (Plex, Jellyfin, VLC, MPC-HC, Infuse). When muxing
+            // TrueHD into MP4 it MUST NOT be the default audio stream — a fully
+            // compatible codec (AAC, AC-3, E-AC-3) must also be present and set as default.
+            return [.aacLC, .heAAC, .heAACv2, .xheAAC, .ac3, .eac3, .trueHD, .alac, .opus, .flac, .mp3]
         case .mkv, .mk3d, .mka:
             return AudioCodec.allCases // MKV supports everything
         case .mov:
@@ -332,6 +336,26 @@ public enum ContainerFormat: String, Codable, Sendable, CaseIterable, Identifiab
     /// Check whether a specific audio codec is compatible with this container.
     public func supportsAudioCodec(_ codec: AudioCodec) -> Bool {
         supportedAudioCodecs.contains(codec)
+    }
+
+    /// Audio codecs that are supported in this container but MUST NOT be the default
+    /// audio stream. A fully compatible codec must also be present and marked as default.
+    ///
+    /// Example: TrueHD in MP4 — widely supported by players but not part of the
+    /// official ISOBMFF/MP4 specification. Requires a compatible fallback stream.
+    public var nonDefaultAudioCodecs: [AudioCodec] {
+        switch self {
+        case .mp4, .m4v, .m4a, .m4b, .m4p:
+            return [.trueHD]
+        default:
+            return []
+        }
+    }
+
+    /// Whether the given audio codec must NOT be marked as the default stream
+    /// when muxed into this container (requires a compatible fallback).
+    public func requiresNonDefault(_ codec: AudioCodec) -> Bool {
+        nonDefaultAudioCodecs.contains(codec)
     }
 
     /// The FFmpeg format name for this container (used with -f flag).

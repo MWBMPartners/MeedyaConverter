@@ -155,7 +155,7 @@ private let helpTopics: [HelpTopic] = [
         sections: [
             HelpSection(
                 heading: "Built-in Profiles",
-                body: "MeedyaConverter ships with 7 built-in profiles:\n\n- Web Standard: H.264/AAC in MP4 for maximum compatibility\n- Web High Quality: H.265/AAC in MP4 for better compression\n- Web Next-Gen: AV1/Opus in WebM for modern browsers\n- 4K HDR Master: H.265 HDR with E-AC-3 in MKV\n- Audio Extract: Lossless FLAC extraction\n- Quick Convert: Fast H.264 encoding\n- Archive Lossless: FFV1/FLAC for preservation"
+                body: "MeedyaConverter ships with 23 built-in profiles across 7 categories:\n\n**Quick Start**: Web Standard (H.264), Web High Quality (H.265), Web Next-Gen (AV1), Quick Convert, Audio Extract (FLAC)\n\n**HDR-Aware**: 4K HDR Master, 4K HDR Compact, HDR → SDR (Tone-Map)\n\n**Passthrough**: Remux to MKV, Remux to MP4 (no re-encoding)\n\n**Streaming**: 1080p CVBR, 4K CVBR (for HLS/DASH)\n\n**Professional**: ProRes Proxy, ProRes HQ, DNxHR SQ\n\n**Disc Authoring**: Blu-ray Compatible, DVD Compatible\n\n**Archival**: Lossless (FFV1/FLAC), ProRes 4444\n\n**Hardware**: Hardware H.264, Hardware H.265 (VideoToolbox)"
             ),
             HelpSection(
                 heading: "Custom Profiles",
@@ -196,6 +196,38 @@ private let helpTopics: [HelpTopic] = [
             HelpSection(
                 heading: "Encoding",
                 body: "Cmd+Return: Add selected file to queue\nCmd+.: Cancel current operation"
+            ),
+        ]
+    ),
+
+    HelpTopic(
+        title: "Container & Codec Compatibility",
+        systemImage: "square.grid.3x3",
+        summary: "Which video and audio codecs work in which container formats.",
+        sections: [
+            HelpSection(
+                heading: "Overview",
+                body: "Not every codec can be placed in every container format. For example, VP8/VP9 belong in WebM, while ProRes belongs in MOV. MeedyaConverter validates your codec/container choice before encoding and warns about incompatible combinations."
+            ),
+            HelpSection(
+                heading: "Recommended Containers",
+                body: "- **MP4**: Maximum compatibility — plays on browsers, phones, TVs, game consoles. Supports H.264, H.265, AV1, AAC, AC-3, E-AC-3.\n- **MKV**: Maximum flexibility — supports every codec, subtitle format, and chapter style. Best for archival and multi-stream content.\n- **MOV**: Professional editing — native support in Final Cut Pro, DaVinci Resolve, Premiere Pro. Supports ProRes, DNxHR.\n- **WebM**: Modern web delivery — supports VP8, VP9, AV1 video with Opus or Vorbis audio."
+            ),
+            HelpSection(
+                heading: "TrueHD in MP4",
+                body: "Dolby TrueHD is not part of the official MP4 specification, but is widely supported by major players (Plex, Jellyfin, VLC, MPC-HC, Infuse). MeedyaConverter allows TrueHD in MP4 with one important rule:\n\nTrueHD must NOT be the default audio stream. A fully compatible codec (AAC, AC-3, or E-AC-3) must also be present and set as default. This ensures universal playback — players that support TrueHD will select it automatically, while others use the compatible fallback."
+            ),
+            HelpSection(
+                heading: "HDR & Dolby Vision",
+                body: "HDR metadata (HDR10, HDR10+, HLG, Dolby Vision) requires:\n\n1. A compatible codec: H.265, AV1, or VP9\n2. 10-bit pixel format (yuv420p10le)\n3. A supported container: MP4, MKV, MOV, or TS\n\nDolby Vision is supported in MP4, MKV, MOV, and MPEG-TS containers. WebM supports HDR10 and HLG but not Dolby Vision."
+            ),
+            HelpSection(
+                heading: "Chapter Support",
+                body: "Chapters (markers and titles) are supported in MKV, MP4, M4V, M4B, MOV, and OGG containers. When converting to a container that doesn't support chapters (WebM, AVI, TS), chapter data is silently dropped.\n\nChapters are always copied from source to output by default."
+            ),
+            HelpSection(
+                heading: "Subtitle Compatibility",
+                body: "MKV supports all subtitle formats (SRT, ASS/SSA, PGS, VobSub, DVB-SUB, WebVTT). MP4 and MOV only support text-based subtitles (SRT). WebM supports WebVTT.\n\nWhen remuxing from MKV to MP4, image-based subtitles (PGS, VobSub) will be dropped unless converted to text first."
             ),
         ]
     ),
