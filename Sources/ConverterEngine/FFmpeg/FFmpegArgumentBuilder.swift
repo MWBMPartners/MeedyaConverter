@@ -176,6 +176,19 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Audio filter chain string (e.g., "loudnorm=I=-14").
     public var audioFilterChain: String?
 
+    // MARK: - Codec Metadata Preservation (Phase 3.16a)
+
+    /// Preserve codec-specific metadata when re-encoding within the same codec family.
+    /// When true and the source/output audio codecs match, dialog normalization,
+    /// dynamic range, surround mode flags, etc. are carried through.
+    public var preserveCodecMetadata: Bool = true
+
+    // MARK: - Aspect Ratio (Phase 3.16b)
+
+    /// Display Aspect Ratio override (e.g., "16:9", "2.35:1").
+    /// When set, applies -aspect to the output. When nil, aspect is copied from source.
+    public var displayAspectRatio: String?
+
     // MARK: - Additional Arguments
 
     /// Extra FFmpeg arguments to append (for advanced use cases).
@@ -240,6 +253,11 @@ public struct FFmpegArgumentBuilder: Sendable {
         // --- Audio filters ---
         if let af = audioFilterChain, !af.isEmpty {
             args.append(contentsOf: ["-af", af])
+        }
+
+        // --- Display aspect ratio override ---
+        if let dar = displayAspectRatio, !dar.isEmpty {
+            args.append(contentsOf: ["-aspect", dar])
         }
 
         // --- Metadata ---
@@ -511,28 +529,8 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// Get the FFmpeg format name for a container format.
+    /// Delegates to ContainerFormat.ffmpegFormatName to avoid duplication.
     private func ffmpegFormatName(for container: ContainerFormat) -> String {
-        switch container {
-        case .mp4, .m4v, .m4a, .m4b, .m4p: return "mp4"
-        case .mkv, .mk3d: return "matroska"
-        case .mka: return "matroska"
-        case .mks: return "matroska"
-        case .mov: return "mov"
-        case .webm: return "webm"
-        case .mpegTS: return "mpegts"
-        case .mpegPS: return "mpeg"
-        case .mxf: return "mxf"
-        case .avi: return "avi"
-        case .flv: return "flv"
-        case .threeGP, .threeG2: return "3gp"
-        case .ogg, .ogm: return "ogg"
-        case .hls: return "hls"
-        case .dash: return "dash"
-        case .aiff: return "aiff"
-        case .caf: return "caf"
-        case .w64: return "w64"
-        case .rf64: return "rf64"
-        case .dcp: return "mxf" // DCP uses MXF containers
-        }
+        container.ffmpegFormatName
     }
 }

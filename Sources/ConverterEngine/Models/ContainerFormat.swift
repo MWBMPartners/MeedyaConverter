@@ -247,4 +247,127 @@ public enum ContainerFormat: String, Codable, Sendable, CaseIterable, Identifiab
         let lowered = ext.lowercased().trimmingCharacters(in: .punctuationCharacters)
         return allCases.first { $0.fileExtensions.contains(lowered) }
     }
+
+    // MARK: - Codec Compatibility (Phase 3.11)
+
+    /// Video codecs that can be muxed into this container.
+    public var supportedVideoCodecs: [VideoCodec] {
+        switch self {
+        case .mp4, .m4v:
+            return [.h264, .h265, .h266, .av1, .mpeg2, .mpeg4, .vp9]
+        case .mkv, .mk3d:
+            return VideoCodec.allCases // MKV supports everything
+        case .mov:
+            return [.h264, .h265, .prores, .dnxhr, .av1, .mvHevc, .mpeg2, .mpeg4, .jpeg2000]
+        case .webm:
+            return [.vp8, .vp9, .av1]
+        case .mpegTS:
+            return [.h264, .h265, .mpeg2, .av1]
+        case .mpegPS:
+            return [.mpeg2, .mpeg4]
+        case .mxf:
+            return [.h264, .h265, .prores, .dnxhr, .mpeg2, .jpeg2000]
+        case .avi:
+            return [.h264, .h265, .mpeg2, .mpeg4, .ffv1, .dnxhr]
+        case .flv:
+            return [.h264, .h265, .vp8]
+        case .threeGP, .threeG2:
+            return [.h264, .mpeg4]
+        case .ogg, .ogm:
+            return [.theora, .vp8]
+        case .hls:
+            return [.h264, .h265, .av1]
+        case .dash:
+            return [.h264, .h265, .av1, .vp9]
+        default:
+            return [] // Audio-only containers
+        }
+    }
+
+    /// Audio codecs that can be muxed into this container.
+    public var supportedAudioCodecs: [AudioCodec] {
+        switch self {
+        case .mp4, .m4v, .m4a, .m4b, .m4p:
+            return [.aacLC, .heAAC, .heAACv2, .xheAAC, .ac3, .eac3, .alac, .opus, .flac, .mp3]
+        case .mkv, .mk3d, .mka:
+            return AudioCodec.allCases // MKV supports everything
+        case .mov:
+            return [.aacLC, .heAAC, .heAACv2, .ac3, .eac3, .alac, .pcm, .flac, .opus, .mp3]
+        case .webm:
+            return [.opus, .vorbis]
+        case .mpegTS:
+            return [.aacLC, .heAAC, .ac3, .eac3, .dts, .mp2, .mp3, .opus]
+        case .mpegPS:
+            return [.ac3, .dts, .pcm, .mp2]
+        case .mxf:
+            return [.pcm, .aacLC, .ac3, .eac3]
+        case .avi:
+            return [.mp3, .ac3, .aacLC, .pcm, .dts]
+        case .flv:
+            return [.aacLC, .mp3]
+        case .threeGP, .threeG2:
+            return [.aacLC, .heAAC]
+        case .ogg, .ogm:
+            return [.vorbis, .opus, .flac]
+        case .hls:
+            return [.aacLC, .heAAC, .ac3, .eac3, .flac]
+        case .dash:
+            return [.aacLC, .heAAC, .ac3, .eac3, .opus]
+        case .aiff:
+            return [.pcm]
+        case .caf:
+            return [.aacLC, .alac, .pcm, .opus, .flac]
+        case .w64, .rf64:
+            return [.pcm]
+        default:
+            return []
+        }
+    }
+
+    /// Check whether a specific video codec is compatible with this container.
+    public func supportsVideoCodec(_ codec: VideoCodec) -> Bool {
+        supportedVideoCodecs.contains(codec)
+    }
+
+    /// Check whether a specific audio codec is compatible with this container.
+    public func supportsAudioCodec(_ codec: AudioCodec) -> Bool {
+        supportedAudioCodecs.contains(codec)
+    }
+
+    /// The FFmpeg format name for this container (used with -f flag).
+    public var ffmpegFormatName: String {
+        switch self {
+        case .mp4, .m4v, .m4a, .m4b, .m4p: return "mp4"
+        case .mkv, .mk3d: return "matroska"
+        case .mka: return "matroska"
+        case .mks: return "matroska"
+        case .mov: return "mov"
+        case .webm: return "webm"
+        case .mpegTS: return "mpegts"
+        case .mpegPS: return "mpeg"
+        case .mxf: return "mxf"
+        case .avi: return "avi"
+        case .flv: return "flv"
+        case .threeGP: return "3gp"
+        case .threeG2: return "3g2"
+        case .ogg, .ogm: return "ogg"
+        case .hls: return "hls"
+        case .dash: return "dash"
+        case .aiff: return "aiff"
+        case .caf: return "caf"
+        case .w64: return "w64"
+        case .rf64: return "rf64"
+        case .dcp: return "mxf" // DCP uses MXF wrapper
+        }
+    }
+
+    /// Whether this container supports Dolby Vision metadata.
+    public var supportsDolbyVision: Bool {
+        switch self {
+        case .mp4, .m4v, .mkv, .mk3d, .mov, .mpegTS:
+            return true
+        default:
+            return false
+        }
+    }
 }

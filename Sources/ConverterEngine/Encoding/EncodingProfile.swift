@@ -263,14 +263,45 @@ extension EncodingProfile {
 
     /// All built-in profiles shipped with MeedyaConverter.
     public static let builtInProfiles: [EncodingProfile] = [
+        // Quick Start
         .webStandard,
         .webHighQuality,
         .webNextGen,
-        .fourKHDRMaster,
-        .audioExtract,
         .quickConvert,
+        .audioExtract,
+
+        // HDR-aware
+        .fourKHDRMaster,
+        .fourKHDRCompact,
+        .hdrToSDR,
+
+        // Passthrough / Remux
+        .remuxToMKV,
+        .remuxToMP4,
+
+        // Streaming (CVBR)
+        .streaming1080p,
+        .streaming4K,
+
+        // Professional
+        .proresProxy,
+        .proresHQ,
+        .dnxhrSQ,
+
+        // Disc Authoring
+        .blurayCompatible,
+        .dvdCompatible,
+
+        // Archival
         .archiveLossless,
+        .archiveProRes4444,
+
+        // Hardware Accelerated
+        .hardwareH264,
+        .hardwareH265,
     ]
+
+    // MARK: - Quick Start Profiles
 
     /// Web Standard — H.264/AAC in MP4, maximum compatibility.
     public static let webStandard = EncodingProfile(
@@ -314,6 +345,37 @@ extension EncodingProfile {
         containerFormat: .webm
     )
 
+    /// Quick Convert — fast H.264 at reasonable quality.
+    public static let quickConvert = EncodingProfile(
+        name: "Quick Convert",
+        description: "Fast H.264 encode — good enough quality, maximum speed",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h264,
+        videoCRF: 23,
+        videoPreset: "fast",
+        audioCodec: .aacLC,
+        audioBitrate: 128_000,
+        containerFormat: .mp4
+    )
+
+    /// Audio Extract — extract and convert audio to FLAC.
+    public static let audioExtract = EncodingProfile(
+        name: "Audio Extract (FLAC)",
+        description: "Extract audio to lossless FLAC — no video",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: nil,
+        videoPassthrough: false,
+        videoCRF: nil,
+        videoPreset: nil,
+        audioCodec: .flac,
+        audioBitrate: nil,
+        containerFormat: .mka
+    )
+
+    // MARK: - HDR-Aware Profiles
+
     /// 4K HDR Master — H.265/E-AC-3 in MKV, high-quality archive with HDR.
     public static let fourKHDRMaster = EncodingProfile(
         name: "4K HDR Master",
@@ -331,34 +393,195 @@ extension EncodingProfile {
         containerFormat: .mkv
     )
 
-    /// Audio Extract — extract and convert audio to FLAC.
-    public static let audioExtract = EncodingProfile(
-        name: "Audio Extract (FLAC)",
-        description: "Extract audio to lossless FLAC — no video",
+    /// 4K HDR Compact — H.265 HDR with smaller file size, good for Plex/Jellyfin.
+    public static let fourKHDRCompact = EncodingProfile(
+        name: "4K HDR Compact",
+        description: "H.265 HDR + AAC in MKV — balanced size for media servers",
         category: .quickStart,
         isBuiltIn: true,
-        videoCodec: nil,
-        videoPassthrough: false,
-        videoCRF: nil,
-        videoPreset: nil,
-        audioCodec: .flac,
-        audioBitrate: nil, // Lossless — no bitrate needed
-        containerFormat: .mka
+        videoCodec: .h265,
+        videoCRF: 24,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
+        audioCodec: .aacLC,
+        audioBitrate: 256_000,
+        audioChannels: 6,
+        containerFormat: .mkv
     )
 
-    /// Quick Convert — fast H.264 at reasonable quality.
-    public static let quickConvert = EncodingProfile(
-        name: "Quick Convert",
-        description: "Fast H.264 encode — good enough quality, maximum speed",
+    /// HDR → SDR — tone-map HDR content to SDR with correct colour conversion.
+    public static let hdrToSDR = EncodingProfile(
+        name: "HDR → SDR (Tone-Map)",
+        description: "Convert HDR to SDR with tone mapping — H.265 + AAC in MP4",
         category: .quickStart,
         isBuiltIn: true,
-        videoCodec: .h264,
-        videoCRF: 23,
-        videoPreset: "fast",
+        videoCodec: .h265,
+        videoCRF: 20,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p",
+        preserveHDR: false,
         audioCodec: .aacLC,
-        audioBitrate: 128_000,
+        audioBitrate: 192_000,
         containerFormat: .mp4
     )
+
+    // MARK: - Passthrough / Remux Profiles
+
+    /// Remux to MKV — copy all streams without re-encoding.
+    public static let remuxToMKV = EncodingProfile(
+        name: "Remux to MKV",
+        description: "Copy all streams to MKV container — no re-encoding",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoPassthrough: true,
+        videoCRF: nil,
+        videoPreset: nil,
+        audioPassthrough: true,
+        audioBitrate: nil,
+        subtitlePassthrough: true,
+        containerFormat: .mkv
+    )
+
+    /// Remux to MP4 — copy compatible streams to MP4 container.
+    public static let remuxToMP4 = EncodingProfile(
+        name: "Remux to MP4",
+        description: "Copy streams to MP4 container — no re-encoding",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoPassthrough: true,
+        videoCRF: nil,
+        videoPreset: nil,
+        audioPassthrough: true,
+        audioBitrate: nil,
+        subtitlePassthrough: false,
+        containerFormat: .mp4
+    )
+
+    // MARK: - Streaming Profiles (CVBR)
+
+    /// 1080p Streaming — CVBR H.264 for adaptive streaming (HLS/DASH).
+    public static let streaming1080p = EncodingProfile(
+        name: "1080p Streaming (CVBR)",
+        description: "H.264 CVBR + AAC in MP4 — optimised for HLS/DASH delivery",
+        category: .streaming,
+        isBuiltIn: true,
+        videoCodec: .h264,
+        videoCRF: nil,
+        videoBitrate: 5_000_000,
+        videoMaxBitrate: 7_500_000,
+        videoPreset: "medium",
+        outputWidth: 1920,
+        outputHeight: 1080,
+        containerFormat: .mp4,
+        keyframeIntervalSeconds: 2.0,
+        videoBufferSize: 10_000_000
+    )
+
+    /// 4K Streaming — CVBR H.265 for high-end adaptive streaming.
+    public static let streaming4K = EncodingProfile(
+        name: "4K Streaming (CVBR)",
+        description: "H.265 CVBR + AAC in MP4 — 4K adaptive streaming delivery",
+        category: .streaming,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: nil,
+        videoBitrate: 12_000_000,
+        videoMaxBitrate: 18_000_000,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
+        audioCodec: .aacLC,
+        audioBitrate: 256_000,
+        containerFormat: .mp4,
+        keyframeIntervalSeconds: 2.0,
+        videoBufferSize: 24_000_000
+    )
+
+    // MARK: - Professional Profiles
+
+    /// ProRes Proxy — lightweight Apple ProRes for offline editing.
+    public static let proresProxy = EncodingProfile(
+        name: "ProRes Proxy",
+        description: "Apple ProRes Proxy in MOV — lightweight for offline editing",
+        category: .archival,
+        isBuiltIn: true,
+        videoCodec: .prores,
+        videoCRF: nil,
+        videoPreset: "proxy",
+        audioCodec: .pcm,
+        audioBitrate: nil,
+        containerFormat: .mov
+    )
+
+    /// ProRes HQ — high-quality Apple ProRes for mastering.
+    public static let proresHQ = EncodingProfile(
+        name: "ProRes HQ",
+        description: "Apple ProRes HQ in MOV — high-quality mastering codec",
+        category: .archival,
+        isBuiltIn: true,
+        videoCodec: .prores,
+        videoCRF: nil,
+        videoPreset: "hq",
+        audioCodec: .pcm,
+        audioBitrate: nil,
+        containerFormat: .mov
+    )
+
+    /// DNxHR SQ — Avid DNxHR Standard Quality for editing.
+    public static let dnxhrSQ = EncodingProfile(
+        name: "DNxHR SQ",
+        description: "Avid DNxHR Standard Quality in MXF — for Avid/Resolve editing",
+        category: .archival,
+        isBuiltIn: true,
+        videoCodec: .dnxhr,
+        videoCRF: nil,
+        videoPreset: nil,
+        audioCodec: .pcm,
+        audioBitrate: nil,
+        containerFormat: .mxf
+    )
+
+    // MARK: - Disc Authoring Profiles
+
+    /// Blu-ray Compatible — H.264 high profile with AC-3 audio.
+    public static let blurayCompatible = EncodingProfile(
+        name: "Blu-ray Compatible",
+        description: "H.264 High Profile + AC-3 in MPEG-TS — Blu-ray authoring",
+        category: .disc,
+        isBuiltIn: true,
+        videoCodec: .h264,
+        videoCRF: nil,
+        videoBitrate: 25_000_000,
+        videoMaxBitrate: 40_000_000,
+        videoPreset: "slow",
+        audioCodec: .ac3,
+        audioBitrate: 640_000,
+        audioChannels: 6,
+        containerFormat: .mpegTS,
+        videoBufferSize: 30_000_000
+    )
+
+    /// DVD Compatible — MPEG-2 with AC-3 audio.
+    public static let dvdCompatible = EncodingProfile(
+        name: "DVD Compatible",
+        description: "MPEG-2 + AC-3 in MPEG-PS — DVD authoring",
+        category: .disc,
+        isBuiltIn: true,
+        videoCodec: .mpeg2,
+        videoCRF: nil,
+        videoBitrate: 6_000_000,
+        videoMaxBitrate: 9_800_000,
+        videoPreset: nil,
+        outputWidth: 720,
+        outputHeight: 480,
+        audioCodec: .ac3,
+        audioBitrate: 448_000,
+        audioChannels: 6,
+        containerFormat: .mpegPS
+    )
+
+    // MARK: - Archival Profiles
 
     /// Archive Lossless — FFV1/FLAC in MKV for archival preservation.
     public static let archiveLossless = EncodingProfile(
@@ -372,6 +595,55 @@ extension EncodingProfile {
         audioCodec: .flac,
         audioBitrate: nil,
         containerFormat: .mkv
+    )
+
+    /// Archive ProRes 4444 — lossless-quality Apple ProRes with alpha channel support.
+    public static let archiveProRes4444 = EncodingProfile(
+        name: "Archive (ProRes 4444)",
+        description: "ProRes 4444 + PCM in MOV — near-lossless with alpha channel",
+        category: .archival,
+        isBuiltIn: true,
+        videoCodec: .prores,
+        videoCRF: nil,
+        videoPreset: "4444",
+        pixelFormat: "yuva444p10le",
+        audioCodec: .pcm,
+        audioBitrate: nil,
+        containerFormat: .mov
+    )
+
+    // MARK: - Hardware Accelerated Profiles
+
+    /// Hardware H.264 — VideoToolbox-accelerated H.264 for fast encoding.
+    public static let hardwareH264 = EncodingProfile(
+        name: "Hardware H.264 (Fast)",
+        description: "VideoToolbox H.264 + AAC in MP4 — hardware-accelerated fast encode",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h264,
+        videoCRF: nil,
+        videoQP: 28,
+        useHardwareEncoding: true,
+        audioCodec: .aacLC,
+        audioBitrate: 160_000,
+        containerFormat: .mp4
+    )
+
+    /// Hardware H.265 — VideoToolbox-accelerated H.265 for fast HDR encoding.
+    public static let hardwareH265 = EncodingProfile(
+        name: "Hardware H.265 (Fast)",
+        description: "VideoToolbox H.265 + AAC in MP4 — hardware-accelerated with HDR",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: nil,
+        videoQP: 30,
+        pixelFormat: "yuv420p10le",
+        useHardwareEncoding: true,
+        preserveHDR: true,
+        audioCodec: .aacLC,
+        audioBitrate: 192_000,
+        containerFormat: .mp4
     )
 }
 
