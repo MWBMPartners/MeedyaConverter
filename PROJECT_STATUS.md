@@ -10,11 +10,11 @@
 
 | Metric | Value |
 | ------ | ----- |
-| **Current Phase** | Phase 3 — Essential Encoding & Passthrough |
-| **Next Target** | Alpha 0.2 (Phases 3 + 4) |
-| **Overall Completion** | ▓▓▓▓▓▓░░░░░░░░░░░░░░ 28% |
-| **Phases Complete** | 2 / 19 (Phase 2 complete, Phase 3 in progress) |
-| **Active Work** | Phase 3 — Essential encoding, passthrough, HDR, hardware encoding, crop detection |
+| **Current Phase** | Phase 4 — CLI Tool (meedya-convert) |
+| **Next Target** | Alpha 0.2 (Phase 4 remaining) |
+| **Overall Completion** | ▓▓▓▓▓▓▓░░░░░░░░░░░░░ 30% |
+| **Phases Complete** | 3 / 19 (Phases 0, 1, 2, 3 complete) |
+| **Active Work** | Phase 3 complete — ready for Phase 4 (CLI Tool) |
 
 ---
 
@@ -43,7 +43,7 @@
 | **0** | Project Setup & Architecture | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | — |
 | **1** | Core Engine Foundation | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | Alpha 0.1 |
 | **2** | macOS SwiftUI Application (MVP) | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | Alpha 0.1 |
-| **3** | Essential Encoding & Passthrough | 🚧 In Progress | ▓▓▓▓▓▓▓▓▓░ 90% | Alpha 0.2 |
+| **3** | Essential Encoding & Passthrough | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | Alpha 0.2 |
 | **4** | CLI Tool | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.2 |
 | **5** | Subtitles & Core Audio Processing | ⏳ Planned | ░░░░░░░░░░ 0% | Beta 0.5 |
 | **6** | Adaptive Streaming (HLS/MPEG-DASH) | ⏳ Planned | ░░░░░░░░░░ 0% | Beta 0.5 |
@@ -124,9 +124,8 @@
 
 ## 🔜 What's Next (Alpha 0.2 Path)
 
-1. **Phase 3** (remaining) — Dolby Vision/HDR10+ handling, codec matrix expansion, container validation, built-in profile library
-2. **Phase 4** — CLI tool (meedya-convert)
-3. Alpha 0.2 targeting full codec support, passthrough, and CLI
+1. **Phase 4** — CLI tool (meedya-convert): encode, probe, profile commands
+2. Alpha 0.2 release targeting full CLI support alongside the GUI app
 
 ---
 
