@@ -1,7 +1,7 @@
 # MeedyaConverter — Project Brief
 
 > Saved for Claude AI context continuity across sessions.
-> Last updated: 2026-04-03
+> Last updated: 2026-04-04
 
 ## Project Summary
 
@@ -9,6 +9,14 @@ MeedyaConverter is a cross-platform media conversion application (modern HandBra
 built by MWBM Partners Ltd. It converts audio/video files between formats/containers with
 advanced features including passthrough, adaptive streaming (HLS/MPEG-DASH), HDR preservation,
 spatial audio, optical disc ripping/authoring, cloud upload, and image conversion (future).
+
+## Current Status
+
+- **Phase 0**: Complete (project setup, architecture)
+- **Phase 1**: Complete (core engine: FFmpeg bundle manager, process controller, probe, argument builder, encoding profiles, temp files, feature gating, 30 unit tests)
+- **Phase 2**: Complete (macOS SwiftUI app: NavigationSplitView, source import with drag-drop, stream inspector with HDR/DV badges, output settings, profile management, encoding queue with controls, unified activity log, settings, notifications, help, about)
+- **Phase 3**: ~90% complete (passthrough toggles, stream selection, metadata editor, HDR warnings, hardware encoder detection, crop detection, Dolby Vision dovi_tool wrapper, container-codec compatibility matrix, 23 built-in profiles, tone mapping, auto-trigger, container validation, disposition enforcement)
+- **Overall**: ~28% of 19 phases
 
 ## Key Requirements
 
@@ -40,17 +48,39 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 
 ### Technology Stack
 
-- Language: Swift 6.3
-- macOS UI: SwiftUI (native)
+- Language: Swift 6.3 with strict concurrency
+- macOS UI: SwiftUI (native, macOS 15.0+ Sequoia)
 - Core: ConverterEngine Swift Package (cross-platform)
+- MVVM: @Observable AppViewModel with @Environment injection
 - Media Engine: Hybrid encoding backend
   - Direct distribution: FFmpeg as subprocess (full GPL, libx264/libx265)
   - App Store: AVFoundation/VideoToolbox + FFmpegKit (LGPL linked)
 - Media Analysis: ffprobe + libmediainfo (BSD-2-Clause)
-- HDR: dovi_tool, DDVT (bundled)
+- HDR: dovi_tool (DoviToolWrapper), DDVT (bundled)
 - Package Manager: Swift Package Manager
 - CI/CD: GitHub Actions (build, release, beta/alpha)
 - Auto-Update: Sparkle 2 (direct distribution); Apple-managed (App Store)
+
+### Key Architectural Patterns
+
+- `@Observable` macro with `@Environment` injection for AppViewModel
+- `@Bindable var vm = viewModel` pattern for SwiftUI bindings
+- `NavigationSplitView` with sidebar/detail layout
+- `EncodingEngine` orchestration with `EncodingQueue` (ObservableObject with @Published)
+- `EncodingJobState` as ObservableObject for per-job SwiftUI binding
+- `EncodingProfile` (Codable, Hashable) with JSON persistence via EncodingProfileStore
+- `FFmpegArgumentBuilder` for translating settings to CLI args
+- `HardwareEncoderDetector` for runtime VideoToolbox/NVENC/QSV discovery
+- `CropDetector` for automatic black bar detection via cropdetect filter
+- `DoviToolWrapper` for Dolby Vision RPU extraction/injection/conversion
+- `ContainerFormat.supportedVideoCodecs/supportedAudioCodecs` for codec-container validation
+- Feature gating: ProductTier (free/pro/studio) with FeatureGateProtocol
+
+### Important Policies
+
+- **Metadata passthrough by default**: `-map_metadata 0` and `-map_chapters 0` always emitted
+- **TrueHD in MP4**: Allowed but MUST NOT be default audio stream (MP4-family only). All other containers: no restriction. See issue #253.
+- **HDR auto-trigger**: When HDR source + incompatible output settings, tone mapping auto-enabled with notification
 
 ### Apple Dual Distribution Strategy
 
@@ -79,10 +109,10 @@ spatial audio, optical disc ripping/authoring, cloud upload, and image conversio
 
 ### Project Phases (19 total, 0-18)
 
-- Phase 0: Project Setup & Architecture (MOSTLY COMPLETE)
-- Phase 1: Core Engine Foundation
-- Phase 2: macOS SwiftUI Application (MVP) — includes settings, help, notifications, code signing
-- Phase 3: Essential Encoding & Passthrough — core codecs, HDR, hardware encoding
+- Phase 0: Project Setup & Architecture (COMPLETE)
+- Phase 1: Core Engine Foundation (COMPLETE)
+- Phase 2: macOS SwiftUI Application (MVP) (COMPLETE)
+- Phase 3: Essential Encoding & Passthrough (~90%) — codecs, HDR, hardware encoding, profiles, DV, tone mapping
 - Phase 4: CLI Tool — moved earlier for test automation
 - Phase 5: Subtitles & Core Audio Processing
 - Phase 6: Adaptive Streaming (HLS/MPEG-DASH)

@@ -133,3 +133,69 @@ Key changes:
 - CEA-708/EIA-708 naming clarified
 
 **Result:** 19 phases (0-18), 240 GitHub issues (as of latest update), 19 milestones.
+
+## Session: 2026-04-04
+
+### Prompt 13: Review Issues & Proceed with Phase 2
+
+User requested: "Review the GitHub issues, and proceed with the next logic step in the project main branch."
+
+Completed Phase 2 (macOS SwiftUI Application MVP):
+- NavigationSplitView with sidebar/detail layout (ContentView, SidebarView)
+- Source file import with drag-and-drop (SourceFileView)
+- Stream inspector with HDR/DV/3D badges (StreamInspectorView)
+- Output settings with profile selection (OutputSettingsView)
+- Profile management with CRUD, import/export (ProfileManagementView)
+- Encoding queue with start/pause/resume/cancel (JobQueueView)
+- Unified activity log with filtering and export (ActivityLogView)
+- Settings with General/Encoding/Paths/Notifications/About tabs (SettingsView)
+- In-app help with searchable topics (HelpView)
+- Notification delivery via UNUserNotificationCenter
+- AppViewModel as @Observable with @Environment injection
+
+### Prompt 14: Proceed with Phase 3
+
+Implemented Phase 3 (Essential Encoding & Passthrough):
+
+**Phase 3.1–3.7** (commit 569194b):
+- Video/audio/subtitle passthrough toggles in OutputSettingsView
+- Stream selection pickers for multi-stream sources
+- StreamMetadataEditorView for per-stream title, language (BCP 47), default/forced flags
+- HDR warning system with Dolby Vision / HDR10+ badges
+- Metadata passthrough: `-map_metadata 0`, `-map_chapters 0` by default
+- Stream selection and metadata wired into EncodingJobConfig
+
+**Phase 3.10, 3.14** (commit c23627c):
+- HardwareEncoderDetector: queries FFmpeg for VideoToolbox/NVENC/QSV/AMF/VA-API encoders
+- CropDetector: automatic black bar detection via cropdetect filter with confidence scoring
+
+**Phase 3.8, 3.11–3.13, 3.15, 3.16** (commit d97b8cb):
+- DoviToolWrapper: dovi_tool integration for RPU extract/inject/convert/generate
+- Container-codec compatibility matrix (supportedVideoCodecs, supportedAudioCodecs)
+- Built-in profiles expanded from 7 to 23 across 7 categories
+- Codec metadata preservation (preserveCodecMetadata) and aspect ratio override
+- EncodingProfile made Hashable for SwiftUI Picker
+
+**Phase 3.9** (commit beebd58):
+- HDR→SDR tone mapping via zscale/tonemap filter chain (5 algorithms)
+- toneMapToSDR and toneMapAlgorithm on EncodingProfile
+- Phase 3.9c auto-trigger: auto-enable tone mapping when HDR source + incompatible output
+- Container validation warnings in OutputSettingsView
+- Stream disposition support for TrueHD non-default enforcement (MP4-only)
+
+**Documentation** (commit b91d2d4):
+- help/container-codec-compatibility.md: full reference tables
+- In-app help: "Container & Codec Compatibility" topic
+- TrueHD-in-MP4 policy: allowed but non-default (MP4-family only)
+
+**GitHub Issues:**
+- #251: Metadata passthrough (updated with checkboxes)
+- #252: Chapter passthrough (updated)
+- #253: TrueHD in MP4 policy (created)
+
+### Key Decisions Made
+
+- **TrueHD in MP4**: Allowed but must NOT be default audio stream in MP4-family containers only. All other containers (MKV etc.) have no restriction. See issue #253.
+- **Metadata passthrough by default**: All source metadata copied via `-map_metadata 0` and `-map_chapters 0`. UI overrides apply on top, not replace.
+- **HDR auto-trigger**: When HDR source + incompatible output (non-HDR codec, 8-bit, non-HDR container), tone mapping auto-enabled with user notification.
+- **Environment limitation**: Linux x86_64 without Swift compiler — all code verified by review only, cannot build/test.
