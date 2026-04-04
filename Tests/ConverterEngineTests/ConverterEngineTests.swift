@@ -2324,4 +2324,338 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(result.cropPercentage, 0, accuracy: 0.01)
         XCTAssertTrue(result.summary.contains("No black bars"))
     }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.3: Encoding Reports
+    // -----------------------------------------------------------------
+
+    /// Verifies EncodingReport compression ratio calculation.
+    func test_encodingReport_compressionRatio() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 1_000_000_000, // 1 GB
+            inputDuration: 3600,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 250_000_000 // 250 MB
+        )
+        XCTAssertEqual(report.compressionRatio, 4.0, accuracy: 0.01)
+        XCTAssertEqual(report.sizeReductionPercent, 75.0, accuracy: 0.01)
+    }
+
+    /// Verifies EncodingReport plain text output.
+    func test_encodingReport_plainText() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 500_000_000,
+            inputDuration: 1800,
+            inputFormat: "matroska",
+            inputStreams: [
+                StreamReport(type: "video", codec: "h265", bitrate: 5_000_000, resolution: "1920x1080"),
+                StreamReport(type: "audio", codec: "aac", bitrate: 160_000, channels: 2),
+            ],
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 200_000_000,
+            outputFormat: "mp4",
+            profileName: "webStandard"
+        )
+        let text = report.toPlainText()
+        XCTAssertTrue(text.contains("ENCODING REPORT"))
+        XCTAssertTrue(text.contains("source.mkv"))
+        XCTAssertTrue(text.contains("output.mp4"))
+        XCTAssertTrue(text.contains("COMPRESSION"))
+        XCTAssertTrue(text.contains("webStandard"))
+    }
+
+    /// Verifies EncodingReport Markdown output.
+    func test_encodingReport_markdown() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 500_000_000,
+            inputDuration: 1800,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 200_000_000
+        )
+        let md = report.toMarkdown()
+        XCTAssertTrue(md.contains("# Encoding Report"))
+        XCTAssertTrue(md.contains("| Property | Value |"))
+        XCTAssertTrue(md.contains("Compression"))
+    }
+
+    /// Verifies EncodingReport JSON serialization.
+    func test_encodingReport_json() throws {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 100_000,
+            inputDuration: 60,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 50_000
+        )
+        let data = try report.toJSON()
+        XCTAssertFalse(data.isEmpty)
+        let str = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(str.contains("inputPath"))
+        XCTAssertTrue(str.contains("outputFileSize"))
+    }
+
+    /// Verifies EncodingPerformance formatted time.
+    func test_encodingPerformance_formattedTime() {
+        let short = EncodingPerformance(totalTime: 45)
+        XCTAssertEqual(short.formattedTime, "45s")
+
+        let medium = EncodingPerformance(totalTime: 185)
+        XCTAssertEqual(medium.formattedTime, "3m 5s")
+
+        let long = EncodingPerformance(totalTime: 7325)
+        XCTAssertEqual(long.formattedTime, "2h 2m 5s")
+    }
+
+    /// Verifies StreamReport construction.
+    func test_streamReport_construction() {
+        let stream = StreamReport(
+            type: "video",
+            codec: "h265",
+            bitrate: 5_000_000,
+            resolution: "3840x2160",
+            frameRate: 23.976
+        )
+        XCTAssertEqual(stream.type, "video")
+        XCTAssertEqual(stream.codec, "h265")
+        XCTAssertEqual(stream.bitrate, 5_000_000)
+        XCTAssertEqual(stream.resolution, "3840x2160")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.16: Content-Aware Encoding
+    // -----------------------------------------------------------------
+
+    /// Verifies content complexity CRF adjustments.
+    func test_contentComplexity_crfAdjustment() {
+        XCTAssertGreaterThan(ContentComplexity.veryLow.crfAdjustment, 0) // Less quality needed
+        XCTAssertEqual(ContentComplexity.medium.crfAdjustment, 0) // Baseline
+        XCTAssertLessThan(ContentComplexity.veryHigh.crfAdjustment, 0) // More quality needed
+    }
+
+    /// Verifies content complexity bitrate multipliers.
+    func test_contentComplexity_bitrateMultiplier() {
+        XCTAssertLessThan(ContentComplexity.veryLow.bitrateMultiplier, 1.0)
+        XCTAssertEqual(ContentComplexity.medium.bitrateMultiplier, 1.0)
+        XCTAssertGreaterThan(ContentComplexity.veryHigh.bitrateMultiplier, 1.0)
+    }
+
+    /// Verifies complexity classification from scores.
+    func test_contentAnalyzer_classifyComplexity() {
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.05, spatialComplexity: 0.05),
+            .veryLow
+        )
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.5, spatialComplexity: 0.5),
+            .medium
+        )
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.9, spatialComplexity: 0.9),
+            .veryHigh
+        )
+    }
+
+    /// Verifies CRF adjustment clamping.
+    func test_contentAnalyzer_adjustedCRF() {
+        let config = ContentAwareConfig(minCRF: 16, maxCRF: 32, baselineCRF: 22)
+
+        let simple = ContentAnalyzer.adjustedCRF(config: config, complexity: .veryLow)
+        XCTAssertEqual(simple, 26) // 22 + 4
+
+        let complex = ContentAnalyzer.adjustedCRF(config: config, complexity: .veryHigh)
+        XCTAssertEqual(complex, 18) // 22 - 4
+
+        // Test clamping
+        let extreme = ContentAwareConfig(minCRF: 20, maxCRF: 24, baselineCRF: 22)
+        XCTAssertEqual(ContentAnalyzer.adjustedCRF(config: extreme, complexity: .veryLow), 24)
+        XCTAssertEqual(ContentAnalyzer.adjustedCRF(config: extreme, complexity: .veryHigh), 20)
+    }
+
+    /// Verifies content-aware encoder arguments for H.265.
+    func test_contentAnalyzer_h265Arguments() {
+        let config = ContentAwareConfig()
+        let analysis = ContentAnalysisResult(
+            overallComplexity: .high,
+            contentType: .film
+        )
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .h265
+        )
+        XCTAssertTrue(args.contains("-crf"))
+        XCTAssertTrue(args.contains("-tune"))
+        XCTAssertTrue(args.contains("film"))
+    }
+
+    /// Verifies content-aware encoder arguments for AV1 with film grain.
+    func test_contentAnalyzer_av1FilmGrain() {
+        let config = ContentAwareConfig(filmGrainSynthesis: true)
+        let analysis = ContentAnalysisResult(
+            segments: [
+                SegmentAnalysis(startTime: 0, endTime: 10,
+                    temporalComplexity: 0.5, spatialComplexity: 0.5, hasFilmGrain: true)
+            ],
+            overallComplexity: .medium
+        )
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .av1
+        )
+        XCTAssertTrue(args.contains("-film-grain-denoise"))
+    }
+
+    /// Verifies disabled content-aware produces empty arguments.
+    func test_contentAnalyzer_disabled() {
+        let config = ContentAwareConfig(enabled: false)
+        let analysis = ContentAnalysisResult()
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .h265
+        )
+        XCTAssertTrue(args.isEmpty)
+    }
+
+    /// Verifies ContentType encoder tunes.
+    func test_contentType_encoderTune() {
+        XCTAssertEqual(ContentType.film.encoderTune, "film")
+        XCTAssertEqual(ContentType.animation.encoderTune, "animation")
+        XCTAssertEqual(ContentType.screenContent.encoderTune, "stillimage")
+        XCTAssertNil(ContentType.documentary.encoderTune)
+    }
+
+    /// Verifies ContentAnalysisResult computed properties.
+    func test_contentAnalysisResult_averages() {
+        let result = ContentAnalysisResult(
+            segments: [
+                SegmentAnalysis(startTime: 0, endTime: 5,
+                    temporalComplexity: 0.2, spatialComplexity: 0.3),
+                SegmentAnalysis(startTime: 5, endTime: 10,
+                    temporalComplexity: 0.8, spatialComplexity: 0.7),
+            ],
+            overallComplexity: .medium
+        )
+        XCTAssertEqual(result.averageTemporalComplexity, 0.5, accuracy: 0.01)
+        XCTAssertEqual(result.averageSpatialComplexity, 0.5, accuracy: 0.01)
+    }
+
+    /// Verifies analysis arguments construction.
+    func test_contentAnalyzer_analysisArguments() {
+        let args = ContentAnalyzer.buildAnalysisArguments(inputPath: "/tmp/video.mp4")
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.mp4"))
+        let vf = args.first { $0.contains("signalstats") }
+        XCTAssertNotNil(vf)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.10: Watch Folder
+    // -----------------------------------------------------------------
+
+    /// Verifies WatchFolderConfig default initialization.
+    func test_watchFolderConfig_defaults() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+        XCTAssertEqual(config.name, "Test")
+        XCTAssertEqual(config.watchPath, "/tmp/watch")
+        XCTAssertNil(config.outputPath)
+        XCTAssertEqual(config.profileName, "webStandard")
+        XCTAssertTrue(config.fileExtensions.isEmpty)
+        XCTAssertFalse(config.recursive)
+        XCTAssertEqual(config.postAction, .leaveInPlace)
+        XCTAssertEqual(config.concurrencyLimit, 1)
+        XCTAssertTrue(config.isActive)
+    }
+
+    /// Verifies effective output path defaults to sibling "output" folder.
+    func test_watchFolderConfig_effectiveOutputPath() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+        XCTAssertTrue(config.effectiveOutputPath.contains("output"))
+
+        let custom = WatchFolderConfig(
+            name: "Test", watchPath: "/tmp/watch", outputPath: "/tmp/encoded"
+        )
+        XCTAssertEqual(custom.effectiveOutputPath, "/tmp/encoded")
+    }
+
+    /// Verifies file extension filtering.
+    func test_watchFolderConfig_shouldProcess() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+
+        // Default extensions — accepts common media files
+        XCTAssertTrue(config.shouldProcess(filename: "movie.mkv"))
+        XCTAssertTrue(config.shouldProcess(filename: "audio.flac"))
+        XCTAssertTrue(config.shouldProcess(filename: "video.mp4"))
+        XCTAssertFalse(config.shouldProcess(filename: "readme.txt"))
+        XCTAssertFalse(config.shouldProcess(filename: "image.png"))
+
+        // Hidden files rejected
+        XCTAssertFalse(config.shouldProcess(filename: ".DS_Store"))
+        XCTAssertFalse(config.shouldProcess(filename: ".hidden.mp4"))
+
+        // System files rejected
+        XCTAssertFalse(config.shouldProcess(filename: "Thumbs.db"))
+        XCTAssertFalse(config.shouldProcess(filename: "desktop.ini"))
+    }
+
+    /// Verifies custom extension filtering.
+    func test_watchFolderConfig_customExtensions() {
+        let config = WatchFolderConfig(
+            name: "Test", watchPath: "/tmp/watch",
+            fileExtensions: ["mkv", "avi"]
+        )
+        XCTAssertTrue(config.shouldProcess(filename: "movie.mkv"))
+        XCTAssertTrue(config.shouldProcess(filename: "movie.avi"))
+        XCTAssertFalse(config.shouldProcess(filename: "movie.mp4"))
+    }
+
+    /// Verifies PostProcessingAction raw values.
+    func test_postProcessingAction_rawValues() {
+        XCTAssertEqual(PostProcessingAction.leaveInPlace.rawValue, "leave")
+        XCTAssertEqual(PostProcessingAction.moveToCompleted.rawValue, "move")
+        XCTAssertEqual(PostProcessingAction.deleteSource.rawValue, "delete")
+    }
+
+    /// Verifies output path generation.
+    func test_fileStabilityChecker_outputPath() {
+        let config = WatchFolderConfig(
+            name: "Test",
+            watchPath: "/tmp/watch",
+            outputPath: "/tmp/output"
+        )
+        let path = FileStabilityChecker.outputPath(
+            for: "/tmp/watch/movie.mkv",
+            config: config,
+            outputExtension: "mp4"
+        )
+        XCTAssertTrue(path.contains("movie.mp4"))
+        XCTAssertTrue(path.contains("/tmp/output"))
+    }
+
+    /// Verifies WatchFolderConfig JSON round-trip.
+    func test_watchFolderStore_roundTrip() throws {
+        let configs = [
+            WatchFolderConfig(name: "Folder 1", watchPath: "/tmp/w1"),
+            WatchFolderConfig(name: "Folder 2", watchPath: "/tmp/w2", recursive: true),
+        ]
+        let data = try WatchFolderStore.encode(configs: configs)
+        let decoded = try WatchFolderStore.decode(from: data)
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertEqual(decoded[0].name, "Folder 1")
+        XCTAssertEqual(decoded[1].recursive, true)
+    }
+
+    /// Verifies WatchFolderStatus construction.
+    func test_watchFolderStatus_construction() {
+        let status = WatchFolderStatus(
+            configId: "abc",
+            isMonitoring: true,
+            filesProcessed: 5,
+            filesQueued: 2,
+            filesFailed: 1
+        )
+        XCTAssertEqual(status.configId, "abc")
+        XCTAssertTrue(status.isMonitoring)
+        XCTAssertEqual(status.filesProcessed, 5)
+        XCTAssertEqual(status.filesQueued, 2)
+        XCTAssertEqual(status.filesFailed, 1)
+    }
 }
