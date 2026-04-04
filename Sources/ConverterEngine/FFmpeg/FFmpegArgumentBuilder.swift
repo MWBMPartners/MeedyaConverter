@@ -122,6 +122,25 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Uses a zscale filter chain: PQ input → linear → HLG output, keeping BT.2020 colour.
     public var convertPQToHLG: Bool = false
 
+    // MARK: - HDR Metadata Injection (Issue #43, #245)
+
+    /// Whether to inject HDR10 static metadata into the output stream.
+    /// When true and the source has MDCV/CLL metadata, these are signalled in the
+    /// output via codec-specific parameters (-x265-params for HEVC, side data for AV1).
+    public var preserveHDRMetadata: Bool = true
+
+    /// Mastering display colour volume: display primaries as G(x,y)B(x,y)R(x,y)WP(x,y)
+    /// in CIE 1931 coordinates multiplied by 50000 (SMPTE ST 2086).
+    /// Format: "G(gx,gy)B(bx,by)R(rx,ry)WP(wpx,wpy)L(max,min)"
+    /// Example: "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
+    public var masteringDisplay: String?
+
+    /// Maximum Content Light Level in nits (MaxCLL).
+    public var maxCLL: Int?
+
+    /// Maximum Frame-Average Light Level in nits (MaxFALL).
+    public var maxFALL: Int?
+
     /// Whether to use hardware encoding (VideoToolbox on macOS).
     public var useHardwareEncoding: Bool = false
 
@@ -164,6 +183,16 @@ public struct FFmpegArgumentBuilder: Sendable {
 
     /// Whether to disable all subtitle streams in output.
     public var disableSubtitles: Bool = false
+
+    // MARK: - Per-Stream Audio Settings (Phase 3.2 / Issue #38)
+
+    /// Per-stream audio codec overrides, keyed by output audio stream index.
+    /// When set, these take precedence over the global `audioCodec` for the
+    /// corresponding stream. Enables multi-codec audio output (e.g., AAC default + TrueHD).
+    public var perStreamAudioCodec: [Int: AudioCodec] = [:]
+
+    /// Per-stream audio bitrate overrides.
+    public var perStreamAudioBitrate: [Int: Int] = [:]
 
     // MARK: - Stream Selection
 
@@ -543,6 +572,13 @@ public struct FFmpegArgumentBuilder: Sendable {
             args.append(contentsOf: ["-keyint_min", "\(gopSize)"])
         }
 
+        // HDR10 metadata injection (Phase 3.7 / Issue #43, #245)
+        // When preserving HDR and the source has mastering display / content light level
+        // metadata, inject it into the output via codec-specific mechanisms.
+        if preserveHDRMetadata && !toneMap && !convertPQToHLG {
+            args.append(contentsOf: buildHDR10MetadataArguments(codec: codec))
+        }
+
         // Two-pass encoding
         if encodingPasses == 2 {
             args.append(contentsOf: ["-pass", "\(currentPass ?? 1)"])
@@ -558,7 +594,84 @@ public struct FFmpegArgumentBuilder: Sendable {
         return args
     }
 
+    /// Build HDR10 static metadata injection arguments.
+    ///
+    /// For HEVC (x265): uses `-x265-params` to set mastering display and CLL.
+    /// For AV1 (SVT-AV1): uses `--enable-hdr` and related parameters.
+    /// For other codecs: uses FFmpeg's generic `-master_display` and `-max_muxing_queue_size`.
+    ///
+    /// HDR10 requires:
+    /// - Colour primaries: BT.2020
+    /// - Transfer characteristics: SMPTE ST 2084 (PQ)
+    /// - Matrix coefficients: BT.2020 NCL
+    /// - Mastering Display Colour Volume (MDCV) — SMPTE ST 2086
+    /// - Content Light Level (CLL) — MaxCLL + MaxFALL
+    private func buildHDR10MetadataArguments(codec: VideoCodec) -> [String] {
+        var args: [String] = []
+
+        // Colour signalling — always needed for HDR output
+        args.append(contentsOf: ["-color_primaries", "bt2020"])
+        args.append(contentsOf: ["-color_trc", "smpte2084"])
+        args.append(contentsOf: ["-colorspace", "bt2020nc"])
+
+        let hasMDCV = masteringDisplay != nil
+        let hasCLL = maxCLL != nil || maxFALL != nil
+        guard hasMDCV || hasCLL else { return args }
+
+        switch codec {
+        case .h265:
+            // x265 uses its own parameter syntax for HDR10 metadata
+            var x265Params: [String] = []
+
+            // Always signal HDR10 mode
+            x265Params.append("hdr10-opt=1")
+            x265Params.append("repeat-headers=1")
+
+            if let md = masteringDisplay {
+                // x265 format: G(gx,gy)B(bx,by)R(rx,ry)WP(wpx,wpy)L(max,min)
+                x265Params.append("master-display=\(md)")
+            }
+
+            if let cll = maxCLL, let fall = maxFALL {
+                x265Params.append("max-cll=\(cll),\(fall)")
+            } else if let cll = maxCLL {
+                x265Params.append("max-cll=\(cll),0")
+            }
+
+            if !x265Params.isEmpty {
+                args.append(contentsOf: ["-x265-params", x265Params.joined(separator: ":")])
+            }
+
+        case .av1:
+            // SVT-AV1 uses --enable-hdr and chroma-sample-position
+            // Metadata is passed via FFmpeg side data
+            if let md = masteringDisplay {
+                args.append(contentsOf: ["-master_display", md])
+            }
+            if let cll = maxCLL, let fall = maxFALL {
+                args.append(contentsOf: ["-max_muxing_queue_size", "9999"])
+                args.append(contentsOf: ["-content_light", "\(cll),\(fall)"])
+            }
+
+        default:
+            // Generic FFmpeg metadata for other codecs (VP9, etc.)
+            if let md = masteringDisplay {
+                args.append(contentsOf: ["-master_display", md])
+            }
+            if let cll = maxCLL, let fall = maxFALL {
+                args.append(contentsOf: ["-content_light", "\(cll),\(fall)"])
+            }
+        }
+
+        return args
+    }
+
     /// Build audio codec and quality arguments.
+    ///
+    /// Supports two modes:
+    /// 1. **Global**: Single audio codec for all streams (default).
+    /// 2. **Per-stream**: Different codecs per output audio stream via `perStreamAudioCodec`.
+    ///    Used for multi-codec scenarios like TrueHD + AAC fallback in MP4.
     private func buildAudioArguments() -> [String] {
         var args: [String] = []
 
@@ -567,6 +680,22 @@ public struct FFmpegArgumentBuilder: Sendable {
             return ["-an"]
         }
 
+        // Per-stream audio codec overrides
+        if !perStreamAudioCodec.isEmpty {
+            for (index, codec) in perStreamAudioCodec.sorted(by: { $0.key < $1.key }) {
+                if let encoderName = codec.ffmpegEncoder {
+                    args.append(contentsOf: ["-c:a:\(index)", encoderName])
+                } else {
+                    args.append(contentsOf: ["-c:a:\(index)", "copy"])
+                }
+                if let br = perStreamAudioBitrate[index] {
+                    args.append(contentsOf: ["-b:a:\(index)", formatBitrate(br)])
+                }
+            }
+            return args
+        }
+
+        // Global audio settings
         if audioPassthrough {
             args.append(contentsOf: ["-c:a", "copy"])
             return args

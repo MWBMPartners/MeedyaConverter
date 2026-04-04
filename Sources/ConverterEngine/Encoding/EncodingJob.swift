@@ -77,6 +77,24 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// Extra FFmpeg arguments for advanced use.
     public var extraArguments: [String]
 
+    // MARK: - HDR Metadata (injected by EncodingEngine from probe result)
+
+    /// HDR10 mastering display string for x265/AV1 metadata injection.
+    /// Set by EncodingEngine after probing the source.
+    public var hdrMasteringDisplay: String?
+
+    /// Maximum Content Light Level in nits (from source probe).
+    public var hdrMaxCLL: Int?
+
+    /// Maximum Frame-Average Light Level in nits (from source probe).
+    public var hdrMaxFALL: Int?
+
+    /// Mastering display maximum luminance in nits (from source probe).
+    public var hdrMasteringDisplayMaxLuminance: Int?
+
+    /// Mastering display minimum luminance in nits (from source probe).
+    public var hdrMasteringDisplayMinLuminance: Int?
+
     /// Timestamp when this job was created.
     public var createdAt: Date
 
@@ -137,6 +155,11 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         if let af = audioFilterChain {
             builder.audioFilterChain = af
         }
+
+        // Apply HDR metadata from source probe
+        builder.masteringDisplay = hdrMasteringDisplay
+        builder.maxCLL = hdrMaxCLL
+        builder.maxFALL = hdrMaxFALL
 
         // Apply extra arguments
         builder.extraArguments = extraArguments

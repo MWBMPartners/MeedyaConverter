@@ -271,8 +271,33 @@ public final class EncodingEngine: @unchecked Sendable {
             try? FileManager.default.removeItem(at: hevcES)
         }
 
+        // Inject HDR10 metadata from source into the job's argument builder
+        // This ensures MDCV/CLL metadata is carried through to the output when
+        // re-encoding HDR content (Phase 3.7 / Issue #43, #245).
+        var enrichedJob = job
+        if let sourceInfo,
+           let video = sourceInfo.primaryVideoStream,
+           !job.profile.videoPassthrough,
+           job.profile.preserveHDR,
+           !job.profile.toneMapToSDR {
+            if let cp = video.colourProperties {
+                enrichedJob.hdrMaxCLL = cp.maxCLL
+                enrichedJob.hdrMaxFALL = cp.maxFALL
+                enrichedJob.hdrMasteringDisplayMaxLuminance = cp.masteringDisplayMaxLuminance
+                enrichedJob.hdrMasteringDisplayMinLuminance = cp.masteringDisplayMinLuminance
+                // Build MDCV string if we have luminance data
+                // Format for x265: G(gx,gy)B(bx,by)R(rx,ry)WP(wpx,wpy)L(max,min)
+                // Default BT.2020 primaries with DCI-P3 white point
+                if let maxLum = cp.masteringDisplayMaxLuminance,
+                   let minLum = cp.masteringDisplayMinLuminance {
+                    enrichedJob.hdrMasteringDisplay =
+                        "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(\(maxLum * 10000),\(minLum))"
+                }
+            }
+        }
+
         // Build FFmpeg arguments
-        let arguments = job.buildArguments()
+        let arguments = enrichedJob.buildArguments()
 
         // Handle multipass encoding
         if job.profile.encodingPasses == 2 {
