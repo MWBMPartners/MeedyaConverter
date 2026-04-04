@@ -96,6 +96,11 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// When false or hlg-tools unavailable, falls back to FFmpeg zscale filter.
     public var useHlgTools: Bool
 
+    /// Whether to convert PQ (HDR10) to Dolby Vision Profile 8.4 + HLG.
+    /// Chains PQ→HLG conversion with DV RPU generation for three-tier playback:
+    /// Dolby Vision → HLG → SDR fallback from a single stream.
+    public var convertPQToDVHLG: Bool
+
     // MARK: - Audio Settings
 
     /// The audio codec for encoding.
@@ -158,6 +163,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         toneMapAlgorithm: String? = nil,
         convertPQToHLG: Bool = false,
         useHlgTools: Bool = false,
+        convertPQToDVHLG: Bool = false,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
@@ -192,6 +198,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.toneMapAlgorithm = toneMapAlgorithm
         self.convertPQToHLG = convertPQToHLG
         self.useHlgTools = useHlgTools
+        self.convertPQToDVHLG = convertPQToDVHLG
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
@@ -201,6 +208,13 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
         self.videoBufferSize = videoBufferSize
+    }
+
+    // MARK: - Computed Properties
+
+    /// The preferred file extension for the output container format.
+    public var preferredExtension: String {
+        containerFormat.fileExtensions.first ?? "mkv"
     }
 
     // MARK: - Argument Builder Conversion
@@ -310,6 +324,7 @@ extension EncodingProfile {
         .fourKHDRCompact,
         .hdrToSDR,
         .pqToHLG,
+        .pqToDVHLG,
 
         // Passthrough / Remux
         .remuxToMKV,
@@ -479,6 +494,26 @@ extension EncodingProfile {
         audioCodec: .eac3,
         audioBitrate: 448_000,
         audioChannels: 6,
+        containerFormat: .mkv
+    )
+
+    /// PQ → DV+HLG — convert PQ to Dolby Vision Profile 8.4 + HLG for maximum compatibility.
+    /// Three-tier playback: Dolby Vision → HLG → SDR from a single stream.
+    public static let pqToDVHLG = EncodingProfile(
+        name: "PQ → DV+HLG (Max Compat)",
+        description: "Convert PQ/HDR10 to DV Profile 8.4 + HLG — three-tier playback in MKV",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: 18,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
+        convertPQToHLG: true,
+        convertPQToDVHLG: true,
+        audioCodec: .eac3,
+        audioBitrate: 640_000,
+        audioChannels: 8,
         containerFormat: .mkv
     )
 

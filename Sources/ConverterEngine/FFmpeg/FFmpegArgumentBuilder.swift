@@ -314,6 +314,9 @@ public struct FFmpegArgumentBuilder: Sendable {
             args.append(contentsOf: ["-f", ffmpegFormatName(for: format)])
         }
 
+        // --- Container-specific muxing flags ---
+        args.append(contentsOf: buildContainerFlags())
+
         // --- Extra arguments ---
         args.append(contentsOf: extraArguments)
 
@@ -667,5 +670,171 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Delegates to ContainerFormat.ffmpegFormatName to avoid duplication.
     private func ffmpegFormatName(for container: ContainerFormat) -> String {
         container.ffmpegFormatName
+    }
+
+    // MARK: - Container-Specific Flags (Phase 3.11)
+
+    /// Build container-specific muxing flags.
+    ///
+    /// Different containers require special FFmpeg muxer options:
+    /// - MP4/M4V/MOV: `-movflags +faststart` moves the moov atom to the front
+    ///   for progressive web playback (no need to download entire file first).
+    /// - MPEG-TS: PCR and PAT/PMT intervals for broadcast compliance.
+    /// - MKV: cluster size hint for better seeking.
+    private func buildContainerFlags() -> [String] {
+        let format = resolveContainerFormat()
+        guard let format else { return [] }
+
+        var args: [String] = []
+
+        switch format {
+        case .mp4, .m4v, .m4a, .m4b, .m4p, .mov:
+            // Move moov atom to start for progressive download / web streaming.
+            // Without this, players must download the entire file before playback.
+            args.append(contentsOf: ["-movflags", "+faststart"])
+
+        case .mpegTS:
+            // Set PAT/PMT period for broadcast compliance and better random access.
+            args.append(contentsOf: ["-mpegts_flags", "+resend_headers"])
+
+        default:
+            break
+        }
+
+        return args
+    }
+
+    /// Resolve the effective container format from explicit setting or output extension.
+    private func resolveContainerFormat() -> ContainerFormat? {
+        if let format = containerFormat { return format }
+        guard let ext = outputURL?.pathExtension else { return nil }
+        return ContainerFormat.from(fileExtension: ext)
+    }
+
+    // MARK: - HLG Metadata Preservation (Issue #245)
+
+    /// Build FFmpeg arguments to preserve HLG HDR metadata in the output.
+    ///
+    /// When the source has HLG transfer characteristics and the output codec/container
+    /// supports HDR, these arguments ensure the colour metadata is correctly signalled:
+    /// - colour_primaries=9 (BT.2020)
+    /// - transfer_characteristics=18 (ARIB STD-B67 / HLG)
+    /// - matrix_coefficients=9 (BT.2020 non-constant luminance)
+    ///
+    /// Call this method and append the result when encoding HLG content without
+    /// tone mapping or transfer function conversion.
+    public func buildHLGPreservationArguments() -> [String] {
+        guard !toneMap, !convertPQToHLG, !videoPassthrough else { return [] }
+        return [
+            "-color_primaries", "bt2020",
+            "-color_trc", "arib-std-b67",
+            "-colorspace", "bt2020nc",
+        ]
+    }
+
+    /// Build FFmpeg arguments to preserve HDR10/PQ metadata in the output.
+    public func buildPQPreservationArguments() -> [String] {
+        guard !toneMap, !convertPQToHLG, !videoPassthrough else { return [] }
+        return [
+            "-color_primaries", "bt2020",
+            "-color_trc", "smpte2084",
+            "-colorspace", "bt2020nc",
+        ]
+    }
+
+    // MARK: - TrueHD Disposition Enforcement (Issue #253)
+
+    /// Automatically set stream dispositions when TrueHD is used in MP4-family containers.
+    ///
+    /// When TrueHD audio is present in an MP4 output, it MUST NOT be the default stream.
+    /// A compatible fallback codec (AAC, AC-3, E-AC-3) must be present and set as default.
+    ///
+    /// - Parameters:
+    ///   - audioStreams: The audio streams being included in the output.
+    ///   - container: The target container format.
+    /// - Returns: Disposition arguments to append.
+    public static func buildTrueHDDispositionArguments(
+        audioStreams: [(index: Int, codec: AudioCodec)],
+        container: ContainerFormat
+    ) -> [String] {
+        guard container.requiresNonDefault(.trueHD) else { return [] }
+
+        let hasTrueHD = audioStreams.contains { $0.codec == .trueHD }
+        guard hasTrueHD else { return [] }
+
+        var args: [String] = []
+        var defaultSet = false
+
+        for stream in audioStreams {
+            let spec = "a:\(stream.index)"
+            if stream.codec == .trueHD {
+                // TrueHD must not be default in MP4
+                args.append(contentsOf: ["-disposition:\(spec)", "0"])
+            } else if !defaultSet {
+                // First non-TrueHD stream becomes the default
+                args.append(contentsOf: ["-disposition:\(spec)", "default"])
+                defaultSet = true
+            }
+        }
+
+        return args
+    }
+
+    // MARK: - PCM Format Selection (Issue #49)
+
+    /// Map a PCM bit depth to the appropriate FFmpeg PCM encoder name.
+    ///
+    /// - Parameter bitDepth: The desired bit depth (16, 24, 32, or 64).
+    /// - Parameter floatingPoint: Whether to use floating-point PCM.
+    /// - Returns: The FFmpeg encoder name string.
+    public static func pcmEncoderName(bitDepth: Int = 16, floatingPoint: Bool = false) -> String {
+        if floatingPoint {
+            switch bitDepth {
+            case 64: return "pcm_f64le"
+            default: return "pcm_f32le"
+            }
+        }
+        switch bitDepth {
+        case 24: return "pcm_s24le"
+        case 32: return "pcm_s32le"
+        default: return "pcm_s16le"
+        }
+    }
+
+    // MARK: - ProRes Profile Selection (Issue #48)
+
+    /// Map a ProRes profile name to the FFmpeg -profile:v value.
+    ///
+    /// ProRes profiles from lowest to highest quality:
+    /// - Proxy (0): Offline editing, ~45 Mbps at 1080p
+    /// - LT (1): Light editing, ~100 Mbps at 1080p
+    /// - Standard (2): Standard quality, ~150 Mbps at 1080p
+    /// - HQ (3): High quality mastering, ~220 Mbps at 1080p
+    /// - 4444 (4): Highest quality with alpha channel support
+    /// - 4444 XQ (5): Extended quality 4444 with higher data rate
+    public static func proresProfileValue(for profileName: String) -> Int? {
+        switch profileName.lowercased() {
+        case "proxy": return 0
+        case "lt": return 1
+        case "standard": return 2
+        case "hq": return 3
+        case "4444": return 4
+        case "4444xq", "4444 xq": return 5
+        default: return nil
+        }
+    }
+
+    // MARK: - DNxHR Profile Selection (Issue #48)
+
+    /// Map a DNxHR profile name to the FFmpeg -profile:v value.
+    public static func dnxhrProfileValue(for profileName: String) -> String? {
+        switch profileName.lowercased() {
+        case "lb": return "dnxhr_lb"
+        case "sq": return "dnxhr_sq"
+        case "hq": return "dnxhr_hq"
+        case "hqx": return "dnxhr_hqx"
+        case "444": return "dnxhr_444"
+        default: return nil
+        }
     }
 }

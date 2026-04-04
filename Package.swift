@@ -115,7 +115,7 @@ let package = Package(
         // and the `ParsableCommand` protocol used by `meedya-convert`.
         // Repository : https://github.com/apple/swift-argument-parser.git
         // Pin        : ~> 1.5.0
-        // .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
 
         // -- swift-log ----------------------------------------------------
         // Apple's structured logging facade. All subsystems log through
@@ -260,8 +260,7 @@ let package = Package(
             name: "meedya-convert",
             dependencies: [
                 "ConverterEngine",
-                // Uncomment when swift-argument-parser is integrated:
-                // .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/meedya-convert",
             swiftSettings: [
