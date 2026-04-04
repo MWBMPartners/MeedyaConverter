@@ -302,17 +302,55 @@ struct OutputSettingsView: View {
                         .foregroundStyle(.cyan)
                 }
 
+                // DV+HLG combined option (Issue #255)
+                if viewModel.selectedProfile.videoCodec == .h265,
+                   viewModel.selectedProfile.containerFormat.supportsDolbyVision {
+                    Toggle("Add Dolby Vision Profile 8.4 (DV + HLG + SDR fallback)", isOn: $vm.selectedProfile.convertPQToDVHLG)
+                        .accessibilityLabel("Generate Dolby Vision metadata for three-tier compatibility")
+
+                    if viewModel.selectedProfile.convertPQToDVHLG {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.purple)
+                            Text("Three-tier output: Dolby Vision → HLG → SDR fallback")
+                                .font(.caption)
+                                .foregroundStyle(.purple)
+                        }
+
+                        if !viewModel.engine.doviTool.isAvailable {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundStyle(.orange)
+                                Text("dovi_tool not found — DV metadata will be skipped, HLG output only.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+
                 if viewModel.engine.isHlgToolsAvailable {
-                    Toggle("Use hlg-tools for higher quality", isOn: $vm.selectedProfile.useHlgTools)
-                        .font(.caption)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Using hlg-tools for higher quality PQ→HLG conversion")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
 
                     if let version = viewModel.engine.hlgToolsVersion {
                         Text("hlg-tools \(version) detected")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+
+                    Toggle("Force FFmpeg zscale filter instead", isOn: Binding(
+                        get: { !vm.selectedProfile.useHlgTools },
+                        set: { vm.selectedProfile.useHlgTools = !$0 }
+                    ))
+                    .font(.caption)
                 } else {
-                    Text("Using FFmpeg zscale filter for conversion. Install hlg-tools for optional higher quality.")
+                    Text("Using FFmpeg zscale filter. Install hlg-tools (github.com/wswartzendruber/hlg-tools) for higher quality.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

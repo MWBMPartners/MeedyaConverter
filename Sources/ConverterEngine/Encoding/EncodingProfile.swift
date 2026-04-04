@@ -91,10 +91,18 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// When true, a zscale filter chain converts PQ→HLG while maintaining BT.2020 colour.
     public var convertPQToHLG: Bool
 
-    /// Whether to use external hlg-tools (pq2hlg) for PQ→HLG conversion.
-    /// When true and hlg-tools is available, uses the external binary for higher quality.
-    /// When false or hlg-tools unavailable, falls back to FFmpeg zscale filter.
+    /// Whether to prefer external hlg-tools (pq2hlg) for PQ→HLG conversion.
+    /// Enabled by default — hlg-tools provides higher quality conversion than FFmpeg's
+    /// zscale filter. When hlg-tools is not installed, automatically falls back to zscale.
+    /// Set to false to force FFmpeg zscale even when hlg-tools is available.
     public var useHlgTools: Bool
+
+    /// Whether to convert PQ HDR to Dolby Vision Profile 8.4 + HLG combined output.
+    /// Chains PQ→HLG conversion with HLG→DV Profile 8.4 RPU generation via dovi_tool.
+    /// Produces a three-tier compatible stream: DV → HLG → SDR fallback.
+    /// Requires dovi_tool, HEVC codec, and a DV-capable container. Falls back to
+    /// PQ→HLG only when dovi_tool is unavailable or container doesn't support DV.
+    public var convertPQToDVHLG: Bool
 
     // MARK: - Audio Settings
 
@@ -157,7 +165,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         toneMapToSDR: Bool = false,
         toneMapAlgorithm: String? = nil,
         convertPQToHLG: Bool = false,
-        useHlgTools: Bool = false,
+        useHlgTools: Bool = true,
+        convertPQToDVHLG: Bool = false,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
@@ -192,6 +201,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.toneMapAlgorithm = toneMapAlgorithm
         self.convertPQToHLG = convertPQToHLG
         self.useHlgTools = useHlgTools
+        self.convertPQToDVHLG = convertPQToDVHLG
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
@@ -310,6 +320,7 @@ extension EncodingProfile {
         .fourKHDRCompact,
         .hdrToSDR,
         .pqToHLG,
+        .pqToDVHLG,
 
         // Passthrough / Remux
         .remuxToMKV,
@@ -479,6 +490,26 @@ extension EncodingProfile {
         audioCodec: .eac3,
         audioBitrate: 448_000,
         audioChannels: 6,
+        containerFormat: .mkv
+    )
+
+    /// PQ → DV+HLG — convert PQ to Dolby Vision Profile 8.4 with HLG base layer.
+    /// Three-tier compatibility: DV → HLG → SDR fallback from a single stream.
+    public static let pqToDVHLG = EncodingProfile(
+        name: "PQ → DV+HLG (Max Compat)",
+        description: "Convert PQ/HDR10 to Dolby Vision Profile 8.4 + HLG — three-tier playback compatibility",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: 18,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
+        convertPQToHLG: true,
+        convertPQToDVHLG: true,
+        audioCodec: .eac3,
+        audioBitrate: 640_000,
+        audioChannels: 8,
         containerFormat: .mkv
     )
 
@@ -831,6 +862,7 @@ public final class EncodingProfileStore: @unchecked Sendable {
             toneMapAlgorithm: profile.toneMapAlgorithm,
             convertPQToHLG: profile.convertPQToHLG,
             useHlgTools: profile.useHlgTools,
+            convertPQToDVHLG: profile.convertPQToDVHLG,
             audioCodec: profile.audioCodec,
             audioPassthrough: profile.audioPassthrough,
             audioBitrate: profile.audioBitrate,

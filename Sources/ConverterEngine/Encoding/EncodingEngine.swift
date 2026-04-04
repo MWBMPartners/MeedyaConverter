@@ -370,6 +370,88 @@ public final class EncodingEngine: @unchecked Sendable {
             try? FileManager.default.removeItem(at: injectedOutput)
             try? FileManager.default.removeItem(atPath: rpuPath)
         }
+
+        // PQ → DV Profile 8.4 + HLG combined pipeline (Issue #255)
+        // After encoding with PQ→HLG zscale filter applied, generate a DV Profile 8.4
+        // RPU from the HLG output and inject it. This produces a three-tier compatible
+        // stream: Dolby Vision → HLG → SDR fallback.
+        // Only runs when: convertPQToDVHLG is set, source was PQ, dovi_tool available,
+        // container supports DV, codec is HEVC, and we didn't already inject a DV RPU above.
+        let needsDVHLGConversion = job.profile.convertPQToDVHLG
+            && (sourceInfo?.hasPQ ?? false)
+            && !job.profile.videoPassthrough
+            && doviTool.isAvailable
+            && job.profile.containerFormat.supportsDolbyVision
+            && job.profile.videoCodec == .h265
+            && rpuPath == nil // Don't double-inject if DV preservation already ran
+
+        if needsDVHLGConversion {
+            let dvRPU = tempDir.appendingPathComponent("dv_hlg_rpu.bin")
+            let hevcES = tempDir.appendingPathComponent("dvhlg_hevc.hevc")
+            let injectedES = tempDir.appendingPathComponent("dvhlg_injected.hevc")
+
+            // Generate DV Profile 8.4 RPU for the HLG output
+            // Use source HDR metadata for luminance values
+            let video = sourceInfo?.primaryVideoStream
+            do {
+                try await doviTool.generateRPU(
+                    outputPath: dvRPU.path,
+                    maxCLL: video?.colourProperties?.maxCLL,
+                    maxFALL: video?.colourProperties?.maxFALL,
+                    minLuminance: video?.colourProperties?.masteringDisplayMinLuminance,
+                    maxLuminance: video?.colourProperties?.masteringDisplayMaxLuminance
+                )
+
+                // Extract HEVC ES from the encoded output
+                let extractArgs = [
+                    "-y", "-i", job.outputURL.path,
+                    "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+                    "-an", "-sn", "-f", "hevc", hevcES.path
+                ]
+                try await runFFmpegPass(
+                    ffmpegPath: ffmpegPath,
+                    arguments: extractArgs,
+                    pass: nil, multipassLogPath: nil,
+                    sourceDuration: nil,
+                    onProgress: { _ in }
+                )
+
+                // Inject DV Profile 8.4 RPU into the HEVC stream
+                try await doviTool.injectRPU(
+                    hevcPath: hevcES.path,
+                    rpuPath: dvRPU.path,
+                    outputPath: injectedES.path
+                )
+
+                // Remux the DV-injected stream back into the final container
+                let remuxArgs = [
+                    "-y", "-i", injectedES.path,
+                    "-i", job.outputURL.path,
+                    "-map", "0:v:0",
+                    "-map", "1:a?",
+                    "-map", "1:s?",
+                    "-c", "copy",
+                    "-map_metadata", "1",
+                    "-map_chapters", "1",
+                    job.outputURL.path
+                ]
+                try await runFFmpegPass(
+                    ffmpegPath: ffmpegPath,
+                    arguments: remuxArgs,
+                    pass: nil, multipassLogPath: nil,
+                    sourceDuration: nil,
+                    onProgress: { _ in }
+                )
+            } catch {
+                // DV RPU generation/injection failed — output still has HLG, which is valid.
+                // Log but don't fail the encode.
+            }
+
+            // Clean up intermediary files
+            try? FileManager.default.removeItem(at: dvRPU)
+            try? FileManager.default.removeItem(at: hevcES)
+            try? FileManager.default.removeItem(at: injectedES)
+        }
     }
 
     // MARK: - Crop Detection

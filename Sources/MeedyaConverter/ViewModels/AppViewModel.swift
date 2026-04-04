@@ -288,9 +288,24 @@ final class AppViewModel {
         guard !selectedProfile.videoPassthrough else { return }
 
         if engine.isHlgToolsAvailable && selectedProfile.useHlgTools {
-            appendLog(.info, "PQ→HLG conversion will use hlg-tools (higher quality)", category: .hdr)
+            appendLog(.info, "PQ→HLG: Using hlg-tools for higher quality conversion", category: .hdr)
+        } else if engine.isHlgToolsAvailable && !selectedProfile.useHlgTools {
+            appendLog(.info, "PQ→HLG: hlg-tools available but FFmpeg zscale forced by user", category: .hdr)
         } else {
-            appendLog(.info, "PQ→HLG conversion will use FFmpeg zscale filter", category: .hdr)
+            appendLog(.info, "PQ→HLG: Using FFmpeg zscale filter (install hlg-tools for higher quality)", category: .hdr)
+        }
+
+        // Log DV+HLG combined pipeline status (Issue #255)
+        if selectedProfile.convertPQToDVHLG {
+            if engine.doviTool.isAvailable
+                && selectedProfile.containerFormat.supportsDolbyVision
+                && selectedProfile.videoCodec == .h265 {
+                appendLog(.info, "PQ→DV+HLG: Will generate Dolby Vision Profile 8.4 RPU for three-tier compatibility (DV→HLG→SDR)", category: .hdr)
+            } else if !engine.doviTool.isAvailable {
+                appendLog(.warning, "PQ→DV+HLG: dovi_tool not available — will produce HLG-only output", category: .hdr)
+            } else {
+                appendLog(.warning, "PQ→DV+HLG: Container or codec does not support Dolby Vision — will produce HLG-only output", category: .hdr)
+            }
         }
     }
 
