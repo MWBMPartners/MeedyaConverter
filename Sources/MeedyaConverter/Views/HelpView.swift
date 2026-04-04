@@ -215,7 +215,7 @@ private let helpTopics: [HelpTopic] = [
             ),
             HelpSection(
                 heading: "TrueHD in MP4",
-                body: "Dolby TrueHD is not part of the official MP4 specification, but is widely supported by major players (Plex, Jellyfin, VLC, MPC-HC, Infuse). MeedyaConverter allows TrueHD in MP4 with one important rule:\n\nTrueHD must NOT be the default audio stream. A fully compatible codec (AAC, AC-3, or E-AC-3) must also be present and set as default. This ensures universal playback — players that support TrueHD will select it automatically, while others use the compatible fallback."
+                body: "Dolby TrueHD is not part of the official MP4 specification, but is widely supported by major players (Plex, Jellyfin, VLC, MPC-HC, Infuse). MeedyaConverter allows TrueHD in MP4 with one important rule:\n\nIn MP4 containers only: TrueHD must NOT be the default audio stream. A fully compatible codec (AAC, AC-3, or E-AC-3) must also be present and set as default. This ensures universal playback.\n\nThis restriction applies only to MP4-family containers. In MKV and all other containers where TrueHD is officially supported, it can be set as the default audio stream with no restrictions."
             ),
             HelpSection(
                 heading: "HDR & Dolby Vision",

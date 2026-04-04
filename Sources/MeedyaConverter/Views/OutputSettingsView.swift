@@ -92,6 +92,21 @@ struct OutputSettingsView: View {
                 }
             }
 
+            // Compatibility warnings
+            if !compatibilityWarnings.isEmpty {
+                Section("Compatibility") {
+                    ForEach(compatibilityWarnings, id: \.self) { warning in
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(warning)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+
             // Output destination
             Section("Output") {
                 outputDirectoryPicker
@@ -411,6 +426,46 @@ struct OutputSettingsView: View {
         // Map all streams toggle
         Toggle("Map all streams to output", isOn: $vm.mapAllStreams)
             .accessibilityLabel("Include all streams from source in output")
+    }
+
+    // MARK: - Compatibility Validation
+
+    /// Computed warnings for incompatible codec/container combinations.
+    private var compatibilityWarnings: [String] {
+        let profile = viewModel.selectedProfile
+        var warnings: [String] = []
+
+        // Video codec vs container
+        if !profile.videoPassthrough, let codec = profile.videoCodec {
+            if !profile.containerFormat.supportsVideoCodec(codec) {
+                warnings.append("\(codec.displayName) is not compatible with \(profile.containerFormat.displayName). Choose a different container or codec.")
+            }
+        }
+
+        // Audio codec vs container
+        if !profile.audioPassthrough, let codec = profile.audioCodec {
+            if !profile.containerFormat.supportsAudioCodec(codec) {
+                warnings.append("\(codec.displayName) is not compatible with \(profile.containerFormat.displayName). Choose a different container or audio codec.")
+            }
+
+            // TrueHD non-default warning (MP4 only)
+            if profile.containerFormat.requiresNonDefault(codec) {
+                warnings.append("\(codec.displayName) in \(profile.containerFormat.displayName) must not be the default audio stream. A compatible fallback (AAC, AC-3, or E-AC-3) is required.")
+            }
+        }
+
+        // Chapter support
+        if let file = viewModel.selectedFile, !file.chapters.isEmpty,
+           !profile.containerFormat.supportsChapters {
+            warnings.append("Source has \(file.chapters.count) chapter(s) but \(profile.containerFormat.displayName) does not support chapters. They will be dropped.")
+        }
+
+        // Subtitle compatibility
+        if profile.subtitlePassthrough, !profile.containerFormat.supportsSubtitles {
+            warnings.append("\(profile.containerFormat.displayName) has limited or no subtitle support. Subtitles may be dropped.")
+        }
+
+        return warnings
     }
 
     // MARK: - Output Directory

@@ -57,7 +57,9 @@ If you select an incompatible combination, MeedyaConverter will warn you before 
 
 Dolby TrueHD is **not** part of the official MP4 (ISOBMFF) specification, but is widely supported by major media players including Plex, Jellyfin, VLC, MPC-HC, and Infuse. MeedyaConverter allows TrueHD in MP4 with the following **mandatory rule**:
 
-> **TrueHD must NOT be the default audio stream in an MP4 container.** A fully compatible audio codec (AAC, AC-3, or E-AC-3) must also be present and set as the default stream. This ensures all players can play the file — those that support TrueHD will select it, while others fall back to the compatible stream.
+> **In MP4 containers only:** TrueHD must NOT be the default audio stream. A fully compatible audio codec (AAC, AC-3, or E-AC-3) must also be present and set as the default stream. This ensures all players can play the file — those that support TrueHD will select it, while others fall back to the compatible stream.
+
+**This restriction applies only to MP4-family containers** (MP4, M4V, M4A, M4B). In all other containers where TrueHD is officially supported (MKV, etc.), TrueHD can be set as the default audio stream with no restrictions.
 
 MeedyaConverter enforces this automatically when you include TrueHD in MP4 output.
 

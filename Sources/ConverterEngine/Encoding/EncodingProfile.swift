@@ -79,6 +79,13 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Whether to preserve HDR metadata when source is HDR.
     public var preserveHDR: Bool
 
+    /// Whether to apply HDR-to-SDR tone mapping when source is HDR.
+    /// When true, the zscale/tonemap filter chain is applied automatically.
+    public var toneMapToSDR: Bool
+
+    /// Tone mapping algorithm (hable, reinhard, mobius, bt2390, clip).
+    public var toneMapAlgorithm: String?
+
     // MARK: - Audio Settings
 
     /// The audio codec for encoding.
@@ -137,6 +144,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         useHardwareEncoding: Bool = false,
         encodingPasses: Int = 1,
         preserveHDR: Bool = true,
+        toneMapToSDR: Bool = false,
+        toneMapAlgorithm: String? = nil,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
@@ -167,6 +176,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.useHardwareEncoding = useHardwareEncoding
         self.encodingPasses = encodingPasses
         self.preserveHDR = preserveHDR
+        self.toneMapToSDR = toneMapToSDR
+        self.toneMapAlgorithm = toneMapAlgorithm
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
@@ -215,6 +226,13 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         builder.audioBitrate = audioBitrate
         builder.audioSampleRate = audioSampleRate
         builder.audioChannels = audioChannels
+
+        // Tone mapping
+        builder.toneMap = toneMapToSDR
+        if let algorithm = toneMapAlgorithm,
+           let tmAlgo = FFmpegArgumentBuilder.ToneMapAlgorithm(rawValue: algorithm) {
+            builder.toneMapAlgorithm = tmAlgo
+        }
 
         // Subtitles
         builder.subtitlePassthrough = subtitlePassthrough
@@ -413,7 +431,7 @@ extension EncodingProfile {
     /// HDR → SDR — tone-map HDR content to SDR with correct colour conversion.
     public static let hdrToSDR = EncodingProfile(
         name: "HDR → SDR (Tone-Map)",
-        description: "Convert HDR to SDR with tone mapping — H.265 + AAC in MP4",
+        description: "Convert HDR to SDR with Hable tone mapping — H.265 + AAC in MP4",
         category: .quickStart,
         isBuiltIn: true,
         videoCodec: .h265,
@@ -421,6 +439,8 @@ extension EncodingProfile {
         videoPreset: "medium",
         pixelFormat: "yuv420p",
         preserveHDR: false,
+        toneMapToSDR: true,
+        toneMapAlgorithm: "hable",
         audioCodec: .aacLC,
         audioBitrate: 192_000,
         containerFormat: .mp4

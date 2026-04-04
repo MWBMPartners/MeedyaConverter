@@ -89,6 +89,32 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Video encoder level (e.g., "4.1", "5.1").
     public var videoLevel: String?
 
+    // MARK: - HDR / Tone Mapping (Phase 3.9b–3.9c)
+
+    /// Whether to apply HDR-to-SDR tone mapping.
+    /// When true, builds a libplacebo/zscale tone mapping filter chain that converts
+    /// PQ/HLG/HDR10 → BT.709 SDR with the configured algorithm and parameters.
+    public var toneMap: Bool = false
+
+    /// Tone mapping algorithm. Maps to libplacebo tonemap function.
+    public enum ToneMapAlgorithm: String, Sendable, CaseIterable {
+        case hable      // Filmic S-curve (default, good for movies)
+        case reinhard   // Simple, can clip highlights
+        case mobius     // Smooth roll-off, good for mixed content
+        case bt2390     // ITU-R BT.2390 reference curve
+        case clip       // Hard clip (fastest, lowest quality)
+    }
+
+    /// The tone mapping algorithm to use.
+    public var toneMapAlgorithm: ToneMapAlgorithm = .hable
+
+    /// Peak brightness of the source in nits. Nil means auto-detect from metadata.
+    public var toneMapPeakNits: Double?
+
+    /// Desaturation strength (0.0 = none, 1.0 = full). Controls how much bright
+    /// colours are desaturated during tone mapping to avoid over-saturation.
+    public var toneMapDesaturation: Double?
+
     /// Whether to use hardware encoding (VideoToolbox on macOS).
     public var useHardwareEncoding: Bool = false
 
@@ -176,6 +202,14 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Audio filter chain string (e.g., "loudnorm=I=-14").
     public var audioFilterChain: String?
 
+    // MARK: - Stream Disposition (Phase 3.11 / TrueHD-in-MP4)
+
+    /// Per-stream disposition overrides.
+    /// Key is the stream specifier (e.g., "a:0", "a:1"), value is the disposition
+    /// string (e.g., "default", "0" to clear default).
+    /// Used to enforce non-default TrueHD in MP4 containers.
+    public var streamDispositions: [String: String] = [:]
+
     // MARK: - Codec Metadata Preservation (Phase 3.16a)
 
     /// Preserve codec-specific metadata when re-encoding within the same codec family.
@@ -246,8 +280,10 @@ public struct FFmpegArgumentBuilder: Sendable {
         args.append(contentsOf: buildSubtitleArguments())
 
         // --- Video filters ---
-        if let vf = videoFilterChain, !vf.isEmpty {
-            args.append(contentsOf: ["-vf", vf])
+        // Build the complete video filter chain: user filters + tone mapping
+        let vfChain = buildVideoFilterChain()
+        if !vfChain.isEmpty {
+            args.append(contentsOf: ["-vf", vfChain])
         }
 
         // --- Audio filters ---
@@ -259,6 +295,9 @@ public struct FFmpegArgumentBuilder: Sendable {
         if let dar = displayAspectRatio, !dar.isEmpty {
             args.append(contentsOf: ["-aspect", dar])
         }
+
+        // --- Stream disposition (TrueHD non-default enforcement) ---
+        args.append(contentsOf: buildDispositionArguments())
 
         // --- Metadata ---
         args.append(contentsOf: buildMetadataArguments())
@@ -282,6 +321,56 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         return args
+    }
+
+    // MARK: - Video Filter Chain
+
+    /// Build the complete video filter chain combining user filters and tone mapping.
+    private func buildVideoFilterChain() -> String {
+        var filters: [String] = []
+
+        // User-specified video filter chain (crop, scale, etc.)
+        if let vf = videoFilterChain, !vf.isEmpty {
+            filters.append(vf)
+        }
+
+        // HDR → SDR tone mapping filter (Phase 3.9b)
+        if toneMap && !videoPassthrough {
+            filters.append(buildToneMapFilter())
+        }
+
+        return filters.joined(separator: ",")
+    }
+
+    /// Build the zscale/tonemap filter chain for HDR → SDR conversion.
+    ///
+    /// Uses zscale for colour space conversion (BT.2020 → BT.709) and
+    /// tonemap for dynamic range compression (PQ/HLG → SDR).
+    ///
+    /// Pipeline: zscale(transfer=linear) → tonemap → zscale(BT.709) → format(yuv420p)
+    private func buildToneMapFilter() -> String {
+        var parts: [String] = []
+
+        // Step 1: Convert to linear light for tone mapping
+        parts.append("zscale=t=linear:npl=100")
+
+        // Step 2: Apply tone mapping algorithm
+        var tonemapArgs = "tonemap=\(toneMapAlgorithm.rawValue)"
+        if let peak = toneMapPeakNits {
+            tonemapArgs += ":peak=\(peak / 10000.0)" // FFmpeg expects normalised (0-1)
+        }
+        if let desat = toneMapDesaturation {
+            tonemapArgs += ":desat=\(desat)"
+        }
+        parts.append(tonemapArgs)
+
+        // Step 3: Convert to BT.709 colour space
+        parts.append("zscale=p=bt709:t=bt709:m=bt709:r=tv")
+
+        // Step 4: Convert to 8-bit output
+        parts.append("format=yuv420p")
+
+        return parts.joined(separator: ",")
     }
 
     // MARK: - Private Builders
@@ -495,6 +584,17 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // Default: no subtitle processing (subtitles from mapping will be copied if compatible)
         return []
+    }
+
+    /// Build stream disposition arguments.
+    /// Used to enforce non-default flags for codecs that require it in certain containers
+    /// (e.g., TrueHD in MP4 must not be default).
+    private func buildDispositionArguments() -> [String] {
+        var args: [String] = []
+        for (streamSpec, disposition) in streamDispositions {
+            args.append(contentsOf: ["-disposition:\(streamSpec)", disposition])
+        }
+        return args
     }
 
     /// Build metadata arguments.

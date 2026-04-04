@@ -249,11 +249,41 @@ final class AppViewModel {
         }
     }
 
+    // MARK: - HDR Auto-Trigger (Phase 3.9c)
+
+    /// Check if the current profile settings are HDR-incompatible with an HDR source
+    /// and auto-enable tone mapping if needed.
+    ///
+    /// Triggers when: source has HDR + profile uses BT.709/8-bit/H.264 or non-HDR codec
+    /// and video passthrough is off and preserveHDR is off and tone mapping isn't already on.
+    func autoTriggerToneMapping() {
+        guard let file = selectedFile, file.hasHDR else { return }
+        guard !selectedProfile.videoPassthrough else { return }
+        guard !selectedProfile.preserveHDR else { return }
+        guard !selectedProfile.toneMapToSDR else { return } // Already enabled
+
+        // Check if output settings are HDR-incompatible
+        let codecIncompatible = selectedProfile.videoCodec.map { !$0.supportsHDR } ?? false
+        let pixelFormatIs8Bit = selectedProfile.pixelFormat == "yuv420p" || selectedProfile.pixelFormat == "yuv422p"
+        let containerIncompatible = !selectedProfile.containerFormat.supportsHDR
+
+        if codecIncompatible || pixelFormatIs8Bit || containerIncompatible {
+            selectedProfile.toneMapToSDR = true
+            if selectedProfile.toneMapAlgorithm == nil {
+                selectedProfile.toneMapAlgorithm = "hable"
+            }
+            appendLog(.info, "HDR source detected with HDR-incompatible output settings — tone mapping auto-enabled", category: .encoding)
+        }
+    }
+
     // MARK: - Encoding
 
     /// Create an encoding job for the selected file with current settings and add to queue.
     func enqueueSelectedFile() {
         guard let file = selectedFile else { return }
+
+        // Auto-trigger tone mapping if HDR source with incompatible output (Phase 3.9c)
+        autoTriggerToneMapping()
 
         // Determine output URL
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory

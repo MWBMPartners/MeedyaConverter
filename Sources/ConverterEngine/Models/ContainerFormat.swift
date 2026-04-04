@@ -341,19 +341,24 @@ public enum ContainerFormat: String, Codable, Sendable, CaseIterable, Identifiab
     /// Audio codecs that are supported in this container but MUST NOT be the default
     /// audio stream. A fully compatible codec must also be present and marked as default.
     ///
-    /// Example: TrueHD in MP4 — widely supported by players but not part of the
-    /// official ISOBMFF/MP4 specification. Requires a compatible fallback stream.
+    /// This restriction applies **only to MP4-family containers** where TrueHD is
+    /// not part of the official ISOBMFF spec but is supported by most players.
+    /// All other containers where TrueHD is officially supported (MKV, etc.)
+    /// allow it as the default audio stream with no restrictions.
     public var nonDefaultAudioCodecs: [AudioCodec] {
         switch self {
         case .mp4, .m4v, .m4a, .m4b, .m4p:
             return [.trueHD]
         default:
+            // MKV, MOV, TS, and all other containers: no restrictions —
+            // TrueHD (and all other supported codecs) can be set as default.
             return []
         }
     }
 
     /// Whether the given audio codec must NOT be marked as the default stream
     /// when muxed into this container (requires a compatible fallback).
+    /// Only applies to MP4-family containers; all others return false.
     public func requiresNonDefault(_ codec: AudioCodec) -> Bool {
         nonDefaultAudioCodecs.contains(codec)
     }
