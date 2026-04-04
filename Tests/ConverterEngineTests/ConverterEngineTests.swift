@@ -1539,4 +1539,1478 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertNotNil(builder.audioFilterChain)
         XCTAssertTrue(builder.audioFilterChain?.contains("loudnorm") ?? false)
     }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: Spatial Audio Codecs
+    // -----------------------------------------------------------------
+
+    /// Verifies new spatial audio codecs exist and have correct display names.
+    func test_spatialAudioCodecs_displayNames() {
+        XCTAssertEqual(AudioCodec.dolbyMAT.displayName, "Dolby MAT")
+        XCTAssertEqual(AudioCodec.iamf.displayName, "IAMF")
+        XCTAssertEqual(AudioCodec.mpegH3D.displayName, "MPEG-H 3D Audio")
+        XCTAssertEqual(AudioCodec.sonyRA.displayName, "Sony 360 Reality Audio")
+        XCTAssertEqual(AudioCodec.ambisonics.displayName, "Ambisonics")
+        XCTAssertEqual(AudioCodec.auro3D.displayName, "Auro-3D")
+        XCTAssertEqual(AudioCodec.nhk222.displayName, "NHK 22.2")
+        XCTAssertEqual(AudioCodec.ac4AJOC.displayName, "AC-4 A-JOC")
+        XCTAssertEqual(AudioCodec.mp3Surround.displayName, "MP3 Surround")
+        XCTAssertEqual(AudioCodec.imaxEnhanced.displayName, "IMAX Enhanced")
+    }
+
+    /// Verifies spatial audio codecs are passthrough-only (no FFmpeg encoder).
+    func test_spatialAudioCodecs_passthroughOnly() {
+        let spatialCodecs: [AudioCodec] = [
+            .dolbyMAT, .iamf, .mpegH3D, .sonyRA, .asaf,
+            .ambisonics, .auro3D, .nhk222, .ac4AJOC, .mp3Surround, .imaxEnhanced
+        ]
+        for codec in spatialCodecs {
+            XCTAssertNil(codec.ffmpegEncoder, "\(codec.rawValue) should be passthrough-only")
+        }
+    }
+
+    /// Verifies the isSpatial computed property.
+    func test_spatialAudioCodecs_isSpatialProperty() {
+        XCTAssertTrue(AudioCodec.dolbyMAT.isSpatial)
+        XCTAssertTrue(AudioCodec.iamf.isSpatial)
+        XCTAssertTrue(AudioCodec.ambisonics.isSpatial)
+        XCTAssertTrue(AudioCodec.nhk222.isSpatial)
+        XCTAssertFalse(AudioCodec.aac.isSpatial)
+        XCTAssertFalse(AudioCodec.flac.isSpatial)
+    }
+
+    /// Verifies the isObjectBased computed property.
+    func test_spatialAudioCodecs_isObjectBasedProperty() {
+        XCTAssertTrue(AudioCodec.dolbyMAT.isObjectBased)
+        XCTAssertTrue(AudioCodec.iamf.isObjectBased)
+        XCTAssertTrue(AudioCodec.mpegH3D.isObjectBased)
+        XCTAssertTrue(AudioCodec.ac4AJOC.isObjectBased)
+        XCTAssertFalse(AudioCodec.ambisonics.isObjectBased)
+        XCTAssertFalse(AudioCodec.nhk222.isObjectBased)
+        XCTAssertFalse(AudioCodec.aac.isObjectBased)
+    }
+
+    /// Verifies maxChannels for spatial codecs.
+    func test_spatialAudioCodecs_maxChannels() {
+        XCTAssertEqual(AudioCodec.nhk222.maxChannels, 24)
+        XCTAssertEqual(AudioCodec.ambisonics.maxChannels, 64)
+        XCTAssertEqual(AudioCodec.auro3D.maxChannels, 14)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: SpatialAudioFormat
+    // -----------------------------------------------------------------
+
+    /// Verifies SpatialAudioFormat raw values.
+    func test_spatialAudioFormat_rawValues() {
+        XCTAssertEqual(SpatialAudioFormat.channelBased.rawValue, "channel")
+        XCTAssertEqual(SpatialAudioFormat.objectBased.rawValue, "object")
+        XCTAssertEqual(SpatialAudioFormat.sceneBased.rawValue, "scene")
+        XCTAssertEqual(SpatialAudioFormat.hybrid.rawValue, "hybrid")
+    }
+
+    /// Verifies SpatialAudioFormat CaseIterable conformance.
+    func test_spatialAudioFormat_allCases() {
+        XCTAssertEqual(SpatialAudioFormat.allCases.count, 4)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: AmbisonicsOrder
+    // -----------------------------------------------------------------
+
+    /// Verifies Ambisonics channel count formula: (order+1)².
+    func test_ambisonicsOrder_channelCount() {
+        XCTAssertEqual(AmbisonicsOrder.first.channelCount, 4)    // (1+1)² = 4
+        XCTAssertEqual(AmbisonicsOrder.second.channelCount, 9)   // (2+1)² = 9
+        XCTAssertEqual(AmbisonicsOrder.third.channelCount, 16)   // (3+1)² = 16
+        XCTAssertEqual(AmbisonicsOrder.fourth.channelCount, 25)  // (4+1)² = 25
+        XCTAssertEqual(AmbisonicsOrder.fifth.channelCount, 36)   // (5+1)² = 36
+        XCTAssertEqual(AmbisonicsOrder.seventh.channelCount, 64) // (7+1)² = 64
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: StereoMode3D
+    // -----------------------------------------------------------------
+
+    /// Verifies StereoMode3D display names.
+    func test_stereoMode3D_displayNames() {
+        XCTAssertEqual(StereoMode3D.mono.displayName, "2D (Mono)")
+        XCTAssertEqual(StereoMode3D.sideBySide.displayName, "Side-by-Side")
+        XCTAssertEqual(StereoMode3D.topBottom.displayName, "Top-and-Bottom")
+        XCTAssertEqual(StereoMode3D.multiview.displayName, "Multiview (MV-HEVC/MVC)")
+        XCTAssertEqual(StereoMode3D.anaglyph.displayName, "Anaglyph")
+    }
+
+    /// Verifies isMultiStream is true only for multiview.
+    func test_stereoMode3D_isMultiStream() {
+        XCTAssertTrue(StereoMode3D.multiview.isMultiStream)
+        XCTAssertFalse(StereoMode3D.sideBySide.isMultiStream)
+        XCTAssertFalse(StereoMode3D.topBottom.isMultiStream)
+        XCTAssertFalse(StereoMode3D.mono.isMultiStream)
+    }
+
+    /// Verifies StereoMode3D CaseIterable conformance.
+    func test_stereoMode3D_allCases() {
+        XCTAssertEqual(StereoMode3D.allCases.count, 9)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: Video3DMetadata
+    // -----------------------------------------------------------------
+
+    /// Verifies Video3DMetadata default initialization.
+    func test_video3DMetadata_defaults() {
+        let meta = Video3DMetadata()
+        XCTAssertEqual(meta.stereoMode, .mono)
+        XCTAssertNil(meta.viewIndex)
+        XCTAssertNil(meta.viewCount)
+        XCTAssertFalse(meta.viewsSwapped)
+        XCTAssertNil(meta.baselineDistance)
+    }
+
+    /// Verifies Video3DMetadata custom initialization.
+    func test_video3DMetadata_customInit() {
+        let meta = Video3DMetadata(
+            stereoMode: .sideBySide,
+            viewIndex: 0,
+            viewCount: 2,
+            viewsSwapped: true,
+            baselineDistance: 63.5
+        )
+        XCTAssertEqual(meta.stereoMode, .sideBySide)
+        XCTAssertEqual(meta.viewIndex, 0)
+        XCTAssertEqual(meta.viewCount, 2)
+        XCTAssertTrue(meta.viewsSwapped)
+        XCTAssertEqual(meta.baselineDistance, 63.5)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: SpatialAudioMetadata
+    // -----------------------------------------------------------------
+
+    /// Verifies SpatialAudioMetadata default initialization.
+    func test_spatialAudioMetadata_defaults() {
+        let meta = SpatialAudioMetadata()
+        XCTAssertEqual(meta.format, .channelBased)
+        XCTAssertNil(meta.ambisonicsOrder)
+        XCTAssertNil(meta.ambisonicsNorm)
+        XCTAssertNil(meta.objectCount)
+        XCTAssertNil(meta.bedChannels)
+        XCTAssertFalse(meta.hasHeightChannels)
+        XCTAssertFalse(meta.binauralRendering)
+    }
+
+    /// Verifies SpatialAudioMetadata scene-based initialization.
+    func test_spatialAudioMetadata_sceneBased() {
+        let meta = SpatialAudioMetadata(
+            format: .sceneBased,
+            ambisonicsOrder: .third,
+            ambisonicsNorm: .sn3d
+        )
+        XCTAssertEqual(meta.format, .sceneBased)
+        XCTAssertEqual(meta.ambisonicsOrder, .third)
+        XCTAssertEqual(meta.ambisonicsNorm, .sn3d)
+    }
+
+    /// Verifies SpatialAudioMetadata hybrid initialization.
+    func test_spatialAudioMetadata_hybrid() {
+        let meta = SpatialAudioMetadata(
+            format: .hybrid,
+            objectCount: 118,
+            bedChannels: 12,
+            hasHeightChannels: true,
+            binauralRendering: true
+        )
+        XCTAssertEqual(meta.format, .hybrid)
+        XCTAssertEqual(meta.objectCount, 118)
+        XCTAssertEqual(meta.bedChannels, 12)
+        XCTAssertTrue(meta.hasHeightChannels)
+        XCTAssertTrue(meta.binauralRendering)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: SpatialAudioConverter
+    // -----------------------------------------------------------------
+
+    /// Verifies Ambisonics encode filter output.
+    func test_spatialAudioConverter_ambisonicsEncodeFilter() {
+        let filter = SpatialAudioConverter.buildAmbisonicsEncodeFilter(
+            order: .first, normalization: .sn3d
+        )
+        XCTAssertTrue(filter.contains("pan=4c"))
+    }
+
+    /// Verifies Ambisonics encode filter with third order (16 channels).
+    func test_spatialAudioConverter_ambisonicsEncodeThirdOrder() {
+        let filter = SpatialAudioConverter.buildAmbisonicsEncodeFilter(
+            order: .third, normalization: .n3d
+        )
+        XCTAssertTrue(filter.contains("pan=16c"))
+    }
+
+    /// Verifies binaural downmix filter uses sofalizer.
+    func test_spatialAudioConverter_binauralDownmix() {
+        let filter = SpatialAudioConverter.buildBinauralDownmixFilter()
+        XCTAssertTrue(filter.contains("sofalizer"))
+        XCTAssertTrue(filter.contains("hrtf.sofa"))
+    }
+
+    /// Verifies Dolby MAT passthrough arguments.
+    func test_spatialAudioConverter_matPassthrough() {
+        let args = SpatialAudioConverter.buildMATPassthroughArguments()
+        XCTAssertTrue(args.contains("-c:a"))
+        XCTAssertTrue(args.contains("copy"))
+    }
+
+    /// Verifies channel layout conversion downmix.
+    func test_spatialAudioConverter_channelLayoutDownmix() {
+        let filter = SpatialAudioConverter.buildChannelLayoutConversion(from: 8, to: 2)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("pan=2c"))
+    }
+
+    /// Verifies channel layout conversion upmix.
+    func test_spatialAudioConverter_channelLayoutUpmix() {
+        let filter = SpatialAudioConverter.buildChannelLayoutConversion(from: 2, to: 6)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("5.1"))
+    }
+
+    /// Verifies no conversion when channel counts match.
+    func test_spatialAudioConverter_noConversionNeeded() {
+        let filter = SpatialAudioConverter.buildChannelLayoutConversion(from: 6, to: 6)
+        XCTAssertNil(filter)
+    }
+
+    /// Verifies channel layout strings for standard configurations.
+    func test_spatialAudioConverter_channelLayoutStrings() {
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 1), "mono")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 2), "stereo")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 6), "5.1")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 8), "7.1")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 12), "7.1.4")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 24), "22.2")
+        XCTAssertEqual(SpatialAudioConverter.channelLayoutString(for: 3), "3c")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7: Video3DConverter
+    // -----------------------------------------------------------------
+
+    /// Verifies SBS to TB conversion filter.
+    func test_video3DConverter_sbsToTB() {
+        let filter = Video3DConverter.buildConversionFilter(from: .sideBySide, to: .topBottom)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("stereo3d=sbsl:abl"))
+    }
+
+    /// Verifies TB to SBS conversion filter.
+    func test_video3DConverter_tbToSBS() {
+        let filter = Video3DConverter.buildConversionFilter(from: .topBottom, to: .sideBySide)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("stereo3d=abl:sbsl"))
+    }
+
+    /// Verifies 3D to mono (left view extraction).
+    func test_video3DConverter_3dToMono() {
+        let filter = Video3DConverter.buildConversionFilter(from: .sideBySide, to: .mono)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("stereo3d="))
+        XCTAssertTrue(filter!.contains(":ml"))
+    }
+
+    /// Verifies SBS to anaglyph conversion.
+    func test_video3DConverter_sbsToAnaglyph() {
+        let filter = Video3DConverter.buildConversionFilter(from: .sideBySide, to: .anaglyph)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("arcg"))
+    }
+
+    /// Verifies no conversion when modes match.
+    func test_video3DConverter_noConversionNeeded() {
+        let filter = Video3DConverter.buildConversionFilter(from: .sideBySide, to: .sideBySide)
+        XCTAssertNil(filter)
+    }
+
+    /// Verifies 3D metadata arguments for SBS.
+    func test_video3DConverter_metadataArgsSBS() {
+        let meta = Video3DMetadata(stereoMode: .sideBySide)
+        let args = Video3DConverter.buildMetadataArguments(metadata: meta)
+        XCTAssertTrue(args.contains("-metadata:s:v:0"))
+        XCTAssertTrue(args.contains("stereo_mode=side_by_side"))
+    }
+
+    /// Verifies 3D metadata arguments for top-bottom.
+    func test_video3DConverter_metadataArgsTB() {
+        let meta = Video3DMetadata(stereoMode: .topBottom)
+        let args = Video3DConverter.buildMetadataArguments(metadata: meta)
+        XCTAssertTrue(args.contains("stereo_mode=top_bottom"))
+    }
+
+    /// Verifies no metadata for mono mode.
+    func test_video3DConverter_metadataArgsMono() {
+        let meta = Video3DMetadata(stereoMode: .mono)
+        let args = Video3DConverter.buildMetadataArguments(metadata: meta)
+        XCTAssertTrue(args.isEmpty)
+    }
+
+    /// Verifies AmbisonicsNormalization raw values.
+    func test_ambisonicsNormalization_rawValues() {
+        XCTAssertEqual(AmbisonicsNormalization.sn3d.rawValue, "sn3d")
+        XCTAssertEqual(AmbisonicsNormalization.n3d.rawValue, "n3d")
+        XCTAssertEqual(AmbisonicsNormalization.fuma.rawValue, "fuma")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.12: Quality Metrics
+    // -----------------------------------------------------------------
+
+    /// Verifies QualityMetricType CaseIterable conformance.
+    func test_qualityMetricType_allCases() {
+        XCTAssertEqual(QualityMetricType.allCases.count, 3)
+        XCTAssertTrue(QualityMetricType.allCases.contains(.vmaf))
+        XCTAssertTrue(QualityMetricType.allCases.contains(.ssim))
+        XCTAssertTrue(QualityMetricType.allCases.contains(.psnr))
+    }
+
+    /// Verifies VMAF model raw values.
+    func test_vmafModel_rawValues() {
+        XCTAssertEqual(VMAFModel.standard.rawValue, "vmaf_v0.6.1")
+        XCTAssertEqual(VMAFModel.uhd4K.rawValue, "vmaf_4k_v0.6.1")
+        XCTAssertEqual(VMAFModel.phone.rawValue, "vmaf_v0.6.1neg")
+    }
+
+    /// Verifies VMAF argument construction.
+    func test_qualityMetrics_vmafArguments() {
+        let args = QualityMetricsBuilder.buildVMAFArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/encoded.mp4"))
+        XCTAssertTrue(args.contains("/tmp/source.mp4"))
+        let lavfi = args.first { $0.contains("libvmaf") }
+        XCTAssertNotNil(lavfi)
+        XCTAssertTrue(lavfi?.contains("vmaf_v0.6.1") ?? false)
+    }
+
+    /// Verifies VMAF with 4K model and log path.
+    func test_qualityMetrics_vmaf4KWithLog() {
+        let args = QualityMetricsBuilder.buildVMAFArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4",
+            model: .uhd4K,
+            logPath: "/tmp/vmaf.json"
+        )
+        let lavfi = args.first { $0.contains("libvmaf") }
+        XCTAssertNotNil(lavfi)
+        XCTAssertTrue(lavfi?.contains("vmaf_4k_v0.6.1") ?? false)
+        XCTAssertTrue(lavfi?.contains("log_path") ?? false)
+        XCTAssertTrue(lavfi?.contains("log_fmt=json") ?? false)
+    }
+
+    /// Verifies SSIM argument construction.
+    func test_qualityMetrics_ssimArguments() {
+        let args = QualityMetricsBuilder.buildSSIMArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4",
+            logPath: "/tmp/ssim.log"
+        )
+        XCTAssertTrue(args.contains("-lavfi"))
+        let filter = args.first { $0.contains("ssim") }
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter?.contains("stats_file") ?? false)
+    }
+
+    /// Verifies PSNR argument construction.
+    func test_qualityMetrics_psnrArguments() {
+        let args = QualityMetricsBuilder.buildPSNRArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4"
+        )
+        XCTAssertTrue(args.contains("-lavfi"))
+        let filter = args.first { $0.contains("psnr") }
+        XCTAssertNotNil(filter)
+    }
+
+    /// Verifies VMAF score parsing from FFmpeg output.
+    func test_qualityMetrics_parseVMAF() {
+        let output = """
+        [libvmaf @ 0x12345] VMAF score: 95.123456
+        """
+        let score = QualityMetricsBuilder.parseVMAFScore(from: output)
+        XCTAssertNotNil(score)
+        XCTAssertEqual(score!, 95.123456, accuracy: 0.001)
+    }
+
+    /// Verifies SSIM score parsing from FFmpeg output.
+    func test_qualityMetrics_parseSSIM() {
+        let output = """
+        [Parsed_ssim_0 @ 0x12345] SSIM Y:0.987654 U:0.993210 V:0.991234 All:0.990699 (20.41)
+        """
+        let score = QualityMetricsBuilder.parseSSIMScore(from: output)
+        XCTAssertNotNil(score)
+        XCTAssertEqual(score!, 0.990699, accuracy: 0.0001)
+    }
+
+    /// Verifies PSNR score parsing from FFmpeg output.
+    func test_qualityMetrics_parsePSNR() {
+        let output = """
+        [Parsed_psnr_0 @ 0x12345] PSNR y:45.123456 u:47.234567 v:46.345678 average:45.901234 min:32.123456 max:inf
+        """
+        let result = QualityMetricsBuilder.parsePSNRScore(from: output)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result!.average, 45.901234, accuracy: 0.001)
+        XCTAssertEqual(result!.min, 32.123456, accuracy: 0.001)
+    }
+
+    /// Verifies QualityScore summary text.
+    func test_qualityScore_summary() {
+        let vmaf = QualityScore(metric: .vmaf, mean: 95.5, min: 82.0, max: 99.0)
+        XCTAssertTrue(vmaf.summary.contains("Excellent"))
+        XCTAssertTrue(vmaf.summary.contains("95.50"))
+
+        let ssim = QualityScore(metric: .ssim, mean: 0.85, min: 0.72, max: 0.99)
+        XCTAssertTrue(ssim.summary.contains("Fair"))
+
+        let psnr = QualityScore(metric: .psnr, mean: 42.5, min: 30.0, max: 50.0)
+        XCTAssertTrue(psnr.summary.contains("Excellent"))
+    }
+
+    /// Verifies QualityReport threshold checking.
+    func test_qualityReport_meetsThresholds() {
+        let good = QualityReport(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4",
+            scores: [
+                QualityScore(metric: .vmaf, mean: 93, min: 80, max: 99),
+                QualityScore(metric: .ssim, mean: 0.97, min: 0.92, max: 1.0),
+            ]
+        )
+        XCTAssertTrue(good.meetsQualityThresholds)
+
+        let bad = QualityReport(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4",
+            scores: [
+                QualityScore(metric: .vmaf, mean: 70, min: 50, max: 85),
+            ]
+        )
+        XCTAssertFalse(bad.meetsQualityThresholds)
+    }
+
+    /// Verifies QualityReport score lookup.
+    func test_qualityReport_scoreLookup() {
+        let report = QualityReport(
+            referencePath: "/tmp/a.mp4",
+            distortedPath: "/tmp/b.mp4",
+            scores: [
+                QualityScore(metric: .vmaf, mean: 90, min: 80, max: 99),
+                QualityScore(metric: .psnr, mean: 42, min: 35, max: 50),
+            ]
+        )
+        XCTAssertNotNil(report.score(for: .vmaf))
+        XCTAssertNotNil(report.score(for: .psnr))
+        XCTAssertNil(report.score(for: .ssim))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.13: Scene Detection & Chaptering
+    // -----------------------------------------------------------------
+
+    /// Verifies scene detection argument construction.
+    func test_sceneDetector_detectionArguments() {
+        let args = SceneDetector.buildDetectionArguments(
+            inputPath: "/tmp/video.mp4",
+            threshold: 0.4
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.mp4"))
+        let vf = args.first { $0.contains("scene") }
+        XCTAssertNotNil(vf)
+        XCTAssertTrue(vf?.contains("0.40") ?? false)
+    }
+
+    /// Verifies scene change parsing from FFmpeg output.
+    func test_sceneDetector_parseSceneChanges() {
+        let output = """
+        [Parsed_showinfo_1 @ 0x12345] n:  42 pts:  512000 pts_time:5.333 pos:123456 fmt:yuv420p sar:1/1
+        [Parsed_showinfo_1 @ 0x12345] n: 120 pts: 1440000 pts_time:15.000 pos:234567 fmt:yuv420p sar:1/1
+        [Parsed_showinfo_1 @ 0x12345] n: 250 pts: 3000000 pts_time:31.250 pos:345678 fmt:yuv420p sar:1/1
+        """
+        let changes = SceneDetector.parseSceneChanges(from: output)
+        XCTAssertEqual(changes.count, 3)
+        XCTAssertEqual(changes[0].timestamp, 5.333, accuracy: 0.001)
+        XCTAssertEqual(changes[1].timestamp, 15.0, accuracy: 0.001)
+        XCTAssertEqual(changes[2].timestamp, 31.25, accuracy: 0.001)
+        XCTAssertEqual(changes[0].frameNumber, 42)
+    }
+
+    /// Verifies chapter generation from scene changes (every scene strategy).
+    func test_sceneDetector_generateChaptersEveryScene() {
+        let scenes = [
+            SceneChange(timestamp: 60.0, score: 0.5),
+            SceneChange(timestamp: 120.0, score: 0.4),
+            SceneChange(timestamp: 180.0, score: 0.6),
+        ]
+        let chapters = SceneDetector.generateChapters(
+            from: scenes,
+            duration: 240.0,
+            strategy: .everyScene,
+            minimumDuration: 30.0
+        )
+        // Chapter 1 at 0, plus 3 scene chapters
+        XCTAssertEqual(chapters.count, 4)
+        XCTAssertEqual(chapters[0].startTime, 0)
+        XCTAssertEqual(chapters[0].title, "Chapter 1")
+        XCTAssertEqual(chapters[1].startTime, 60.0)
+        XCTAssertEqual(chapters[3].startTime, 180.0)
+    }
+
+    /// Verifies micro-chapter filtering with minimum duration.
+    func test_sceneDetector_minimumDurationFilter() {
+        let scenes = [
+            SceneChange(timestamp: 5.0, score: 0.5),  // Too close to start
+            SceneChange(timestamp: 60.0, score: 0.4),
+            SceneChange(timestamp: 65.0, score: 0.3),  // Too close to previous
+        ]
+        let chapters = SceneDetector.generateChapters(
+            from: scenes,
+            duration: 120.0,
+            strategy: .everyScene,
+            minimumDuration: 30.0
+        )
+        // Should get: Chapter 1 at 0, Chapter 2 at 60 (5s too close to 0, 65s too close to 60)
+        XCTAssertEqual(chapters.count, 2)
+    }
+
+    /// Verifies fixed-interval chapter generation.
+    func test_sceneDetector_fixedIntervalChapters() {
+        let chapters = SceneDetector.generateChapters(
+            from: [],
+            duration: 900.0,
+            strategy: .fixedInterval,
+            fixedInterval: 300.0
+        )
+        // 0, 300, 600 (3 chapters at 5-minute intervals for 15-min video)
+        XCTAssertEqual(chapters.count, 3)
+        XCTAssertEqual(chapters[0].startTime, 0)
+        XCTAssertEqual(chapters[1].startTime, 300.0)
+        XCTAssertEqual(chapters[2].startTime, 600.0)
+    }
+
+    /// Verifies FFmetadata chapter output format.
+    func test_sceneDetector_ffmetadataOutput() {
+        let chapters = [
+            Chapter(title: "Intro", startTime: 0, endTime: 60),
+            Chapter(title: "Main", startTime: 60, endTime: 180),
+        ]
+        let metadata = SceneDetector.generateFFmetadata(chapters: chapters, duration: 180)
+        XCTAssertTrue(metadata.contains(";FFMETADATA1"))
+        XCTAssertTrue(metadata.contains("[CHAPTER]"))
+        XCTAssertTrue(metadata.contains("TIMEBASE=1/1000"))
+        XCTAssertTrue(metadata.contains("START=0"))
+        XCTAssertTrue(metadata.contains("END=60000"))
+        XCTAssertTrue(metadata.contains("title=Intro"))
+        XCTAssertTrue(metadata.contains("START=60000"))
+        XCTAssertTrue(metadata.contains("title=Main"))
+    }
+
+    /// Verifies OGG chapter format output.
+    func test_sceneDetector_oggChapterOutput() {
+        let chapters = [
+            Chapter(title: "Scene 1", startTime: 0),
+            Chapter(title: "Scene 2", startTime: 65.5),
+        ]
+        let ogg = SceneDetector.generateOGGChapters(chapters: chapters)
+        XCTAssertTrue(ogg.contains("CHAPTER01=00:00:00.000"))
+        XCTAssertTrue(ogg.contains("CHAPTER01NAME=Scene 1"))
+        XCTAssertTrue(ogg.contains("CHAPTER02=00:01:05.000"))
+        XCTAssertTrue(ogg.contains("CHAPTER02NAME=Scene 2"))
+    }
+
+    /// Verifies SceneChange formatted timestamp.
+    func test_sceneChange_formattedTimestamp() {
+        let change = SceneChange(timestamp: 3723.456)
+        XCTAssertEqual(change.formattedTimestamp, "01:02:03.456")
+    }
+
+    /// Verifies auto-chaptering is skipped when source already has chapters.
+    func test_sceneDetector_shouldAutoChapter() {
+        XCTAssertTrue(SceneDetector.shouldAutoChapter(existingChapterCount: 0))
+        XCTAssertFalse(SceneDetector.shouldAutoChapter(existingChapterCount: 1))
+        XCTAssertFalse(SceneDetector.shouldAutoChapter(existingChapterCount: 5))
+    }
+
+    /// Verifies ChapterGenerationStrategy raw values.
+    func test_chapterStrategy_rawValues() {
+        XCTAssertEqual(ChapterGenerationStrategy.everyScene.rawValue, "every_scene")
+        XCTAssertEqual(ChapterGenerationStrategy.fixedInterval.rawValue, "fixed_interval")
+        XCTAssertEqual(ChapterGenerationStrategy.keyScenes.rawValue, "key_scenes")
+        XCTAssertEqual(ChapterGenerationStrategy.combined.rawValue, "combined")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.2: Forensic Watermarking
+    // -----------------------------------------------------------------
+
+    /// Verifies WatermarkStrength CaseIterable conformance and values.
+    func test_watermarkStrength_allCases() {
+        XCTAssertEqual(WatermarkStrength.allCases.count, 3)
+        XCTAssertTrue(WatermarkStrength.light.opacity < WatermarkStrength.standard.opacity)
+        XCTAssertTrue(WatermarkStrength.standard.opacity < WatermarkStrength.strong.opacity)
+        XCTAssertTrue(WatermarkStrength.light.blendFactor < WatermarkStrength.strong.blendFactor)
+    }
+
+    /// Verifies WatermarkPayload encoding.
+    func test_watermarkPayload_encodedString() {
+        let payload = WatermarkPayload(
+            identifier: "user-123",
+            metadata: "license-abc"
+        )
+        XCTAssertTrue(payload.encodedString.contains("user-123"))
+        XCTAssertTrue(payload.encodedString.contains("license-abc"))
+        XCTAssertFalse(payload.payloadHash.isEmpty)
+        XCTAssertEqual(payload.payloadHash.count, 16) // 16 hex chars
+    }
+
+    /// Verifies embed filter construction.
+    func test_forensicWatermark_embedFilter() {
+        let payload = WatermarkPayload(identifier: "test-user")
+        let filter = ForensicWatermark.buildEmbedFilter(
+            payload: payload,
+            strength: .standard
+        )
+        XCTAssertTrue(filter.contains("drawtext"))
+        XCTAssertTrue(filter.contains(payload.payloadHash))
+        XCTAssertTrue(filter.contains("fontcolor=white@"))
+    }
+
+    /// Verifies multiple drawtext positions for redundancy.
+    func test_forensicWatermark_multiplePositions() {
+        let payload = WatermarkPayload(identifier: "test")
+        let filter = ForensicWatermark.buildEmbedFilter(payload: payload)
+        // Should have 5 drawtext filters chained
+        let drawTextCount = filter.components(separatedBy: "drawtext").count - 1
+        XCTAssertEqual(drawTextCount, 5)
+    }
+
+    /// Verifies noise watermark filter construction.
+    func test_forensicWatermark_noiseFilter() {
+        let payload = WatermarkPayload(identifier: "test")
+        let filter = ForensicWatermark.buildNoiseWatermarkFilter(
+            payload: payload,
+            strength: .standard
+        )
+        XCTAssertTrue(filter.contains("noise="))
+        XCTAssertTrue(filter.contains("amount="))
+    }
+
+    /// Verifies metadata arguments for container embedding.
+    func test_forensicWatermark_metadataArguments() {
+        let payload = WatermarkPayload(identifier: "user-456")
+        let args = ForensicWatermark.buildMetadataArguments(payload: payload)
+        XCTAssertTrue(args.contains("-metadata"))
+        XCTAssertTrue(args.contains("encoded_by=MeedyaConverter"))
+        let wmArg = args.first { $0.contains("watermark_id=") }
+        XCTAssertNotNil(wmArg)
+    }
+
+    /// Verifies complete watermark arguments when enabled.
+    func test_forensicWatermark_enabledConfig() {
+        let config = WatermarkConfig(
+            enabled: true,
+            payload: WatermarkPayload(identifier: "test"),
+            strength: .strong
+        )
+        let (filter, args) = ForensicWatermark.buildWatermarkArguments(config: config)
+        XCTAssertFalse(filter.isEmpty)
+        XCTAssertFalse(args.isEmpty)
+        XCTAssertTrue(filter.contains("drawtext"))
+    }
+
+    /// Verifies watermark arguments when disabled.
+    func test_forensicWatermark_disabledConfig() {
+        let config = WatermarkConfig(
+            enabled: false,
+            payload: WatermarkPayload(identifier: "test")
+        )
+        let (filter, args) = ForensicWatermark.buildWatermarkArguments(config: config)
+        XCTAssertTrue(filter.isEmpty)
+        XCTAssertTrue(args.isEmpty)
+    }
+
+    /// Verifies detection argument construction.
+    func test_forensicWatermark_detectionArguments() {
+        let args = ForensicWatermark.buildDetectionArguments(
+            inputPath: "/tmp/video.mp4",
+            outputPath: "/tmp/analysis.png",
+            seekTo: 30.0
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.mp4"))
+        XCTAssertTrue(args.contains("/tmp/analysis.png"))
+        let vf = args.first { $0.contains("contrast") }
+        XCTAssertNotNil(vf)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.14: Crop Detection (existing CropDetector)
+    // -----------------------------------------------------------------
+
+    /// Verifies CropRect filter string generation.
+    func test_cropRect_filterString() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        XCTAssertEqual(crop.filterString, "crop=1920:800:0:140")
+    }
+
+    /// Verifies CropRect display string.
+    func test_cropRect_displayString() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        XCTAssertEqual(crop.displayString, "1920x800+0+140")
+    }
+
+    /// Verifies CropRect aspect ratio calculation.
+    func test_cropRect_aspectRatio() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        XCTAssertEqual(crop.aspectRatio, 2.4, accuracy: 0.01)
+    }
+
+    /// Verifies CropRect cropping detection.
+    func test_cropRect_isCropping() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        XCTAssertTrue(crop.isCropping(sourceWidth: 1920, sourceHeight: 1080))
+        XCTAssertFalse(crop.isCropping(sourceWidth: 1920, sourceHeight: 800))
+    }
+
+    /// Verifies cropdetect output parsing.
+    func test_cropDetector_parseCropOutput() {
+        let output = """
+        [Parsed_cropdetect_0 @ 0x12345] x1:0 x2:1919 y1:140 y2:939 w:1920 h:800 x:0 y:140 pts:12345
+        [Parsed_cropdetect_0 @ 0x12345] x1:0 x2:1919 y1:140 y2:939 w:1920 h:800 x:0 y:140 pts:23456
+        """
+        let crops = CropDetector.parseCropDetectOutput(output)
+        XCTAssertEqual(crops.count, 2)
+        XCTAssertEqual(crops[0].width, 1920)
+        XCTAssertEqual(crops[0].height, 800)
+        XCTAssertEqual(crops[0].x, 0)
+        XCTAssertEqual(crops[0].y, 140)
+    }
+
+    /// Verifies CropDetectionResult summary.
+    func test_cropDetectionResult_summary() {
+        let result = CropDetectionResult(
+            recommendedCrop: CropRect(width: 1920, height: 800, x: 0, y: 140),
+            detectedCrops: [],
+            confidence: 0.95,
+            sourceWidth: 1920,
+            sourceHeight: 1080
+        )
+        XCTAssertTrue(result.willCrop)
+        XCTAssertTrue(result.cropPercentage > 0)
+        XCTAssertTrue(result.summary.contains("removes"))
+    }
+
+    /// Verifies no-crop result.
+    func test_cropDetectionResult_noCrop() {
+        let result = CropDetectionResult(
+            recommendedCrop: CropRect(width: 1920, height: 1080, x: 0, y: 0),
+            detectedCrops: [],
+            confidence: 1.0,
+            sourceWidth: 1920,
+            sourceHeight: 1080
+        )
+        XCTAssertFalse(result.willCrop)
+        XCTAssertEqual(result.cropPercentage, 0, accuracy: 0.01)
+        XCTAssertTrue(result.summary.contains("No black bars"))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.3: Encoding Reports
+    // -----------------------------------------------------------------
+
+    /// Verifies EncodingReport compression ratio calculation.
+    func test_encodingReport_compressionRatio() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 1_000_000_000, // 1 GB
+            inputDuration: 3600,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 250_000_000 // 250 MB
+        )
+        XCTAssertEqual(report.compressionRatio, 4.0, accuracy: 0.01)
+        XCTAssertEqual(report.sizeReductionPercent, 75.0, accuracy: 0.01)
+    }
+
+    /// Verifies EncodingReport plain text output.
+    func test_encodingReport_plainText() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 500_000_000,
+            inputDuration: 1800,
+            inputFormat: "matroska",
+            inputStreams: [
+                StreamReport(type: "video", codec: "h265", bitrate: 5_000_000, resolution: "1920x1080"),
+                StreamReport(type: "audio", codec: "aac", bitrate: 160_000, channels: 2),
+            ],
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 200_000_000,
+            outputFormat: "mp4",
+            profileName: "webStandard"
+        )
+        let text = report.toPlainText()
+        XCTAssertTrue(text.contains("ENCODING REPORT"))
+        XCTAssertTrue(text.contains("source.mkv"))
+        XCTAssertTrue(text.contains("output.mp4"))
+        XCTAssertTrue(text.contains("COMPRESSION"))
+        XCTAssertTrue(text.contains("webStandard"))
+    }
+
+    /// Verifies EncodingReport Markdown output.
+    func test_encodingReport_markdown() {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 500_000_000,
+            inputDuration: 1800,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 200_000_000
+        )
+        let md = report.toMarkdown()
+        XCTAssertTrue(md.contains("# Encoding Report"))
+        XCTAssertTrue(md.contains("| Property | Value |"))
+        XCTAssertTrue(md.contains("Compression"))
+    }
+
+    /// Verifies EncodingReport JSON serialization.
+    func test_encodingReport_json() throws {
+        let report = EncodingReport(
+            inputPath: "/tmp/source.mkv",
+            inputFileSize: 100_000,
+            inputDuration: 60,
+            outputPath: "/tmp/output.mp4",
+            outputFileSize: 50_000
+        )
+        let data = try report.toJSON()
+        XCTAssertFalse(data.isEmpty)
+        let str = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(str.contains("inputPath"))
+        XCTAssertTrue(str.contains("outputFileSize"))
+    }
+
+    /// Verifies EncodingPerformance formatted time.
+    func test_encodingPerformance_formattedTime() {
+        let short = EncodingPerformance(totalTime: 45)
+        XCTAssertEqual(short.formattedTime, "45s")
+
+        let medium = EncodingPerformance(totalTime: 185)
+        XCTAssertEqual(medium.formattedTime, "3m 5s")
+
+        let long = EncodingPerformance(totalTime: 7325)
+        XCTAssertEqual(long.formattedTime, "2h 2m 5s")
+    }
+
+    /// Verifies StreamReport construction.
+    func test_streamReport_construction() {
+        let stream = StreamReport(
+            type: "video",
+            codec: "h265",
+            bitrate: 5_000_000,
+            resolution: "3840x2160",
+            frameRate: 23.976
+        )
+        XCTAssertEqual(stream.type, "video")
+        XCTAssertEqual(stream.codec, "h265")
+        XCTAssertEqual(stream.bitrate, 5_000_000)
+        XCTAssertEqual(stream.resolution, "3840x2160")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.16: Content-Aware Encoding
+    // -----------------------------------------------------------------
+
+    /// Verifies content complexity CRF adjustments.
+    func test_contentComplexity_crfAdjustment() {
+        XCTAssertGreaterThan(ContentComplexity.veryLow.crfAdjustment, 0) // Less quality needed
+        XCTAssertEqual(ContentComplexity.medium.crfAdjustment, 0) // Baseline
+        XCTAssertLessThan(ContentComplexity.veryHigh.crfAdjustment, 0) // More quality needed
+    }
+
+    /// Verifies content complexity bitrate multipliers.
+    func test_contentComplexity_bitrateMultiplier() {
+        XCTAssertLessThan(ContentComplexity.veryLow.bitrateMultiplier, 1.0)
+        XCTAssertEqual(ContentComplexity.medium.bitrateMultiplier, 1.0)
+        XCTAssertGreaterThan(ContentComplexity.veryHigh.bitrateMultiplier, 1.0)
+    }
+
+    /// Verifies complexity classification from scores.
+    func test_contentAnalyzer_classifyComplexity() {
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.05, spatialComplexity: 0.05),
+            .veryLow
+        )
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.5, spatialComplexity: 0.5),
+            .medium
+        )
+        XCTAssertEqual(
+            ContentAnalyzer.classifyComplexity(temporalComplexity: 0.9, spatialComplexity: 0.9),
+            .veryHigh
+        )
+    }
+
+    /// Verifies CRF adjustment clamping.
+    func test_contentAnalyzer_adjustedCRF() {
+        let config = ContentAwareConfig(minCRF: 16, maxCRF: 32, baselineCRF: 22)
+
+        let simple = ContentAnalyzer.adjustedCRF(config: config, complexity: .veryLow)
+        XCTAssertEqual(simple, 26) // 22 + 4
+
+        let complex = ContentAnalyzer.adjustedCRF(config: config, complexity: .veryHigh)
+        XCTAssertEqual(complex, 18) // 22 - 4
+
+        // Test clamping
+        let extreme = ContentAwareConfig(minCRF: 20, maxCRF: 24, baselineCRF: 22)
+        XCTAssertEqual(ContentAnalyzer.adjustedCRF(config: extreme, complexity: .veryLow), 24)
+        XCTAssertEqual(ContentAnalyzer.adjustedCRF(config: extreme, complexity: .veryHigh), 20)
+    }
+
+    /// Verifies content-aware encoder arguments for H.265.
+    func test_contentAnalyzer_h265Arguments() {
+        let config = ContentAwareConfig()
+        let analysis = ContentAnalysisResult(
+            overallComplexity: .high,
+            contentType: .film
+        )
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .h265
+        )
+        XCTAssertTrue(args.contains("-crf"))
+        XCTAssertTrue(args.contains("-tune"))
+        XCTAssertTrue(args.contains("film"))
+    }
+
+    /// Verifies content-aware encoder arguments for AV1 with film grain.
+    func test_contentAnalyzer_av1FilmGrain() {
+        let config = ContentAwareConfig(filmGrainSynthesis: true)
+        let analysis = ContentAnalysisResult(
+            segments: [
+                SegmentAnalysis(startTime: 0, endTime: 10,
+                    temporalComplexity: 0.5, spatialComplexity: 0.5, hasFilmGrain: true)
+            ],
+            overallComplexity: .medium
+        )
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .av1
+        )
+        XCTAssertTrue(args.contains("-film-grain-denoise"))
+    }
+
+    /// Verifies disabled content-aware produces empty arguments.
+    func test_contentAnalyzer_disabled() {
+        let config = ContentAwareConfig(enabled: false)
+        let analysis = ContentAnalysisResult()
+        let args = ContentAnalyzer.buildEncoderArguments(
+            config: config, analysis: analysis, codec: .h265
+        )
+        XCTAssertTrue(args.isEmpty)
+    }
+
+    /// Verifies ContentType encoder tunes.
+    func test_contentType_encoderTune() {
+        XCTAssertEqual(ContentType.film.encoderTune, "film")
+        XCTAssertEqual(ContentType.animation.encoderTune, "animation")
+        XCTAssertEqual(ContentType.screenContent.encoderTune, "stillimage")
+        XCTAssertNil(ContentType.documentary.encoderTune)
+    }
+
+    /// Verifies ContentAnalysisResult computed properties.
+    func test_contentAnalysisResult_averages() {
+        let result = ContentAnalysisResult(
+            segments: [
+                SegmentAnalysis(startTime: 0, endTime: 5,
+                    temporalComplexity: 0.2, spatialComplexity: 0.3),
+                SegmentAnalysis(startTime: 5, endTime: 10,
+                    temporalComplexity: 0.8, spatialComplexity: 0.7),
+            ],
+            overallComplexity: .medium
+        )
+        XCTAssertEqual(result.averageTemporalComplexity, 0.5, accuracy: 0.01)
+        XCTAssertEqual(result.averageSpatialComplexity, 0.5, accuracy: 0.01)
+    }
+
+    /// Verifies analysis arguments construction.
+    func test_contentAnalyzer_analysisArguments() {
+        let args = ContentAnalyzer.buildAnalysisArguments(inputPath: "/tmp/video.mp4")
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.mp4"))
+        let vf = args.first { $0.contains("signalstats") }
+        XCTAssertNotNil(vf)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.10: Watch Folder
+    // -----------------------------------------------------------------
+
+    /// Verifies WatchFolderConfig default initialization.
+    func test_watchFolderConfig_defaults() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+        XCTAssertEqual(config.name, "Test")
+        XCTAssertEqual(config.watchPath, "/tmp/watch")
+        XCTAssertNil(config.outputPath)
+        XCTAssertEqual(config.profileName, "webStandard")
+        XCTAssertTrue(config.fileExtensions.isEmpty)
+        XCTAssertFalse(config.recursive)
+        XCTAssertEqual(config.postAction, .leaveInPlace)
+        XCTAssertEqual(config.concurrencyLimit, 1)
+        XCTAssertTrue(config.isActive)
+    }
+
+    /// Verifies effective output path defaults to sibling "output" folder.
+    func test_watchFolderConfig_effectiveOutputPath() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+        XCTAssertTrue(config.effectiveOutputPath.contains("output"))
+
+        let custom = WatchFolderConfig(
+            name: "Test", watchPath: "/tmp/watch", outputPath: "/tmp/encoded"
+        )
+        XCTAssertEqual(custom.effectiveOutputPath, "/tmp/encoded")
+    }
+
+    /// Verifies file extension filtering.
+    func test_watchFolderConfig_shouldProcess() {
+        let config = WatchFolderConfig(name: "Test", watchPath: "/tmp/watch")
+
+        // Default extensions — accepts common media files
+        XCTAssertTrue(config.shouldProcess(filename: "movie.mkv"))
+        XCTAssertTrue(config.shouldProcess(filename: "audio.flac"))
+        XCTAssertTrue(config.shouldProcess(filename: "video.mp4"))
+        XCTAssertFalse(config.shouldProcess(filename: "readme.txt"))
+        XCTAssertFalse(config.shouldProcess(filename: "image.png"))
+
+        // Hidden files rejected
+        XCTAssertFalse(config.shouldProcess(filename: ".DS_Store"))
+        XCTAssertFalse(config.shouldProcess(filename: ".hidden.mp4"))
+
+        // System files rejected
+        XCTAssertFalse(config.shouldProcess(filename: "Thumbs.db"))
+        XCTAssertFalse(config.shouldProcess(filename: "desktop.ini"))
+    }
+
+    /// Verifies custom extension filtering.
+    func test_watchFolderConfig_customExtensions() {
+        let config = WatchFolderConfig(
+            name: "Test", watchPath: "/tmp/watch",
+            fileExtensions: ["mkv", "avi"]
+        )
+        XCTAssertTrue(config.shouldProcess(filename: "movie.mkv"))
+        XCTAssertTrue(config.shouldProcess(filename: "movie.avi"))
+        XCTAssertFalse(config.shouldProcess(filename: "movie.mp4"))
+    }
+
+    /// Verifies PostProcessingAction raw values.
+    func test_postProcessingAction_rawValues() {
+        XCTAssertEqual(PostProcessingAction.leaveInPlace.rawValue, "leave")
+        XCTAssertEqual(PostProcessingAction.moveToCompleted.rawValue, "move")
+        XCTAssertEqual(PostProcessingAction.deleteSource.rawValue, "delete")
+    }
+
+    /// Verifies output path generation.
+    func test_fileStabilityChecker_outputPath() {
+        let config = WatchFolderConfig(
+            name: "Test",
+            watchPath: "/tmp/watch",
+            outputPath: "/tmp/output"
+        )
+        let path = FileStabilityChecker.outputPath(
+            for: "/tmp/watch/movie.mkv",
+            config: config,
+            outputExtension: "mp4"
+        )
+        XCTAssertTrue(path.contains("movie.mp4"))
+        XCTAssertTrue(path.contains("/tmp/output"))
+    }
+
+    /// Verifies WatchFolderConfig JSON round-trip.
+    func test_watchFolderStore_roundTrip() throws {
+        let configs = [
+            WatchFolderConfig(name: "Folder 1", watchPath: "/tmp/w1"),
+            WatchFolderConfig(name: "Folder 2", watchPath: "/tmp/w2", recursive: true),
+        ]
+        let data = try WatchFolderStore.encode(configs: configs)
+        let decoded = try WatchFolderStore.decode(from: data)
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertEqual(decoded[0].name, "Folder 1")
+        XCTAssertEqual(decoded[1].recursive, true)
+    }
+
+    /// Verifies WatchFolderStatus construction.
+    func test_watchFolderStatus_construction() {
+        let status = WatchFolderStatus(
+            configId: "abc",
+            isMonitoring: true,
+            filesProcessed: 5,
+            filesQueued: 2,
+            filesFailed: 1
+        )
+        XCTAssertEqual(status.configId, "abc")
+        XCTAssertTrue(status.isMonitoring)
+        XCTAssertEqual(status.filesProcessed, 5)
+        XCTAssertEqual(status.filesQueued, 2)
+        XCTAssertEqual(status.filesFailed, 1)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.15: AI Upscaling
+    // -----------------------------------------------------------------
+
+    /// Verifies UpscaleModel display names and scale factors.
+    func test_upscaleModel_properties() {
+        XCTAssertEqual(UpscaleModel.realESRGAN.displayName, "Real-ESRGAN (General)")
+        XCTAssertEqual(UpscaleModel.realESRGANAnime.displayName, "Real-ESRGAN (Anime)")
+        XCTAssertEqual(UpscaleModel.realESRGAN.defaultScaleFactor, 4)
+        XCTAssertEqual(UpscaleModel.waifu2x.defaultScaleFactor, 2)
+        XCTAssertTrue(UpscaleModel.realESRGAN.supportedScaleFactors.contains(4))
+    }
+
+    /// Verifies UpscaleModel CaseIterable.
+    func test_upscaleModel_allCases() {
+        XCTAssertEqual(UpscaleModel.allCases.count, 4)
+    }
+
+    /// Verifies Real-ESRGAN argument construction.
+    func test_aiUpscaler_realESRGANArguments() {
+        let config = UpscaleConfig(model: .realESRGAN, scaleFactor: 4, tileSize: 256)
+        let args = AIUpscaler.buildRealESRGANArguments(
+            config: config,
+            inputPath: "/tmp/input.png",
+            outputPath: "/tmp/output.png"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/input.png"))
+        XCTAssertTrue(args.contains("-n"))
+        XCTAssertTrue(args.contains("realesrgan-x4plus"))
+        XCTAssertTrue(args.contains("-s"))
+        XCTAssertTrue(args.contains("4"))
+        XCTAssertTrue(args.contains("-t"))
+        XCTAssertTrue(args.contains("256"))
+    }
+
+    /// Verifies output resolution calculation.
+    func test_aiUpscaler_calculateOutputResolution() {
+        let res = AIUpscaler.calculateOutputResolution(
+            sourceWidth: 960, sourceHeight: 540, scaleFactor: 4
+        )
+        XCTAssertEqual(res.width, 3840)
+        XCTAssertEqual(res.height, 2160)
+    }
+
+    /// Verifies resolution rounding to even numbers.
+    func test_aiUpscaler_resolutionRounding() {
+        let res = AIUpscaler.calculateOutputResolution(
+            sourceWidth: 481, sourceHeight: 271, scaleFactor: 2
+        )
+        XCTAssertEqual(res.width % 2, 0)
+        XCTAssertEqual(res.height % 2, 0)
+    }
+
+    /// Verifies traditional upscale filter fallback.
+    func test_aiUpscaler_traditionalFilter() {
+        let filter = AIUpscaler.buildTraditionalUpscaleFilter(
+            targetWidth: 3840, targetHeight: 2160
+        )
+        XCTAssertTrue(filter.contains("scale=3840:2160"))
+        XCTAssertTrue(filter.contains("lanczos"))
+    }
+
+    /// Verifies VRAM estimation.
+    func test_aiUpscaler_estimateVRAM() {
+        let vram = AIUpscaler.estimateVRAM(width: 1920, height: 1080, scaleFactor: 4)
+        XCTAssertGreaterThan(vram, 0)
+
+        // Smaller tile = less VRAM
+        let vramTiled = AIUpscaler.estimateVRAM(
+            width: 1920, height: 1080, scaleFactor: 4, tileSize: 256
+        )
+        XCTAssertLessThan(vramTiled, vram)
+    }
+
+    /// Verifies frame extraction arguments.
+    func test_aiUpscaler_frameExtraction() {
+        let args = AIUpscaler.buildFrameExtractionArguments(
+            inputPath: "/tmp/video.mp4",
+            outputPattern: "/tmp/frames/%06d.png"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.mp4"))
+        XCTAssertTrue(args.contains("-pix_fmt"))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.17: DCP Creation
+    // -----------------------------------------------------------------
+
+    /// Verifies DCP resolution dimensions.
+    func test_dcpResolution_dimensions() {
+        XCTAssertEqual(DCPResolution.dci2K.width, 2048)
+        XCTAssertEqual(DCPResolution.dci2K.height, 1080)
+        XCTAssertEqual(DCPResolution.dci4K.width, 4096)
+        XCTAssertEqual(DCPResolution.dci4K.height, 2160)
+    }
+
+    /// Verifies DCP aspect ratio dimensions.
+    func test_dcpAspectRatio_dimensions() {
+        let flat2K = DCPAspectRatio.flat.activeDimensions(for: .dci2K)
+        XCTAssertEqual(flat2K.width, 1998)
+        XCTAssertEqual(flat2K.height, 1080)
+
+        let scope2K = DCPAspectRatio.scope.activeDimensions(for: .dci2K)
+        XCTAssertEqual(scope2K.width, 2048)
+        XCTAssertEqual(scope2K.height, 858)
+
+        let flat4K = DCPAspectRatio.flat.activeDimensions(for: .dci4K)
+        XCTAssertEqual(flat4K.width, 3996)
+        XCTAssertEqual(flat4K.height, 2160)
+    }
+
+    /// Verifies DCP video encode arguments.
+    func test_dcpGenerator_videoEncodeArguments() {
+        let config = DCPConfig(title: "Test Film", outputDirectory: "/tmp/dcp")
+        let args = DCPGenerator.buildVideoEncodeArguments(
+            inputPath: "/tmp/source.mp4",
+            outputPath: "/tmp/dcp/video.mxf",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-c:v"))
+        XCTAssertTrue(args.contains("libopenjpeg"))
+        XCTAssertTrue(args.contains("-pix_fmt"))
+        XCTAssertTrue(args.contains("xyz12le"))
+        XCTAssertTrue(args.contains("-an"))
+    }
+
+    /// Verifies DCP audio encode arguments.
+    func test_dcpGenerator_audioEncodeArguments() {
+        let config = DCPConfig(title: "Test", audioChannels: 6, outputDirectory: "/tmp/dcp")
+        let args = DCPGenerator.buildAudioEncodeArguments(
+            inputPath: "/tmp/source.mp4",
+            outputPath: "/tmp/dcp/audio.mxf",
+            config: config
+        )
+        XCTAssertTrue(args.contains("pcm_s24le"))
+        XCTAssertTrue(args.contains("48000"))
+        XCTAssertTrue(args.contains("6"))
+        XCTAssertTrue(args.contains("-vn"))
+    }
+
+    /// Verifies DCP ASSETMAP generation.
+    func test_dcpGenerator_assetMap() {
+        let xml = DCPGenerator.generateAssetMap(
+            dcpId: "dcp-uuid",
+            cplId: "cpl-uuid",
+            pklId: "pkl-uuid",
+            videoFile: "video.mxf",
+            audioFile: "audio.mxf"
+        )
+        XCTAssertTrue(xml.contains("AssetMap"))
+        XCTAssertTrue(xml.contains("urn:uuid:dcp-uuid"))
+        XCTAssertTrue(xml.contains("urn:uuid:cpl-uuid"))
+        XCTAssertTrue(xml.contains("video.mxf"))
+        XCTAssertTrue(xml.contains("audio.mxf"))
+        XCTAssertTrue(xml.contains("MeedyaConverter"))
+    }
+
+    /// Verifies DCP CPL generation.
+    func test_dcpGenerator_cpl() {
+        let config = DCPConfig(
+            title: "My Film",
+            contentKind: .feature,
+            outputDirectory: "/tmp/dcp"
+        )
+        let xml = DCPGenerator.generateCPL(
+            config: config,
+            cplId: "cpl-uuid",
+            videoId: "vid-uuid",
+            audioId: "aud-uuid",
+            durationFrames: 172800
+        )
+        XCTAssertTrue(xml.contains("CompositionPlaylist"))
+        XCTAssertTrue(xml.contains("My Film"))
+        XCTAssertTrue(xml.contains("feature"))
+        XCTAssertTrue(xml.contains("172800"))
+    }
+
+    /// Verifies DCP validation.
+    func test_dcpGenerator_validation() {
+        let good = DCPConfig(title: "Film", frameRate: 24, outputDirectory: "/tmp")
+        XCTAssertTrue(DCPGenerator.validate(config: good).isEmpty)
+
+        let badFps = DCPConfig(title: "Film", frameRate: 30, outputDirectory: "/tmp")
+        XCTAssertFalse(DCPGenerator.validate(config: badFps).isEmpty)
+
+        let noTitle = DCPConfig(title: "", outputDirectory: "/tmp")
+        XCTAssertFalse(DCPGenerator.validate(config: noTitle).isEmpty)
+
+        let encrypted = DCPConfig(title: "Film", encrypted: true, outputDirectory: "/tmp")
+        XCTAssertFalse(DCPGenerator.validate(config: encrypted).isEmpty)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.18: Audio Fingerprinting
+    // -----------------------------------------------------------------
+
+    /// Verifies fingerprint argument construction.
+    func test_audioFingerprinter_arguments() {
+        let args = AudioFingerprinter.buildFingerprintArguments(
+            inputPath: "/tmp/audio.flac",
+            duration: 120
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/audio.flac"))
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("chromaprint"))
+        XCTAssertTrue(args.contains("-t"))
+    }
+
+    /// Verifies fingerprint argument with stream selection.
+    func test_audioFingerprinter_streamSelection() {
+        let args = AudioFingerprinter.buildFingerprintArguments(
+            inputPath: "/tmp/video.mkv",
+            streamIndex: 2
+        )
+        XCTAssertTrue(args.contains("-map"))
+        XCTAssertTrue(args.contains("0:a:2"))
+    }
+
+    /// Verifies AcoustID URL construction.
+    func test_audioFingerprinter_acoustIDURL() {
+        let url = AudioFingerprinter.buildAcoustIDLookupURL(
+            fingerprint: "AQAA",
+            duration: 180,
+            apiKey: "test-key"
+        )
+        XCTAssertTrue(url.contains("api.acoustid.org"))
+        XCTAssertTrue(url.contains("client=test-key"))
+        XCTAssertTrue(url.contains("duration=180"))
+        XCTAssertTrue(url.contains("fingerprint=AQAA"))
+    }
+
+    /// Verifies fingerprint comparison.
+    func test_audioFingerprinter_compareIdentical() {
+        let fp: [UInt32] = [0xAABBCCDD, 0x11223344, 0x55667788]
+        let result = AudioFingerprinter.compareFingerprints(fp, fp)
+        XCTAssertEqual(result.similarity, 1.0, accuracy: 0.001)
+        XCTAssertTrue(result.isDefiniteMatch)
+    }
+
+    /// Verifies fingerprint comparison with different data.
+    func test_audioFingerprinter_compareDifferent() {
+        let fp1: [UInt32] = [0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF]
+        let fp2: [UInt32] = [0x00000000, 0x00000000, 0x00000000]
+        let result = AudioFingerprinter.compareFingerprints(fp1, fp2)
+        XCTAssertEqual(result.similarity, 0.0, accuracy: 0.001)
+        XCTAssertFalse(result.isLikelyMatch)
+    }
+
+    /// Verifies FingerprintMatch confidence levels.
+    func test_fingerprintMatch_confidence() {
+        let high = FingerprintMatch(confidence: 0.95, title: "Song")
+        XCTAssertTrue(high.isHighConfidence)
+
+        let low = FingerprintMatch(confidence: 0.3)
+        XCTAssertFalse(low.isHighConfidence)
+    }
+
+    /// Verifies fingerprint parsing from output.
+    func test_audioFingerprinter_parseFingerprint() {
+        let output = "FINGERPRINT=AQADtNQYhYkYnYmR"
+        let fp = AudioFingerprinter.parseFingerprint(from: output)
+        XCTAssertEqual(fp, "AQADtNQYhYkYnYmR")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Phase 7.6: Auto Metadata Tagging
+    // -----------------------------------------------------------------
+
+    /// Verifies audio title generation.
+    func test_metadataTagger_audioTitle() {
+        let title = MetadataTagger.generateAudioTitle(
+            codec: "aac", channels: 2, language: "English"
+        )
+        XCTAssertEqual(title, "English Stereo AAC")
+
+        let surround = MetadataTagger.generateAudioTitle(
+            codec: "truehd", channels: 8, language: "English"
+        )
+        XCTAssertEqual(surround, "English 7.1 TrueHD")
+    }
+
+    /// Verifies subtitle title generation.
+    func test_metadataTagger_subtitleTitle() {
+        let normal = MetadataTagger.generateSubtitleTitle(language: "English")
+        XCTAssertEqual(normal, "English")
+
+        let forced = MetadataTagger.generateSubtitleTitle(language: "French", isForced: true)
+        XCTAssertEqual(forced, "French (Forced)")
+
+        let sdh = MetadataTagger.generateSubtitleTitle(language: "English", isSDH: true)
+        XCTAssertEqual(sdh, "English SDH")
+    }
+
+    /// Verifies forced subtitle detection.
+    func test_metadataTagger_forcedDetection() {
+        // 10% of video duration = likely forced
+        XCTAssertTrue(MetadataTagger.isLikelyForced(
+            subtitleDuration: 180, videoDuration: 5400
+        ))
+        // 80% of video duration = full subtitles, not forced
+        XCTAssertFalse(MetadataTagger.isLikelyForced(
+            subtitleDuration: 4320, videoDuration: 5400
+        ))
+        // 0 duration = not forced
+        XCTAssertFalse(MetadataTagger.isLikelyForced(
+            subtitleDuration: 0, videoDuration: 5400
+        ))
+    }
+
+    /// Verifies SDH subtitle detection.
+    func test_metadataTagger_sdhDetection() {
+        let sdhText = """
+        [door slams]
+        What are you doing here?
+        [dramatic music]
+        I came to say goodbye.
+        [footsteps approaching]
+        """
+        XCTAssertTrue(MetadataTagger.isLikelySDH(sampleText: sdhText))
+
+        let normalText = """
+        What are you doing here?
+        I came to say goodbye.
+        We should talk about this.
+        """
+        XCTAssertFalse(MetadataTagger.isLikelySDH(sampleText: normalText))
+    }
+
+    /// Verifies metadata arguments generation.
+    func test_metadataTagger_buildArguments() {
+        let suggestions = [
+            StreamTagSuggestion(
+                streamIndex: 0,
+                streamType: "audio",
+                suggestedTitle: "English 5.1 AAC",
+                suggestedLanguage: "eng",
+                isDefault: true
+            ),
+            StreamTagSuggestion(
+                streamIndex: 0,
+                streamType: "subtitle",
+                suggestedTitle: "English (Forced)",
+                isForced: true
+            ),
+        ]
+        let args = MetadataTagger.buildMetadataArguments(suggestions: suggestions)
+        XCTAssertTrue(args.contains("title=English 5.1 AAC"))
+        XCTAssertTrue(args.contains("language=eng"))
+        let dispArg = args.first { $0.contains("default") }
+        XCTAssertNotNil(dispArg)
+    }
 }
