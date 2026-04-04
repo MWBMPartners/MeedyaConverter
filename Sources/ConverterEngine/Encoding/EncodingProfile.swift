@@ -13,7 +13,7 @@ import Foundation
 ///
 /// Profiles can be built-in (shipped with the app), user-created, or imported.
 /// They are serialised as JSON for persistence and sharing.
-public struct EncodingProfile: Identifiable, Codable, Sendable, Equatable {
+public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
 
     // MARK: - Identity
 

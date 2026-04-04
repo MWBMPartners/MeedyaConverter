@@ -76,6 +76,8 @@ struct OutputSettingsView: View {
             Section("Video") {
                 videoSettingsSummary
                 hdrWarning
+                hardwareEncoderInfo
+                cropDetectionControls
             }
 
             // Audio settings
@@ -258,6 +260,80 @@ struct OutputSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+            }
+        }
+    }
+
+    // MARK: - Hardware Encoder Info (Phase 3.10)
+
+    @ViewBuilder
+    private var hardwareEncoderInfo: some View {
+        let profile = viewModel.selectedProfile
+
+        if !profile.videoPassthrough, profile.useHardwareEncoding {
+            if let codec = profile.videoCodec {
+                let hwEncoders = viewModel.availableHardwareEncoders.filter { $0.codec == codec }
+                if let hw = hwEncoders.first {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.fill")
+                            .foregroundStyle(.green)
+                        Text(hw.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                } else if codec.supportsVideoToolbox {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Text("Hardware encoding requested but \(codec.displayName) hardware encoder not detected on this system.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Crop Detection (Phase 3.14)
+
+    @ViewBuilder
+    private var cropDetectionControls: some View {
+        @Bindable var vm = viewModel
+
+        if viewModel.selectedFile != nil, !viewModel.selectedProfile.videoPassthrough {
+            Toggle("Auto-crop black bars", isOn: $vm.autoCropEnabled)
+                .accessibilityLabel("Automatically detect and remove letterbox/pillarbox black bars")
+
+            if viewModel.autoCropEnabled {
+                if viewModel.isDetectingCrop {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Detecting black bars...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let crop = viewModel.detectedCrop {
+                    if crop.willCrop {
+                        HStack(spacing: 4) {
+                            Image(systemName: "crop")
+                                .foregroundStyle(.blue)
+                            Text("Crop: \(crop.recommendedCrop.displayString) — removes \(String(format: "%.1f", crop.cropPercentage))% black bars")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                    } else {
+                        Text("No black bars detected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Button("Detect Now") {
+                    Task { await viewModel.detectCropForSelectedFile() }
+                }
+                .font(.caption)
+                .disabled(viewModel.isDetectingCrop || viewModel.selectedFile == nil)
             }
         }
     }

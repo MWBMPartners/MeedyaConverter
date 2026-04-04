@@ -82,6 +82,9 @@ public final class EncodingEngine: @unchecked Sendable {
     /// The feature gate for checking feature availability.
     public let featureGate: FeatureGateProtocol
 
+    /// The hardware encoder detector for VideoToolbox/NVENC/QSV capability discovery.
+    public let hardwareDetector: HardwareEncoderDetector
+
     /// Cached FFmpeg binary info (populated after configure()).
     public private(set) var ffmpegInfo: FFmpegBinaryInfo?
 
@@ -114,6 +117,7 @@ public final class EncodingEngine: @unchecked Sendable {
         self.profileStore = EncodingProfileStore()
         self.queue = EncodingQueue()
         self.featureGate = featureGate
+        self.hardwareDetector = HardwareEncoderDetector()
     }
 
     // MARK: - Configuration
@@ -258,6 +262,55 @@ public final class EncodingEngine: @unchecked Sendable {
                 onProgress: onProgress
             )
         }
+    }
+
+    // MARK: - Crop Detection
+
+    /// Detect black bars in a video file using FFmpeg's cropdetect filter.
+    ///
+    /// - Parameter mediaFile: The probed media file to analyse.
+    /// - Returns: Crop detection result, or nil if no video stream exists.
+    /// - Throws: If FFmpeg analysis fails.
+    public func detectCrop(for mediaFile: MediaFile) async throws -> CropDetectionResult? {
+        guard let ffmpegPath = ffmpegInfo?.path else {
+            throw EncodingEngineError.ffmpegUnavailable("FFmpeg not configured. Call configure() first.")
+        }
+        guard let video = mediaFile.primaryVideoStream,
+              let width = video.width, let height = video.height else {
+            return nil
+        }
+
+        let detector = CropDetector(ffmpegPath: ffmpegPath)
+        return try await detector.detect(
+            url: mediaFile.fileURL,
+            duration: mediaFile.duration,
+            sourceWidth: width,
+            sourceHeight: height
+        )
+    }
+
+    // MARK: - Hardware Encoding
+
+    /// Detect available hardware encoders on this system.
+    ///
+    /// Must be called after `configure()` has located the FFmpeg binary.
+    /// Results are cached for the session.
+    ///
+    /// - Returns: Array of available hardware encoders, empty if none or not configured.
+    public func detectHardwareEncoders() -> [HardwareEncoderInfo] {
+        guard let ffmpegPath = ffmpegInfo?.path else { return [] }
+        return hardwareDetector.detectEncoders(ffmpegPath: ffmpegPath)
+    }
+
+    /// Check if hardware encoding is available for a specific codec.
+    ///
+    /// - Parameter codec: The video codec to check.
+    /// - Returns: Available hardware encoder info, or nil if not supported.
+    public func hardwareEncoder(for codec: VideoCodec) -> HardwareEncoderInfo? {
+        guard let ffmpegPath = ffmpegInfo?.path else { return nil }
+        // Prefer VideoToolbox on macOS
+        return hardwareDetector.encoder(for: codec, api: .videoToolbox, ffmpegPath: ffmpegPath)
+            ?? hardwareDetector.encoders(for: codec, ffmpegPath: ffmpegPath).first
     }
 
     // MARK: - Process Control

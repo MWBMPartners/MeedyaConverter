@@ -115,6 +115,22 @@ final class AppViewModel {
     /// Keyed by FFmpeg stream specifier (e.g. "s:v:0"), value is tag dict.
     var streamMetadataOverrides: [String: [String: String]] = [:]
 
+    // MARK: - Crop Detection (Phase 3.14)
+
+    /// Whether automatic crop detection is enabled for new encodes.
+    var autoCropEnabled: Bool = true
+
+    /// The detected crop result for the currently selected file.
+    var detectedCrop: CropDetectionResult?
+
+    /// Whether crop detection is currently running.
+    var isDetectingCrop: Bool = false
+
+    // MARK: - Hardware Encoding (Phase 3.10)
+
+    /// Discovered hardware encoders on this system.
+    var availableHardwareEncoders: [HardwareEncoderInfo] = []
+
     // MARK: - Activity Log
 
     /// Log entries for the unified activity log.
@@ -186,6 +202,53 @@ final class AppViewModel {
         selectedFile = nil
     }
 
+    // MARK: - Crop Detection (Phase 3.14)
+
+    /// Run automatic black bar crop detection on the selected file.
+    func detectCropForSelectedFile() async {
+        guard let file = selectedFile else { return }
+        isDetectingCrop = true
+        detectedCrop = nil
+
+        do {
+            try engine.configure()
+            let result = try await engine.detectCrop(for: file)
+            detectedCrop = result
+
+            if let result = result, result.willCrop {
+                appendLog(.info, "Crop detected: \(result.summary)", category: .filter)
+            } else {
+                appendLog(.info, "No black bars detected in \(file.fileName)", category: .filter)
+            }
+        } catch {
+            appendLog(.warning, "Crop detection failed: \(error.localizedDescription)", category: .filter)
+        }
+
+        isDetectingCrop = false
+    }
+
+    // MARK: - Hardware Detection (Phase 3.10)
+
+    /// Detect available hardware encoders and cache the results.
+    func detectHardwareEncoders() {
+        do {
+            try engine.configure()
+        } catch {
+            appendLog(.warning, "Cannot detect hardware encoders: \(error.localizedDescription)")
+            return
+        }
+
+        let encoders = engine.detectHardwareEncoders()
+        availableHardwareEncoders = encoders
+
+        if encoders.isEmpty {
+            appendLog(.info, "No hardware encoders detected", category: .encoding)
+        } else {
+            let names = encoders.map(\.displayName).joined(separator: ", ")
+            appendLog(.info, "Hardware encoders available: \(names)", category: .encoding)
+        }
+    }
+
     // MARK: - Encoding
 
     /// Create an encoding job for the selected file with current settings and add to queue.
@@ -200,6 +263,13 @@ final class AppViewModel {
             .appendingPathComponent("\(baseName)_converted")
             .appendingPathExtension(outputExtension)
 
+        // Apply auto-crop filter if enabled and a crop was detected
+        var cropFilter: String? = nil
+        if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
+            cropFilter = crop.recommendedCrop.filterString
+            appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
+        }
+
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
@@ -208,7 +278,8 @@ final class AppViewModel {
             audioStreamIndex: selectedAudioStreamIndex,
             subtitleStreamIndex: selectedSubtitleStreamIndex,
             mapAllStreams: mapAllStreams,
-            streamMetadata: streamMetadataOverrides
+            streamMetadata: streamMetadataOverrides,
+            videoFilterChain: cropFilter
         )
 
         engine.queue.addJob(config)
