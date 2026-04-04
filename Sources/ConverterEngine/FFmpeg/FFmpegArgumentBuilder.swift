@@ -155,6 +155,11 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Always true in MeedyaConverter (we handle confirmation in the UI).
     public var overwriteOutput: Bool = true
 
+    /// Whether to copy all metadata from the source file to the output.
+    /// Enabled by default so passthrough preserves track names, language tags,
+    /// and all other stream/container metadata unless overridden in the UI.
+    public var copySourceMetadata: Bool = true
+
     // MARK: - Metadata
 
     /// Metadata key-value pairs to write to the output file.
@@ -208,6 +213,15 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // --- Stream mapping ---
         args.append(contentsOf: buildStreamMapping())
+
+        // --- Source metadata passthrough ---
+        // Copy all metadata (track names, language, title, etc.) and chapters
+        // from the source file by default. Per-stream overrides from the UI
+        // are applied separately via buildMetadataArguments().
+        if copySourceMetadata {
+            args.append(contentsOf: ["-map_metadata", "0"])
+            args.append(contentsOf: ["-map_chapters", "0"])
+        }
 
         // --- Video codec and quality ---
         args.append(contentsOf: buildVideoArguments())

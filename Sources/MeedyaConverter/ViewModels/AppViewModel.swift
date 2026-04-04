@@ -95,6 +95,26 @@ final class AppViewModel {
     /// The output directory URL for encoded files.
     var outputDirectory: URL?
 
+    // MARK: - Stream Selection (Phase 3.4–3.5)
+
+    /// Selected video stream index (nil = default/first).
+    var selectedVideoStreamIndex: Int?
+
+    /// Selected audio stream index (nil = default/first).
+    var selectedAudioStreamIndex: Int?
+
+    /// Selected subtitle stream index (nil = none).
+    var selectedSubtitleStreamIndex: Int?
+
+    /// Whether to map all streams from the source to the output.
+    var mapAllStreams: Bool = false
+
+    // MARK: - Stream Metadata (Phase 3.6)
+
+    /// Per-stream metadata overrides from the StreamMetadataEditorView.
+    /// Keyed by FFmpeg stream specifier (e.g. "s:v:0"), value is tag dict.
+    var streamMetadataOverrides: [String: [String: String]] = [:]
+
     // MARK: - Activity Log
 
     /// Log entries for the unified activity log.
@@ -183,7 +203,12 @@ final class AppViewModel {
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
-            profile: selectedProfile
+            profile: selectedProfile,
+            videoStreamIndex: selectedVideoStreamIndex,
+            audioStreamIndex: selectedAudioStreamIndex,
+            subtitleStreamIndex: selectedSubtitleStreamIndex,
+            mapAllStreams: mapAllStreams,
+            streamMetadata: streamMetadataOverrides
         )
 
         engine.queue.addJob(config)
