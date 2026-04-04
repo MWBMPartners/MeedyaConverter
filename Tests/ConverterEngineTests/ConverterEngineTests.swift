@@ -2135,6 +2135,13 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(change.formattedTimestamp, "01:02:03.456")
     }
 
+    /// Verifies auto-chaptering is skipped when source already has chapters.
+    func test_sceneDetector_shouldAutoChapter() {
+        XCTAssertTrue(SceneDetector.shouldAutoChapter(existingChapterCount: 0))
+        XCTAssertFalse(SceneDetector.shouldAutoChapter(existingChapterCount: 1))
+        XCTAssertFalse(SceneDetector.shouldAutoChapter(existingChapterCount: 5))
+    }
+
     /// Verifies ChapterGenerationStrategy raw values.
     func test_chapterStrategy_rawValues() {
         XCTAssertEqual(ChapterGenerationStrategy.everyScene.rawValue, "every_scene")

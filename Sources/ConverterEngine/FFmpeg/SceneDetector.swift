@@ -115,6 +115,20 @@ public struct SceneDetectionResult: Sendable {
 /// Phase 7.13
 public struct SceneDetector: Sendable {
 
+    /// Determine whether auto-chaptering should run for a given source.
+    ///
+    /// Auto-chaptering is only applied when the source has **no** existing
+    /// chapters (i.e. `existingChapterCount == 0`). If the source already
+    /// contains one or more chapters they are preserved as-is and scene
+    /// detection is skipped.
+    ///
+    /// - Parameter existingChapterCount: Number of chapters already present
+    ///   in the source file (from probe metadata).
+    /// - Returns: `true` if auto-chaptering should proceed.
+    public static func shouldAutoChapter(existingChapterCount: Int) -> Bool {
+        return existingChapterCount < 1
+    }
+
     /// Build FFmpeg arguments for scene detection.
     ///
     /// - Parameters:
