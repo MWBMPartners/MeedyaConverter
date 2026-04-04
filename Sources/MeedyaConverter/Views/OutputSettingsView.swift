@@ -21,6 +21,10 @@ struct OutputSettingsView: View {
 
     @Environment(AppViewModel.self) private var viewModel
 
+    // MARK: - State
+
+    @State private var showProfileManager = false
+
     // MARK: - Body
 
     var body: some View {
@@ -36,6 +40,9 @@ struct OutputSettingsView: View {
             }
         }
         .navigationTitle("Output Settings")
+        .sheet(isPresented: $showProfileManager) {
+            ProfileManagementView()
+        }
     }
 
     // MARK: - Settings Form
@@ -46,6 +53,10 @@ struct OutputSettingsView: View {
             Section("Encoding Profile") {
                 profilePicker
                 profileDescription
+                Button("Manage Profiles...") {
+                    showProfileManager = true
+                }
+                .font(.caption)
             }
 
             // Video settings summary (read-only from profile)

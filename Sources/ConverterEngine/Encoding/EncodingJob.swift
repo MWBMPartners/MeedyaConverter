@@ -234,7 +234,7 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
     @Published public private(set) var jobs: [EncodingJobState] = []
 
     /// The currently encoding job, if any.
-    @Published public private(set) var currentJob: EncodingJobState?
+    @Published public var currentJob: EncodingJobState?
 
     /// Whether the queue is currently processing jobs.
     @Published public private(set) var isProcessing: Bool = false

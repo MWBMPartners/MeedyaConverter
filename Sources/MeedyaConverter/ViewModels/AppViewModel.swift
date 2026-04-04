@@ -192,25 +192,227 @@ final class AppViewModel {
         selectedNavItem = .queue
     }
 
+    // MARK: - Queue Processing
+
+    /// Whether the queue is currently processing jobs sequentially.
+    var isQueueRunning = false
+
+    /// The currently encoding job state (for UI binding).
+    var activeJobState: EncodingJobState?
+
+    /// Start processing the encoding queue sequentially.
+    ///
+    /// Picks the next queued job, encodes it, then moves to the next
+    /// until no queued jobs remain or the queue is stopped.
+    func startQueue() async {
+        guard !isQueueRunning else { return }
+        isQueueRunning = true
+
+        // Ensure engine is configured
+        do {
+            try engine.configure()
+        } catch {
+            appendLog(.error, "Engine configuration failed: \(error.localizedDescription)")
+            isQueueRunning = false
+            return
+        }
+
+        appendLog(.info, "Queue started")
+
+        // Prevent system sleep during encoding
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "MeedyaConverter is encoding media"
+        )
+
+        while isQueueRunning, let jobState = engine.queue.nextPendingJob() {
+            activeJobState = jobState
+            jobState.status = .encoding
+            jobState.startedAt = Date()
+            engine.queue.currentJob = jobState
+
+            appendLog(.info, "Encoding: \(jobState.config.inputURL.lastPathComponent)",
+                      category: .encoding, jobID: jobState.config.id)
+
+            do {
+                try await engine.encode(job: jobState.config) { [weak self] progressInfo in
+                    Task { @MainActor in
+                        jobState.progress = progressInfo.fractionComplete ?? 0
+                        jobState.speed = progressInfo.speed
+                        jobState.currentBitrate = progressInfo.bitrate
+                        jobState.currentFrame = progressInfo.frame
+
+                        // Calculate ETA from speed and remaining fraction
+                        if let fraction = progressInfo.fractionComplete, fraction > 0,
+                           let startedAt = jobState.startedAt {
+                            let elapsed = Date().timeIntervalSince(startedAt)
+                            let totalEstimated = elapsed / fraction
+                            jobState.eta = totalEstimated - elapsed
+                        }
+
+                        // Log raw FFmpeg output
+                        if let raw = progressInfo.rawLine, !raw.isEmpty {
+                            self?.appendLog(.debug, raw, source: .ffmpeg,
+                                            category: .progress, rawOutput: raw,
+                                            jobID: jobState.config.id)
+                        }
+                    }
+                }
+
+                jobState.status = .completed
+                jobState.progress = 1.0
+                jobState.completedAt = Date()
+
+                let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
+                appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
+                          category: .encoding, jobID: jobState.config.id)
+
+            } catch {
+                jobState.status = .failed
+                jobState.errorMessage = error.localizedDescription
+                jobState.completedAt = Date()
+
+                appendLog(.error, "Failed: \(jobState.config.inputURL.lastPathComponent) — \(error.localizedDescription)",
+                          category: .encoding, jobID: jobState.config.id)
+            }
+
+            engine.queue.currentJob = nil
+            activeJobState = nil
+        }
+
+        ProcessInfo.processInfo.endActivity(activity)
+        isQueueRunning = false
+        appendLog(.info, "Queue finished — \(engine.queue.completedCount) completed, \(engine.queue.failedCount) failed")
+    }
+
+    /// Stop the queue after the current job finishes.
+    func stopQueue() {
+        isQueueRunning = false
+        appendLog(.info, "Queue stopping after current job")
+    }
+
+    /// Pause the currently encoding job.
+    func pauseCurrentJob() {
+        engine.pauseEncoding()
+        activeJobState?.status = .paused
+        appendLog(.info, "Encoding paused")
+    }
+
+    /// Resume the currently paused job.
+    func resumeCurrentJob() {
+        engine.resumeEncoding()
+        activeJobState?.status = .encoding
+        appendLog(.info, "Encoding resumed")
+    }
+
+    /// Cancel the currently encoding job and stop the queue.
+    func cancelCurrentJob() {
+        engine.stopEncoding()
+        activeJobState?.status = .cancelled
+        activeJobState?.completedAt = Date()
+        isQueueRunning = false
+        appendLog(.warning, "Encoding cancelled")
+    }
+
     // MARK: - Logging
 
     /// Append a log entry to the activity log.
-    func appendLog(_ level: LogEntry.Level, _ message: String) {
-        let entry = LogEntry(level: level, message: message)
+    func appendLog(
+        _ level: LogEntry.Level,
+        _ message: String,
+        source: LogEntry.Source = .app,
+        category: LogEntry.Category = .general,
+        rawOutput: String? = nil,
+        details: [String: String]? = nil,
+        jobID: UUID? = nil
+    ) {
+        let entry = LogEntry(
+            level: level,
+            message: message,
+            source: source,
+            category: category,
+            rawOutput: rawOutput,
+            details: details,
+            jobID: jobID
+        )
         logEntries.append(entry)
+    }
+
+    /// Export all log entries as JSON data.
+    func exportLogAsJSON() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(logEntries)
+    }
+
+    /// Export all log entries as plain text.
+    func exportLogAsText() -> String {
+        let formatter = ISO8601DateFormatter()
+        return logEntries.map { entry in
+            let ts = formatter.string(from: entry.timestamp)
+            return "[\(ts)] [\(entry.level.rawValue)] [\(entry.source.rawValue)] \(entry.message)"
+        }.joined(separator: "\n")
+    }
+
+    // MARK: - Helpers
+
+    /// Format a time interval as a human-readable duration.
+    private func formatDuration(_ interval: TimeInterval) -> String {
+        let hours = Int(interval) / 3600
+        let minutes = (Int(interval) % 3600) / 60
+        let seconds = Int(interval) % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%d:%02d", minutes, seconds)
+        }
     }
 }
 
 // MARK: - LogEntry
 
 /// A single entry in the unified activity log.
-struct LogEntry: Identifiable {
-    let id = UUID()
-    let timestamp = Date()
+///
+/// Combines structured application events and raw FFmpeg/tool output
+/// into a single filterable log stream per issue #249.
+struct LogEntry: Identifiable, Codable {
+    let id: UUID
+    let timestamp: Date
     let level: Level
+    let source: Source
+    let category: Category
     let message: String
+    /// Raw subprocess output line (for FFmpeg/tool entries).
+    let rawOutput: String?
+    /// Structured key-value details for app events.
+    let details: [String: String]?
+    /// The job ID this entry relates to (nil for app-level events).
+    let jobID: UUID?
 
-    enum Level: String {
+    init(
+        level: Level,
+        message: String,
+        source: Source = .app,
+        category: Category = .general,
+        rawOutput: String? = nil,
+        details: [String: String]? = nil,
+        jobID: UUID? = nil
+    ) {
+        self.id = UUID()
+        self.timestamp = Date()
+        self.level = level
+        self.source = source
+        self.category = category
+        self.message = message
+        self.rawOutput = rawOutput
+        self.details = details
+        self.jobID = jobID
+    }
+
+    // MARK: - Level
+
+    enum Level: String, Codable, CaseIterable {
         case info = "INFO"
         case warning = "WARN"
         case error = "ERROR"
@@ -231,6 +433,53 @@ struct LogEntry: Identifiable {
             case .warning: return "exclamationmark.triangle"
             case .error: return "xmark.circle"
             case .debug: return "ant"
+            }
+        }
+    }
+
+    // MARK: - Source
+
+    /// The origin of this log entry.
+    enum Source: String, Codable, CaseIterable {
+        /// Structured application event.
+        case app
+        /// Raw FFmpeg stderr output.
+        case ffmpeg
+        /// MediaInfo analysis output.
+        case mediainfo
+        /// dovi_tool output.
+        case doviTool = "dovi_tool"
+        /// System-level event (temp files, disk space).
+        case system
+    }
+
+    // MARK: - Category
+
+    /// Logical category for filtering.
+    enum Category: String, Codable, CaseIterable {
+        case general
+        case encoding
+        case settings
+        case stream
+        case filter
+        case audio
+        case hdr
+        case metadata
+        case tempFiles = "temp_files"
+        case progress
+
+        var displayName: String {
+            switch self {
+            case .general: return "General"
+            case .encoding: return "Encoding"
+            case .settings: return "Settings"
+            case .stream: return "Stream"
+            case .filter: return "Filter"
+            case .audio: return "Audio"
+            case .hdr: return "HDR"
+            case .metadata: return "Metadata"
+            case .tempFiles: return "Temp Files"
+            case .progress: return "Progress"
             }
         }
     }

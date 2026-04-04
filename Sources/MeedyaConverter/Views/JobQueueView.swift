@@ -21,6 +21,10 @@ struct JobQueueView: View {
 
     @Environment(AppViewModel.self) private var viewModel
 
+    // MARK: - State
+
+    @State private var showCancelConfirmation = false
+
     // MARK: - Body
 
     var body: some View {
@@ -33,9 +37,20 @@ struct JobQueueView: View {
         }
         .navigationTitle("Encoding Queue")
         .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                queueToolbar
+            ToolbarItemGroup(placement: .primaryAction) {
+                queueControls
             }
+            ToolbarItemGroup(placement: .automatic) {
+                queueManagement
+            }
+        }
+        .alert("Cancel Encoding?", isPresented: $showCancelConfirmation) {
+            Button("Cancel Encoding", role: .destructive) {
+                viewModel.cancelCurrentJob()
+            }
+            Button("Continue Encoding", role: .cancel) {}
+        } message: {
+            Text("This will stop the current encoding job. The partial output file will be deleted.")
         }
     }
 
@@ -56,6 +71,11 @@ struct JobQueueView: View {
             // Queue statistics header
             queueStatsSection
 
+            // Overall queue progress
+            if viewModel.isQueueRunning {
+                overallProgressSection
+            }
+
             // Active and queued jobs
             let activeJobs = viewModel.engine.queue.jobs.filter {
                 $0.status == .encoding || $0.status == .paused || $0.status == .queued
@@ -64,6 +84,11 @@ struct JobQueueView: View {
                 Section("Active & Pending") {
                     ForEach(activeJobs, id: \.config.id) { job in
                         JobRow(job: job)
+                    }
+                    .onMove { from, to in
+                        if let fromIndex = from.first {
+                            viewModel.engine.queue.moveJob(fromIndex: fromIndex, toIndex: to)
+                        }
                     }
                 }
             }
@@ -110,10 +135,76 @@ struct JobQueueView: View {
         }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Overall Progress
+
+    private var overallProgressSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Queue Progress")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer()
+                    let completed = viewModel.engine.queue.completedCount
+                    let total = viewModel.engine.queue.totalCount
+                    Text("\(completed) of \(total) files")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                let total = viewModel.engine.queue.totalCount
+                let completed = viewModel.engine.queue.completedCount
+                let currentProgress = viewModel.activeJobState?.progress ?? 0
+                let overallProgress = total > 0
+                    ? (Double(completed) + currentProgress) / Double(total)
+                    : 0
+
+                ProgressView(value: overallProgress)
+                    .progressViewStyle(.linear)
+                    .accessibilityLabel("Overall queue progress: \(Int(overallProgress * 100))%")
+            }
+        }
+    }
+
+    // MARK: - Queue Controls
 
     @ViewBuilder
-    private var queueToolbar: some View {
+    private var queueControls: some View {
+        if viewModel.isQueueRunning {
+            // Pause/Resume
+            if viewModel.activeJobState?.status == .paused {
+                Button("Resume", systemImage: "play.fill") {
+                    viewModel.resumeCurrentJob()
+                }
+                .help("Resume encoding")
+            } else {
+                Button("Pause", systemImage: "pause.fill") {
+                    viewModel.pauseCurrentJob()
+                }
+                .help("Pause current encoding")
+            }
+
+            // Cancel
+            Button("Cancel", systemImage: "stop.fill") {
+                showCancelConfirmation = true
+            }
+            .help("Cancel current encoding")
+        } else {
+            // Start Queue
+            Button("Start Queue", systemImage: "play.fill") {
+                Task {
+                    await viewModel.startQueue()
+                }
+            }
+            .disabled(viewModel.engine.queue.pendingCount == 0)
+            .help("Start encoding queued jobs")
+        }
+    }
+
+    // MARK: - Queue Management
+
+    @ViewBuilder
+    private var queueManagement: some View {
         Button("Clear Finished", systemImage: "trash") {
             viewModel.engine.queue.clearFinished()
         }
@@ -152,7 +243,7 @@ struct JobRow: View {
                     .clipShape(Capsule())
             }
 
-            // Progress bar (only for encoding/paused)
+            // Progress bar (for encoding/paused)
             if job.status == .encoding || job.status == .paused {
                 ProgressView(value: job.progress)
                     .progressViewStyle(.linear)
@@ -166,6 +257,32 @@ struct JobRow: View {
                     .foregroundStyle(statusColor)
 
                 Spacer()
+
+                // Encoding stats
+                if job.status == .encoding {
+                    HStack(spacing: 8) {
+                        if let fps = job.currentFrame {
+                            Text("frame \(fps)")
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        if let bitrate = job.currentBitrate {
+                            Text(String(format: "%.0f kbps", bitrate))
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                // Elapsed time for completed jobs
+                if job.status == .completed, let elapsed = job.elapsedTime {
+                    Text(formatDuration(elapsed))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
 
                 // Output format
                 Text(job.config.outputURL.pathExtension.uppercased())
@@ -191,6 +308,17 @@ struct JobRow: View {
                         job.config.outputURL.path,
                         inFileViewerRootedAtPath: job.config.outputURL.deletingLastPathComponent().path
                     )
+                }
+                Button("Open Output File") {
+                    NSWorkspace.shared.open(job.config.outputURL)
+                }
+            }
+            if job.status == .failed {
+                if let error = job.errorMessage {
+                    Button("Copy Error") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(error, forType: .string)
+                    }
                 }
             }
         }
@@ -219,6 +347,17 @@ struct JobRow: View {
         case .completed: return .green
         case .failed: return .red
         case .cancelled: return .secondary
+        }
+    }
+
+    private func formatDuration(_ interval: TimeInterval) -> String {
+        let hours = Int(interval) / 3600
+        let minutes = (Int(interval) % 3600) / 60
+        let seconds = Int(interval) % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%d:%02d", minutes, seconds)
         }
     }
 }
