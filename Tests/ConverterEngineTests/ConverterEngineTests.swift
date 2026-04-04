@@ -2102,8 +2102,8 @@ final class ConverterEngineTests: XCTestCase {
     /// Verifies FFmetadata chapter output format.
     func test_sceneDetector_ffmetadataOutput() {
         let chapters = [
-            Chapter(title: "Intro", startTime: 0, endTime: 60),
-            Chapter(title: "Main", startTime: 60, endTime: 180),
+            SceneChapter(title: "Intro", startTime: 0, endTime: 60),
+            SceneChapter(title: "Main", startTime: 60, endTime: 180),
         ]
         let metadata = SceneDetector.generateFFmetadata(chapters: chapters, duration: 180)
         XCTAssertTrue(metadata.contains(";FFMETADATA1"))
@@ -2119,8 +2119,8 @@ final class ConverterEngineTests: XCTestCase {
     /// Verifies OGG chapter format output.
     func test_sceneDetector_oggChapterOutput() {
         let chapters = [
-            Chapter(title: "Scene 1", startTime: 0),
-            Chapter(title: "Scene 2", startTime: 65.5),
+            SceneChapter(title: "Scene 1", startTime: 0),
+            SceneChapter(title: "Scene 2", startTime: 65.5),
         ]
         let ogg = SceneDetector.generateOGGChapters(chapters: chapters)
         XCTAssertTrue(ogg.contains("CHAPTER01=00:00:00.000"))
@@ -6836,22 +6836,22 @@ final class ConverterEngineTests: XCTestCase {
 
     // MARK: - Phase 5: Matrix Encoding Tests
 
-    // MARK: MatrixEncoding
+    // MARK: MatrixEncodingFormat
 
     /// Verifies matrix encoding properties.
     func test_matrixEncoding_properties() {
-        XCTAssertTrue(MatrixEncoding.dolbyProLogicII.isDecodable)
-        XCTAssertEqual(MatrixEncoding.dolbyProLogicII.maxDecodeChannels, 6)
-        XCTAssertEqual(MatrixEncoding.dolbyProLogicIIx.maxDecodeChannels, 8)
-        XCTAssertFalse(MatrixEncoding.none.isDecodable)
-        XCTAssertEqual(MatrixEncoding.none.maxDecodeChannels, 2)
+        XCTAssertTrue(MatrixEncodingFormat.dolbyProLogicII.isDecodable)
+        XCTAssertEqual(MatrixEncodingFormat.dolbyProLogicII.maxDecodeChannels, 6)
+        XCTAssertEqual(MatrixEncodingFormat.dolbyProLogicIIx.maxDecodeChannels, 8)
+        XCTAssertFalse(MatrixEncodingFormat.none.isDecodable)
+        XCTAssertEqual(MatrixEncodingFormat.none.maxDecodeChannels, 2)
     }
 
     /// Verifies matrix encoding display names.
     func test_matrixEncoding_displayNames() {
-        XCTAssertEqual(MatrixEncoding.dolbyProLogicII.displayName, "Dolby Pro Logic II")
-        XCTAssertEqual(MatrixEncoding.dtsNeo6.displayName, "DTS Neo:6")
-        XCTAssertEqual(MatrixEncoding.none.displayName, "None")
+        XCTAssertEqual(MatrixEncodingFormat.dolbyProLogicII.displayName, "Dolby Pro Logic II")
+        XCTAssertEqual(MatrixEncodingFormat.dtsNeo6.displayName, "DTS Neo:6")
+        XCTAssertEqual(MatrixEncodingFormat.none.displayName, "None")
     }
 
     // MARK: MatrixEncodingPreserver

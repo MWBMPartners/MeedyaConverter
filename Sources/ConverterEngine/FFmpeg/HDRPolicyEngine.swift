@@ -7,66 +7,7 @@
 
 import Foundation
 
-// MARK: - HDRFormat
-
-/// Recognised HDR formats in source media.
-public enum HDRFormat: String, Codable, Sendable, CaseIterable {
-    /// HDR10 (PQ transfer, static metadata).
-    case hdr10 = "hdr10"
-
-    /// HDR10+ (PQ transfer, dynamic metadata).
-    case hdr10Plus = "hdr10plus"
-
-    /// Dolby Vision.
-    case dolbyVision = "dolby_vision"
-
-    /// Dolby Vision + HDR10 (dual-layer / compatible).
-    case dolbyVisionHDR10 = "dolby_vision_hdr10"
-
-    /// HLG (Hybrid Log-Gamma).
-    case hlg = "hlg"
-
-    /// SDR (not HDR).
-    case sdr = "sdr"
-
-    /// Display name.
-    public var displayName: String {
-        switch self {
-        case .hdr10: return "HDR10"
-        case .hdr10Plus: return "HDR10+"
-        case .dolbyVision: return "Dolby Vision"
-        case .dolbyVisionHDR10: return "Dolby Vision + HDR10"
-        case .hlg: return "HLG"
-        case .sdr: return "SDR"
-        }
-    }
-
-    /// Whether this format is HDR.
-    public var isHDR: Bool {
-        self != .sdr
-    }
-
-    /// Whether this format uses PQ transfer.
-    public var isPQ: Bool {
-        switch self {
-        case .hdr10, .hdr10Plus, .dolbyVision, .dolbyVisionHDR10: return true
-        default: return false
-        }
-    }
-
-    /// Whether this format uses HLG transfer.
-    public var isHLG: Bool {
-        self == .hlg
-    }
-
-    /// Whether this format has dynamic metadata.
-    public var hasDynamicMetadata: Bool {
-        switch self {
-        case .hdr10Plus, .dolbyVision, .dolbyVisionHDR10: return true
-        default: return false
-        }
-    }
-}
+// NOTE: HDRFormat is defined in Models/MediaStream.swift
 
 // MARK: - HDRCompatibility
 

@@ -10,7 +10,7 @@ import Foundation
 // MARK: - MatrixEncoding
 
 /// Recognised surround sound matrix encoding formats embedded in stereo tracks.
-public enum MatrixEncoding: String, Codable, Sendable, CaseIterable {
+public enum MatrixEncodingFormat: String, Codable, Sendable, CaseIterable {
     /// Dolby Surround (passive matrix, 1982).
     case dolbySurround = "dolby_surround"
 
@@ -152,7 +152,7 @@ public struct MatrixEncodingPreserver: Sendable {
     ///
     /// - Parameter metadataString: Audio encoding metadata.
     /// - Returns: Detected matrix encoding.
-    public static func detectFromMetadata(_ metadataString: String?) -> MatrixEncoding {
+    public static func detectFromMetadata(_ metadataString: String?) -> MatrixEncodingFormat {
         guard let meta = metadataString?.lowercased() else { return .none }
 
         if meta.contains("pro logic ii") || meta.contains("prologic ii") || meta.contains("plii") {
@@ -201,7 +201,7 @@ public struct MatrixEncodingPreserver: Sendable {
     ///   - streamIndex: Audio stream index in output.
     /// - Returns: FFmpeg argument array.
     public static func buildPreservationArguments(
-        encoding: MatrixEncoding,
+        encoding: MatrixEncodingFormat,
         streamIndex: Int = 0
     ) -> [String] {
         guard encoding != .none else { return [] }
@@ -233,7 +233,7 @@ public struct MatrixEncodingPreserver: Sendable {
     ///   - targetChannels: Target channel count (6 for 5.1, 8 for 7.1).
     /// - Returns: FFmpeg audio filter string (or nil if not decodable).
     public static func buildDecodeFilter(
-        encoding: MatrixEncoding,
+        encoding: MatrixEncodingFormat,
         targetChannels: Int = 6
     ) -> String? {
         switch encoding {
@@ -272,7 +272,7 @@ public struct MatrixEncodingPreserver: Sendable {
     ///   - streamIndex: Audio stream index.
     /// - Returns: FFmpeg argument array.
     public static func buildTranscodeArguments(
-        encoding: MatrixEncoding,
+        encoding: MatrixEncodingFormat,
         decode: Bool = false,
         targetChannels: Int = 6,
         streamIndex: Int = 0

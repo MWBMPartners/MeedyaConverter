@@ -33,7 +33,7 @@ public enum StreamType: String, Codable, Sendable {
 // MARK: - HDRFormat
 
 /// The HDR (High Dynamic Range) format detected in a video stream.
-public enum HDRFormat: String, Codable, Sendable {
+public enum HDRFormat: String, Codable, Sendable, CaseIterable {
     /// HDR10 — static metadata (SMPTE ST 2086 mastering display + MaxCLL/MaxFALL).
     case hdr10
 
@@ -45,6 +45,9 @@ public enum HDRFormat: String, Codable, Sendable {
     /// Profiles: 5 (MEL), 7 (FEL), 8.1-8.4 (various base layers).
     case dolbyVision = "dolby_vision"
 
+    /// Dolby Vision + HDR10 (dual-layer / compatible).
+    case dolbyVisionHDR10 = "dolby_vision_hdr10"
+
     /// HLG (Hybrid Log-Gamma) — BBC/NHK standard for broadcast HDR.
     /// Backward-compatible with SDR displays.
     case hlg
@@ -52,6 +55,48 @@ public enum HDRFormat: String, Codable, Sendable {
     /// PQ (Perceptual Quantizer) — SMPTE ST 2084 transfer function.
     /// The transfer curve used by HDR10, HDR10+, and Dolby Vision.
     case pq
+
+    /// SDR (not HDR).
+    case sdr
+
+    /// Display name.
+    public var displayName: String {
+        switch self {
+        case .hdr10: return "HDR10"
+        case .hdr10Plus: return "HDR10+"
+        case .dolbyVision: return "Dolby Vision"
+        case .dolbyVisionHDR10: return "Dolby Vision + HDR10"
+        case .hlg: return "HLG"
+        case .pq: return "PQ"
+        case .sdr: return "SDR"
+        }
+    }
+
+    /// Whether this format is HDR.
+    public var isHDR: Bool {
+        self != .sdr
+    }
+
+    /// Whether this format uses PQ transfer.
+    public var isPQ: Bool {
+        switch self {
+        case .hdr10, .hdr10Plus, .dolbyVision, .dolbyVisionHDR10, .pq: return true
+        default: return false
+        }
+    }
+
+    /// Whether this format uses HLG transfer.
+    public var isHLG: Bool {
+        self == .hlg
+    }
+
+    /// Whether this format has dynamic metadata.
+    public var hasDynamicMetadata: Bool {
+        switch self {
+        case .hdr10Plus, .dolbyVision, .dolbyVisionHDR10: return true
+        default: return false
+        }
+    }
 }
 
 // MARK: - ColourProperties

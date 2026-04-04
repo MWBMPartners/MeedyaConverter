@@ -39,7 +39,7 @@ public struct SceneChange: Codable, Sendable {
 // MARK: - Chapter
 
 /// A chapter marker for a media file.
-public struct Chapter: Codable, Sendable {
+public struct SceneChapter: Codable, Sendable {
     /// Chapter title.
     public var title: String
 
@@ -205,7 +205,7 @@ public struct SceneDetector: Sendable {
         minimumDuration: TimeInterval = 30.0,
         fixedInterval: TimeInterval = 300.0,
         titlePrefix: String = "Chapter"
-    ) -> [Chapter] {
+    ) -> [SceneChapter] {
         switch strategy {
         case .everyScene:
             return chaptersFromScenes(
@@ -245,7 +245,7 @@ public struct SceneDetector: Sendable {
     /// END=5123
     /// title=Chapter 1
     /// ```
-    public static func generateFFmetadata(chapters: [Chapter], duration: TimeInterval) -> String {
+    public static func generateFFmetadata(chapters: [SceneChapter], duration: TimeInterval) -> String {
         var output = ";FFMETADATA1\n"
 
         for (index, chapter) in chapters.enumerated() {
@@ -272,7 +272,7 @@ public struct SceneDetector: Sendable {
     /// Generate OGG-style chapter list.
     ///
     /// Format: `CHAPTER01=00:00:00.000\nCHAPTER01NAME=Chapter 1\n`
-    public static func generateOGGChapters(chapters: [Chapter]) -> String {
+    public static func generateOGGChapters(chapters: [SceneChapter]) -> String {
         var output = ""
         for (index, chapter) in chapters.enumerated() {
             let num = String(format: "%02d", index + 1)
@@ -289,11 +289,11 @@ public struct SceneDetector: Sendable {
         duration: TimeInterval,
         minimumDuration: TimeInterval,
         titlePrefix: String
-    ) -> [Chapter] {
-        var chapters: [Chapter] = []
+    ) -> [SceneChapter] {
+        var chapters: [SceneChapter] = []
 
         // Always start with a chapter at 0
-        chapters.append(Chapter(title: "\(titlePrefix) 1", startTime: 0))
+        chapters.append(SceneChapter(title: "\(titlePrefix) 1", startTime: 0))
 
         var lastChapterTime: TimeInterval = 0
         var chapterIndex = 2
@@ -304,7 +304,7 @@ public struct SceneDetector: Sendable {
             // Skip scenes too close to the end
             guard duration - scene.timestamp >= minimumDuration else { continue }
 
-            chapters.append(Chapter(
+            chapters.append(SceneChapter(
                 title: "\(titlePrefix) \(chapterIndex)",
                 startTime: scene.timestamp
             ))
@@ -328,14 +328,14 @@ public struct SceneDetector: Sendable {
         duration: TimeInterval,
         interval: TimeInterval,
         titlePrefix: String
-    ) -> [Chapter] {
-        var chapters: [Chapter] = []
+    ) -> [SceneChapter] {
+        var chapters: [SceneChapter] = []
         var time: TimeInterval = 0
         var index = 1
 
         while time < duration {
             let endTime = min(time + interval, duration)
-            chapters.append(Chapter(
+            chapters.append(SceneChapter(
                 title: "\(titlePrefix) \(index)",
                 startTime: time,
                 endTime: endTime
@@ -353,7 +353,7 @@ public struct SceneDetector: Sendable {
         interval: TimeInterval,
         minimumDuration: TimeInterval,
         titlePrefix: String
-    ) -> [Chapter] {
+    ) -> [SceneChapter] {
         // Start with fixed interval chapters
         var timestamps: Set<TimeInterval> = [0]
 
@@ -376,13 +376,13 @@ public struct SceneDetector: Sendable {
 
         // Sort and create chapters
         let sorted = timestamps.sorted()
-        var chapters: [Chapter] = []
+        var chapters: [SceneChapter] = []
 
         for (index, time) in sorted.enumerated() {
             let endTime = index + 1 < sorted.count ? sorted[index + 1] : duration
             // Skip micro-chapters
             guard endTime - time >= minimumDuration || index == 0 else { continue }
-            chapters.append(Chapter(
+            chapters.append(SceneChapter(
                 title: "\(titlePrefix) \(chapters.count + 1)",
                 startTime: time,
                 endTime: endTime
