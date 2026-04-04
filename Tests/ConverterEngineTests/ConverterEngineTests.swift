@@ -8411,4 +8411,455 @@ final class ConverterEngineTests: XCTestCase {
         // All should be built-in
         XCTAssertTrue(profiles.allSatisfy { $0.isBuiltIn })
     }
+
+    // MARK: - Media Server Notifier Tests (Phase 7.19)
+
+    /// Verifies media server type properties.
+    func test_mediaServerType_properties() {
+        XCTAssertEqual(MediaServerType.plex.displayName, "Plex")
+        XCTAssertEqual(MediaServerType.jellyfin.displayName, "Jellyfin")
+        XCTAssertEqual(MediaServerType.emby.displayName, "Emby")
+        XCTAssertEqual(MediaServerType.plex.defaultPort, 32400)
+        XCTAssertEqual(MediaServerType.jellyfin.defaultPort, 8096)
+        XCTAssertEqual(MediaServerType.emby.defaultPort, 8096)
+    }
+
+    /// Verifies media server config base URL generation.
+    func test_mediaServerConfig_baseURL() {
+        let config = MediaServerConfig(
+            serverType: .plex,
+            displayName: "My Plex",
+            host: "192.168.1.100",
+            apiKey: "test-token"
+        )
+        XCTAssertEqual(config.baseURL, "http://192.168.1.100:32400")
+
+        let tlsConfig = MediaServerConfig(
+            serverType: .jellyfin,
+            displayName: "My Jellyfin",
+            host: "media.example.com",
+            port: 8920,
+            apiKey: "test-key",
+            useTLS: true
+        )
+        XCTAssertEqual(tlsConfig.baseURL, "https://media.example.com:8920")
+    }
+
+    /// Verifies Plex scan URL building.
+    func test_mediaServerNotifier_plexScanURL() {
+        let config = MediaServerConfig(
+            serverType: .plex,
+            displayName: "Plex",
+            host: "localhost",
+            apiKey: "abc123"
+        )
+        let (url, method, headers) = MediaServerNotifier.buildPlexScanURL(config: config)
+        XCTAssertEqual(url, "http://localhost:32400/library/sections/all/refresh")
+        XCTAssertEqual(method, "GET")
+        XCTAssertEqual(headers["X-Plex-Token"], "abc123")
+
+        // With specific library section
+        let (url2, _, _) = MediaServerNotifier.buildPlexScanURL(
+            config: config, librarySection: "3"
+        )
+        XCTAssertEqual(url2, "http://localhost:32400/library/sections/3/refresh")
+    }
+
+    /// Verifies Jellyfin scan URL building.
+    func test_mediaServerNotifier_jellyfinScanURL() {
+        let config = MediaServerConfig(
+            serverType: .jellyfin,
+            displayName: "Jellyfin",
+            host: "localhost",
+            apiKey: "key123"
+        )
+        let (url, method, headers) = MediaServerNotifier.buildJellyfinScanURL(config: config)
+        XCTAssertEqual(url, "http://localhost:8096/Library/Refresh")
+        XCTAssertEqual(method, "POST")
+        XCTAssertEqual(headers["X-Emby-Token"], "key123")
+    }
+
+    /// Verifies Emby scan URL building.
+    func test_mediaServerNotifier_embyScanURL() {
+        let config = MediaServerConfig(
+            serverType: .emby,
+            displayName: "Emby",
+            host: "localhost",
+            apiKey: "emby-key"
+        )
+        let (url, method, headers) = MediaServerNotifier.buildEmbyScanURL(config: config)
+        XCTAssertEqual(url, "http://localhost:8096/Library/Refresh")
+        XCTAssertEqual(method, "POST")
+        XCTAssertEqual(headers["X-Emby-Token"], "emby-key")
+    }
+
+    /// Verifies scan request building.
+    func test_mediaServerNotifier_buildScanRequest() {
+        let config = MediaServerConfig(
+            serverType: .plex,
+            displayName: "Plex",
+            host: "192.168.1.50",
+            apiKey: "token"
+        )
+        let request = MediaServerNotifier.buildScanRequest(config: config)
+        XCTAssertNotNil(request)
+        XCTAssertEqual(request?.httpMethod, "GET")
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "X-Plex-Token"), "token")
+    }
+
+    /// Verifies webhook payload building.
+    func test_mediaServerNotifier_webhookPayload() {
+        let payload = MediaServerNotifier.buildWebhookPayload(
+            event: .encodingCompleted,
+            jobName: "Test Job",
+            inputFile: "/input/video.mkv",
+            outputFile: "/output/video.mp4",
+            duration: 120.5,
+            fileSize: 1_500_000
+        )
+        XCTAssertNotNil(payload)
+
+        // Verify it's valid JSON with expected keys
+        let json = try! JSONSerialization.jsonObject(with: payload!, options: []) as! [String: Any]
+        XCTAssertEqual(json["event"] as? String, "encoding_completed")
+        XCTAssertEqual(json["job_name"] as? String, "Test Job")
+        XCTAssertEqual(json["input_file"] as? String, "/input/video.mkv")
+        XCTAssertEqual(json["output_file"] as? String, "/output/video.mp4")
+        XCTAssertEqual(json["encoding_duration_seconds"] as? Double, 120.5)
+        XCTAssertEqual(json["output_file_size_bytes"] as? Int64, 1_500_000)
+    }
+
+    /// Verifies disabled server returns failure result.
+    func test_mediaServerNotifier_disabledServer() async {
+        let config = MediaServerConfig(
+            serverType: .plex,
+            displayName: "Disabled Plex",
+            host: "localhost",
+            apiKey: "token",
+            enabled: false
+        )
+        let result = await MediaServerNotifier.sendLibraryScan(config: config)
+        XCTAssertFalse(result.success)
+        XCTAssertEqual(result.errorMessage, "Server is disabled")
+    }
+
+    // MARK: - Frame Comparison Extractor Tests (Phase 7.11)
+
+    /// Verifies frame extraction argument building.
+    func test_frameComparison_extractionArguments() {
+        let args = FrameComparisonExtractor.buildFrameExtractionArguments(
+            inputPath: "/video.mkv",
+            outputPath: "/frame.png",
+            timestamp: 30.5
+        )
+        XCTAssertTrue(args.contains("-ss"))
+        XCTAssertTrue(args.contains("30.500"))
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/video.mkv"))
+        XCTAssertTrue(args.contains("-frames:v"))
+        XCTAssertTrue(args.contains("1"))
+        XCTAssertTrue(args.contains("/frame.png"))
+    }
+
+    /// Verifies frame extraction with resize.
+    func test_frameComparison_extractionWithResize() {
+        let args = FrameComparisonExtractor.buildFrameExtractionArguments(
+            inputPath: "/video.mkv",
+            outputPath: "/frame.png",
+            timestamp: 10.0,
+            width: 1920,
+            height: 1080
+        )
+        XCTAssertTrue(args.contains("-vf"))
+        XCTAssertTrue(args.contains("scale=1920:1080"))
+    }
+
+    /// Verifies timestamp calculation for comparison frames.
+    func test_frameComparison_calculateTimestamps() {
+        let timestamps = FrameComparisonExtractor.calculateTimestamps(
+            duration: 120.0,
+            count: 5,
+            excludeEdges: 2.0
+        )
+        XCTAssertEqual(timestamps.count, 5)
+        // First should be near 2s, last near 118s
+        XCTAssertEqual(timestamps.first!, 2.0, accuracy: 0.01)
+        XCTAssertEqual(timestamps.last!, 118.0, accuracy: 0.01)
+    }
+
+    /// Verifies single timestamp calculation.
+    func test_frameComparison_singleTimestamp() {
+        let timestamps = FrameComparisonExtractor.calculateTimestamps(
+            duration: 60.0,
+            count: 1
+        )
+        XCTAssertEqual(timestamps.count, 1)
+        // Should be in the middle
+        XCTAssertEqual(timestamps[0], 30.0, accuracy: 1.0)
+    }
+
+    /// Verifies batch extraction argument building.
+    func test_frameComparison_batchExtraction() {
+        let batch = FrameComparisonExtractor.buildBatchExtractionArguments(
+            sourcePath: "/source.mkv",
+            encodedPath: "/encoded.mp4",
+            timestamps: [10.0, 30.0, 60.0],
+            outputDirectory: "/tmp/job"
+        )
+        XCTAssertEqual(batch.count, 3)
+        XCTAssertTrue(batch[0].sourceArgs.contains("/source.mkv"))
+        XCTAssertTrue(batch[0].encodedArgs.contains("/encoded.mp4"))
+        XCTAssertEqual(batch[1].timestamp, 30.0)
+    }
+
+    /// Verifies SSIM argument building.
+    func test_frameComparison_ssimArguments() {
+        let args = FrameComparisonExtractor.buildSSIMArguments(
+            sourcePath: "/source.mkv",
+            encodedPath: "/encoded.mp4"
+        )
+        XCTAssertTrue(args.contains("-lavfi"))
+        XCTAssertTrue(args.contains("ssim"))
+    }
+
+    /// Verifies PSNR argument building.
+    func test_frameComparison_psnrArguments() {
+        let args = FrameComparisonExtractor.buildPSNRArguments(
+            sourcePath: "/source.mkv",
+            encodedPath: "/encoded.mp4"
+        )
+        XCTAssertTrue(args.contains("-lavfi"))
+        XCTAssertTrue(args.contains("psnr"))
+    }
+
+    /// Verifies SSIM parsing from FFmpeg output.
+    func test_frameComparison_parseSSIM() {
+        let output = """
+        [Parsed_ssim_0 @ 0x7f9] SSIM Y:0.984532 U:0.991234 V:0.990123 All:0.982145 (17.493721)
+        """
+        let ssim = FrameComparisonExtractor.parseSSIM(from: output)
+        XCTAssertNotNil(ssim)
+        XCTAssertEqual(ssim!, 0.982145, accuracy: 0.000001)
+    }
+
+    /// Verifies PSNR parsing from FFmpeg output.
+    func test_frameComparison_parsePSNR() {
+        let output = """
+        [Parsed_psnr_0 @ 0x7f9] PSNR y:43.56 u:48.12 v:47.89 average:42.123456 min:35.12 max:inf
+        """
+        let psnr = FrameComparisonExtractor.parsePSNR(from: output)
+        XCTAssertNotNil(psnr)
+        XCTAssertEqual(psnr!, 42.123456, accuracy: 0.000001)
+    }
+
+    /// Verifies comparison mode properties.
+    func test_comparisonMode_displayNames() {
+        XCTAssertEqual(ComparisonMode.sideBySide.displayName, "Side by Side")
+        XCTAssertEqual(ComparisonMode.slider.displayName, "Slider")
+        XCTAssertEqual(ComparisonMode.toggle.displayName, "Toggle")
+        XCTAssertEqual(ComparisonMode.difference.displayName, "Difference")
+    }
+
+    // MARK: - Encoding Statistics Tests (Phase 7.4)
+
+    /// Verifies encoding data point creation.
+    func test_encodingStatistics_dataPoint() {
+        let point = EncodingDataPoint(
+            elapsedSeconds: 10.0,
+            encodedSeconds: 25.0,
+            fps: 120.5,
+            bitrate: 5000.0,
+            quantizer: 22.5,
+            frameNumber: 750,
+            speedFactor: 2.5
+        )
+        XCTAssertEqual(point.fps, 120.5)
+        XCTAssertEqual(point.bitrate, 5000.0)
+        XCTAssertEqual(point.speedFactor, 2.5)
+    }
+
+    /// Verifies statistics computation.
+    func test_encodingStatistics_computedStats() {
+        var stats = EncodingStatistics(
+            jobID: UUID(),
+            jobName: "Test Job"
+        )
+        stats.inputFileSize = 1_000_000_000 // 1 GB
+        stats.outputFileSize = 500_000_000   // 500 MB
+        stats.inputDuration = 3600.0          // 1 hour
+
+        // Add some data points
+        for i in 0..<10 {
+            stats.addDataPoint(EncodingDataPoint(
+                elapsedSeconds: Double(i) * 10,
+                encodedSeconds: Double(i) * 36,
+                fps: Double(100 + i * 5),
+                bitrate: 4000.0 + Double(i) * 100,
+                quantizer: 22.0,
+                frameNumber: i * 900
+            ))
+        }
+
+        XCTAssertEqual(stats.averageFPS, 122.5, accuracy: 0.1)
+        XCTAssertEqual(stats.peakFPS, 145.0)
+        XCTAssertEqual(stats.minimumFPS, 100.0)
+        XCTAssertEqual(stats.compressionRatio!, 2.0, accuracy: 0.01)
+        XCTAssertEqual(stats.spaceSavingsPercent!, 50.0, accuracy: 0.01)
+        XCTAssertNotNil(stats.averageBitrate)
+        XCTAssertNotNil(stats.averageQuantizer)
+    }
+
+    /// Verifies FPS time series extraction.
+    func test_encodingStatistics_timeSeries() {
+        var stats = EncodingStatistics(
+            jobID: UUID(),
+            jobName: "Test"
+        )
+        stats.addDataPoint(EncodingDataPoint(
+            elapsedSeconds: 1.0, encodedSeconds: 2.0, fps: 100.0
+        ))
+        stats.addDataPoint(EncodingDataPoint(
+            elapsedSeconds: 2.0, encodedSeconds: 4.0, fps: 120.0
+        ))
+
+        let series = stats.fpsTimeSeries
+        XCTAssertEqual(series.count, 2)
+        XCTAssertEqual(series[0].elapsed, 1.0)
+        XCTAssertEqual(series[0].value, 100.0)
+        XCTAssertEqual(series[1].value, 120.0)
+    }
+
+    /// Verifies statistics collector thread safety and sampling.
+    func test_encodingStatisticsCollector_basic() {
+        let collector = EncodingStatisticsCollector(
+            jobID: UUID(),
+            jobName: "Test",
+            sampleInterval: 0.0 // No throttling for test
+        )
+        collector.setInputMetadata(
+            fileSize: 100_000,
+            duration: 60.0,
+            videoCodec: "h265",
+            resolution: "1920x1080"
+        )
+
+        collector.recordProgress(fps: 120.0, encodedSeconds: 10.0)
+        collector.recordProgress(fps: 130.0, encodedSeconds: 20.0)
+        collector.markComplete()
+
+        let stats = collector.currentStatistics
+        XCTAssertEqual(stats.dataPoints.count, 2)
+        XCTAssertEqual(stats.inputDuration, 60.0)
+        XCTAssertEqual(stats.videoCodec, "h265")
+        XCTAssertNotNil(stats.endTime)
+    }
+
+    // MARK: - Stream Metadata Editor Tests (Phase 3.6)
+
+    /// Verifies stream disposition FFmpeg value building.
+    func test_streamDisposition_ffmpegValue() {
+        let disp = StreamDisposition(isDefault: true, isForced: true)
+        XCTAssertEqual(disp.ffmpegValue, "default+forced")
+
+        let empty = StreamDisposition()
+        XCTAssertEqual(empty.ffmpegValue, "0")
+
+        let complex = StreamDisposition(
+            isDefault: true,
+            isOriginal: true,
+            isHearingImpaired: true
+        )
+        XCTAssertTrue(complex.ffmpegValue.contains("default"))
+        XCTAssertTrue(complex.ffmpegValue.contains("original"))
+        XCTAssertTrue(complex.ffmpegValue.contains("hearing_impaired"))
+    }
+
+    /// Verifies disposition parsing.
+    func test_streamDisposition_parse() {
+        let disp = StreamDisposition.parse("default+forced+hearing_impaired")
+        XCTAssertTrue(disp.isDefault)
+        XCTAssertTrue(disp.isForced)
+        XCTAssertTrue(disp.isHearingImpaired)
+        XCTAssertFalse(disp.isDub)
+        XCTAssertFalse(disp.isOriginal)
+    }
+
+    /// Verifies metadata edit argument building.
+    func test_streamMetadataEditor_buildArguments() {
+        var editSet = StreamMetadataEditSet()
+        editSet.globalEdits["title"] = "My Movie"
+        editSet.streamEdits.append(StreamMetadataEdit(
+            streamIndex: 1,
+            key: "language",
+            value: "eng"
+        ))
+        editSet.streamEdits.append(StreamMetadataEdit(
+            streamIndex: 2,
+            key: "title",
+            value: "Director Commentary"
+        ))
+        editSet.dispositionEdits.append(DispositionEdit(
+            streamIndex: 1,
+            disposition: StreamDisposition(isDefault: true)
+        ))
+
+        let args = StreamMetadataEditor.buildArguments(from: editSet)
+        XCTAssertTrue(args.contains("-metadata"))
+        XCTAssertTrue(args.contains("title=My Movie"))
+        XCTAssertTrue(args.contains("-metadata:s:1"))
+        XCTAssertTrue(args.contains("language=eng"))
+        XCTAssertTrue(args.contains("-metadata:s:2"))
+        XCTAssertTrue(args.contains("title=Director Commentary"))
+        XCTAssertTrue(args.contains("-disposition:1"))
+        XCTAssertTrue(args.contains("default"))
+    }
+
+    /// Verifies set title argument building.
+    func test_streamMetadataEditor_setTitle() {
+        let args = StreamMetadataEditor.buildSetTitle(streamIndex: 0, title: "Main Video")
+        XCTAssertEqual(args, ["-metadata:s:0", "title=Main Video"])
+    }
+
+    /// Verifies set language argument building.
+    func test_streamMetadataEditor_setLanguage() {
+        let args = StreamMetadataEditor.buildSetLanguage(streamIndex: 1, language: "fra")
+        XCTAssertEqual(args, ["-metadata:s:1", "language=fra"])
+    }
+
+    /// Verifies remux edit argument building.
+    func test_streamMetadataEditor_remuxEdit() {
+        var editSet = StreamMetadataEditSet()
+        editSet.globalEdits["title"] = "Edited Title"
+
+        let args = StreamMetadataEditor.buildRemuxEditArguments(
+            inputPath: "/input.mkv",
+            outputPath: "/output.mkv",
+            editSet: editSet
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/input.mkv"))
+        XCTAssertTrue(args.contains("-c"))
+        XCTAssertTrue(args.contains("copy"))
+        XCTAssertTrue(args.contains("title=Edited Title"))
+        XCTAssertTrue(args.contains("/output.mkv"))
+    }
+
+    /// Verifies language code validation.
+    func test_streamMetadataEditor_languageValidation() {
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("eng"))
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("en"))
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("fra"))
+        XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode(""))
+        XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("1234"))
+        XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("toolong"))
+    }
+
+    /// Verifies edit set has edits detection.
+    func test_streamMetadataEditSet_hasEdits() {
+        var empty = StreamMetadataEditSet()
+        XCTAssertFalse(empty.hasEdits)
+
+        empty.globalEdits["title"] = "Test"
+        XCTAssertTrue(empty.hasEdits)
+    }
 }
