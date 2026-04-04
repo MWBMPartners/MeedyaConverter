@@ -7295,4 +7295,277 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(NamingTemplate.kodi.displayName, "Kodi")
         XCTAssertEqual(NamingTemplate.simple.displayName, "Simple")
     }
+
+    // MARK: - PQToHLGPipeline Tests
+
+    /// Verifies PQToHLGMethod display names.
+    func test_pqToHLGMethod_displayNames() {
+        XCTAssertEqual(PQToHLGMethod.hlgTools.displayName, "hlg-tools (High Quality)")
+        XCTAssertEqual(PQToHLGMethod.ffmpegZscale.displayName, "FFmpeg zscale (Built-in)")
+        XCTAssertEqual(PQToHLGMethod.auto.displayName, "Auto (Best Available)")
+    }
+
+    /// Verifies PQToHLGMethod raw values.
+    func test_pqToHLGMethod_rawValues() {
+        XCTAssertEqual(PQToHLGMethod.hlgTools.rawValue, "hlg_tools")
+        XCTAssertEqual(PQToHLGMethod.ffmpegZscale.rawValue, "ffmpeg_zscale")
+        XCTAssertEqual(PQToHLGMethod.auto.rawValue, "auto")
+    }
+
+    /// Verifies PQToHLGConfig default initializer values.
+    func test_pqToHLGConfig_defaults() {
+        let config = PQToHLGConfig()
+        XCTAssertEqual(config.method, .auto)
+        XCTAssertNil(config.maxCLL)
+        XCTAssertNil(config.maxFALL)
+        XCTAssertFalse(config.generateDolbyVision)
+        XCTAssertEqual(config.encoder, "libx265")
+        XCTAssertEqual(config.crf, 18)
+        XCTAssertEqual(config.preset, "medium")
+        XCTAssertTrue(config.passthroughOtherStreams)
+    }
+
+    /// Verifies the zscale PQ→HLG filter string.
+    func test_pqToHLGPipeline_buildPQToHLGFilter_containsZscaleSteps() {
+        let filter = PQToHLGPipeline.buildPQToHLGFilter()
+        XCTAssertTrue(filter.contains("zscale=t=linear:npl=1000"))
+        XCTAssertTrue(filter.contains("format=gbrpf32le"))
+        XCTAssertTrue(filter.contains("zscale=t=arib-std-b67"))
+        XCTAssertTrue(filter.contains("format=yuv420p10le"))
+    }
+
+    /// Verifies zscale argument building includes input, filter, encoder, and HLG metadata.
+    func test_pqToHLGPipeline_buildZscaleArguments_containsHLGMetadata() {
+        let args = PQToHLGPipeline.buildZscaleArguments(
+            inputPath: "/input.mkv",
+            outputPath: "/output.mkv"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/input.mkv"))
+        XCTAssertTrue(args.contains("-vf"))
+        XCTAssertTrue(args.contains("-c:v"))
+        XCTAssertTrue(args.contains("libx265"))
+        XCTAssertTrue(args.contains("-color_trc"))
+        XCTAssertTrue(args.contains("arib-std-b67"))
+        XCTAssertTrue(args.contains("-color_primaries"))
+        XCTAssertTrue(args.contains("bt2020"))
+        XCTAssertTrue(args.contains("-pix_fmt"))
+        XCTAssertTrue(args.contains("yuv420p10le"))
+        XCTAssertTrue(args.contains("/output.mkv"))
+    }
+
+    /// Verifies zscale arguments include CLL when provided.
+    func test_pqToHLGPipeline_buildZscaleArguments_includesCLL() {
+        let config = PQToHLGConfig(maxCLL: 1000, maxFALL: 400)
+        let args = PQToHLGPipeline.buildZscaleArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-max_cll"))
+        XCTAssertTrue(args.contains("1000,400"))
+    }
+
+    /// Verifies zscale arguments include audio/subtitle passthrough by default.
+    func test_pqToHLGPipeline_buildZscaleArguments_passthroughStreams() {
+        let args = PQToHLGPipeline.buildZscaleArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv"
+        )
+        XCTAssertTrue(args.contains("-c:a"))
+        XCTAssertTrue(args.contains("-c:s"))
+    }
+
+    /// Verifies zscale arguments omit passthrough when disabled.
+    func test_pqToHLGPipeline_buildZscaleArguments_noPassthroughWhenDisabled() {
+        let config = PQToHLGConfig(passthroughOtherStreams: false)
+        let args = PQToHLGPipeline.buildZscaleArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertFalse(args.contains("-c:a"))
+        XCTAssertFalse(args.contains("-c:s"))
+    }
+
+    /// Verifies decode-to-Y4M arguments for hlg-tools pipeline.
+    func test_pqToHLGPipeline_buildDecodeToY4MArguments_containsY4MPipe() {
+        let args = PQToHLGPipeline.buildDecodeToY4MArguments(
+            inputPath: "/src.mkv",
+            y4mOutputPath: "/tmp/video.y4m"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/src.mkv"))
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("yuv4mpegpipe"))
+        XCTAssertTrue(args.contains("/tmp/video.y4m"))
+        XCTAssertTrue(args.contains("yuv420p10le"))
+    }
+
+    /// Verifies pq2hlg argument building with and without maxCLL.
+    func test_pqToHLGPipeline_buildPQ2HLGArguments_withAndWithoutCLL() {
+        let argsNoCLL = PQToHLGPipeline.buildPQ2HLGArguments(
+            y4mInputPath: "/tmp/in.y4m",
+            y4mOutputPath: "/tmp/out.y4m"
+        )
+        XCTAssertTrue(argsNoCLL.contains("-i"))
+        XCTAssertTrue(argsNoCLL.contains("-o"))
+        XCTAssertFalse(argsNoCLL.contains("--max-cll"))
+
+        let argsWithCLL = PQToHLGPipeline.buildPQ2HLGArguments(
+            y4mInputPath: "/tmp/in.y4m",
+            y4mOutputPath: "/tmp/out.y4m",
+            maxCLL: 1000
+        )
+        XCTAssertTrue(argsWithCLL.contains("--max-cll"))
+        XCTAssertTrue(argsWithCLL.contains("1000"))
+    }
+
+    /// Verifies encode-from-Y4M arguments include both inputs and HLG metadata.
+    func test_pqToHLGPipeline_buildEncodeFromY4MArguments_dualInput() {
+        let args = PQToHLGPipeline.buildEncodeFromY4MArguments(
+            y4mInputPath: "/tmp/hlg.y4m",
+            originalInputPath: "/src.mkv",
+            outputPath: "/out.mkv"
+        )
+        // Two -i inputs
+        let iIndices = args.enumerated().filter { $0.element == "-i" }.map { $0.offset }
+        XCTAssertEqual(iIndices.count, 2)
+        XCTAssertTrue(args.contains("/tmp/hlg.y4m"))
+        XCTAssertTrue(args.contains("/src.mkv"))
+        // Stream mapping
+        XCTAssertTrue(args.contains("0:v"))
+        XCTAssertTrue(args.contains("1:a?"))
+        XCTAssertTrue(args.contains("1:s?"))
+        // HLG metadata
+        XCTAssertTrue(args.contains("arib-std-b67"))
+        XCTAssertTrue(args.contains("bt2020"))
+    }
+
+    /// Verifies DV Profile 8.4 RPU generation arguments.
+    func test_pqToHLGPipeline_buildGenerateProfile84RPUArguments_containsMode4() {
+        let args = PQToHLGPipeline.buildGenerateProfile84RPUArguments(
+            outputRPUPath: "/tmp/rpu.bin",
+            maxCLL: 1000,
+            maxFALL: 400,
+            maxLuminance: 4000,
+            minLuminance: 50
+        )
+        XCTAssertTrue(args.contains("generate"))
+        XCTAssertTrue(args.contains("-m"))
+        XCTAssertTrue(args.contains("4"))
+        XCTAssertTrue(args.contains("-o"))
+        XCTAssertTrue(args.contains("/tmp/rpu.bin"))
+        XCTAssertTrue(args.contains("--max-lum"))
+        XCTAssertTrue(args.contains("4000"))
+        XCTAssertTrue(args.contains("--min-lum"))
+        XCTAssertTrue(args.contains("50"))
+        XCTAssertTrue(args.contains("--max-cll"))
+        XCTAssertTrue(args.contains("1000"))
+        XCTAssertTrue(args.contains("--max-fall"))
+        XCTAssertTrue(args.contains("400"))
+    }
+
+    /// Verifies DV Profile 8.4 RPU generation with no optional params.
+    func test_pqToHLGPipeline_buildGenerateProfile84RPUArguments_minimalArgs() {
+        let args = PQToHLGPipeline.buildGenerateProfile84RPUArguments(
+            outputRPUPath: "/tmp/rpu.bin"
+        )
+        XCTAssertEqual(args.count, 5) // generate -m 4 -o /path
+        XCTAssertFalse(args.contains("--max-lum"))
+        XCTAssertFalse(args.contains("--max-cll"))
+    }
+
+    /// Verifies RPU injection arguments.
+    func test_pqToHLGPipeline_buildInjectRPUArguments_containsRPUIn() {
+        let args = PQToHLGPipeline.buildInjectRPUArguments(
+            hevcInputPath: "/tmp/video.hevc",
+            rpuPath: "/tmp/rpu.bin",
+            outputPath: "/tmp/dv.hevc"
+        )
+        XCTAssertTrue(args.contains("inject-rpu"))
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/video.hevc"))
+        XCTAssertTrue(args.contains("--rpu-in"))
+        XCTAssertTrue(args.contains("/tmp/rpu.bin"))
+        XCTAssertTrue(args.contains("-o"))
+        XCTAssertTrue(args.contains("/tmp/dv.hevc"))
+    }
+
+    /// Verifies HEVC extraction arguments include annexb bitstream filter.
+    func test_pqToHLGPipeline_buildExtractHEVCArguments_containsAnnexB() {
+        let args = PQToHLGPipeline.buildExtractHEVCArguments(
+            inputPath: "/src.mkv",
+            outputPath: "/tmp/video.hevc"
+        )
+        XCTAssertTrue(args.contains("-bsf:v"))
+        XCTAssertTrue(args.contains("hevc_mp4toannexb"))
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("hevc"))
+        XCTAssertTrue(args.contains("0:v:0"))
+    }
+
+    /// Verifies DV+HLG mux arguments include strict unofficial.
+    func test_pqToHLGPipeline_buildMuxDVHLGArguments_containsStrictUnofficial() {
+        let args = PQToHLGPipeline.buildMuxDVHLGArguments(
+            hevcPath: "/tmp/dv.hevc",
+            originalPath: "/src.mkv",
+            outputPath: "/final.mkv"
+        )
+        XCTAssertTrue(args.contains("-strict"))
+        XCTAssertTrue(args.contains("unofficial"))
+        XCTAssertTrue(args.contains("0:v"))
+        XCTAssertTrue(args.contains("1:a?"))
+        XCTAssertTrue(args.contains("1:s?"))
+    }
+
+    /// Verifies pipeline description for hlg-tools method.
+    func test_pqToHLGPipeline_describePipeline_hlgToolsMethod() {
+        let config = PQToHLGConfig(method: .hlgTools)
+        let steps = PQToHLGPipeline.describePipeline(config: config)
+        XCTAssertEqual(steps.count, 3)
+        XCTAssertTrue(steps[0].contains("Y4M"))
+        XCTAssertTrue(steps[1].contains("pq2hlg"))
+        XCTAssertTrue(steps[2].contains("Encode"))
+    }
+
+    /// Verifies pipeline description for zscale method.
+    func test_pqToHLGPipeline_describePipeline_zscaleMethod() {
+        let config = PQToHLGConfig(method: .ffmpegZscale)
+        let steps = PQToHLGPipeline.describePipeline(config: config)
+        XCTAssertEqual(steps.count, 2)
+        XCTAssertTrue(steps[0].contains("zscale"))
+    }
+
+    /// Verifies pipeline description includes DV steps when enabled.
+    func test_pqToHLGPipeline_describePipeline_withDolbyVision() {
+        let config = PQToHLGConfig(method: .ffmpegZscale, generateDolbyVision: true)
+        let steps = PQToHLGPipeline.describePipeline(config: config)
+        XCTAssertTrue(steps.count > 2)
+        let dvSteps = steps.filter { $0.contains("Dolby Vision") || $0.contains("RPU") || $0.contains("HEVC") || $0.contains("Mux") || $0.contains("Inject") }
+        XCTAssertTrue(dvSteps.count >= 3)
+    }
+
+    /// Verifies PQToHLGConfig Codable round-trip.
+    func test_pqToHLGConfig_codableRoundTrip() throws {
+        let config = PQToHLGConfig(
+            method: .hlgTools,
+            maxCLL: 1000,
+            maxFALL: 400,
+            generateDolbyVision: true,
+            encoder: "libx265",
+            crf: 20,
+            preset: "slow",
+            passthroughOtherStreams: false
+        )
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(PQToHLGConfig.self, from: data)
+        XCTAssertEqual(decoded.method, .hlgTools)
+        XCTAssertEqual(decoded.maxCLL, 1000)
+        XCTAssertEqual(decoded.maxFALL, 400)
+        XCTAssertTrue(decoded.generateDolbyVision)
+        XCTAssertEqual(decoded.crf, 20)
+        XCTAssertEqual(decoded.preset, "slow")
+        XCTAssertFalse(decoded.passthroughOtherStreams)
+    }
 }
