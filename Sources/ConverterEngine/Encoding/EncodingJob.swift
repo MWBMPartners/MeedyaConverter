@@ -6,6 +6,18 @@
 // ============================================================================
 
 import Foundation
+import Combine
+
+// MARK: - HDRTransferFunction
+
+/// The HDR transfer function detected in the source stream.
+/// Used by the encoding pipeline to apply correct colour signalling to the output.
+public enum HDRTransferFunction: String, Codable, Sendable {
+    /// SMPTE ST 2084 (Perceptual Quantizer) — HDR10, HDR10+, Dolby Vision.
+    case pq
+    /// ARIB STD-B67 (Hybrid Log-Gamma) — broadcast HDR.
+    case hlg
+}
 
 // MARK: - EncodingJobStatus
 
@@ -76,6 +88,29 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// Extra FFmpeg arguments for advanced use.
     public var extraArguments: [String]
 
+    // MARK: - HDR Metadata (injected by EncodingEngine from probe result)
+
+    /// HDR10 mastering display string for x265/AV1 metadata injection.
+    /// Set by EncodingEngine after probing the source.
+    public var hdrMasteringDisplay: String?
+
+    /// Maximum Content Light Level in nits (from source probe).
+    public var hdrMaxCLL: Int?
+
+    /// Maximum Frame-Average Light Level in nits (from source probe).
+    public var hdrMaxFALL: Int?
+
+    /// Mastering display maximum luminance in nits (from source probe).
+    public var hdrMasteringDisplayMaxLuminance: Int?
+
+    /// Mastering display minimum luminance in nits (from source probe).
+    public var hdrMasteringDisplayMinLuminance: Int?
+
+    /// The HDR transfer function of the source, set by EncodingEngine for colour signalling.
+    /// When `.hlg`, HLG-specific colour metadata is applied to the output.
+    /// When `.pq`, PQ/HDR10 colour metadata is applied.
+    public var hdrTransferFunction: HDRTransferFunction?
+
     /// Timestamp when this job was created.
     public var createdAt: Date
 
@@ -135,6 +170,17 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         }
         if let af = audioFilterChain {
             builder.audioFilterChain = af
+        }
+
+        // Apply HDR metadata from source probe
+        builder.masteringDisplay = hdrMasteringDisplay
+        builder.maxCLL = hdrMaxCLL
+        builder.maxFALL = hdrMaxFALL
+
+        // Apply HLG-specific colour signalling when source is HLG
+        if hdrTransferFunction == .hlg {
+            let hlgArgs = builder.buildHLGPreservationArguments()
+            builder.extraArguments.append(contentsOf: hlgArgs)
         }
 
         // Apply extra arguments

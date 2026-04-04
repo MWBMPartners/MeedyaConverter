@@ -91,18 +91,25 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// When true, a zscale filter chain converts PQ→HLG while maintaining BT.2020 colour.
     public var convertPQToHLG: Bool
 
-    /// Whether to prefer external hlg-tools (pq2hlg) for PQ→HLG conversion.
-    /// Enabled by default — hlg-tools provides higher quality conversion than FFmpeg's
-    /// zscale filter. When hlg-tools is not installed, automatically falls back to zscale.
-    /// Set to false to force FFmpeg zscale even when hlg-tools is available.
+    /// Whether to use external hlg-tools (pq2hlg) for PQ→HLG conversion.
+    /// When true and hlg-tools is available, uses the external binary for higher quality.
+    /// When false or hlg-tools unavailable, falls back to FFmpeg zscale filter.
     public var useHlgTools: Bool
 
-    /// Whether to convert PQ HDR to Dolby Vision Profile 8.4 + HLG combined output.
-    /// Chains PQ→HLG conversion with HLG→DV Profile 8.4 RPU generation via dovi_tool.
-    /// Produces a three-tier compatible stream: DV → HLG → SDR fallback.
-    /// Requires dovi_tool, HEVC codec, and a DV-capable container. Falls back to
-    /// PQ→HLG only when dovi_tool is unavailable or container doesn't support DV.
+    /// Peak brightness of the source in nits for tone mapping. Nil means auto-detect.
+    public var toneMapPeakNits: Double?
+
+    /// Desaturation strength for tone mapping (0.0 = none, 1.0 = full).
+    public var toneMapDesaturation: Double?
+
+    /// Whether to convert PQ (HDR10) to Dolby Vision Profile 8.4 + HLG.
+    /// Chains PQ→HLG conversion with DV RPU generation for three-tier playback:
+    /// Dolby Vision → HLG → SDR fallback from a single stream.
     public var convertPQToDVHLG: Bool
+
+    /// Display aspect ratio override (e.g., "16:9", "2.35:1").
+    /// When set, applies -aspect to the output. When nil, preserves source aspect ratio.
+    public var displayAspectRatio: String?
 
     // MARK: - Audio Settings
 
@@ -120,6 +127,12 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
 
     /// Number of audio channels. Nil means match source.
     public var audioChannels: Int?
+
+    /// Loudness normalization standard. Nil means no normalization.
+    public var loudnessNormalization: String?
+
+    /// Whether to apply peak limiting to the audio output.
+    public var applyPeakLimiter: Bool
 
     // MARK: - Subtitle Settings
 
@@ -165,13 +178,18 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         toneMapToSDR: Bool = false,
         toneMapAlgorithm: String? = nil,
         convertPQToHLG: Bool = false,
-        useHlgTools: Bool = true,
+        useHlgTools: Bool = false,
+        toneMapPeakNits: Double? = nil,
+        toneMapDesaturation: Double? = nil,
         convertPQToDVHLG: Bool = false,
+        displayAspectRatio: String? = nil,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
         audioSampleRate: Int? = nil,
         audioChannels: Int? = nil,
+        loudnessNormalization: String? = nil,
+        applyPeakLimiter: Bool = false,
         subtitlePassthrough: Bool = true,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
@@ -201,16 +219,28 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.toneMapAlgorithm = toneMapAlgorithm
         self.convertPQToHLG = convertPQToHLG
         self.useHlgTools = useHlgTools
+        self.toneMapPeakNits = toneMapPeakNits
+        self.toneMapDesaturation = toneMapDesaturation
         self.convertPQToDVHLG = convertPQToDVHLG
+        self.displayAspectRatio = displayAspectRatio
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
         self.audioSampleRate = audioSampleRate
         self.audioChannels = audioChannels
+        self.loudnessNormalization = loudnessNormalization
+        self.applyPeakLimiter = applyPeakLimiter
         self.subtitlePassthrough = subtitlePassthrough
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
         self.videoBufferSize = videoBufferSize
+    }
+
+    // MARK: - Computed Properties
+
+    /// The preferred file extension for the output container format.
+    public var preferredExtension: String {
+        containerFormat.fileExtensions.first ?? "mkv"
     }
 
     // MARK: - Argument Builder Conversion
@@ -257,9 +287,27 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
            let tmAlgo = FFmpegArgumentBuilder.ToneMapAlgorithm(rawValue: algorithm) {
             builder.toneMapAlgorithm = tmAlgo
         }
+        builder.toneMapPeakNits = toneMapPeakNits
+        builder.toneMapDesaturation = toneMapDesaturation
+
+        // Audio normalization (Phase 5)
+        if let normStd = loudnessNormalization,
+           let standard = LoudnessStandard(rawValue: normStd) {
+            let chain = AudioProcessor.buildProcessingChain(
+                normalize: true,
+                standard: standard,
+                limit: applyPeakLimiter
+            )
+            builder.audioFilterChain = chain
+        } else if applyPeakLimiter {
+            builder.audioFilterChain = AudioProcessor.buildPeakLimiterFilter()
+        }
 
         // PQ → HLG conversion
         builder.convertPQToHLG = convertPQToHLG
+
+        // Display aspect ratio
+        builder.displayAspectRatio = displayAspectRatio
 
         // Subtitles
         builder.subtitlePassthrough = subtitlePassthrough
@@ -493,11 +541,11 @@ extension EncodingProfile {
         containerFormat: .mkv
     )
 
-    /// PQ → DV+HLG — convert PQ to Dolby Vision Profile 8.4 with HLG base layer.
-    /// Three-tier compatibility: DV → HLG → SDR fallback from a single stream.
+    /// PQ → DV+HLG — convert PQ to Dolby Vision Profile 8.4 + HLG for maximum compatibility.
+    /// Three-tier playback: Dolby Vision → HLG → SDR from a single stream.
     public static let pqToDVHLG = EncodingProfile(
         name: "PQ → DV+HLG (Max Compat)",
-        description: "Convert PQ/HDR10 to Dolby Vision Profile 8.4 + HLG — three-tier playback compatibility",
+        description: "Convert PQ/HDR10 to DV Profile 8.4 + HLG — three-tier playback in MKV",
         category: .quickStart,
         isBuiltIn: true,
         videoCodec: .h265,
@@ -862,12 +910,17 @@ public final class EncodingProfileStore: @unchecked Sendable {
             toneMapAlgorithm: profile.toneMapAlgorithm,
             convertPQToHLG: profile.convertPQToHLG,
             useHlgTools: profile.useHlgTools,
+            toneMapPeakNits: profile.toneMapPeakNits,
+            toneMapDesaturation: profile.toneMapDesaturation,
             convertPQToDVHLG: profile.convertPQToDVHLG,
+            displayAspectRatio: profile.displayAspectRatio,
             audioCodec: profile.audioCodec,
             audioPassthrough: profile.audioPassthrough,
             audioBitrate: profile.audioBitrate,
             audioSampleRate: profile.audioSampleRate,
             audioChannels: profile.audioChannels,
+            loudnessNormalization: profile.loudnessNormalization,
+            applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,
