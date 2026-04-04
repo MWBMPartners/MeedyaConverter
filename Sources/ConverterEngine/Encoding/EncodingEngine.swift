@@ -85,6 +85,9 @@ public final class EncodingEngine: @unchecked Sendable {
     /// The hardware encoder detector for VideoToolbox/NVENC/QSV capability discovery.
     public let hardwareDetector: HardwareEncoderDetector
 
+    /// The Dolby Vision tool wrapper for RPU handling.
+    public let doviTool: DoviToolWrapper
+
     /// Cached FFmpeg binary info (populated after configure()).
     public private(set) var ffmpegInfo: FFmpegBinaryInfo?
 
@@ -118,6 +121,7 @@ public final class EncodingEngine: @unchecked Sendable {
         self.queue = EncodingQueue()
         self.featureGate = featureGate
         self.hardwareDetector = HardwareEncoderDetector()
+        self.doviTool = DoviToolWrapper()
     }
 
     // MARK: - Configuration
@@ -213,9 +217,55 @@ public final class EncodingEngine: @unchecked Sendable {
             tempManager.cleanupJob(job.id)
         }
 
-        // Probe the source to get duration (for progress calculation)
+        // Probe the source to get duration and DV/HDR info
         let sourceInfo = try? await probe(url: job.inputURL)
         let sourceDuration = sourceInfo?.duration
+
+        // Validate container-codec compatibility before encoding
+        try validateCodecContainerCompatibility(job: job)
+
+        // Dolby Vision preservation pipeline (Phase 3.8)
+        // If source has DV and we're re-encoding video (not passthrough),
+        // extract the RPU to a temp file for re-injection after encoding.
+        var rpuPath: String?
+        let sourceHasDV = sourceInfo?.hasDolbyVision ?? false
+        let needsDVPreservation = sourceHasDV
+            && !job.profile.videoPassthrough
+            && job.profile.preserveHDR
+            && doviTool.isAvailable
+            && job.profile.containerFormat.supportsDolbyVision
+
+        if needsDVPreservation {
+            let rpuFile = tempDir.appendingPathComponent("dovi_rpu.bin")
+            // Extract HEVC elementary stream from source, then extract RPU
+            let hevcES = tempDir.appendingPathComponent("source_hevc.hevc")
+            // Use FFmpeg to extract raw HEVC stream
+            let extractArgs = [
+                "-y", "-i", job.inputURL.path,
+                "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+                "-an", "-sn", "-f", "hevc", hevcES.path
+            ]
+            try await runFFmpegPass(
+                ffmpegPath: ffmpegPath,
+                arguments: extractArgs,
+                pass: nil,
+                multipassLogPath: nil,
+                sourceDuration: sourceDuration,
+                onProgress: { _ in } // Silent extraction
+            )
+            do {
+                try await doviTool.extractRPU(
+                    inputPath: hevcES.path,
+                    outputPath: rpuFile.path
+                )
+                rpuPath = rpuFile.path
+            } catch {
+                // RPU extraction failed — continue without DV preservation
+                rpuPath = nil
+            }
+            // Clean up extracted ES
+            try? FileManager.default.removeItem(at: hevcES)
+        }
 
         // Build FFmpeg arguments
         let arguments = job.buildArguments()
@@ -262,6 +312,60 @@ public final class EncodingEngine: @unchecked Sendable {
                 onProgress: onProgress
             )
         }
+
+        // Dolby Vision RPU re-injection (Phase 3.8)
+        // If we extracted an RPU earlier, inject it into the encoded output.
+        if let rpuPath = rpuPath {
+            let encodedOutput = job.outputURL
+            let hevcOutput = tempDir.appendingPathComponent("encoded_hevc.hevc")
+            let injectedOutput = tempDir.appendingPathComponent("injected_hevc.hevc")
+
+            // Extract HEVC ES from the encoded output
+            let extractArgs = [
+                "-y", "-i", encodedOutput.path,
+                "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+                "-an", "-sn", "-f", "hevc", hevcOutput.path
+            ]
+            try await runFFmpegPass(
+                ffmpegPath: ffmpegPath,
+                arguments: extractArgs,
+                pass: nil, multipassLogPath: nil,
+                sourceDuration: nil,
+                onProgress: { _ in }
+            )
+
+            // Inject RPU into the encoded HEVC stream
+            try await doviTool.injectRPU(
+                hevcPath: hevcOutput.path,
+                rpuPath: rpuPath,
+                outputPath: injectedOutput.path
+            )
+
+            // Remux the DV-injected stream back into the final container
+            let remuxArgs = [
+                "-y", "-i", injectedOutput.path,
+                "-i", encodedOutput.path,
+                "-map", "0:v:0",  // Video from DV-injected stream
+                "-map", "1:a?",   // Audio from original encode
+                "-map", "1:s?",   // Subtitles from original encode
+                "-c", "copy",
+                "-map_metadata", "1",  // Metadata from original encode
+                "-map_chapters", "1",  // Chapters from original encode
+                encodedOutput.path
+            ]
+            try await runFFmpegPass(
+                ffmpegPath: ffmpegPath,
+                arguments: remuxArgs,
+                pass: nil, multipassLogPath: nil,
+                sourceDuration: nil,
+                onProgress: { _ in }
+            )
+
+            // Clean up intermediary files
+            try? FileManager.default.removeItem(at: hevcOutput)
+            try? FileManager.default.removeItem(at: injectedOutput)
+            try? FileManager.default.removeItem(atPath: rpuPath)
+        }
     }
 
     // MARK: - Crop Detection
@@ -287,6 +391,83 @@ public final class EncodingEngine: @unchecked Sendable {
             sourceWidth: width,
             sourceHeight: height
         )
+    }
+
+    // MARK: - Container-Codec Validation (Phase 3.11)
+
+    /// Validate that the job's codec/container combination is compatible.
+    ///
+    /// Throws `EncodingEngineError` if the video or audio codec cannot be
+    /// muxed into the selected container format.
+    private func validateCodecContainerCompatibility(job: EncodingJobConfig) throws {
+        let container = job.profile.containerFormat
+
+        // Validate video codec compatibility (skip if passthrough — codec comes from source)
+        if !job.profile.videoPassthrough, let videoCodec = job.profile.videoCodec {
+            if !container.supportsVideoCodec(videoCodec) {
+                throw EncodingEngineError.encodingFailed(
+                    exitCode: -1,
+                    stderr: "\(videoCodec.displayName) is not compatible with \(container.displayName). Choose a different container or video codec."
+                )
+            }
+        }
+
+        // Validate audio codec compatibility (skip if passthrough)
+        if !job.profile.audioPassthrough, let audioCodec = job.profile.audioCodec {
+            if !container.supportsAudioCodec(audioCodec) {
+                throw EncodingEngineError.encodingFailed(
+                    exitCode: -1,
+                    stderr: "\(audioCodec.displayName) is not compatible with \(container.displayName). Choose a different container or audio codec."
+                )
+            }
+        }
+    }
+
+    // MARK: - Dolby Vision / HLG Conversion (Phase 3.9a)
+
+    /// Generate a Dolby Vision RPU from HLG or HDR10 content.
+    ///
+    /// This enables automatic DV creation from non-DV HDR sources.
+    /// The generated RPU can be injected into the re-encoded HEVC stream.
+    ///
+    /// - Parameters:
+    ///   - mediaFile: The probed source file (must have HDR metadata).
+    ///   - outputPath: Path where the generated RPU will be written.
+    ///   - targetProfile: DV profile to generate (default: Profile 8.1 for HDR10,
+    ///     Profile 8.4 for HLG).
+    /// - Throws: `DoviToolError` if generation fails or dovi_tool is not available.
+    public func generateDolbyVisionRPU(
+        for mediaFile: MediaFile,
+        outputPath: String,
+        targetProfile: DoviProfile? = nil
+    ) async throws {
+        guard doviTool.isAvailable else {
+            throw DoviToolError.binaryNotFound
+        }
+
+        guard let video = mediaFile.primaryVideoStream else {
+            throw DoviToolError.noDolbyVision
+        }
+
+        // Determine the target DV profile based on source HDR type
+        let profile = targetProfile ?? (mediaFile.hasHLG ? .profile8_4 : .profile8_1)
+
+        // Extract HDR metadata from the source for RPU generation
+        // MaxCLL/MaxFALL come from the stream's content light level metadata
+        let maxCLL = video.maxCLL
+        let maxFALL = video.maxFALL
+        let maxLuminance = video.masteringDisplayMaxLuminance
+        let minLuminance = video.masteringDisplayMinLuminance
+
+        try await doviTool.generateRPU(
+            outputPath: outputPath,
+            maxCLL: maxCLL,
+            maxFALL: maxFALL,
+            minLuminance: minLuminance,
+            maxLuminance: maxLuminance
+        )
+
+        _ = profile // Profile selection will be used in dovi_tool convert step
     }
 
     // MARK: - Hardware Encoding

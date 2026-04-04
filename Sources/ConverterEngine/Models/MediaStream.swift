@@ -79,6 +79,12 @@ public struct ColourProperties: Codable, Sendable, Equatable {
     /// Maximum Frame-Average Light Level in nits (cd/m²).
     public var maxFALL: Int?
 
+    /// Mastering display maximum luminance in nits.
+    public var masteringDisplayMaxLuminance: Int?
+
+    /// Mastering display minimum luminance in nits × 10000 (e.g., 500 = 0.05 nits).
+    public var masteringDisplayMinLuminance: Int?
+
     /// Whether the colour space is wide gamut (BT.2020 or wider).
     public var isWideGamut: Bool {
         return primaries?.contains("2020") == true || primaries?.contains("P3") == true
@@ -99,7 +105,9 @@ public struct ColourProperties: Codable, Sendable, Equatable {
         bitDepth: Int? = nil,
         chromaSubsampling: String? = nil,
         maxCLL: Int? = nil,
-        maxFALL: Int? = nil
+        maxFALL: Int? = nil,
+        masteringDisplayMaxLuminance: Int? = nil,
+        masteringDisplayMinLuminance: Int? = nil
     ) {
         self.primaries = primaries
         self.transferCharacteristics = transferCharacteristics
@@ -108,6 +116,8 @@ public struct ColourProperties: Codable, Sendable, Equatable {
         self.chromaSubsampling = chromaSubsampling
         self.maxCLL = maxCLL
         self.maxFALL = maxFALL
+        self.masteringDisplayMaxLuminance = masteringDisplayMaxLuminance
+        self.masteringDisplayMinLuminance = masteringDisplayMinLuminance
     }
 }
 
