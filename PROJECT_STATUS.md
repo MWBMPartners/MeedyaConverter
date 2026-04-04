@@ -12,7 +12,7 @@
 | ------ | ----- |
 | **Current Phase** | Phase 2 — macOS SwiftUI Application (MVP) |
 | **Next Target** | Alpha 0.1 (Phases 0 + 1 + 2) |
-| **Overall Completion** | ▓▓▓░░░░░░░░░░░░░░░░░ 13% |
+| **Overall Completion** | ▓▓▓▓░░░░░░░░░░░░░░░░ 16% |
 | **Phases Complete** | 1 / 19 (Phase 1 complete) |
 | **Active Work** | Phase 2 — macOS SwiftUI application shell, navigation, source import, stream inspector |
 
@@ -42,7 +42,7 @@
 | ----- | ---- | ------ | -------- | ------- |
 | **0** | Project Setup & Architecture | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | — |
 | **1** | Core Engine Foundation | ✅ Complete | ▓▓▓▓▓▓▓▓▓▓ 100% | Alpha 0.1 |
-| **2** | macOS SwiftUI Application (MVP) | 🚧 In Progress | ▓▓▓▓▓░░░░░ 50% | Alpha 0.1 |
+| **2** | macOS SwiftUI Application (MVP) | 🚧 In Progress | ▓▓▓▓▓▓▓▓░░ 80% | Alpha 0.1 |
 | **3** | Essential Encoding & Passthrough | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.2 |
 | **4** | CLI Tool | ⏳ Planned | ░░░░░░░░░░ 0% | Alpha 0.2 |
 | **5** | Subtitles & Core Audio Processing | ⏳ Planned | ░░░░░░░░░░ 0% | Beta 0.5 |

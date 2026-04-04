@@ -10,11 +10,14 @@
 // ---------------------------------------------------------------------------
 // This file defines the `@main` entry point for the MeedyaConverter macOS
 // application. It sets up the SwiftUI `App` lifecycle, declares the primary
-// window group, and configures:
+// window group, Settings window, and Help window, and configures:
 //
 //   - The main encoding-queue window (ContentView)
+//   - The Settings/Preferences window (Cmd+Comma)
+//   - The Help window (Help menu)
 //   - App-level state injection via @Environment and @Observable
-//   - Window sizing and default configuration
+//   - Appearance mode override (system/light/dark)
+//   - macOS notification authorisation
 //
 // ### Architecture
 // The app follows the MVVM pattern:
@@ -23,10 +26,6 @@
 //   - **Views** live in `Sources/MeedyaConverter/Views/`.
 //   - **Components** (reusable UI pieces) live in
 //     `Sources/MeedyaConverter/Components/`.
-//
-// The `App` struct itself is intentionally lightweight — it owns the
-// top-level scene declaration and delegates all business logic to the
-// engine and view-model layers.
 //
 // ### Minimum Deployment Target
 // macOS 15.0 (Sequoia) is required for:
@@ -38,26 +37,11 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 import ConverterEngine
 
 // ---------------------------------------------------------------------------
 // MARK: - MeedyaConverterApp
-// ---------------------------------------------------------------------------
-/// The application-level entry point for MeedyaConverter.
-///
-/// `MeedyaConverterApp` conforms to the SwiftUI `App` protocol, providing
-/// the macOS application lifecycle. The `@main` attribute generates the
-/// `main()` entry point that boots the run loop.
-///
-/// ### Scenes
-/// - **`WindowGroup`** — The primary window showing the encoding workflow
-///   with sidebar navigation, source import, stream inspection, output
-///   settings, job queue, and activity log.
-///
-/// ### State Management
-/// The `AppViewModel` (@Observable) is injected into the environment
-/// so all child views can access the shared encoding engine, source
-/// files, queue, and UI state.
 // ---------------------------------------------------------------------------
 @main
 struct MeedyaConverterApp: App {
@@ -65,9 +49,12 @@ struct MeedyaConverterApp: App {
     // -----------------------------------------------------------------
     // MARK: - Application State
     // -----------------------------------------------------------------
-    /// The shared application view model, injected into the environment.
-    /// Contains the encoding engine, source files, queue, and UI state.
+
+    /// The shared application view model.
     @State private var appViewModel = AppViewModel()
+
+    /// User's preferred appearance mode (persisted).
+    @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
     // -----------------------------------------------------------------
     // MARK: - Scene Declaration
@@ -77,23 +64,58 @@ struct MeedyaConverterApp: App {
         WindowGroup {
             ContentView()
                 .environment(appViewModel)
+                .preferredColorScheme(currentColorScheme)
+                .onAppear {
+                    requestNotificationPermission()
+                }
         }
         .defaultSize(width: 1100, height: 700)
         .commands {
-            // File menu customisation
+            // File menu — Import
             CommandGroup(after: .newItem) {
                 Button("Import Media Files...") {
                     openFilePicker()
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
+
+            // Help menu — In-app help
+            CommandGroup(replacing: .help) {
+                Button("MeedyaConverter Help") {
+                    openHelpWindow()
+                }
+                .keyboardShortcut("?", modifiers: .command)
+            }
         }
+
+        // Settings Window (Cmd+Comma)
+        Settings {
+            SettingsView()
+                .environment(appViewModel)
+                .preferredColorScheme(currentColorScheme)
+        }
+
+        // Help Window
+        Window("Help", id: "help") {
+            HelpView()
+                .preferredColorScheme(currentColorScheme)
+        }
+        .defaultSize(width: 750, height: 500)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Appearance
+    // -----------------------------------------------------------------
+
+    /// The current colour scheme based on user preference.
+    private var currentColorScheme: ColorScheme? {
+        AppearanceMode(rawValue: appearanceMode)?.colorScheme
     }
 
     // -----------------------------------------------------------------
     // MARK: - File Picker
     // -----------------------------------------------------------------
-    /// Open a file picker from the menu bar command.
+
     private func openFilePicker() {
         let panel = NSOpenPanel()
         panel.title = "Import Media Files"
@@ -109,6 +131,31 @@ struct MeedyaConverterApp: App {
 
         Task {
             await appViewModel.importFiles(panel.urls)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Help Window
+    // -----------------------------------------------------------------
+
+    private func openHelpWindow() {
+        if let url = URL(string: "meedyaconverter://help") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Notifications
+    // -----------------------------------------------------------------
+
+    /// Request permission for macOS notifications on first launch.
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge]
+        ) { granted, error in
+            if let error = error {
+                appViewModel.appendLog(.warning, "Notification permission error: \(error.localizedDescription)")
+            }
         }
     }
 }

@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UserNotifications
 import ConverterEngine
 
 // MARK: - NavigationItem
@@ -267,6 +268,12 @@ final class AppViewModel {
                 appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
                           category: .encoding, jobID: jobState.config.id)
 
+                sendNotification(
+                    title: "Encoding Complete",
+                    body: "\(jobState.config.inputURL.lastPathComponent) finished in \(elapsed)",
+                    settingKey: "notifyOnCompletion"
+                )
+
             } catch {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
@@ -274,6 +281,12 @@ final class AppViewModel {
 
                 appendLog(.error, "Failed: \(jobState.config.inputURL.lastPathComponent) — \(error.localizedDescription)",
                           category: .encoding, jobID: jobState.config.id)
+
+                sendNotification(
+                    title: "Encoding Failed",
+                    body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
+                    settingKey: "notifyOnFailure"
+                )
             }
 
             engine.queue.currentJob = nil
@@ -282,7 +295,15 @@ final class AppViewModel {
 
         ProcessInfo.processInfo.endActivity(activity)
         isQueueRunning = false
-        appendLog(.info, "Queue finished — \(engine.queue.completedCount) completed, \(engine.queue.failedCount) failed")
+
+        let summary = "\(engine.queue.completedCount) completed, \(engine.queue.failedCount) failed"
+        appendLog(.info, "Queue finished — \(summary)")
+
+        sendNotification(
+            title: "Queue Finished",
+            body: summary,
+            settingKey: "notifyOnQueueFinished"
+        )
     }
 
     /// Stop the queue after the current job finishes.
@@ -312,6 +333,31 @@ final class AppViewModel {
         activeJobState?.completedAt = Date()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
+    }
+
+    // MARK: - Notifications
+
+    /// Send a macOS notification if the corresponding setting is enabled.
+    private func sendNotification(title: String, body: String, settingKey: String) {
+        let enabled = UserDefaults.standard.bool(forKey: settingKey)
+        // Default to true if key hasn't been set
+        let isEnabled = UserDefaults.standard.object(forKey: settingKey) == nil ? true : enabled
+
+        guard isEnabled else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = UserDefaults.standard.bool(forKey: "playSoundOnCompletion")
+            ? .default : nil
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: - Logging
