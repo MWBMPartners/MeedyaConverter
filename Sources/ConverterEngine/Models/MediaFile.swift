@@ -164,6 +164,12 @@ public struct MediaFile: Identifiable, Codable, Sendable {
         return videoStreams.contains { $0.hdrFormats.contains(.hlg) }
     }
 
+    /// Whether any video stream uses PQ (SMPTE ST 2084) transfer function.
+    /// This includes HDR10, HDR10+, and Dolby Vision content with PQ base layer.
+    public var hasPQ: Bool {
+        return videoStreams.contains { $0.hdrFormats.contains(.pq) || $0.hdrFormats.contains(.hdr10) || $0.hdrFormats.contains(.hdr10Plus) }
+    }
+
     /// Whether any video stream contains 3D/stereoscopic content.
     public var hasStereo3D: Bool {
         return videoStreams.contains { $0.isStereo3D }

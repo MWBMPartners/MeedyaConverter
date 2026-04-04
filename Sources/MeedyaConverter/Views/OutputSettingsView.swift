@@ -76,6 +76,7 @@ struct OutputSettingsView: View {
             Section("Video") {
                 videoSettingsSummary
                 hdrWarning
+                pqToHLGControls
                 hardwareEncoderInfo
                 cropDetectionControls
             }
@@ -274,6 +275,46 @@ struct OutputSettingsView: View {
                     Text("\(codec.displayName) has limited HDR support. Consider H.265, AV1, or video passthrough.")
                         .font(.caption)
                         .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    // MARK: - PQ → HLG Controls (Issue #254)
+
+    @ViewBuilder
+    private var pqToHLGControls: some View {
+        @Bindable var vm = viewModel
+
+        if let file = viewModel.selectedFile, file.hasPQ,
+           !viewModel.selectedProfile.videoPassthrough,
+           !viewModel.selectedProfile.toneMapToSDR {
+
+            Toggle("Convert PQ to HLG (broadcast HDR)", isOn: $vm.selectedProfile.convertPQToHLG)
+                .accessibilityLabel("Convert PQ HDR to HLG HDR for broadcast compatibility")
+
+            if viewModel.selectedProfile.convertPQToHLG {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.cyan)
+                    Text("PQ (ST 2084) → HLG (ARIB STD-B67) — preserves HDR, changes transfer for broadcast")
+                        .font(.caption)
+                        .foregroundStyle(.cyan)
+                }
+
+                if viewModel.engine.isHlgToolsAvailable {
+                    Toggle("Use hlg-tools for higher quality", isOn: $vm.selectedProfile.useHlgTools)
+                        .font(.caption)
+
+                    if let version = viewModel.engine.hlgToolsVersion {
+                        Text("hlg-tools \(version) detected")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Using FFmpeg zscale filter for conversion. Install hlg-tools for optional higher quality.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

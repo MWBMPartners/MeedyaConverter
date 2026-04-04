@@ -88,6 +88,9 @@ public final class EncodingEngine: @unchecked Sendable {
     /// The Dolby Vision tool wrapper for RPU handling.
     public let doviTool: DoviToolWrapper
 
+    /// The hlg-tools wrapper for PQ → HLG conversion.
+    public let hlgTools: HlgToolsWrapper
+
     /// Cached FFmpeg binary info (populated after configure()).
     public private(set) var ffmpegInfo: FFmpegBinaryInfo?
 
@@ -122,6 +125,7 @@ public final class EncodingEngine: @unchecked Sendable {
         self.featureGate = featureGate
         self.hardwareDetector = HardwareEncoderDetector()
         self.doviTool = DoviToolWrapper()
+        self.hlgTools = HlgToolsWrapper()
     }
 
     // MARK: - Configuration
@@ -492,6 +496,21 @@ public final class EncodingEngine: @unchecked Sendable {
         // Prefer VideoToolbox on macOS
         return hardwareDetector.encoder(for: codec, api: .videoToolbox, ffmpegPath: ffmpegPath)
             ?? hardwareDetector.encoders(for: codec, ffmpegPath: ffmpegPath).first
+    }
+
+    // MARK: - PQ → HLG (Issue #254)
+
+    /// Whether the external hlg-tools (pq2hlg) binary is available on this system.
+    ///
+    /// When available, the engine can use hlg-tools for higher-quality PQ→HLG
+    /// conversion. When unavailable, the FFmpeg zscale filter chain is used instead.
+    public var isHlgToolsAvailable: Bool {
+        hlgTools.isAvailable
+    }
+
+    /// Get the version of the installed hlg-tools, if available.
+    public var hlgToolsVersion: String? {
+        hlgTools.version()
     }
 
     // MARK: - Process Control

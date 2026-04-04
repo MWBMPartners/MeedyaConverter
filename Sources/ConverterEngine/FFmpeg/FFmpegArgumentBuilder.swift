@@ -115,6 +115,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// colours are desaturated during tone mapping to avoid over-saturation.
     public var toneMapDesaturation: Double?
 
+    // MARK: - PQ → HLG Conversion (Issue #254)
+
+    /// Whether to convert PQ (SMPTE ST 2084) transfer to HLG (ARIB STD-B67).
+    /// This preserves HDR but changes the transfer function for broadcast compatibility.
+    /// Uses a zscale filter chain: PQ input → linear → HLG output, keeping BT.2020 colour.
+    public var convertPQToHLG: Bool = false
+
     /// Whether to use hardware encoding (VideoToolbox on macOS).
     public var useHardwareEncoding: Bool = false
 
@@ -339,6 +346,12 @@ public struct FFmpegArgumentBuilder: Sendable {
             filters.append(buildToneMapFilter())
         }
 
+        // PQ → HLG transfer function conversion (Issue #254)
+        // Mutually exclusive with tone mapping — PQ→HLG keeps HDR, tone mapping goes to SDR.
+        if convertPQToHLG && !toneMap && !videoPassthrough {
+            filters.append(buildPQToHLGFilter())
+        }
+
         return filters.joined(separator: ",")
     }
 
@@ -369,6 +382,28 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // Step 4: Convert to 8-bit output
         parts.append("format=yuv420p")
+
+        return parts.joined(separator: ",")
+    }
+
+    /// Build the zscale filter chain for PQ → HLG transfer function conversion.
+    ///
+    /// Converts PQ (SMPTE ST 2084) transfer to HLG (ARIB STD-B67) while preserving
+    /// BT.2020 wide colour gamut and 10-bit depth. Used for broadcast delivery where
+    /// HLG is required but the source was mastered in PQ.
+    ///
+    /// Pipeline: zscale(PQ→linear) → zscale(linear→HLG, BT.2020 preserved) → format(10-bit)
+    private func buildPQToHLGFilter() -> String {
+        var parts: [String] = []
+
+        // Step 1: Convert from PQ to linear light
+        parts.append("zscale=tin=smpte2084:t=linear:pin=bt2020:p=bt2020:min=bt2020nc:m=bt2020nc")
+
+        // Step 2: Convert from linear to HLG transfer, keep BT.2020 colour space
+        parts.append("zscale=t=arib-std-b67:p=bt2020:m=bt2020nc")
+
+        // Step 3: Ensure 10-bit YUV 4:2:0 output for HLG
+        parts.append("format=yuv420p10le")
 
         return parts.joined(separator: ",")
     }

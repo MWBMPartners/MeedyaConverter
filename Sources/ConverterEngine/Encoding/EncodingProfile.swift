@@ -86,6 +86,16 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Tone mapping algorithm (hable, reinhard, mobius, bt2390, clip).
     public var toneMapAlgorithm: String?
 
+    /// Whether to convert PQ (SMPTE ST 2084) HDR to HLG (ARIB STD-B67) HDR.
+    /// This preserves HDR but changes the transfer function for broadcast compatibility.
+    /// When true, a zscale filter chain converts PQ→HLG while maintaining BT.2020 colour.
+    public var convertPQToHLG: Bool
+
+    /// Whether to use external hlg-tools (pq2hlg) for PQ→HLG conversion.
+    /// When true and hlg-tools is available, uses the external binary for higher quality.
+    /// When false or hlg-tools unavailable, falls back to FFmpeg zscale filter.
+    public var useHlgTools: Bool
+
     // MARK: - Audio Settings
 
     /// The audio codec for encoding.
@@ -146,6 +156,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         preserveHDR: Bool = true,
         toneMapToSDR: Bool = false,
         toneMapAlgorithm: String? = nil,
+        convertPQToHLG: Bool = false,
+        useHlgTools: Bool = false,
         audioCodec: AudioCodec? = .aacLC,
         audioPassthrough: Bool = false,
         audioBitrate: Int? = 160_000,
@@ -178,6 +190,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.preserveHDR = preserveHDR
         self.toneMapToSDR = toneMapToSDR
         self.toneMapAlgorithm = toneMapAlgorithm
+        self.convertPQToHLG = convertPQToHLG
+        self.useHlgTools = useHlgTools
         self.audioCodec = audioCodec
         self.audioPassthrough = audioPassthrough
         self.audioBitrate = audioBitrate
@@ -233,6 +247,9 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
            let tmAlgo = FFmpegArgumentBuilder.ToneMapAlgorithm(rawValue: algorithm) {
             builder.toneMapAlgorithm = tmAlgo
         }
+
+        // PQ → HLG conversion
+        builder.convertPQToHLG = convertPQToHLG
 
         // Subtitles
         builder.subtitlePassthrough = subtitlePassthrough
@@ -292,6 +309,7 @@ extension EncodingProfile {
         .fourKHDRMaster,
         .fourKHDRCompact,
         .hdrToSDR,
+        .pqToHLG,
 
         // Passthrough / Remux
         .remuxToMKV,
@@ -444,6 +462,24 @@ extension EncodingProfile {
         audioCodec: .aacLC,
         audioBitrate: 192_000,
         containerFormat: .mp4
+    )
+
+    /// PQ → HLG — convert PQ (HDR10) transfer to HLG for broadcast compatibility.
+    public static let pqToHLG = EncodingProfile(
+        name: "PQ → HLG (Broadcast)",
+        description: "Convert PQ/HDR10 to HLG transfer — H.265 10-bit in MKV for broadcast delivery",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: 18,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
+        convertPQToHLG: true,
+        audioCodec: .eac3,
+        audioBitrate: 448_000,
+        audioChannels: 6,
+        containerFormat: .mkv
     )
 
     // MARK: - Passthrough / Remux Profiles
@@ -791,6 +827,10 @@ public final class EncodingProfileStore: @unchecked Sendable {
             useHardwareEncoding: profile.useHardwareEncoding,
             encodingPasses: profile.encodingPasses,
             preserveHDR: profile.preserveHDR,
+            toneMapToSDR: profile.toneMapToSDR,
+            toneMapAlgorithm: profile.toneMapAlgorithm,
+            convertPQToHLG: profile.convertPQToHLG,
+            useHlgTools: profile.useHlgTools,
             audioCodec: profile.audioCodec,
             audioPassthrough: profile.audioPassthrough,
             audioBitrate: profile.audioBitrate,

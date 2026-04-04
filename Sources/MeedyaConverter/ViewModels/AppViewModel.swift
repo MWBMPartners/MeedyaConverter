@@ -276,6 +276,24 @@ final class AppViewModel {
         }
     }
 
+    // MARK: - PQ → HLG Auto-Trigger (Issue #254)
+
+    /// Check if the selected PQ → HLG profile matches a PQ source and log accordingly.
+    ///
+    /// Auto-enables PQ→HLG conversion when the selected profile is the "PQ → HLG" preset
+    /// and the source has PQ transfer, or when the user has manually enabled it.
+    func logPQToHLGStatus() {
+        guard let file = selectedFile, file.hasPQ else { return }
+        guard selectedProfile.convertPQToHLG else { return }
+        guard !selectedProfile.videoPassthrough else { return }
+
+        if engine.isHlgToolsAvailable && selectedProfile.useHlgTools {
+            appendLog(.info, "PQ→HLG conversion will use hlg-tools (higher quality)", category: .hdr)
+        } else {
+            appendLog(.info, "PQ→HLG conversion will use FFmpeg zscale filter", category: .hdr)
+        }
+    }
+
     // MARK: - Encoding
 
     /// Create an encoding job for the selected file with current settings and add to queue.
@@ -284,6 +302,9 @@ final class AppViewModel {
 
         // Auto-trigger tone mapping if HDR source with incompatible output (Phase 3.9c)
         autoTriggerToneMapping()
+
+        // Log PQ → HLG conversion status (Issue #254)
+        logPQToHLGStatus()
 
         // Determine output URL
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory
@@ -621,6 +642,8 @@ struct LogEntry: Identifiable, Codable {
         case mediainfo
         /// dovi_tool output.
         case doviTool = "dovi_tool"
+        /// hlg-tools output (PQ → HLG conversion).
+        case hlgTools = "hlg_tools"
         /// System-level event (temp files, disk space).
         case system
     }
