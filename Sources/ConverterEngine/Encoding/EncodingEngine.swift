@@ -615,6 +615,27 @@ public final class EncodingEngine: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Run an arbitrary FFmpeg command with progress reporting.
+    ///
+    /// Used by the CLI manifest command and other tools that need to execute
+    /// FFmpeg directly with custom arguments (e.g., variant encoding).
+    public func runFFmpeg(
+        arguments: [String],
+        onProgress: @escaping @Sendable (FFmpegProgressInfo) -> Void
+    ) async throws {
+        guard let ffmpegPath = ffmpegInfo?.path else {
+            throw EncodingEngineError.ffmpegUnavailable("FFmpeg not configured. Call configure() first.")
+        }
+        try await runFFmpegPass(
+            ffmpegPath: ffmpegPath,
+            arguments: arguments,
+            pass: nil,
+            multipassLogPath: nil,
+            sourceDuration: nil,
+            onProgress: onProgress
+        )
+    }
+
     /// Run a single FFmpeg pass (or the entire encode for single-pass).
     private func runFFmpegPass(
         ffmpegPath: String,

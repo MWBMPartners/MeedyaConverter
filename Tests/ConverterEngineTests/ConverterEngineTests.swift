@@ -979,4 +979,269 @@ final class ConverterEngineTests: XCTestCase {
         let mono = ChannelLayout(channelCount: 1)
         XCTAssertFalse(mono.canUpmix) // Mono should not offer upmix
     }
+
+    // -----------------------------------------------------------------
+    // MARK: - ColourSpaceConverter Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies colour space filter generation.
+    func test_colourSpaceConverter_buildFilter() {
+        let filter = ColourSpaceConverter.buildFilter(from: .bt601, to: .bt709)
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter!.contains("zscale"))
+        XCTAssertTrue(filter!.contains("bt709"))
+    }
+
+    /// Verifies no filter generated for same colour space.
+    func test_colourSpaceConverter_sameColourSpace() {
+        let filter = ColourSpaceConverter.buildFilter(from: .bt709, to: .bt709)
+        XCTAssertNil(filter, "Should return nil when source == target")
+    }
+
+    /// Verifies signalling arguments.
+    func test_colourSpaceConverter_signalling() {
+        let args = ColourSpaceConverter.buildSignallingArguments(for: .bt2020)
+        let argStr = args.joined(separator: " ")
+        XCTAssertTrue(argStr.contains("-color_primaries bt2020"))
+        XCTAssertTrue(argStr.contains("-colorspace bt2020nc"))
+    }
+
+    /// Verifies recommended colour space for HDR.
+    func test_colourSpaceConverter_recommendation() {
+        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h265, isHDR: true), .bt2020)
+        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h264, isHDR: false), .bt709)
+        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h264, isHDR: true), .bt709) // H.264 doesn't support HDR
+    }
+
+    /// Verifies ColourSpace properties.
+    func test_colourSpace_properties() {
+        XCTAssertTrue(ColourSpace.bt2020.isWideGamut)
+        XCTAssertTrue(ColourSpace.dciP3.isWideGamut)
+        XCTAssertFalse(ColourSpace.bt709.isWideGamut)
+        XCTAssertFalse(ColourSpace.bt601.isWideGamut)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - PlatformFormatPolicy Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies H.264 is universally supported.
+    func test_platformPolicy_h264Universal() {
+        for platform in PlatformFormatPolicy.Platform.allCases {
+            let result = PlatformFormatPolicy.checkVideoCodec(.h264, on: platform)
+            if case .supported = result {
+                // OK
+            } else {
+                XCTFail("H.264 should be supported on \(platform.rawValue)")
+            }
+        }
+    }
+
+    /// Verifies platform validation catches incompatible combinations.
+    func test_platformPolicy_webBrowserRestrictions() {
+        let result = PlatformFormatPolicy.checkContainer(.mkv, on: .webBrowser)
+        if case .unsupported = result {
+            // Expected
+        } else {
+            XCTFail("MKV should be unsupported in web browsers")
+        }
+    }
+
+    /// Verifies profile validation returns warnings for incompatible settings.
+    func test_platformPolicy_profileValidation() {
+        // HDR Master profile with MKV should warn on Apple platforms
+        let warnings = PlatformFormatPolicy.validate(profile: .fourKHDRMaster, for: .iOS)
+        // MKV is not natively supported on iOS
+        XCTAssertTrue(warnings.contains { $0.contains("MKV") })
+    }
+
+    /// Verifies recommended profiles differ by platform.
+    func test_platformPolicy_recommendations() {
+        let webProfile = PlatformFormatPolicy.recommendedProfile(for: .webBrowser)
+        XCTAssertEqual(webProfile.videoCodec, .av1)
+
+        let androidProfile = PlatformFormatPolicy.recommendedProfile(for: .android)
+        XCTAssertEqual(androidProfile.videoCodec, .h264)
+
+        let plexProfile = PlatformFormatPolicy.recommendedProfile(for: .plex)
+        XCTAssertEqual(plexProfile.videoCodec, .h265)
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - HDRTransferFunction Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies HDRTransferFunction enum values.
+    func test_hdrTransferFunction_rawValues() {
+        XCTAssertEqual(HDRTransferFunction.pq.rawValue, "pq")
+        XCTAssertEqual(HDRTransferFunction.hlg.rawValue, "hlg")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - ManifestGenerator Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies default variant ladder has expected entries.
+    func test_manifestGenerator_defaultLadder() {
+        let ladder = StreamingVariant.defaultLadder
+        XCTAssertEqual(ladder.count, 4)
+        XCTAssertEqual(ladder[0].label, "1080p")
+        XCTAssertEqual(ladder[0].width, 1920)
+        XCTAssertEqual(ladder[0].height, 1080)
+        XCTAssertEqual(ladder[3].label, "360p")
+    }
+
+    /// Verifies 4K UHD ladder.
+    func test_manifestGenerator_uhdLadder() {
+        let ladder = StreamingVariant.uhdrLadder
+        XCTAssertEqual(ladder[0].label, "2160p")
+        XCTAssertEqual(ladder[0].width, 3840)
+        XCTAssertGreaterThan(ladder[0].videoBitrate, ladder[1].videoBitrate)
+    }
+
+    /// Verifies HLS variant arguments are generated correctly.
+    func test_manifestGenerator_hlsVariantArguments() {
+        let generator = ManifestGenerator(ffmpegPath: "/usr/bin/ffmpeg")
+        let config = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/"),
+            format: .hls
+        )
+        let args = generator.buildVariantArguments(config: config, variant: StreamingVariant.defaultLadder[0], variantIndex: 0)
+        let argStr = args.joined(separator: " ")
+
+        XCTAssertTrue(argStr.contains("-f hls"))
+        XCTAssertTrue(argStr.contains("-hls_time"))
+        XCTAssertTrue(argStr.contains("-s 1920x1080"))
+        XCTAssertTrue(argStr.contains("libx264"))
+    }
+
+    /// Verifies DASH variant arguments.
+    func test_manifestGenerator_dashVariantArguments() {
+        let generator = ManifestGenerator(ffmpegPath: "/usr/bin/ffmpeg")
+        let config = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/"),
+            format: .dash
+        )
+        let args = generator.buildVariantArguments(config: config, variant: StreamingVariant.defaultLadder[0], variantIndex: 0)
+        let argStr = args.joined(separator: " ")
+
+        XCTAssertTrue(argStr.contains("-f dash"))
+        XCTAssertTrue(argStr.contains("-seg_duration"))
+    }
+
+    /// Verifies master HLS playlist generation.
+    func test_manifestGenerator_masterPlaylist() {
+        let generator = ManifestGenerator(ffmpegPath: "/usr/bin/ffmpeg")
+        let config = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/")
+        )
+        let playlist = generator.buildMasterPlaylist(config: config)
+
+        XCTAssertTrue(playlist.contains("#EXTM3U"))
+        XCTAssertTrue(playlist.contains("#EXT-X-STREAM-INF"))
+        XCTAssertTrue(playlist.contains("RESOLUTION=1920x1080"))
+        XCTAssertTrue(playlist.contains("RESOLUTION=1280x720"))
+        XCTAssertTrue(playlist.contains("v0_1080p/playlist.m3u8"))
+    }
+
+    /// Verifies DASH MPD manifest generation.
+    func test_manifestGenerator_dashManifest() {
+        let generator = ManifestGenerator(ffmpegPath: "/usr/bin/ffmpeg")
+        let config = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/"),
+            format: .dash
+        )
+        let mpd = generator.buildDASHManifest(config: config)
+
+        XCTAssertTrue(mpd.contains("<?xml"))
+        XCTAssertTrue(mpd.contains("<MPD"))
+        XCTAssertTrue(mpd.contains("Representation"))
+        XCTAssertTrue(mpd.contains("width=\"1920\""))
+    }
+
+    /// Verifies manifest config validation.
+    func test_manifestGenerator_validation() {
+        let generator = ManifestGenerator(ffmpegPath: "/usr/bin/ffmpeg")
+
+        // Valid config
+        let validConfig = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/")
+        )
+        let validIssues = generator.validate(config: validConfig)
+        XCTAssertTrue(validIssues.isEmpty, "Default config should be valid")
+
+        // Empty variants
+        let emptyConfig = ManifestConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
+            outputDirectory: URL(fileURLWithPath: "/tmp/output/"),
+            variants: []
+        )
+        let emptyIssues = generator.validate(config: emptyConfig)
+        XCTAssertTrue(emptyIssues.contains { $0.contains("No variants") })
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - EncodingProfile New Properties Tests
+    // -----------------------------------------------------------------
+
+    /// Verifies new tone mapping parameters exist and round-trip.
+    func test_profile_toneMapParameters() throws {
+        var profile = EncodingProfile(name: "Test TM")
+        profile.toneMapToSDR = true
+        profile.toneMapAlgorithm = "hable"
+        profile.toneMapPeakNits = 1000.0
+        profile.toneMapDesaturation = 0.5
+
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(EncodingProfile.self, from: data)
+
+        XCTAssertEqual(decoded.toneMapPeakNits, 1000.0)
+        XCTAssertEqual(decoded.toneMapDesaturation, 0.5)
+    }
+
+    /// Verifies displayAspectRatio round-trips.
+    func test_profile_displayAspectRatio() throws {
+        var profile = EncodingProfile(name: "Test DAR")
+        profile.displayAspectRatio = "16:9"
+
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(EncodingProfile.self, from: data)
+
+        XCTAssertEqual(decoded.displayAspectRatio, "16:9")
+    }
+
+    /// Verifies tone mapping params wire through toArgumentBuilder.
+    func test_profile_toneMapParamsWiring() {
+        var profile = EncodingProfile(name: "Test Wiring")
+        profile.toneMapToSDR = true
+        profile.toneMapAlgorithm = "mobius"
+        profile.toneMapPeakNits = 4000.0
+        profile.toneMapDesaturation = 0.8
+
+        let inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        let outputURL = URL(fileURLWithPath: "/tmp/output.mp4")
+        let builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
+
+        XCTAssertTrue(builder.toneMap)
+        XCTAssertEqual(builder.toneMapAlgorithm, .mobius)
+        XCTAssertEqual(builder.toneMapPeakNits, 4000.0)
+        XCTAssertEqual(builder.toneMapDesaturation, 0.8)
+    }
+
+    /// Verifies displayAspectRatio wires through toArgumentBuilder.
+    func test_profile_displayAspectRatioWiring() {
+        var profile = EncodingProfile(name: "Test DAR Wiring")
+        profile.displayAspectRatio = "2.35:1"
+
+        let inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
+        let outputURL = URL(fileURLWithPath: "/tmp/output.mp4")
+        let builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
+
+        XCTAssertEqual(builder.displayAspectRatio, "2.35:1")
+    }
 }
