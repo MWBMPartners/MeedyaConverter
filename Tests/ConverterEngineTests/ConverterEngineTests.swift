@@ -7568,4 +7568,504 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(decoded.preset, "slow")
         XCTAssertFalse(decoded.passthroughOtherStreams)
     }
+
+    // MARK: - VVCEncoder Tests
+
+    /// Verifies VVCPreset display names and raw values.
+    func test_vvcPreset_displayNamesAndRawValues() {
+        XCTAssertEqual(VVCPreset.faster.rawValue, "faster")
+        XCTAssertEqual(VVCPreset.medium.rawValue, "medium")
+        XCTAssertEqual(VVCPreset.slower.rawValue, "slower")
+        XCTAssertTrue(VVCPreset.medium.displayName.contains("Default"))
+    }
+
+    /// Verifies VVCConfig default values.
+    func test_vvcConfig_defaults() {
+        let config = VVCConfig()
+        XCTAssertEqual(config.qp, 28)
+        XCTAssertEqual(config.preset, .medium)
+        XCTAssertNil(config.bitrate)
+        XCTAssertEqual(config.tier, .main)
+        XCTAssertEqual(config.threads, 0)
+        XCTAssertFalse(config.hdr10)
+        XCTAssertEqual(config.bitDepth, 10)
+        XCTAssertFalse(config.intraRefresh)
+        XCTAssertTrue(config.outputMP4)
+    }
+
+    /// Verifies VVC encode arguments include libvvenc and QP.
+    func test_vvcEncoder_buildEncodeArguments_defaultConfig() {
+        let args = VVCEncoder.buildEncodeArguments(
+            inputPath: "/input.mkv",
+            outputPath: "/output.mp4"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/input.mkv"))
+        XCTAssertTrue(args.contains("-c:v"))
+        XCTAssertTrue(args.contains("libvvenc"))
+        XCTAssertTrue(args.contains("-qp"))
+        XCTAssertTrue(args.contains("28"))
+        XCTAssertTrue(args.contains("-preset"))
+        XCTAssertTrue(args.contains("medium"))
+        XCTAssertTrue(args.contains("-pix_fmt"))
+        XCTAssertTrue(args.contains("yuv420p10le"))
+        XCTAssertTrue(args.contains("-strict"))
+        XCTAssertTrue(args.contains("unofficial"))
+    }
+
+    /// Verifies VVC encode with bitrate uses -b:v instead of -qp.
+    func test_vvcEncoder_buildEncodeArguments_withBitrate() {
+        let config = VVCConfig(bitrate: 5000)
+        let args = VVCEncoder.buildEncodeArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-b:v"))
+        XCTAssertTrue(args.contains("5000k"))
+        XCTAssertFalse(args.contains("-qp"))
+    }
+
+    /// Verifies VVC encode with HDR10 includes colour metadata.
+    func test_vvcEncoder_buildEncodeArguments_withHDR10() {
+        let config = VVCConfig(hdr10: true)
+        let args = VVCEncoder.buildEncodeArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-color_primaries"))
+        XCTAssertTrue(args.contains("bt2020"))
+        XCTAssertTrue(args.contains("-color_trc"))
+        XCTAssertTrue(args.contains("smpte2084"))
+    }
+
+    /// Verifies VVC encode with 8-bit uses yuv420p.
+    func test_vvcEncoder_buildEncodeArguments_8bit() {
+        let config = VVCConfig(bitDepth: 8)
+        let args = VVCEncoder.buildEncodeArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains("yuv420p"))
+        XCTAssertFalse(args.contains("yuv420p10le"))
+    }
+
+    /// Verifies VVC MKV output does not add -strict unofficial.
+    func test_vvcEncoder_buildEncodeArguments_mkvNoStrict() {
+        let config = VVCConfig(outputMP4: false)
+        let args = VVCEncoder.buildEncodeArguments(
+            inputPath: "/in.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertFalse(args.contains("-strict"))
+    }
+
+    /// Verifies vvencapp argument building.
+    func test_vvcEncoder_buildVvencAppArguments_containsResolution() {
+        let args = VVCEncoder.buildVvencAppArguments(
+            inputPath: "-",
+            outputPath: "/out.vvc",
+            width: 3840,
+            height: 2160,
+            frameRate: 24.0
+        )
+        XCTAssertTrue(args.contains("-s"))
+        XCTAssertTrue(args.contains("3840x2160"))
+        XCTAssertTrue(args.contains("-r"))
+        XCTAssertTrue(args.contains("24"))
+        XCTAssertTrue(args.contains("--internal-bitdepth"))
+        XCTAssertTrue(args.contains("10"))
+    }
+
+    /// Verifies VVC container support info.
+    func test_vvcEncoder_containerSupport_mp4RequiresStrict() {
+        let mp4 = VVCEncoder.containerSupport(container: "mp4")
+        XCTAssertTrue(mp4.supported)
+        XCTAssertTrue(mp4.requiresStrict)
+
+        let mkv = VVCEncoder.containerSupport(container: "mkv")
+        XCTAssertTrue(mkv.supported)
+        XCTAssertFalse(mkv.requiresStrict)
+
+        let webm = VVCEncoder.containerSupport(container: "webm")
+        XCTAssertFalse(webm.supported)
+    }
+
+    /// Verifies VVC supported containers list.
+    func test_vvcEncoder_supportedContainers() {
+        let containers = VVCEncoder.supportedContainers()
+        XCTAssertTrue(containers.contains("mp4"))
+        XCTAssertTrue(containers.contains("mkv"))
+        XCTAssertTrue(containers.contains("ts"))
+    }
+
+    /// Verifies HEVC-equivalent CRF approximation.
+    func test_vvcEncoder_approximateHEVCEquivalentCRF() {
+        XCTAssertEqual(VVCEncoder.approximateHEVCEquivalentCRF(qp: 28), 32)
+        XCTAssertEqual(VVCEncoder.approximateHEVCEquivalentCRF(qp: 20), 24)
+        XCTAssertEqual(VVCEncoder.approximateHEVCEquivalentCRF(qp: 50), 51) // Clamped
+    }
+
+    /// Verifies VVC bitrate savings estimation.
+    func test_vvcEncoder_estimatedBitrateSavings() {
+        let savings = VVCEncoder.estimatedBitrateSavings(hevcBitrateKbps: 10000)
+        XCTAssertEqual(savings.min, 5000)  // 50% saving
+        XCTAssertEqual(savings.max, 7000)  // 30% saving
+    }
+
+    /// Verifies VVC pipeline description.
+    func test_vvcEncoder_describePipeline_withHDR() {
+        let config = VVCConfig(hdr10: true, outputMP4: true)
+        let steps = VVCEncoder.describePipeline(config: config)
+        XCTAssertTrue(steps.count >= 3)
+        XCTAssertTrue(steps.contains { $0.contains("HDR10") })
+        XCTAssertTrue(steps.contains { $0.contains("libvvenc") })
+        XCTAssertTrue(steps.contains { $0.contains("MP4") })
+    }
+
+    // MARK: - HLGToDolbyVision Tests
+
+    /// Verifies DVProfileTarget properties.
+    func test_dvProfileTarget_properties() {
+        XCTAssertEqual(DVProfileTarget.profile84.doviToolMode, "4")
+        XCTAssertEqual(DVProfileTarget.profile5.doviToolMode, "0")
+        XCTAssertTrue(DVProfileTarget.profile84.hlgCompatible)
+        XCTAssertFalse(DVProfileTarget.profile5.hlgCompatible)
+        XCTAssertEqual(DVProfileTarget.profile84.baseLayerTransfer, "arib-std-b67")
+        XCTAssertEqual(DVProfileTarget.profile5.baseLayerTransfer, "smpte2084")
+    }
+
+    /// Verifies HLGToDVConfig defaults.
+    func test_hlgToDVConfig_defaults() {
+        let config = HLGToDVConfig()
+        XCTAssertEqual(config.profile, .profile84)
+        XCTAssertEqual(config.maxLuminance, 1000)
+        XCTAssertEqual(config.minLuminance, 50)
+        XCTAssertEqual(config.encoder, "libx265")
+        XCTAssertEqual(config.crf, 18)
+    }
+
+    /// Verifies Profile 8.4 encode arguments preserve HLG metadata.
+    func test_hlgToDV_buildProfile84EncodeArguments_preservesHLG() {
+        let args = HLGToDolbyVision.buildProfile84EncodeArguments(
+            inputPath: "/hlg.mkv",
+            outputPath: "/out.mkv"
+        )
+        XCTAssertTrue(args.contains("-color_trc"))
+        XCTAssertTrue(args.contains("arib-std-b67"))
+        XCTAssertTrue(args.contains("bt2020"))
+        XCTAssertTrue(args.contains("yuv420p10le"))
+    }
+
+    /// Verifies Profile 5 encode arguments convert HLG→PQ.
+    func test_hlgToDV_buildProfile5EncodeArguments_convertsToPQ() {
+        let config = HLGToDVConfig(profile: .profile5)
+        let args = HLGToDolbyVision.buildProfile5EncodeArguments(
+            inputPath: "/hlg.mkv",
+            outputPath: "/out.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-vf"))
+        XCTAssertTrue(args.contains("-color_trc"))
+        XCTAssertTrue(args.contains("smpte2084"))
+    }
+
+    /// Verifies HLG→PQ filter contains correct zscale stages.
+    func test_hlgToDV_buildHLGToPQFilter_containsZscale() {
+        let filter = HLGToDolbyVision.buildHLGToPQFilter()
+        XCTAssertTrue(filter.contains("zscale=t=linear"))
+        XCTAssertTrue(filter.contains("format=gbrpf32le"))
+        XCTAssertTrue(filter.contains("zscale=t=smpte2084"))
+        XCTAssertTrue(filter.contains("format=yuv420p10le"))
+    }
+
+    /// Verifies RPU generation arguments contain correct mode.
+    func test_hlgToDV_buildGenerateRPUArguments_profile84() {
+        let config = HLGToDVConfig(maxCLL: 800, maxFALL: 300)
+        let args = HLGToDolbyVision.buildGenerateRPUArguments(
+            outputRPUPath: "/tmp/rpu.bin",
+            config: config
+        )
+        XCTAssertTrue(args.contains("generate"))
+        XCTAssertTrue(args.contains("-m"))
+        XCTAssertTrue(args.contains("4")) // Profile 8.4 mode
+        XCTAssertTrue(args.contains("--max-cll"))
+        XCTAssertTrue(args.contains("800"))
+        XCTAssertTrue(args.contains("--max-fall"))
+        XCTAssertTrue(args.contains("300"))
+        XCTAssertTrue(args.contains("--max-lum"))
+        XCTAssertTrue(args.contains("--min-lum"))
+    }
+
+    /// Verifies HEVC extraction arguments.
+    func test_hlgToDV_buildExtractHEVCArguments_containsAnnexB() {
+        let args = HLGToDolbyVision.buildExtractHEVCArguments(
+            inputPath: "/src.mkv",
+            outputPath: "/tmp/video.hevc"
+        )
+        XCTAssertTrue(args.contains("hevc_mp4toannexb"))
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("hevc"))
+    }
+
+    /// Verifies RPU injection arguments.
+    func test_hlgToDV_buildInjectRPUArguments() {
+        let args = HLGToDolbyVision.buildInjectRPUArguments(
+            hevcInputPath: "/tmp/video.hevc",
+            rpuPath: "/tmp/rpu.bin",
+            outputPath: "/tmp/dv.hevc"
+        )
+        XCTAssertTrue(args.contains("inject-rpu"))
+        XCTAssertTrue(args.contains("--rpu-in"))
+    }
+
+    /// Verifies mux arguments include strict unofficial.
+    func test_hlgToDV_buildMuxArguments_containsStrictUnofficial() {
+        let args = HLGToDolbyVision.buildMuxArguments(
+            hevcPath: "/tmp/dv.hevc",
+            originalPath: "/src.mkv",
+            outputPath: "/final.mkv"
+        )
+        XCTAssertTrue(args.contains("-strict"))
+        XCTAssertTrue(args.contains("unofficial"))
+        XCTAssertTrue(args.contains("1:a?"))
+        XCTAssertTrue(args.contains("1:s?"))
+    }
+
+    /// Verifies pipeline description step count per profile.
+    func test_hlgToDV_describePipeline_stepCounts() {
+        let p84 = HLGToDolbyVision.describePipeline(config: HLGToDVConfig(profile: .profile84))
+        XCTAssertEqual(p84.count, 5)
+
+        let p5 = HLGToDolbyVision.describePipeline(config: HLGToDVConfig(profile: .profile5))
+        XCTAssertEqual(p5.count, 6)
+    }
+
+    /// Verifies encoder validation.
+    func test_hlgToDV_validateEncoder_hevcValid() {
+        XCTAssertTrue(HLGToDolbyVision.validateEncoder("libx265").isEmpty)
+        XCTAssertTrue(HLGToDolbyVision.validateEncoder("hevc_videotoolbox").isEmpty)
+        XCTAssertFalse(HLGToDolbyVision.validateEncoder("libx264").isEmpty)
+        XCTAssertFalse(HLGToDolbyVision.validateEncoder("libsvtav1").isEmpty)
+    }
+
+    /// Verifies config validation.
+    func test_hlgToDV_validateConfig_valid() {
+        let config = HLGToDVConfig()
+        XCTAssertTrue(HLGToDolbyVision.validateConfig(config).isEmpty)
+    }
+
+    /// Verifies config validation catches bad luminance.
+    func test_hlgToDV_validateConfig_badLuminance() {
+        let config = HLGToDVConfig(maxLuminance: 0)
+        let warnings = HLGToDolbyVision.validateConfig(config)
+        XCTAssertFalse(warnings.isEmpty)
+    }
+
+    // MARK: - SmartCropIntegration Tests
+
+    /// Verifies CropMode properties.
+    func test_cropMode_thresholds() {
+        XCTAssertEqual(CropMode.auto.threshold, 24)
+        XCTAssertEqual(CropMode.aggressive.threshold, 16)
+        XCTAssertEqual(CropMode.conservative.threshold, 40)
+        XCTAssertEqual(CropMode.none.threshold, 0)
+    }
+
+    /// Verifies letterbox detection — horizontal bars.
+    func test_smartCrop_detectLetterboxType_letterbox() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        let type = SmartCropIntegration.detectLetterboxType(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertEqual(type, .letterbox)
+    }
+
+    /// Verifies pillarbox detection — vertical bars.
+    func test_smartCrop_detectLetterboxType_pillarbox() {
+        let crop = CropRect(width: 1440, height: 1080, x: 240, y: 0)
+        let type = SmartCropIntegration.detectLetterboxType(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertEqual(type, .pillarbox)
+    }
+
+    /// Verifies windowbox detection — all sides.
+    func test_smartCrop_detectLetterboxType_windowbox() {
+        let crop = CropRect(width: 1440, height: 800, x: 240, y: 140)
+        let type = SmartCropIntegration.detectLetterboxType(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertEqual(type, .windowbox)
+    }
+
+    /// Verifies no letterbox detection.
+    func test_smartCrop_detectLetterboxType_none() {
+        let crop = CropRect(width: 1920, height: 1080, x: 0, y: 0)
+        let type = SmartCropIntegration.detectLetterboxType(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertEqual(type, .none)
+    }
+
+    /// Verifies aspect ratio matching for 2.40:1.
+    func test_smartCrop_matchAspectRatio_240() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140) // 2.4:1
+        let ratio = SmartCropIntegration.matchAspectRatio(crop: crop)
+        XCTAssertEqual(ratio, .ratio_2_40_1)
+    }
+
+    /// Verifies aspect ratio matching for 16:9.
+    func test_smartCrop_matchAspectRatio_16_9() {
+        let crop = CropRect(width: 1920, height: 1080, x: 0, y: 0) // 1.778:1
+        let ratio = SmartCropIntegration.matchAspectRatio(crop: crop)
+        XCTAssertNotNil(ratio)
+    }
+
+    /// Verifies snap-to-ratio adjusts dimensions correctly.
+    func test_smartCrop_snapToRatio_adjustsWidth() {
+        let crop = CropRect(width: 1920, height: 804, x: 0, y: 138)
+        let snapped = SmartCropIntegration.snapToRatio(
+            crop: crop,
+            ratio: .ratio_2_39_1,
+            sourceWidth: 1920,
+            sourceHeight: 1080
+        )
+        let snappedRatio = Double(snapped.width) / Double(snapped.height)
+        XCTAssertEqual(snappedRatio, 2.39, accuracy: 0.05)
+    }
+
+    /// Verifies crop validation passes for normal crop.
+    func test_smartCrop_validateCrop_normalCropPasses() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        let warnings = SmartCropIntegration.validateCrop(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertTrue(warnings.isEmpty)
+    }
+
+    /// Verifies crop validation catches excessive crop.
+    func test_smartCrop_validateCrop_excessiveCropWarns() {
+        let crop = CropRect(width: 640, height: 480, x: 640, y: 300)
+        let config = SmartCropConfig(maxCropPercentage: 40.0)
+        let warnings = SmartCropIntegration.validateCrop(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080,
+            config: config
+        )
+        XCTAssertFalse(warnings.isEmpty)
+    }
+
+    /// Verifies crop validation catches tiny dimensions.
+    func test_smartCrop_validateCrop_tinyDimensionsWarns() {
+        let crop = CropRect(width: 32, height: 32, x: 0, y: 0)
+        let warnings = SmartCropIntegration.validateCrop(
+            crop: crop, sourceWidth: 1920, sourceHeight: 1080
+        )
+        XCTAssertTrue(warnings.contains { $0.contains("too small") })
+    }
+
+    /// Verifies crop filter string generation.
+    func test_smartCrop_buildCropFilter() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        let filter = SmartCropIntegration.buildCropFilter(crop: crop)
+        XCTAssertEqual(filter, "crop=1920:800:0:140")
+    }
+
+    /// Verifies combined crop + scale filter.
+    func test_smartCrop_buildCropAndScaleFilter_withTarget() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        let filter = SmartCropIntegration.buildCropAndScaleFilter(
+            crop: crop, targetWidth: 1280, targetHeight: 534
+        )
+        XCTAssertTrue(filter.contains("crop=1920:800:0:140"))
+        XCTAssertTrue(filter.contains("scale=1280:534"))
+    }
+
+    /// Verifies crop arguments generation.
+    func test_smartCrop_buildCropArguments() {
+        let crop = CropRect(width: 1920, height: 800, x: 0, y: 140)
+        let args = SmartCropIntegration.buildCropArguments(crop: crop)
+        XCTAssertTrue(args.contains("-vf"))
+        XCTAssertTrue(args.contains("crop=1920:800:0:140"))
+    }
+
+    /// Verifies cropdetect arguments use correct threshold.
+    func test_smartCrop_buildCropDetectArguments_usesConfigThreshold() {
+        let config = SmartCropConfig(mode: .aggressive)
+        let args = SmartCropIntegration.buildCropDetectArguments(
+            inputPath: "/video.mkv",
+            config: config
+        )
+        XCTAssertTrue(args.contains { $0.contains("limit=16") })
+    }
+
+    /// Verifies multi-segment analysis generates correct segment count.
+    func test_smartCrop_buildMultiSegmentAnalysis_segmentCount() {
+        let segments = SmartCropIntegration.buildMultiSegmentAnalysisArguments(
+            inputPath: "/video.mkv",
+            duration: 7200.0,
+            segments: 5
+        )
+        XCTAssertEqual(segments.count, 5)
+        XCTAssertTrue(segments[0].timestamp > 0)
+    }
+
+    /// Verifies variable letterboxing detection.
+    func test_smartCrop_hasVariableLetterboxing() {
+        let uniform = [
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+        ]
+        XCTAssertFalse(SmartCropIntegration.hasVariableLetterboxing(crops: uniform))
+
+        let variable = [
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 1080, x: 0, y: 0),
+        ]
+        XCTAssertTrue(SmartCropIntegration.hasVariableLetterboxing(crops: variable))
+    }
+
+    /// Verifies best crop selection from multiple detections.
+    func test_smartCrop_selectBestCrop_selectsMostCommon() {
+        let crops = [
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 1080, x: 0, y: 0),
+        ]
+        let best = SmartCropIntegration.selectBestCrop(crops: crops)
+        XCTAssertNotNil(best)
+        XCTAssertEqual(best?.height, 800)
+    }
+
+    /// Verifies best crop returns nil when no dominant crop.
+    func test_smartCrop_selectBestCrop_nilWhenNoDominant() {
+        let crops = [
+            CropRect(width: 1920, height: 800, x: 0, y: 140),
+            CropRect(width: 1920, height: 1080, x: 0, y: 0),
+        ]
+        let best = SmartCropIntegration.selectBestCrop(crops: crops, minimumFrequency: 0.6)
+        XCTAssertNil(best)
+    }
+
+    /// Verifies SmartCropConfig defaults.
+    func test_smartCropConfig_defaults() {
+        let config = SmartCropConfig()
+        XCTAssertEqual(config.mode, .auto)
+        XCTAssertEqual(config.minimumConfidence, 0.7)
+        XCTAssertTrue(config.snapToAspectRatio)
+        XCTAssertEqual(config.sampleCount, 10)
+        XCTAssertEqual(config.maxCropPercentage, 40.0)
+        XCTAssertEqual(config.round, 2)
+    }
+
+    /// Verifies CommonAspectRatio numeric values.
+    func test_commonAspectRatio_numericValues() {
+        XCTAssertEqual(CommonAspectRatio.ratio_16_9.numericValue, 16.0 / 9.0, accuracy: 0.001)
+        XCTAssertEqual(CommonAspectRatio.ratio_4_3.numericValue, 4.0 / 3.0, accuracy: 0.001)
+        XCTAssertEqual(CommonAspectRatio.ratio_2_39_1.numericValue, 2.39, accuracy: 0.001)
+    }
 }
