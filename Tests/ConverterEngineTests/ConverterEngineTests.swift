@@ -8862,4 +8862,274 @@ final class ConverterEngineTests: XCTestCase {
         empty.globalEdits["title"] = "Test"
         XCTAssertTrue(empty.hasEdits)
     }
+
+    // MARK: - Disc Imager Tests (Phase 11.26)
+
+    /// Verifies imaging method properties.
+    func test_imagingMethod_properties() {
+        XCTAssertEqual(ImagingMethod.dd.toolName, "dd")
+        XCTAssertEqual(ImagingMethod.ddrescue.toolName, "ddrescue")
+        XCTAssertEqual(ImagingMethod.readom.toolName, "readom")
+        XCTAssertEqual(ImagingMethod.hdiutil.toolName, "hdiutil")
+        XCTAssertEqual(ImagingMethod.dd.displayName, "dd (Raw Copy)")
+    }
+
+    /// Verifies dd argument building.
+    func test_discImager_ddArguments() {
+        let config = ImagingConfig(
+            sourcePath: "/dev/sr0",
+            outputPath: "/output/disc.iso",
+            method: .dd
+        )
+        let args = DiscImager.buildDdArguments(config: config)
+        XCTAssertTrue(args.contains("if=/dev/sr0"))
+        XCTAssertTrue(args.contains("of=/output/disc.iso"))
+        XCTAssertTrue(args.contains("bs=2048"))
+        XCTAssertTrue(args.contains("status=progress"))
+        XCTAssertTrue(args.contains("conv=noerror,sync"))
+    }
+
+    /// Verifies ddrescue argument building.
+    func test_discImager_ddrescueArguments() {
+        let config = ImagingConfig(
+            sourcePath: "/dev/sr0",
+            outputPath: "/output/disc.iso",
+            method: .ddrescue,
+            retryCount: 5,
+            mapFilePath: "/output/disc.map"
+        )
+        let args = DiscImager.buildDdrescueArguments(config: config)
+        XCTAssertTrue(args.contains("-b"))
+        XCTAssertTrue(args.contains("2048"))
+        XCTAssertTrue(args.contains("-r"))
+        XCTAssertTrue(args.contains("5"))
+        XCTAssertTrue(args.contains("-d"))
+        XCTAssertTrue(args.contains("/dev/sr0"))
+        XCTAssertTrue(args.contains("/output/disc.iso"))
+        XCTAssertTrue(args.contains("/output/disc.map"))
+    }
+
+    /// Verifies hdiutil argument building.
+    func test_discImager_hdiutilArguments() {
+        let config = ImagingConfig(
+            sourcePath: "/dev/disk2",
+            outputPath: "/output/disc.cdr",
+            method: .hdiutil
+        )
+        let args = DiscImager.buildHdiutilArguments(config: config)
+        XCTAssertTrue(args.contains("create"))
+        XCTAssertTrue(args.contains("-srcdevice"))
+        XCTAssertTrue(args.contains("/dev/disk2"))
+    }
+
+    /// Verifies unified argument builder.
+    func test_discImager_unifiedBuilder() {
+        let config = ImagingConfig(
+            sourcePath: "/dev/sr0",
+            outputPath: "/disc.iso",
+            method: .dd
+        )
+        let (tool, args) = DiscImager.buildArguments(config: config)
+        XCTAssertEqual(tool, "dd")
+        XCTAssertFalse(args.isEmpty)
+    }
+
+    /// Verifies checksum argument building.
+    func test_discImager_checksumArguments() {
+        let (tool, args) = DiscImager.buildChecksumArguments(filePath: "/disc.iso")
+        XCTAssertEqual(tool, "sha256sum")
+        XCTAssertTrue(args.contains("/disc.iso"))
+
+        let (md5tool, _) = DiscImager.buildChecksumArguments(
+            filePath: "/disc.iso", algorithm: "md5"
+        )
+        XCTAssertEqual(md5tool, "md5sum")
+    }
+
+    /// Verifies imaging progress formatting.
+    func test_imagingProgress_formattedSpeed() {
+        var progress = ImagingProgress(bytesPerSecond: 12_500_000)
+        XCTAssertEqual(progress.formattedSpeed, "12.5 MB/s")
+
+        progress.bytesPerSecond = 500_000
+        XCTAssertEqual(progress.formattedSpeed, "500 KB/s")
+
+        progress.bytesPerSecond = 100
+        XCTAssertEqual(progress.formattedSpeed, "100 B/s")
+    }
+
+    /// Verifies imaging progress fraction complete.
+    func test_imagingProgress_fractionComplete() {
+        let progress = ImagingProgress(
+            bytesCopied: 500_000,
+            totalBytes: 1_000_000
+        )
+        XCTAssertEqual(progress.fractionComplete!, 0.5, accuracy: 0.001)
+    }
+
+    // MARK: - Speech-to-Text Engine Tests (Phase 18.1)
+
+    /// Verifies speech-to-text provider properties.
+    func test_sttProvider_properties() {
+        XCTAssertFalse(SpeechToTextProvider.whisperLocal.requiresAPIKey)
+        XCTAssertTrue(SpeechToTextProvider.whisperAPI.requiresAPIKey)
+        XCTAssertTrue(SpeechToTextProvider.whisperLocal.isLocal)
+        XCTAssertFalse(SpeechToTextProvider.whisperAPI.isLocal)
+    }
+
+    /// Verifies Whisper model properties.
+    func test_whisperModel_sizes() {
+        XCTAssertEqual(WhisperModel.tiny.approximateSizeMB, 75)
+        XCTAssertEqual(WhisperModel.large.approximateSizeMB, 2900)
+        XCTAssertEqual(WhisperModel.turbo.approximateSizeMB, 800)
+    }
+
+    /// Verifies audio extraction argument building.
+    func test_stt_audioExtractionArguments() {
+        let args = SpeechToTextEngine.buildAudioExtractionArguments(
+            inputPath: "/video.mkv",
+            outputPath: "/audio.wav"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/video.mkv"))
+        XCTAssertTrue(args.contains("-ac"))
+        XCTAssertTrue(args.contains("1"))
+        XCTAssertTrue(args.contains("-ar"))
+        XCTAssertTrue(args.contains("16000"))
+        XCTAssertTrue(args.contains("pcm_s16le"))
+        XCTAssertTrue(args.contains("/audio.wav"))
+    }
+
+    /// Verifies whisper.cpp argument building.
+    func test_stt_whisperArguments() {
+        let config = TranscriptionConfig(
+            provider: .whisperLocal,
+            model: .medium,
+            sourceLanguage: "en",
+            translateToEnglish: false,
+            outputFormat: .srt,
+            threads: 4
+        )
+        let args = SpeechToTextEngine.buildWhisperArguments(
+            config: config,
+            audioPath: "/audio.wav",
+            outputPath: "/output"
+        )
+        XCTAssertTrue(args.contains("-m"))
+        XCTAssertTrue(args.contains("models/ggml-medium.bin"))
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("/audio.wav"))
+        XCTAssertTrue(args.contains("--output-srt"))
+        XCTAssertTrue(args.contains("-l"))
+        XCTAssertTrue(args.contains("en"))
+        XCTAssertTrue(args.contains("-t"))
+        XCTAssertTrue(args.contains("4"))
+    }
+
+    /// Verifies whisper translate mode argument.
+    func test_stt_whisperTranslateMode() {
+        let config = TranscriptionConfig(
+            translateToEnglish: true
+        )
+        let args = SpeechToTextEngine.buildWhisperArguments(
+            config: config,
+            audioPath: "/audio.wav",
+            outputPath: "/output"
+        )
+        XCTAssertTrue(args.contains("--translate"))
+    }
+
+    /// Verifies SRT generation from segments.
+    func test_stt_generateSRT() {
+        let segments = [
+            TranscriptionSegment(
+                startTime: 1.0,
+                endTime: 5.0,
+                text: "Hello world"
+            ),
+            TranscriptionSegment(
+                startTime: 6.0,
+                endTime: 10.5,
+                text: "Background music",
+                isMusic: true
+            ),
+        ]
+        let srt = SpeechToTextEngine.generateSRT(from: segments)
+        XCTAssertTrue(srt.contains("1\n"))
+        XCTAssertTrue(srt.contains("00:00:01,000 --> 00:00:05,000"))
+        XCTAssertTrue(srt.contains("Hello world"))
+        XCTAssertTrue(srt.contains("2\n"))
+        XCTAssertTrue(srt.contains("\u{266B}"))
+    }
+
+    /// Verifies WebVTT generation.
+    func test_stt_generateVTT() {
+        let segments = [
+            TranscriptionSegment(
+                startTime: 0.0,
+                endTime: 3.0,
+                text: "Test subtitle"
+            ),
+        ]
+        let vtt = SpeechToTextEngine.generateVTT(from: segments)
+        XCTAssertTrue(vtt.hasPrefix("WEBVTT"))
+        XCTAssertTrue(vtt.contains("00:00:00.000 --> 00:00:03.000"))
+        XCTAssertTrue(vtt.contains("Test subtitle"))
+    }
+
+    /// Verifies SRT parsing.
+    func test_stt_parseSRT() {
+        let srt = """
+        1
+        00:00:01,000 --> 00:00:05,000
+        Hello world
+
+        2
+        00:00:06,500 --> 00:00:10,000
+        Second line
+
+        """
+        let segments = SpeechToTextEngine.parseSRT(srt)
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].startTime, 1.0, accuracy: 0.01)
+        XCTAssertEqual(segments[0].endTime, 5.0, accuracy: 0.01)
+        XCTAssertEqual(segments[0].text, "Hello world")
+        XCTAssertEqual(segments[1].startTime, 6.5, accuracy: 0.01)
+    }
+
+    /// Verifies transcription segment formatting.
+    func test_transcriptionSegment_formatting() {
+        let segment = TranscriptionSegment(
+            startTime: 3661.5, // 1:01:01.500
+            endTime: 3665.0,
+            text: "Test"
+        )
+        XCTAssertEqual(segment.formattedStartTime, "01:01:01,500")
+        XCTAssertEqual(segment.duration, 3.5, accuracy: 0.001)
+    }
+
+    /// Verifies transcription result properties.
+    func test_transcriptionResult_properties() {
+        let result = TranscriptionResult(
+            segments: [
+                TranscriptionSegment(startTime: 0, endTime: 5, text: "Hello"),
+                TranscriptionSegment(startTime: 5, endTime: 10, text: "World"),
+                TranscriptionSegment(startTime: 10, endTime: 15, text: "Music", isMusic: true),
+            ],
+            detectedLanguage: "en",
+            duration: 15.0,
+            provider: .whisperLocal
+        )
+        XCTAssertEqual(result.segmentCount, 3)
+        XCTAssertEqual(result.fullText, "Hello World Music")
+        XCTAssertEqual(result.musicSegments.count, 1)
+        XCTAssertEqual(result.speechSegments.count, 2)
+    }
+
+    /// Verifies subtitle output format properties.
+    func test_subtitleOutputFormat_properties() {
+        XCTAssertEqual(SubtitleOutputFormat.srt.fileExtension, "srt")
+        XCTAssertEqual(SubtitleOutputFormat.vtt.displayName, "WebVTT")
+        XCTAssertEqual(SubtitleOutputFormat.json.fileExtension, "json")
+    }
 }
