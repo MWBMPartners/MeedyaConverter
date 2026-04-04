@@ -210,7 +210,7 @@ public struct HDRPolicyEngine: Sendable {
                 return .toneMapToSDR
             }
 
-        case .hdr10:
+        case .hdr10, .pq:
             if compat.supportsHDR10 {
                 return .preserve
             } else {
@@ -294,7 +294,7 @@ public struct HDRPolicyEngine: Sendable {
                 "-color_trc", "arib-std-b67",
                 "-colorspace", "bt2020nc",
             ]
-        case .hdr10, .hdr10Plus:
+        case .hdr10, .hdr10Plus, .pq:
             return [
                 "-color_primaries", "bt2020",
                 "-color_trc", "smpte2084",
