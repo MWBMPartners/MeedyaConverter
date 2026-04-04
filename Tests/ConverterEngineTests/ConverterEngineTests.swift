@@ -9132,4 +9132,179 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(SubtitleOutputFormat.vtt.displayName, "WebVTT")
         XCTAssertEqual(SubtitleOutputFormat.json.fileExtension, "json")
     }
+
+    // MARK: - Multi-Stream Selector Tests (Phase 3.4)
+
+    /// Verifies stream selection properties.
+    func test_streamSelection_properties() {
+        let empty = StreamSelection()
+        XCTAssertFalse(empty.hasSelection)
+        XCTAssertEqual(empty.totalSelectedStreams, 0)
+
+        let selection = StreamSelection(
+            videoStreamIndices: [0],
+            audioStreamIndices: [0, 1, 2]
+        )
+        XCTAssertTrue(selection.hasSelection)
+        XCTAssertEqual(selection.totalSelectedStreams, 4)
+    }
+
+    /// Verifies container compatibility lookup.
+    func test_multiStream_containerCompat() {
+        let mkv = MultiStreamSelector.compatibility(for: "mkv")
+        XCTAssertEqual(mkv.maxVideoStreams, 99)
+        XCTAssertTrue(mkv.supportsAttachments)
+        XCTAssertTrue(mkv.supportsChapters)
+
+        let mp4 = MultiStreamSelector.compatibility(for: "mp4")
+        XCTAssertEqual(mp4.maxVideoStreams, 1)
+        XCTAssertFalse(mp4.supportsAttachments)
+
+        let webm = MultiStreamSelector.compatibility(for: "webm")
+        XCTAssertEqual(webm.maxVideoStreams, 1)
+        XCTAssertEqual(webm.maxAudioStreams, 1)
+    }
+
+    /// Verifies validation catches too many video streams.
+    func test_multiStream_validation_tooManyVideo() {
+        let selection = StreamSelection(
+            videoStreamIndices: [0, 1]
+        )
+        let errors = MultiStreamSelector.validate(
+            selection: selection,
+            container: "mp4",
+            sourceStreamCount: 5
+        )
+        XCTAssertFalse(errors.isEmpty)
+        if case .tooManyVideoStreams(let sel, let max) = errors[0] {
+            XCTAssertEqual(sel, 2)
+            XCTAssertEqual(max, 1)
+        } else {
+            XCTFail("Expected tooManyVideoStreams error")
+        }
+    }
+
+    /// Verifies validation passes for MKV with multiple streams.
+    func test_multiStream_validation_mkvMultiple() {
+        let selection = StreamSelection(
+            videoStreamIndices: [0, 1, 2],
+            audioStreamIndices: [0, 1]
+        )
+        let errors = MultiStreamSelector.validate(
+            selection: selection,
+            container: "mkv",
+            sourceStreamCount: 10
+        )
+        XCTAssertTrue(errors.isEmpty)
+    }
+
+    /// Verifies mapAll bypasses validation.
+    func test_multiStream_validation_mapAll() {
+        let selection = StreamSelection(mapAll: true)
+        let errors = MultiStreamSelector.validate(
+            selection: selection,
+            container: "webm",
+            sourceStreamCount: 5
+        )
+        XCTAssertTrue(errors.isEmpty)
+    }
+
+    /// Verifies map argument building for multiple streams.
+    func test_multiStream_buildMapArguments() {
+        let selection = StreamSelection(
+            videoStreamIndices: [0],
+            audioStreamIndices: [0, 2],
+            subtitleStreamIndices: [1]
+        )
+        let args = MultiStreamSelector.buildMapArguments(selection: selection)
+        XCTAssertTrue(args.contains("-map"))
+        XCTAssertTrue(args.contains("0:v:0"))
+        XCTAssertTrue(args.contains("0:a:0"))
+        XCTAssertTrue(args.contains("0:a:2"))
+        XCTAssertTrue(args.contains("0:s:1"))
+    }
+
+    /// Verifies mapAll argument building.
+    func test_multiStream_buildMapArguments_mapAll() {
+        let selection = StreamSelection(mapAll: true)
+        let args = MultiStreamSelector.buildMapArguments(selection: selection)
+        XCTAssertEqual(args, ["-map", "0"])
+    }
+
+    /// Verifies default selection with no selection produces auto defaults.
+    func test_multiStream_emptySelection_defaults() {
+        let selection = StreamSelection()
+        let args = MultiStreamSelector.buildMapArguments(selection: selection)
+        XCTAssertTrue(args.contains("0:v:0?"))
+        XCTAssertTrue(args.contains("0:a:0?"))
+    }
+
+    /// Verifies per-stream codec argument building.
+    func test_multiStream_perStreamCodecs() {
+        let args = MultiStreamSelector.buildPerStreamCodecArguments(
+            audioCodecs: [0: "aac", 1: "ac3"],
+            subtitleCodecs: [0: "srt"]
+        )
+        XCTAssertTrue(args.contains("-c:a:0"))
+        XCTAssertTrue(args.contains("aac"))
+        XCTAssertTrue(args.contains("-c:a:1"))
+        XCTAssertTrue(args.contains("ac3"))
+        XCTAssertTrue(args.contains("-c:s:0"))
+        XCTAssertTrue(args.contains("srt"))
+    }
+
+    /// Verifies disposition argument building.
+    func test_multiStream_dispositionArguments() {
+        let args = MultiStreamSelector.buildDispositionArguments(
+            defaultAudioIndex: 1,
+            defaultSubtitleIndex: 0
+        )
+        XCTAssertTrue(args.contains("-disposition:a:1"))
+        XCTAssertTrue(args.contains("-disposition:s:0"))
+    }
+
+    /// Verifies stream filtering by type.
+    func test_multiStream_filterStreams() {
+        let streams = [
+            MediaStream(streamIndex: 0, streamType: .video),
+            MediaStream(streamIndex: 1, streamType: .audio),
+            MediaStream(streamIndex: 2, streamType: .audio),
+            MediaStream(streamIndex: 3, streamType: .subtitle),
+        ]
+        let audio = MultiStreamSelector.filterStreams(streams, type: .audio)
+        XCTAssertEqual(audio.count, 2)
+        XCTAssertEqual(audio[0].streamIndex, 1)
+        XCTAssertEqual(audio[1].streamIndex, 2)
+    }
+
+    /// Verifies default selection from streams.
+    func test_multiStream_defaultSelection() {
+        let streams = [
+            MediaStream(streamIndex: 0, streamType: .video),
+            MediaStream(streamIndex: 1, streamType: .audio),
+            MediaStream(streamIndex: 2, streamType: .audio),
+            MediaStream(streamIndex: 3, streamType: .subtitle),
+            MediaStream(streamIndex: 4, streamType: .subtitle),
+        ]
+        let selection = MultiStreamSelector.defaultSelection(from: streams)
+        XCTAssertEqual(selection.videoStreamIndices, [0])
+        XCTAssertEqual(selection.audioStreamIndices, [0, 1])
+        XCTAssertEqual(selection.subtitleStreamIndices, [0, 1])
+    }
+
+    /// Verifies invalid stream index detection.
+    func test_multiStream_validation_invalidIndex() {
+        let selection = StreamSelection(
+            videoStreamIndices: [99]
+        )
+        let errors = MultiStreamSelector.validate(
+            selection: selection,
+            container: "mkv",
+            sourceStreamCount: 5
+        )
+        XCTAssertFalse(errors.isEmpty)
+        if case .invalidStreamIndex(let idx) = errors[0] {
+            XCTAssertEqual(idx, 99)
+        }
+    }
 }
