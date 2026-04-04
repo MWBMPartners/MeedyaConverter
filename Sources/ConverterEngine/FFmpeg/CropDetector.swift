@@ -10,7 +10,7 @@ import Foundation
 // MARK: - CropRect
 
 /// A crop rectangle detected by FFmpeg's cropdetect filter.
-public struct CropRect: Sendable, Equatable {
+public struct CropRect: Codable, Sendable, Equatable {
     /// Width of the cropped area in pixels.
     public let width: Int
     /// Height of the cropped area in pixels.
