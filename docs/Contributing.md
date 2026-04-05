@@ -24,6 +24,25 @@ Thank you for your interest in contributing to MeedyaConverter. This document de
 - Properties, methods, variables: `lowerCamelCase`.
 - Constants: `lowerCamelCase` (not `SCREAMING_SNAKE_CASE`).
 
+### SwiftLint Configuration
+
+The project includes a SwiftLint configuration (`.swiftlint.yml`) that enforces:
+
+- Maximum line length (120 characters, warning at 150).
+- Trailing whitespace removal.
+- Consistent brace and parenthesis style.
+- Force unwrap warnings.
+- Unused import detection.
+- `Sendable` conformance checks.
+
+Run SwiftLint locally before submitting a PR:
+
+```bash
+swiftlint lint
+```
+
+If SwiftLint is installed via Homebrew, it runs automatically as part of the build process in Xcode.
+
 ### File Headers
 
 Every Swift source file must include the proprietary copyright header:
@@ -37,12 +56,14 @@ Every Swift source file must include the proprietary copyright header:
 // ============================================================================
 ```
 
+The copyright year is always 2026 (project inception year). Do not change it to the current year.
+
 ### Documentation
 
 - All public types, methods, and properties must have documentation comments (`///`).
 - Use `// MARK: -` to organise sections within files.
 - Inline comments should explain *why*, not *what*.
-- Annotations should be detailed and descriptive — this is a documented codebase.
+- Annotations should be detailed and descriptive -- this is a documented codebase.
 
 ### Access Control
 
@@ -58,7 +79,7 @@ Every Swift source file must include the proprietary copyright header:
 MeedyaConverter uses a three-branch model:
 
 | Branch | Purpose | Protection |
-|--------|---------|------------|
+| ------ | ------- | ---------- |
 | `main` | Production-ready code | Protected. Requires PR review. |
 | `beta` | Integration testing | Semi-protected. |
 | `alpha` | Active development | Development branch. |
@@ -80,7 +101,7 @@ MeedyaConverter uses a three-branch model:
 1. **Build** passes: `swift build` succeeds with no errors.
 2. **Tests** pass: `swift test` succeeds with no failures.
 3. **No warnings**: resolve all compiler warnings, especially concurrency warnings.
-4. **Lint**: no trailing whitespace, consistent formatting.
+4. **Lint**: run `swiftlint lint` and fix any violations. No trailing whitespace, consistent formatting.
 5. **Documentation**: new public API has doc comments.
 
 ### PR Requirements
@@ -88,7 +109,7 @@ MeedyaConverter uses a three-branch model:
 - Clear title describing the change (e.g., "Add HLS manifest generation" not "Update code").
 - Description explaining *what* changed and *why*.
 - Reference the GitHub issue number (e.g., "Closes #42").
-- Keep PRs focused — one feature or fix per PR.
+- Keep PRs focused -- one feature or fix per PR.
 - Include tests for new functionality.
 
 ### Review Process
@@ -103,7 +124,7 @@ MeedyaConverter uses a three-branch model:
 
 Use clear, descriptive commit messages:
 
-```
+```text
 <type>: <short summary>
 
 <optional body explaining why>
@@ -112,16 +133,17 @@ Closes #<issue>
 ```
 
 Types:
-- `feat` — New feature.
-- `fix` — Bug fix.
-- `refactor` — Code restructuring without behaviour change.
-- `docs` — Documentation only.
-- `test` — Adding or updating tests.
-- `chore` — Build, CI, dependency updates.
+
+- `feat` -- New feature.
+- `fix` -- Bug fix.
+- `refactor` -- Code restructuring without behaviour change.
+- `docs` -- Documentation only.
+- `test` -- Adding or updating tests.
+- `chore` -- Build, CI, dependency updates.
 
 Examples:
 
-```
+```text
 feat: Add HLS adaptive bitrate ladder generation
 
 Implements multi-variant HLS output with configurable quality
@@ -130,7 +152,7 @@ tiers. Generates master playlist and per-variant playlists.
 Closes #78
 ```
 
-```
+```text
 fix: Preserve HDR10+ metadata during H.265 passthrough
 
 The metadata sidecar was being dropped when the output container
@@ -149,6 +171,8 @@ Closes #92
 - Tests must pass in Swift 6 strict concurrency mode.
 - Use descriptive test names: `testFFmpegArgumentBuilder_withHDR10Input_preservesMetadata()`.
 - Mock external dependencies (FFmpeg, file system) where possible.
+- Aim for meaningful coverage -- test edge cases, error paths, and boundary conditions.
+- Integration tests that require FFmpeg should be gated behind a test flag so CI can run without FFmpeg installed.
 
 ---
 
@@ -156,8 +180,9 @@ Closes #92
 
 1. Clone the repository (see [Building from Source](Building-from-Source)).
 2. Install FFmpeg via Homebrew for runtime testing.
-3. Open `Package.swift` in Xcode or use VS Code with the Swift extension (`swiftlang.swift-lang`).
-4. Run `swift build` and `swift test` to verify your setup.
+3. Install SwiftLint via Homebrew for linting: `brew install swiftlint`.
+4. Open `Package.swift` in Xcode or use VS Code with the Swift extension (`swiftlang.swift-lang`).
+5. Run `swift build` and `swift test` to verify your setup.
 
 ---
 

@@ -8,60 +8,77 @@
 
 ## Synopsis
 
-```
+```text
 meedya-convert <subcommand> [options]
 ```
 
 ## Subcommands
 
 | Command | Description |
-|---------|-------------|
-| `encode` | Transcode media files |
+| ------- | ----------- |
+| `encode` | Transcode a single media file |
 | `probe` | Inspect media file properties |
-| `batch` | Process multiple files from a job file |
-| `profiles` | List, show, or manage encoding profiles |
-| `manifest` | Generate HLS/DASH streaming manifests |
-| `validate` | Validate encoding settings without running |
+| `profiles` | List, show, export, import, or validate encoding profiles |
+| `batch` | Encode multiple files from a directory or JSON job file |
+| `manifest` | Generate HLS/DASH/CMAF adaptive streaming manifests |
+| `validate` | Validate encoding profiles, manifests, and platform compatibility |
 
 ---
 
 ## `encode`
 
-Transcode a media file using specified settings or a named profile.
+Transcode a media file using a named profile or custom settings.
 
-### Usage
+### encode Usage
 
+```text
+meedya-convert encode --input <path> [--output <path>] [options]
 ```
-meedya-convert encode --input <path> --output <path> [options]
-```
 
-### Options
+If `--output` is omitted, the output file is placed in the same directory as the input with a `_converted` suffix and an extension matching the selected profile or container.
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--input <path>` | `-i` | Input file path (required) | — |
-| `--output <path>` | `-o` | Output file path (required) | — |
-| `--profile <name>` | `-p` | Encoding profile name | — |
-| `--video-codec <codec>` | `-v` | Video codec (h264, h265, av1, prores, etc.) | h265 |
-| `--audio-codec <codec>` | `-a` | Audio codec (aac, ac3, flac, opus, etc.) | aac |
-| `--crf <value>` | | Constant Rate Factor (quality) | 22 |
-| `--video-bitrate <rate>` | | Target video bitrate (e.g., 5M, 8000k) | — |
-| `--audio-bitrate <rate>` | | Target audio bitrate (e.g., 128k, 256k) | 192k |
-| `--preset <name>` | | Encoder preset (ultrafast..veryslow) | medium |
-| `--resolution <WxH>` | | Output resolution (e.g., 1920x1080) | source |
-| `--container <format>` | | Output container (mp4, mkv, mov, webm) | auto |
-| `--passthrough-video` | | Copy video without re-encoding | false |
-| `--passthrough-audio` | | Copy audio without re-encoding | false |
-| `--two-pass` | | Enable two-pass encoding | false |
-| `--hdr-mode <mode>` | | HDR handling: preserve, tonemap, convert | preserve |
-| `--tonemap <algorithm>` | | Tone-map algorithm (hable, reinhard, mobius, bt2390) | hable |
-| `--crop <W:H:X:Y>` | | Crop rectangle | — |
-| `--crop-detect` | | Auto-detect and crop black bars | false |
-| `--overwrite` | `-y` | Overwrite output without prompting | false |
-| `--quiet` | `-q` | Suppress progress output | false |
-| `--json-progress` | | Emit progress as JSON lines (for scripts) | false |
+### encode Options
 
-### Examples
+| Option | Short | Type | Description | Default |
+| ------ | ----- | ---- | ----------- | ------- |
+| `--input <path>` | `-i` | String | Input file path (required) | -- |
+| `--output <path>` | `-o` | String | Output file path | Auto-generated |
+| `--profile <name>` | `-p` | String | Encoding profile name or ID | -- |
+| `--video-codec <codec>` | | String | Video codec (h264, h265, av1, prores, vp9, copy) | -- |
+| `--crf <value>` | | Integer | Constant Rate Factor (quality, 0-63) | -- |
+| `--video-bitrate <rate>` | | String | Target video bitrate (e.g., 5000k, 10M) | -- |
+| `--preset <name>` | | String | Encoder preset (ultrafast..veryslow) | -- |
+| `--resolution <WxH>` | | String | Output resolution (e.g., 1920x1080) | Source |
+| `--video-passthrough` | | Flag | Copy video without re-encoding | false |
+| `--audio-codec <codec>` | | String | Audio codec (aac, ac3, eac3, flac, opus, copy) | -- |
+| `--audio-bitrate <rate>` | | String | Target audio bitrate (e.g., 128k, 256k) | -- |
+| `--audio-channels <n>` | | Integer | Audio channel count (1, 2, 6, 8) | -- |
+| `--audio-passthrough` | | Flag | Copy audio without re-encoding | false |
+| `--subtitle-passthrough` | | Flag | Copy subtitle streams | false |
+| `--no-subtitles` | | Flag | Exclude all subtitle streams | false |
+| `--container <format>` | | String | Output container (mkv, mp4, webm, mov, ts) | Auto |
+| `--tonemap` | | Flag | Enable HDR-to-SDR tone mapping | false |
+| `--tonemap-algorithm <alg>` | | String | Tone map algorithm (hable, reinhard, mobius, bt2390, linear) | hable |
+| `--pq-to-hlg` | | Flag | Convert PQ (HDR10) to HLG | false |
+| `--pq-to-dv-hlg` | | Flag | Convert PQ to Dolby Vision Profile 8.4 + HLG | false |
+| `--no-copy-metadata` | | Flag | Do not copy source metadata | false |
+| `--no-copy-chapters` | | Flag | Do not copy chapter markers | false |
+| `--video-stream <index>` | | Integer | Video stream index to encode | First |
+| `--audio-stream <index>` | | Integer | Audio stream index to encode | First |
+| `--subtitle-stream <index>` | | Integer | Subtitle stream index to include | -- |
+| `--map-all` | | Flag | Map all streams from source | false |
+| `--hardware` | | Flag | Use hardware encoder if available | false |
+| `--quiet` | | Flag | Suppress progress output | false |
+| `--json` | | Flag | Output progress and result as JSON | false |
+| `--yes` | `-y` | Flag | Overwrite output without prompting | false |
+
+### encode Validation Rules
+
+- `--video-codec` and `--video-passthrough` are mutually exclusive.
+- `--audio-codec` and `--audio-passthrough` are mutually exclusive.
+- `--tonemap` and `--pq-to-hlg` are mutually exclusive.
+
+### encode Examples
 
 ```bash
 # Basic H.265 encode
@@ -71,16 +88,27 @@ meedya-convert encode -i input.mkv -o output.mp4 --video-codec h265 --crf 20
 meedya-convert encode -i input.mkv -o output.mp4 --profile "H.265 High Quality"
 
 # Passthrough video, re-encode audio to AAC
-meedya-convert encode -i input.mkv -o output.mp4 --passthrough-video --audio-codec aac --audio-bitrate 256k
-
-# Two-pass AV1 with target bitrate
-meedya-convert encode -i input.mkv -o output.webm --video-codec av1 --video-bitrate 4M --two-pass
+meedya-convert encode -i input.mkv -o output.mp4 \
+  --video-passthrough --audio-codec aac --audio-bitrate 256k
 
 # HDR to SDR tone mapping
-meedya-convert encode -i hdr_input.mkv -o sdr_output.mp4 --video-codec h264 --hdr-mode tonemap --tonemap hable
+meedya-convert encode -i hdr_input.mkv -o sdr_output.mp4 \
+  --video-codec h264 --tonemap --tonemap-algorithm hable
 
 # Remux MKV to MP4 (all streams passthrough)
-meedya-convert encode -i input.mkv -o output.mp4 --passthrough-video --passthrough-audio
+meedya-convert encode -i input.mkv -o output.mp4 \
+  --video-passthrough --audio-passthrough
+
+# Hardware-accelerated encode with overwrite
+meedya-convert encode -i input.mkv -o output.mp4 \
+  --video-codec h265 --crf 22 --hardware -y
+
+# PQ to HLG conversion
+meedya-convert encode -i hdr10_input.mkv -o hlg_output.mkv \
+  --video-codec h265 --pq-to-hlg
+
+# JSON progress output for scripting
+meedya-convert encode -i input.mkv -o output.mp4 --profile "H.265 Balanced" --json
 ```
 
 ---
@@ -89,23 +117,36 @@ meedya-convert encode -i input.mkv -o output.mp4 --passthrough-video --passthrou
 
 Inspect a media file and display stream information, metadata, and technical details.
 
-### Usage
+### probe Usage
 
-```
+```text
 meedya-convert probe --input <path> [options]
 ```
 
-### Options
+### probe Options
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--input <path>` | `-i` | Input file path (required) | — |
-| `--format <type>` | `-f` | Output format: text, json, yaml | text |
-| `--streams` | | Show stream details only | false |
-| `--metadata` | | Show metadata only | false |
-| `--chapters` | | Show chapter list only | false |
+| Option | Short | Type | Description | Default |
+| ------ | ----- | ---- | ----------- | ------- |
+| `--input <path>` | `-i` | String | Input file path (required) | -- |
+| `--format <type>` | `-f` | String | Output format: text, json | text |
+| `--streams-only` | | Flag | Show only stream information | false |
+| `--hdr` | | Flag | Show detailed HDR metadata | false |
 
-### Examples
+### probe Output (Text Mode)
+
+Text mode displays:
+
+- File name, path, size, duration, overall bitrate, container format.
+- HDR format detection (Dolby Vision, HDR10/PQ, HLG).
+- Chapter count.
+- Video streams with codec, resolution, frame rate, bitrate, HDR flags.
+- Audio streams with codec, channel layout, sample rate, bitrate, language.
+- Subtitle streams with format, language, forced/default flags.
+- Metadata key-value pairs.
+
+With `--hdr`, video streams additionally show colour primaries, transfer characteristics, matrix coefficients, MaxCLL, MaxFALL, and mastering display luminance.
+
+### probe Examples
 
 ```bash
 # Human-readable probe
@@ -115,145 +156,134 @@ meedya-convert probe -i video.mkv
 meedya-convert probe -i video.mkv --format json
 
 # Pipe probe output to jq
-meedya-convert probe -i video.mkv -f json | jq '.streams[] | select(.codec_type == "video")'
-```
+meedya-convert probe -i video.mkv -f json | jq '.streams'
 
----
-
-## `batch`
-
-Process multiple files using a job definition file.
-
-### Usage
-
-```
-meedya-convert batch --job-file <path> [options]
-```
-
-### Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--job-file <path>` | Path to job definition file (JSON/YAML) | — |
-| `--parallel <count>` | Number of concurrent encodes | 1 |
-| `--continue-on-error` | Skip failed jobs instead of aborting | false |
-| `--dry-run` | Validate jobs without encoding | false |
-
-### Job File Format
-
-Job files are JSON arrays of encode tasks:
-
-```json
-[
-  {
-    "input": "/path/to/video1.mkv",
-    "output": "/path/to/video1.mp4",
-    "profile": "H.265 High Quality"
-  },
-  {
-    "input": "/path/to/video2.mkv",
-    "output": "/path/to/video2.mp4",
-    "video_codec": "h265",
-    "crf": 20,
-    "audio_codec": "aac",
-    "audio_bitrate": "256k"
-  }
-]
-```
-
-### Examples
-
-```bash
-# Run a batch job file
-meedya-convert batch --job-file jobs.json
-
-# Parallel encoding with 4 concurrent jobs
-meedya-convert batch --job-file jobs.json --parallel 4
-
-# Dry run to validate settings
-meedya-convert batch --job-file jobs.json --dry-run
+# Streams only with HDR details
+meedya-convert probe -i hdr_video.mkv --streams-only --hdr
 ```
 
 ---
 
 ## `profiles`
 
-List, inspect, and manage encoding profiles.
+List, inspect, export, import, and validate encoding profiles.
 
-### Usage
+### profiles Usage
 
+```text
+meedya-convert profiles [options]
 ```
-meedya-convert profiles <subcommand>
-```
 
-### Subcommands
+### profiles Options
 
-| Subcommand | Description |
-|------------|-------------|
-| `list` | List all available profiles |
-| `show <name>` | Show details of a specific profile |
-| `export <name> --output <path>` | Export a profile to JSON |
-| `import --input <path>` | Import a profile from JSON |
+| Option | Type | Description | Default |
+| ------ | ---- | ----------- | ------- |
+| `--list` | Flag | List all available profiles (default action) | false |
+| `--show <name>` | String | Show details of a named profile | -- |
+| `--export <name>` | String | Export a profile to JSON | -- |
+| `--export-file <path>` | String | Output file for export (default: stdout) | -- |
+| `--import <file>` | String | Import a profile from a JSON file | -- |
+| `--validate <name>` | String | Validate a profile for compatibility | -- |
+| `--platform <name>` | String | Target platform for validation | -- |
+| `--json` | Flag | Output as JSON | false |
 
-### Examples
+### Platform Values
+
+When using `--platform` with `--validate`, the following platforms are supported:
+
+`macOS`, `iOS`, `tvOS`, `windows`, `android`, `chromecast`, `webBrowser`, `plex`, `jellyfin`, `roku`, `fireTV`.
+
+### profiles Examples
 
 ```bash
 # List all profiles
-meedya-convert profiles list
+meedya-convert profiles --list
 
 # Show profile details
-meedya-convert profiles show "H.265 High Quality"
+meedya-convert profiles --show "H.265 High Quality"
 
-# Export a profile
-meedya-convert profiles export "H.265 High Quality" --output my_profile.json
+# Export a profile to a file
+meedya-convert profiles --export "H.265 High Quality" --export-file my_profile.json
+
+# Export to stdout (pipe to another tool)
+meedya-convert profiles --export "H.265 High Quality" | jq .
+
+# Import a profile
+meedya-convert profiles --import my_profile.json
+
+# Validate a profile for iOS compatibility
+meedya-convert profiles --validate "H.265 High Quality" --platform iOS --json
 ```
 
 ---
 
-## `manifest`
+## `batch`
 
-Generate streaming manifests (HLS/DASH) from encoded variants.
+Encode multiple files from a directory or JSON job file.
 
-### Usage
+### batch Usage
 
-```
-meedya-convert manifest --type <hls|dash> --input <directory> --output <path>
-```
-
----
-
-## `validate`
-
-Check that encoding settings are valid without performing an encode. Useful for testing profiles and CI validation.
-
-### Usage
-
-```
-meedya-convert validate --input <path> --profile <name>
+```text
+meedya-convert batch --dir <path> --profile <name> [options]
+meedya-convert batch --job-file <path> [options]
 ```
 
----
+### batch Options
 
-## Exit Codes
+| Option | Short | Type | Description | Default |
+| ------ | ----- | ---- | ----------- | ------- |
+| `--dir <path>` | | String | Directory containing input files | -- |
+| `--job-file <path>` | | String | Path to JSON job file | -- |
+| `--profile <name>` | `-p` | String | Encoding profile (required with --dir) | -- |
+| `--output <dir>` | `-o` | String | Output directory | `<dir>/encoded/` |
+| `--extension <list>` | | String | File extensions to include (comma-separated) | mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg |
+| `--recursive` | | Flag | Scan subdirectories recursively | false |
+| `--quiet` | | Flag | Suppress progress output | false |
+| `--json` | | Flag | Output results as JSON | false |
+| `--yes` | `-y` | Flag | Overwrite existing output files | false |
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments or options |
-| 3 | Input file not found or unreadable |
-| 4 | Output path not writable |
-| 5 | FFmpeg not found |
-| 6 | Unsupported codec/container combination |
-| 7 | Encoding failed (FFmpeg error) |
-| 8 | Job file parse error |
-| 9 | Partial batch failure (some jobs failed) |
+### batch Validation Rules
 
----
+- Either `--dir` or `--job-file` must be provided (not both).
+- `--profile` is required when using `--dir`.
 
-## Batch Scripting
+### Job File Format
 
-### Shell Loop
+Job files are JSON arrays of `EncodingJobConfig` objects:
+
+```json
+[
+  {
+    "inputURL": "/path/to/video1.mkv",
+    "outputURL": "/path/to/video1.mp4",
+    "profile": { "name": "H.265 High Quality" }
+  },
+  {
+    "inputURL": "/path/to/video2.mkv",
+    "outputURL": "/path/to/video2.mp4",
+    "profile": { "name": "H.264 Fast" }
+  }
+]
+```
+
+### batch Examples
+
+```bash
+# Encode all media files in a directory
+meedya-convert batch --dir /videos --profile "H.265 Balanced" --output /encoded
+
+# Include only MKV and AVI files, scan recursively
+meedya-convert batch --dir /videos --profile "H.264 Fast" \
+  --extension mkv,avi --recursive
+
+# Run a batch job file
+meedya-convert batch --job-file jobs.json
+
+# JSON output with overwrite
+meedya-convert batch --dir /videos --profile "H.265 Balanced" --json -y
+```
+
+### Shell Loop Alternative
 
 ```bash
 for f in /videos/*.mkv; do
@@ -261,27 +291,165 @@ for f in /videos/*.mkv; do
 done
 ```
 
-### JSON Progress for Automation
+---
 
-Use `--json-progress` to parse progress from another program:
+## `manifest`
 
-```bash
-meedya-convert encode -i input.mkv -o output.mp4 --json-progress 2>&1 | while read -r line; do
-  echo "$line" | jq -r '.percent'
-done
+Generate adaptive streaming manifests (HLS/DASH/CMAF) with multi-bitrate variants.
+
+### manifest Usage
+
+```text
+meedya-convert manifest --input <path> --output <dir> [options]
 ```
 
-Each JSON progress line contains:
+### manifest Options
+
+| Option | Short | Type | Description | Default |
+| ------ | ----- | ---- | ----------- | ------- |
+| `--input <path>` | `-i` | String | Source media file (required) | -- |
+| `--output <dir>` | `-o` | String | Output directory (required) | -- |
+| `--format <type>` | `-f` | String | Manifest format: hls, dash, cmaf | hls |
+| `--video-codec <codec>` | | String | Video codec: h264, h265, av1 | h264 |
+| `--audio-codec <codec>` | | String | Audio codec: aac, ac3, eac3, opus | aac |
+| `--preset <name>` | | String | Encoder preset | medium |
+| `--segment-duration <sec>` | | Double | Segment duration in seconds | 6.0 |
+| `--keyframe-interval <sec>` | | Double | Keyframe interval in seconds | 2.0 |
+| `--variants <preset>` | | String | Variant ladder: default, 4k, uhd | default |
+| `--ladder-file <path>` | | String | Custom variant ladder JSON file | -- |
+| `--hdr` | | Flag | Preserve HDR in output variants | false |
+| `--pixel-format <fmt>` | | String | Pixel format (yuv420p, yuv420p10le) | -- |
+| `--hardware` | | Flag | Use hardware encoder | false |
+| `--dry-run` | | Flag | Show FFmpeg commands without executing | false |
+| `--quiet` | | Flag | Suppress progress output | false |
+| `--json` | | Flag | Output result as JSON | false |
+| `--yes` | `-y` | Flag | Overwrite existing output | false |
+
+### Variant Ladder File
+
+Custom variant ladders are JSON arrays of `StreamingVariant` objects:
+
+```json
+[
+  { "label": "1080p", "width": 1920, "height": 1080, "videoBitrate": 5000000 },
+  { "label": "720p", "width": 1280, "height": 720, "videoBitrate": 3000000 },
+  { "label": "480p", "width": 854, "height": 480, "videoBitrate": 1500000 },
+  { "label": "360p", "width": 640, "height": 360, "videoBitrate": 800000 }
+]
+```
+
+### manifest Examples
+
+```bash
+# Generate HLS with default variant ladder
+meedya-convert manifest -i source.mkv -o /output/hls
+
+# Generate DASH with H.265 and 4K ladder
+meedya-convert manifest -i source.mkv -o /output/dash \
+  --format dash --video-codec h265 --variants 4k
+
+# CMAF (dual HLS + DASH) with custom ladder
+meedya-convert manifest -i source.mkv -o /output/cmaf \
+  --format cmaf --ladder-file my_ladder.json
+
+# Dry run to preview FFmpeg commands
+meedya-convert manifest -i source.mkv -o /output/hls --dry-run
+
+# HDR-preserving HLS with hardware encoding
+meedya-convert manifest -i hdr_source.mkv -o /output/hls \
+  --video-codec h265 --hdr --hardware
+```
+
+---
+
+## `validate`
+
+Validate encoding profiles, manifest configurations, and platform compatibility without performing an encode.
+
+### validate Usage
+
+```text
+meedya-convert validate --profile <name> [options]
+meedya-convert validate --profile-file <path> [options]
+meedya-convert validate --manifest <path> [options]
+```
+
+### validate Options
+
+| Option | Type | Description | Default |
+| ------ | ---- | ----------- | ------- |
+| `--profile <name>` | String | Validate a named built-in profile | -- |
+| `--profile-file <path>` | String | Validate a profile from a JSON file | -- |
+| `--manifest <path>` | String | Validate a manifest config JSON file | -- |
+| `--platform <name>` | String | Target platform for compatibility check | -- |
+| `--json` | Flag | Output results as JSON | false |
+| `--strict` | Flag | Treat warnings as errors (exit code 6) | false |
+
+### validate Checks
+
+The validate command checks for:
+
+- **Codec/container compatibility** — video and audio codecs supported by the container format.
+- **HDR setting conflicts** — mutually exclusive options (toneMapToSDR + convertPQToHLG).
+- **HDR codec support** — preserveHDR with codecs that lack HDR support.
+- **CRF range validity** — values outside 0-63.
+- **Hardware encoding warnings** — CRF vs QP differences with hardware encoders.
+- **Bitrate/CRF conflicts** — both set simultaneously.
+- **Platform compatibility** — codec/format support on target platforms.
+- **Manifest variant ladder** — duplicate resolutions, bitrate ordering, variant count.
+
+### validate Examples
+
+```bash
+# Validate a profile
+meedya-convert validate --profile "H.265 High Quality"
+
+# Validate for iOS compatibility
+meedya-convert validate --profile "H.265 High Quality" --platform iOS
+
+# Validate a profile file with strict mode
+meedya-convert validate --profile-file custom.json --strict
+
+# Validate a manifest config
+meedya-convert validate --manifest streaming_config.json --json
+```
+
+---
+
+## Exit Codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | Success |
+| 1 | General error |
+| 2 | Invalid arguments or options |
+| 3 | Input file not found or unreadable |
+| 4 | Encoding failed (FFmpeg error) |
+| 5 | Output write error (permissions, disk full) |
+| 6 | Validation failed |
+| 130 | Interrupted by signal (SIGINT / Ctrl+C) |
+
+---
+
+## JSON Progress Output
+
+When `encode --json` is active, progress events are emitted to stderr as JSON:
+
+```json
+{"progress":45}
+```
+
+The `progress` field is an integer percentage (0-100).
+
+Upon completion, a JSON result object is printed to stdout:
 
 ```json
 {
-  "percent": 45.2,
-  "fps": 120.5,
-  "speed": "2.4x",
-  "bitrate": "5234k",
-  "time": "00:12:34.56",
-  "eta": "00:15:12",
-  "size": "1.2G"
+  "status": "completed",
+  "input": "/path/to/input.mkv",
+  "output": "/path/to/output.mp4",
+  "elapsed_seconds": 234.5,
+  "profile": "H.265 High Quality"
 }
 ```
 
@@ -290,7 +458,7 @@ Each JSON progress line contains:
 ## Environment Variables
 
 | Variable | Description |
-|----------|-------------|
+| -------- | ----------- |
 | `FFMPEG_PATH` | Override FFmpeg binary location |
 | `FFPROBE_PATH` | Override FFprobe binary location |
 | `MEEDYA_PROFILES_DIR` | Custom directory for encoding profiles |

@@ -8,11 +8,11 @@
 
 ### What is MeedyaConverter?
 
-MeedyaConverter is a professional-grade media transcoding application for macOS. It provides both a SwiftUI GUI and a CLI tool (`meedya-convert`) for encoding, transcoding, and remuxing video and audio files. It supports 16+ video codecs, 30+ audio codecs, HDR workflows, adaptive streaming, and more.
+MeedyaConverter is a professional-grade media transcoding application for macOS. It provides both a SwiftUI GUI and a CLI tool (`meedya-convert`) for encoding, transcoding, and remuxing video and audio files. It supports 16+ video codecs, 30+ audio codecs, HDR workflows, adaptive streaming, encoding pipelines, scheduled encoding, and more.
 
 ### Is MeedyaConverter free?
 
-MeedyaConverter uses a feature-gating system with three tiers: Free, Pro, and Studio. The free tier provides core encoding functionality. Pro and Studio tiers unlock advanced features such as batch processing, cloud uploads, and professional codec support. Pricing details will be announced closer to release.
+MeedyaConverter uses a feature-gating system with three tiers: Free, Pro, and Studio. The free tier provides core encoding functionality. Pro and Studio tiers unlock advanced features such as batch processing, encoding pipelines, cloud uploads, professional codec support, and watch folders. Pricing details will be announced closer to release.
 
 ### What platforms are supported?
 
@@ -29,7 +29,7 @@ No. MeedyaConverter is proprietary software developed by MWBM Partners Ltd. The 
 ### Which video codec should I use?
 
 | Goal | Recommended Codec |
-|------|-------------------|
+| ---- | ----------------- |
 | Maximum compatibility | H.264 |
 | Best quality/size balance | H.265 (HEVC) |
 | Smallest possible file | AV1 |
@@ -40,7 +40,7 @@ No. MeedyaConverter is proprietary software developed by MWBM Partners Ltd. The 
 ### Which audio codec should I use?
 
 | Goal | Recommended Codec |
-|------|-------------------|
+| ---- | ----------------- |
 | Maximum compatibility | AAC-LC |
 | Surround sound (Blu-ray) | AC-3 or E-AC-3 |
 | Lossless archival | FLAC |
@@ -65,6 +65,42 @@ Yes. MeedyaConverter supports HDR10, HDR10+, HLG, and Dolby Vision. It can:
 ### Can I just change the container without re-encoding?
 
 Yes. Use passthrough mode (remux) to copy all streams to a new container without any quality loss. This is extremely fast since no encoding occurs.
+
+---
+
+## Subscriptions and Licensing
+
+### What features are included in each tier?
+
+| Feature | Free | Pro | Studio |
+| ------- | ---- | --- | ------ |
+| Single file encoding | Yes | Yes | Yes |
+| Built-in profiles | Yes | Yes | Yes |
+| Probe / inspect | Yes | Yes | Yes |
+| Batch encoding | Limited | Yes | Yes |
+| Custom profiles | -- | Yes | Yes |
+| Encoding pipelines | -- | Yes | Yes |
+| Scheduled encoding | -- | Yes | Yes |
+| Watch folders | -- | Yes | Yes |
+| Cloud uploads | -- | Yes | Yes |
+| Media server notifications | -- | Yes | Yes |
+| VMAF/SSIM quality metrics | -- | -- | Yes |
+| DCP creation | -- | -- | Yes |
+| AI upscaling | -- | -- | Yes |
+
+Exact tier assignments may change before release.
+
+### How do I restore a purchase?
+
+In the GUI, go to the licensing/paywall view and select "Restore Purchases". This works for both App Store and RevenueCat-managed subscriptions.
+
+### Can I use a license key instead of the App Store?
+
+Yes. Direct distribution builds support license key activation via the License Entry view. License keys are validated by the `LicenseKeyValidator` module.
+
+### Do subscriptions work across devices?
+
+App Store subscriptions are tied to your Apple ID and work across all your macOS devices. RevenueCat-managed subscriptions can sync across devices if you sign in with the same account.
 
 ---
 
@@ -93,7 +129,35 @@ Hardware encoders (VideoToolbox, NVENC) are generally slightly lower quality tha
 
 ### Can I encode multiple files at once?
 
-Yes. The encoding queue supports multiple concurrent jobs (configurable concurrency limit). In the CLI, use `meedya-convert batch` with the `--parallel` flag.
+Yes. The encoding queue supports multiple concurrent jobs (configurable concurrency limit). In the CLI, use `meedya-convert batch` with the `--dir` or `--job-file` options.
+
+### Can I estimate file size before encoding?
+
+Yes. MeedyaConverter provides file size estimation based on target bitrate, CRF quality prediction, source duration, and stream count. This is available in the GUI before starting an encode.
+
+---
+
+## Pipelines, Scheduling, and Automation
+
+### What is an encoding pipeline?
+
+An encoding pipeline chains multiple encoding steps into a single automated workflow. For example, you could encode a source to a 4K master, then downscale to 1080p for web, extract audio to FLAC, and generate HLS manifests -- all in one pipeline.
+
+### Can I schedule encodes for later?
+
+Yes. The Schedule view lets you set one-time or recurring encode schedules. The app must be running (or set to launch at login) for scheduled encodes to execute.
+
+### What are conditional rules?
+
+Conditional rules automatically apply encoding settings based on source file properties. For example: "If source is 4K, use H.265 CRF 20; if 1080p, use H.264 CRF 18." Rules are evaluated in order and the first match is applied.
+
+### What are post-encode actions?
+
+Post-encode actions automate tasks that run after encoding completes: move files, upload to cloud storage, notify a media server, send a webhook, or run a shell script.
+
+### How do watch folders work?
+
+Watch folders monitor directories for new media files and automatically queue them for encoding with a configured profile. The Watch Folder Manager handles multiple directories simultaneously and supports recursive monitoring and file extension filters.
 
 ---
 
@@ -102,11 +166,12 @@ Yes. The encoding queue supports multiple concurrent jobs (configurable concurre
 ### What is the difference between Direct and App Store versions?
 
 | Feature | Direct (DMG) | App Store |
-|---------|-------------|-----------|
+| ------- | ------------ | --------- |
 | FFmpeg backend | System FFmpeg (subprocess) | FFmpegKit (embedded XCFramework) |
 | Auto-updates | Sparkle 2 | Apple-managed |
 | Sandbox | Optional | Required |
 | File access | Unrestricted | User-selected + bookmarks |
+| Licensing | License keys | StoreKit / RevenueCat |
 | Price | Same | Same (Apple takes 30% commission) |
 
 Both versions use the same ConverterEngine and provide identical encoding capabilities.
@@ -115,9 +180,9 @@ Both versions use the same ConverterEngine and provide identical encoding capabi
 
 Apple requires App Store apps to run in a sandbox. MeedyaConverter needs access to your media files for encoding. It uses three tiers of access:
 
-1. **User-selected** — files you choose via the Open dialog or drag-and-drop.
-2. **Security-scoped bookmarks** — remembers previously accessed locations.
-3. **Full Disk Access** — optional, for accessing files anywhere on the system.
+1. **User-selected** -- files you choose via the Open dialog or drag-and-drop.
+2. **Security-scoped bookmarks** -- remembers previously accessed locations.
+3. **Full Disk Access** -- optional, for accessing files anywhere on the system.
 
 ### Will there be an iOS/iPadOS version?
 
@@ -138,6 +203,7 @@ Only for:
 - **Auto-update checks** (Sparkle, direct distribution only).
 - **Cloud uploads** (only when you explicitly configure and trigger an upload to your own cloud storage).
 - **Metadata lookup** (optional, when you request metadata from MusicBrainz, TMDB, etc.).
+- **Subscription verification** (StoreKit/RevenueCat for purchase validation).
 
 MeedyaConverter never sends your media files, encoding settings, or usage patterns to any server.
 
@@ -173,6 +239,6 @@ Open an issue on the [GitHub Issues](https://github.com/MWBMPartners/MeedyaConve
 
 ### Where can I get more help?
 
-- [Troubleshooting Guide](Troubleshooting) — Common issues and solutions.
-- [GitHub Issues](https://github.com/MWBMPartners/MeedyaConverter/issues) — Bug reports and feature requests.
-- [Wiki Home](Home) — Full documentation index.
+- [Troubleshooting Guide](Troubleshooting) -- Common issues and solutions.
+- [GitHub Issues](https://github.com/MWBMPartners/MeedyaConverter/issues) -- Bug reports and feature requests.
+- [Wiki Home](Home) -- Full documentation index.

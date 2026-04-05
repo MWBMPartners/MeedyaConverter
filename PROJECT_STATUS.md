@@ -1,6 +1,6 @@
 <!-- Copyright © 2026 MWBM Partners Ltd. All rights reserved. -->
 
-# MeedyaConverter — Project Status
+# MeedyaConverter -- Project Status
 
 > **Last Updated:** 2026-04-05
 >
@@ -11,28 +11,28 @@
 ## Overall Progress
 
 | Metric | Value |
-|--------|-------|
+| ------ | ----- |
 | **Current Version** | 0.1.0-alpha |
-| **Current Phase** | Phase 4 — CLI Tool (meedya-convert) |
-| **Next Target** | Alpha 0.2 (Phase 4 remaining) |
-| **Overall Completion** | 30% (3 of 19 phases complete) |
-| **Active Work** | Phase 3 complete — ready for Phase 4 (CLI Tool) |
+| **Current Phase** | Phase 16 -- Polish and Distribution (ongoing) |
+| **Next Target** | Alpha 0.2 release |
+| **Overall Completion** | ~55% (core features implemented, advanced phases planned) |
+| **Active Work** | Documentation update, CLI API spec, integration testing |
 
 ---
 
 ## Release Gates
 
 | Release | Phases | Description | Status |
-|---------|--------|-------------|--------|
-| **Alpha 0.1** | 0, 1, 2 | Core engine + macOS app — first testable build | Complete |
-| **Alpha 0.2** | 3, 4 | Essential codecs, passthrough, HDR + CLI tool | In Progress |
-| **Beta 0.5** | 5, 6 | Subtitles, audio normalisation, HLS/DASH | Planned |
-| **Beta 0.7** | 7, 8 | Extended formats, spatial audio, advanced audio | Planned |
-| **RC 0.9** | 9 | Professional features (VMAF, watch folders, AI upscaling) | Planned |
-| **Ongoing** | 16 | Polish and Distribution — runs throughout development | Ongoing |
+| ------- | ------ | ----------- | ------ |
+| **Alpha 0.1** | 0, 1, 2 | Core engine + macOS app -- first testable build | Complete |
+| **Alpha 0.2** | 3, 4 | Essential codecs, passthrough, HDR + CLI tool | Complete |
+| **Beta 0.5** | 5, 6 | Subtitles, audio normalisation, HLS/DASH | In Progress |
+| **Beta 0.7** | 7, 8 | Extended formats, spatial audio, advanced audio | In Progress |
+| **RC 0.9** | 9 | Professional features (VMAF, watch folders, AI upscaling) | In Progress |
+| **Ongoing** | 16 | Polish and Distribution -- runs throughout development | Ongoing |
 | **v1.1+** | 10, 11 | Optical disc ripping and authoring | Planned |
-| **v1.3+** | 12 | Cloud uploads | Planned |
-| **v1.5+** | 15 | Media metadata lookup | Planned |
+| **v1.3+** | 12 | Cloud uploads | In Progress |
+| **v1.5+** | 15 | Media metadata lookup | In Progress |
 | **v2.0** | 13, 14 | Windows and Linux | Planned |
 | **v3.0+** | 17 | Image conversion | Planned |
 
@@ -41,33 +41,33 @@
 ## Phase Status Overview
 
 | Phase | Name | Status | Progress | Release |
-|-------|------|--------|----------|---------|
+| ----- | ---- | ------ | -------- | ------- |
 | **0** | Project Setup and Architecture | Complete | 100% | -- |
 | **1** | Core Engine Foundation | Complete | 100% | Alpha 0.1 |
 | **2** | macOS SwiftUI Application (MVP) | Complete | 100% | Alpha 0.1 |
 | **3** | Essential Encoding and Passthrough | Complete | 100% | Alpha 0.2 |
-| **4** | CLI Tool (meedya-convert) | Planned | 0% | Alpha 0.2 |
-| **5** | Subtitles and Core Audio Processing | Planned | 0% | Beta 0.5 |
-| **6** | Adaptive Streaming (HLS/MPEG-DASH) | Planned | 0% | Beta 0.5 |
-| **7** | Extended Formats and Spatial Audio | Planned | 0% | Beta 0.7 |
-| **8** | Advanced Audio Processing | Planned | 0% | Beta 0.7 |
-| **9** | Professional Features | Planned | 0% | RC 0.9 |
-| **10** | Optical Disc Ripping (22 types) | Planned | 0% | v1.1+ |
-| **11** | Disc Image Creation and Burning | Planned | 0% | v1.2+ |
-| **12** | Cloud Integration and Uploads | Planned | 0% | v1.3+ |
-| **13** | Platform Expansion — Windows | Planned | 0% | v2.0 |
-| **14** | Platform Expansion — Linux | Planned | 0% | v2.0 |
-| **15** | Media Metadata Lookup | Planned | 0% | v1.5+ |
-| **16** | Polish and Distribution | Ongoing | 5% | Ongoing |
-| **17** | Image Conversion (future) | Planned | 0% | v3.0+ |
-| **18** | AI-Powered Features (wishlist) | Wishlist | 0% | TBD |
+| **4** | CLI Tool (meedya-convert) | Complete | 100% | Alpha 0.2 |
+| **5** | Subtitles and Core Audio Processing | In Progress | 70% | Beta 0.5 |
+| **6** | Adaptive Streaming (HLS/MPEG-DASH) | In Progress | 80% | Beta 0.5 |
+| **7** | Extended Formats and Spatial Audio | In Progress | 60% | Beta 0.7 |
+| **8** | Advanced Audio Processing | In Progress | 50% | Beta 0.7 |
+| **9** | Professional Features | In Progress | 60% | RC 0.9 |
+| **10** | Optical Disc Ripping (22 types) | In Progress | 30% | v1.1+ |
+| **11** | Disc Image Creation and Burning | In Progress | 20% | v1.2+ |
+| **12** | Cloud Integration and Uploads | In Progress | 50% | v1.3+ |
+| **13** | Platform Expansion -- Windows | Planned | 0% | v2.0 |
+| **14** | Platform Expansion -- Linux | Planned | 0% | v2.0 |
+| **15** | Media Metadata Lookup | In Progress | 40% | v1.5+ |
+| **16** | Polish and Distribution | Ongoing | 30% | Ongoing |
+| **17** | Image Conversion (future) | In Progress | 10% | v3.0+ |
+| **18** | AI-Powered Features (wishlist) | In Progress | 10% | TBD |
 
 ---
 
-## Phase 0: Project Setup — Detail
+## Phase 0: Project Setup -- Detail
 
 | # | Task | Status | Notes |
-|---|------|--------|-------|
+| - | ---- | ------ | ----- |
 | 0.1 | Project scaffolding (SPM, directories) | Complete | Package.swift, 3 targets, builds and tests pass |
 | 0.2 | Documentation | Complete | README, Plan, Status, Changelog, help/, docs/ wiki |
 | 0.3 | .gitignore | Complete | All platforms covered |
@@ -80,10 +80,10 @@
 
 ---
 
-## Phase 1: Core Engine Foundation — Detail
+## Phase 1: Core Engine Foundation -- Detail
 
 | # | Task | Status | Notes |
-|---|------|--------|-------|
+| - | ---- | ------ | ----- |
 | 1.1 | FFmpeg bundle manager | Complete | Binary discovery, version detection, validation, caching |
 | 1.2 | FFmpeg process controller | Complete | Start, pause, resume, stop with progress monitoring |
 | 1.3 | Media file probing (FFprobe) | Complete | Streams, HDR, chapters, metadata |
@@ -98,10 +98,10 @@
 
 ---
 
-## Phase 2: macOS SwiftUI Application — Detail
+## Phase 2: macOS SwiftUI Application -- Detail
 
 | # | Task | Status | Notes |
-|---|------|--------|-------|
+| - | ---- | ------ | ----- |
 | 2.1 | App shell and navigation | Complete | Sidebar, main content, inspector |
 | 2.2 | Source file import | Complete | Drag-and-drop, file picker, recent files |
 | 2.3 | Stream inspector | Complete | Video, audio, subtitle track details |
@@ -114,10 +114,10 @@
 
 ---
 
-## Phase 3: Essential Encoding and Passthrough — Detail
+## Phase 3: Essential Encoding and Passthrough -- Detail
 
 | # | Task | Status | Notes |
-|---|------|--------|-------|
+| - | ---- | ------ | ----- |
 | 3.1 | Video passthrough | Complete | Copy video without re-encoding |
 | 3.2 | Audio passthrough | Complete | Copy audio without re-encoding |
 | 3.3 | Subtitle passthrough | Complete | Copy subtitles without conversion |
@@ -133,12 +133,29 @@
 
 ---
 
+## Phase 4: CLI Tool -- Detail
+
+| # | Task | Status | Notes |
+| - | ---- | ------ | ----- |
+| 4.1 | CLI entry point and subcommand routing | Complete | MeedyaConvert.swift with ArgumentParser |
+| 4.2 | encode subcommand | Complete | Full options: codec, CRF, bitrate, preset, resolution, HDR, passthrough, stream selection |
+| 4.3 | probe subcommand | Complete | Text and JSON output, streams-only, HDR details |
+| 4.4 | profiles subcommand | Complete | List, show, export, import, validate with platform check |
+| 4.5 | batch subcommand | Complete | Directory scan and job file modes, recursive, extension filter |
+| 4.6 | manifest subcommand | Complete | HLS, DASH, CMAF with variant ladders, dry-run |
+| 4.7 | validate subcommand | Complete | Profile, profile-file, manifest validation with strict mode |
+| 4.8 | Exit codes | Complete | POSIX-compliant exit codes (0-6, 130) |
+| 4.9 | JSON progress output | Complete | Machine-readable progress and result output |
+| 4.10 | OpenAPI CLI specification | Complete | Full spec in docs/api/meedya-convert-api.yaml |
+
+---
+
 ## What's Complete
 
 - Project plan with 19 phases (0-18), release gates, feature gating, and 215+ tasks
-- Full documentation suite: README, Project Plan, Project Status, Changelog, 8 help docs, 10 wiki pages
+- Full documentation suite: README, Project Plan, Project Status, Changelog, 8 help docs, 10 wiki pages, OpenAPI spec
 - Architecture: ConverterEngine (library) + meedya-convert (CLI) + MeedyaConverter (SwiftUI app)
-- SPM package with 3 targets — builds and tests pass (30/30)
+- SPM package with 3 targets -- builds and tests pass (30/30)
 - Hybrid encoding engine (FFmpeg subprocess + AVFoundation/FFmpegKit)
 - Dual update strategy (Sparkle 2 direct + Apple-managed App Store)
 - Three-tier file access for App Store sandbox
@@ -146,15 +163,15 @@
 - CI/CD: 3 GitHub Actions workflows (build, release, beta/alpha)
 - Issue templates, security policy, CODEOWNERS, PR template, LICENSE
 - FFmpeg bundle manager, process controller, argument builder
-- Media probing via FFprobe — streams, HDR detection, chapters, metadata
-- Complete data models — 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
+- Media probing via FFprobe -- streams, HDR detection, chapters, metadata
+- Complete data models -- 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
 - Encoding profile system with 7+ built-in presets and JSON persistence
 - Job queue with priority ordering, state tracking, batch management
 - Temp file management with per-job directories and disk monitoring
 - Encoding engine orchestrating full video/audio conversion pipeline
 - 30 unit tests covering all Phase 1 components
 - Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: sidebar navigation, source import, stream inspector, output settings, queue, log
+- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings
 - Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
 - HDR-to-SDR tone mapping with auto-trigger for incompatible settings
 - PQ-to-HLG conversion, PQ-to-DV Profile 8.4, Dolby Vision RPU pipeline
@@ -163,20 +180,33 @@
 - Automatic black bar crop detection, hardware encoder detection
 - In-app help system, settings view, profile management
 - AccurateRip verification engine and audio disc fidelity module
+- CLI tool with 6 subcommands: encode, probe, profiles, batch, manifest, validate
+- Licensing module: EntitlementGating, ProductCatalog, StoreManager, RevenueCat, LicenseKeyValidator
+- Encoding pipelines, conditional rules, post-encode actions, encoding checkpoints
+- Watch folder monitoring, scene detection, content analysis
+- Audio normalization presets, surround upmixer, audio fingerprinting
+- Metadata lookup and auto-tagging
+- Cloud upload providers (12+), media server notifications
+- Quality metrics (VMAF/SSIM), encoding reports
+- AI upscaler, forensic watermark, DCP generator, image converter
+- Colour space converter, stereo 3D converter, TrueHD MP4 muxer, VVC encoder
+- Speech-to-text engine, multi-stream selector, streaming enhancements
 
 ---
 
-## What's Next (Alpha 0.2 Path)
+## What's Next
 
-1. **Phase 4** — CLI tool (meedya-convert): encode, probe, batch, profiles, manifest, validate commands
-2. Alpha 0.2 release targeting full CLI support alongside the GUI app
+1. **Integration testing** -- End-to-end testing of CLI commands with real media files
+2. **Alpha 0.2 release** -- Package CLI + GUI for first external testing
+3. **Phase 5/6 completion** -- Finish subtitle conversion and streaming features
+4. **Beta 0.5 release** -- Feature-complete for core use cases
 
 ---
 
 ## Known Issues and Blockers
 
 | Issue | Severity | Status | Notes |
-|-------|----------|--------|-------|
+| ----- | -------- | ------ | ----- |
 | FFmpeg App Store strategy | Resolved | Resolved | Hybrid engine: AVFoundation/FFmpegKit for App Store |
 | App Store sandbox file access | Resolved | Resolved | Three-tier: user-selected, bookmarks, Full Disk Access |
 | Optical disc DRM legality | Medium | Noted | CSS/AACS legality varies by jurisdiction |
@@ -187,7 +217,7 @@
 ## Metrics
 
 | Metric | Count |
-|--------|-------|
+| ------ | ----- |
 | Total tasks across all phases | 215+ |
 | GitHub Issues | 257+ |
 | Supported video codecs | 16 |
@@ -200,6 +230,9 @@
 | Target platforms | 3 (macOS, Windows, Linux) |
 | Wiki documentation pages | 10 |
 | Help documentation files | 8 |
+| SwiftUI views | 35+ |
+| ConverterEngine modules | 15 |
+| CLI subcommands | 6 |
 
 ---
 

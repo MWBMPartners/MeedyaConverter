@@ -4,7 +4,20 @@
 #
 # This document describes the meedya-convert CLI tool's command structure,
 # arguments, options, and JSON schemas in OpenAPI-compatible format.
-# Updated automatically as CLI features are implemented.
+# Each CLI subcommand is represented as a "path", with options modelled
+# as parameters and output schemas documented as responses.
+#
+# CLI exit codes are documented in the ExitCodes schema. HTTP status codes
+# used in responses are mapped as follows:
+#   200 = exit 0 (success)
+#   400 = exit 2 (invalid arguments)
+#   404 = exit 3 (input not found)
+#   409 = exit 5 (output write error)
+#   422 = exit 6 (validation failed)
+#   500 = exit 1 (general error)
+#   502 = exit 4 (encoding failed / FFmpeg error)
+#
+# Updated: 2026-04-05
 # ============================================================================
 
 openapi: 3.1.0
@@ -13,7 +26,20 @@ info:
   version: 0.1.0-alpha
   description: |
     Command-line interface for MeedyaConverter media conversion toolkit.
-    This spec documents all CLI commands, options, and JSON job file schemas.
+
+    `meedya-convert` is a headless CLI tool built with Swift Argument Parser.
+    It provides six subcommands: encode, probe, profiles, batch, manifest,
+    and validate. Designed for CI/CD pipelines, batch processing, shell
+    scripting, and remote encoding over SSH.
+
+    **Root command:**
+    ```
+    meedya-convert <subcommand> [options]
+    ```
+
+    **Global flags:**
+    - `--version` — Print the version string and exit.
+    - `--help` / `-h` — Print usage information and exit.
   contact:
     name: MWBM Partners Ltd
     url: https://github.com/MWBMPartners/MeedyaConverter
@@ -21,168 +47,1118 @@ info:
     name: Proprietary
     url: https://github.com/MWBMPartners/MeedyaConverter/blob/main/LICENSE
 
-# CLI commands documented as "paths" for structured reference
+servers:
+  - url: cli://meedya-convert
+    description: Local CLI executable
+
+# ============================================================================
+# CLI commands documented as "paths"
+# ============================================================================
 paths:
+
+  # --------------------------------------------------------------------------
+  # encode — Transcode a single media file
+  # --------------------------------------------------------------------------
   /encode:
     post:
-      summary: Encode media files
+      operationId: encode
+      summary: Transcode a media file using a named profile or custom settings.
       description: |
-        Convert audio/video files using specified profile or custom settings.
-        Usage: meedya-convert encode <input> [options]
+        Convert a single media file to a different codec, container, resolution,
+        or quality setting. Supports per-stream codec selection, HDR tone
+        mapping, hardware encoding, and passthrough (remux) modes.
+
+        **Usage:**
+        ```
+        meedya-convert encode --input <path> [--output <path>] [options]
+        ```
+
+        If `--output` is omitted, the output file is placed in the same
+        directory as the input with a `_converted` suffix and an extension
+        matching the selected profile or container.
+
+        **Exit codes:** 0 (success), 4 (encoding failed), 5 (output write error).
+      tags:
+        - Encoding
       parameters:
-        - name: input
-          in: path
+        # -- Required --
+        - name: --input / -i
+          in: query
           required: true
-          description: Path to input media file
+          description: Path to the input media file. The file must exist.
           schema:
             type: string
-        - name: --output
+
+        # -- Output --
+        - name: --output / -o
           in: query
-          description: Output file path
+          required: false
+          description: Path to the output file. Defaults to input directory with profile-based extension and `_converted` suffix.
           schema:
             type: string
-        - name: --profile
+
+        # -- Profile --
+        - name: --profile / -p
           in: query
-          description: Named encoding profile to use
+          required: false
+          description: Name or ID of a built-in or custom encoding profile to use. Profile settings can be overridden by subsequent flags.
           schema:
             type: string
+
+        # -- Video Options --
         - name: --video-codec
           in: query
-          description: Video codec (h264, h265, av1, vp9, etc.)
+          required: false
+          description: "Video codec for re-encoding. Values: h264, h265, av1, prores, vp9, copy."
           schema:
             type: string
-        - name: --audio-codec
-          in: query
-          description: Audio codec (aac, ac3, eac3, flac, etc.)
-          schema:
-            type: string
+            enum: [h264, h265, av1, prores, vp9, copy]
+
         - name: --crf
           in: query
-          description: Constant Rate Factor (quality)
+          required: false
+          description: "Constant Rate Factor (quality). Lower values produce higher quality and larger files. Range depends on codec: H.264/H.265 0-51, AV1 0-63."
           schema:
             type: integer
-        - name: --job
-          in: query
-          description: Path to JSON job definition file
-          schema:
-            type: string
-        - name: --temp-dir
-          in: query
-          description: Temporary file directory (default is system temp)
-          schema:
-            type: string
-      responses:
-        '0':
-          description: Success
-        '1':
-          description: General error
-        '5':
-          description: Encoding failed
+            minimum: 0
+            maximum: 63
 
-  /probe:
-    get:
-      summary: Inspect media files
-      description: |
-        Analyse and display media file information (streams, codecs, metadata).
-        Uses both ffprobe and MediaInfo for comprehensive analysis.
-        Usage: meedya-convert probe <input> [--json]
-      parameters:
-        - name: input
-          in: path
-          required: true
+        - name: --video-bitrate
+          in: query
+          required: false
+          description: "Target video bitrate. Accepts suffixes: k (kilobits), M (megabits). Examples: 5000k, 10M."
           schema:
             type: string
-        - name: --json
+            examples:
+              - "5000k"
+              - "10M"
+
+        - name: --preset
           in: query
-          description: Output in JSON format
+          required: false
+          description: "Encoder speed/quality preset. Slower presets yield better compression."
+          schema:
+            type: string
+            enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+
+        - name: --resolution
+          in: query
+          required: false
+          description: "Output resolution as WIDTHxHEIGHT. Example: 1920x1080, 3840x2160."
+          schema:
+            type: string
+            pattern: "^\\d+x\\d+$"
+            examples:
+              - "1920x1080"
+              - "1280x720"
+
+        - name: --video-passthrough
+          in: query
+          required: false
+          description: Copy the video stream without re-encoding (passthrough/remux). Cannot be combined with --video-codec.
           schema:
             type: boolean
+            default: false
 
-  /profile:
+        # -- Audio Options --
+        - name: --audio-codec
+          in: query
+          required: false
+          description: "Audio codec for re-encoding. Values: aac, ac3, eac3, flac, opus, copy."
+          schema:
+            type: string
+            enum: [aac, ac3, eac3, flac, opus, copy]
+
+        - name: --audio-bitrate
+          in: query
+          required: false
+          description: "Target audio bitrate. Examples: 128k, 256k, 640k."
+          schema:
+            type: string
+            examples:
+              - "128k"
+              - "256k"
+
+        - name: --audio-channels
+          in: query
+          required: false
+          description: "Audio channel count. 1=mono, 2=stereo, 6=5.1 surround, 8=7.1 surround."
+          schema:
+            type: integer
+            enum: [1, 2, 6, 8]
+
+        - name: --audio-passthrough
+          in: query
+          required: false
+          description: Copy the audio stream without re-encoding. Cannot be combined with --audio-codec.
+          schema:
+            type: boolean
+            default: false
+
+        # -- Subtitle Options --
+        - name: --subtitle-passthrough
+          in: query
+          required: false
+          description: Copy subtitle streams to the output file.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --no-subtitles
+          in: query
+          required: false
+          description: Exclude all subtitle streams from the output.
+          schema:
+            type: boolean
+            default: false
+
+        # -- Container --
+        - name: --container
+          in: query
+          required: false
+          description: "Output container format. Overrides profile default."
+          schema:
+            type: string
+            enum: [mkv, mp4, webm, mov, ts]
+
+        # -- HDR Options --
+        - name: --tonemap
+          in: query
+          required: false
+          description: Enable HDR-to-SDR tone mapping. Mutually exclusive with --pq-to-hlg.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --tonemap-algorithm
+          in: query
+          required: false
+          description: "Tone mapping algorithm to use when --tonemap is enabled."
+          schema:
+            type: string
+            enum: [hable, reinhard, mobius, bt2390, linear]
+            default: hable
+
+        - name: --pq-to-hlg
+          in: query
+          required: false
+          description: Convert PQ (HDR10) transfer function to HLG. Mutually exclusive with --tonemap.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --pq-to-dv-hlg
+          in: query
+          required: false
+          description: Convert PQ to Dolby Vision Profile 8.4 + HLG combined output.
+          schema:
+            type: boolean
+            default: false
+
+        # -- Metadata --
+        - name: --no-copy-metadata
+          in: query
+          required: false
+          description: Do not copy source metadata (tags, titles) to the output file.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --no-copy-chapters
+          in: query
+          required: false
+          description: Do not copy chapter markers to the output file.
+          schema:
+            type: boolean
+            default: false
+
+        # -- Stream Selection --
+        - name: --video-stream
+          in: query
+          required: false
+          description: Index of the video stream to encode (default is the first video stream).
+          schema:
+            type: integer
+
+        - name: --audio-stream
+          in: query
+          required: false
+          description: Index of the audio stream to encode (default is the first audio stream).
+          schema:
+            type: integer
+
+        - name: --subtitle-stream
+          in: query
+          required: false
+          description: Index of the subtitle stream to include in the output.
+          schema:
+            type: integer
+
+        - name: --map-all
+          in: query
+          required: false
+          description: Map all streams from the source file to the output.
+          schema:
+            type: boolean
+            default: false
+
+        # -- Hardware Encoding --
+        - name: --hardware
+          in: query
+          required: false
+          description: Use hardware encoder if available (VideoToolbox on macOS, NVENC on NVIDIA, QSV on Intel).
+          schema:
+            type: boolean
+            default: false
+
+        # -- Output Control --
+        - name: --quiet
+          in: query
+          required: false
+          description: Suppress progress output to stderr.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --json
+          in: query
+          required: false
+          description: Output progress updates and final result as JSON to stderr/stdout.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --yes / -y
+          in: query
+          required: false
+          description: Overwrite the output file without prompting if it already exists.
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — Encoding completed successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncodeResult'
+        "502":
+          description: "Exit 4 — Encoding failed (FFmpeg error)."
+        "409":
+          description: "Exit 5 — Output write error (file exists, permissions, disk full)."
+
+  # --------------------------------------------------------------------------
+  # probe — Inspect a media file
+  # --------------------------------------------------------------------------
+  /probe:
     get:
-      summary: Manage encoding profiles
+      operationId: probe
+      summary: Inspect a media file and print its metadata.
       description: |
-        List, show, export, or import encoding profiles.
-        Usage: meedya-convert profile <subcommand>
+        Analyse a media file using FFprobe and display detailed information
+        about its streams (video, audio, subtitle), container, metadata,
+        chapters, and HDR properties.
+
+        **Usage:**
+        ```
+        meedya-convert probe --input <path> [--format text|json] [options]
+        ```
+
+        **Exit codes:** 0 (success), 4 (probe failed).
+      tags:
+        - Inspection
       parameters:
-        - name: subcommand
-          in: path
+        - name: --input / -i
+          in: query
           required: true
-          description: "list | show <name> | export <name> | import <file>"
+          description: Path to the media file to inspect. The file must exist.
           schema:
             type: string
 
+        - name: --format / -f
+          in: query
+          required: false
+          description: "Output format."
+          schema:
+            type: string
+            enum: [text, json]
+            default: text
+
+        - name: --streams-only
+          in: query
+          required: false
+          description: Show only stream information (skip file-level details and metadata).
+          schema:
+            type: boolean
+            default: false
+
+        - name: --hdr
+          in: query
+          required: false
+          description: Show detailed HDR metadata (colour primaries, transfer characteristics, MaxCLL, MaxFALL, mastering display).
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — Probe completed successfully."
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Human-readable media file information.
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaFile'
+        "502":
+          description: "Exit 4 — Probe failed (FFprobe error or unreadable file)."
+
+  # --------------------------------------------------------------------------
+  # profiles — List, show, export, import, and validate encoding profiles
+  # --------------------------------------------------------------------------
+  /profiles:
+    get:
+      operationId: profiles
+      summary: List, show, export, import, or validate encoding profiles.
+      description: |
+        Manage encoding profiles. By default (with no flags or with --list),
+        lists all available built-in profiles grouped by category.
+
+        **Usage:**
+        ```
+        meedya-convert profiles [--list] [--show <name>] [--export <name>]
+                                [--import <file>] [--validate <name>]
+                                [--platform <name>] [--json]
+        ```
+
+        **Exit codes:** 0 (success), 2 (profile not found / invalid arguments).
+      tags:
+        - Profiles
+      parameters:
+        - name: --list
+          in: query
+          required: false
+          description: List all available encoding profiles (default action).
+          schema:
+            type: boolean
+            default: false
+
+        - name: --show
+          in: query
+          required: false
+          description: Show detailed settings of a named profile.
+          schema:
+            type: string
+
+        - name: --export
+          in: query
+          required: false
+          description: Export a named profile to JSON. Outputs to stdout unless --export-file is set.
+          schema:
+            type: string
+
+        - name: --export-file
+          in: query
+          required: false
+          description: Output file path for profile export. If omitted, JSON is printed to stdout.
+          schema:
+            type: string
+
+        - name: --import
+          in: query
+          required: false
+          description: Import a profile from a JSON file.
+          schema:
+            type: string
+
+        - name: --validate
+          in: query
+          required: false
+          description: Validate a named profile for codec/container compatibility issues.
+          schema:
+            type: string
+
+        - name: --platform
+          in: query
+          required: false
+          description: "Target platform for compatibility check during validation. Values: macOS, iOS, tvOS, windows, android, chromecast, webBrowser, plex, jellyfin, roku, fireTV."
+          schema:
+            type: string
+
+        - name: --json
+          in: query
+          required: false
+          description: Output as JSON instead of human-readable text.
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — Operation completed successfully."
+        "400":
+          description: "Exit 2 — Invalid arguments (profile not found)."
+
+  # --------------------------------------------------------------------------
+  # batch — Encode multiple files from a directory or job file
+  # --------------------------------------------------------------------------
+  /batch:
+    post:
+      operationId: batch
+      summary: Encode multiple files from a directory or JSON job file.
+      description: |
+        Process multiple media files in one invocation. Supports two modes:
+
+        1. **Directory mode** (`--dir`): Scan a directory for media files
+           matching specified extensions and encode them all with a named
+           profile. Requires `--profile`.
+
+        2. **Job file mode** (`--job-file`): Load a JSON array of
+           `EncodingJobConfig` objects and encode each one.
+
+        The two modes are mutually exclusive.
+
+        **Usage:**
+        ```
+        meedya-convert batch --dir <path> --profile <name> [--output <dir>] [options]
+        meedya-convert batch --job-file <path> [options]
+        ```
+
+        **Exit codes:** 0 (all succeeded), 4 (one or more jobs failed).
+      tags:
+        - Batch
+      parameters:
+        - name: --dir
+          in: query
+          required: false
+          description: Directory containing input files to encode. Mutually exclusive with --job-file.
+          schema:
+            type: string
+
+        - name: --job-file
+          in: query
+          required: false
+          description: Path to a JSON file describing batch encoding jobs. Mutually exclusive with --dir.
+          schema:
+            type: string
+
+        - name: --profile / -p
+          in: query
+          required: false
+          description: Encoding profile name. Required when using --dir.
+          schema:
+            type: string
+
+        - name: --output / -o
+          in: query
+          required: false
+          description: "Output directory for encoded files. Defaults to an `encoded/` subdirectory inside the input directory."
+          schema:
+            type: string
+
+        - name: --extension
+          in: query
+          required: false
+          description: "Comma-separated list of file extensions to include when scanning a directory. Defaults to: mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg."
+          schema:
+            type: string
+            default: "mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg"
+
+        - name: --recursive
+          in: query
+          required: false
+          description: Recursively scan subdirectories when using --dir.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --quiet
+          in: query
+          required: false
+          description: Suppress progress output to stderr.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --json
+          in: query
+          required: false
+          description: Output results as JSON.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --yes / -y
+          in: query
+          required: false
+          description: Overwrite existing output files without prompting.
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — All jobs completed successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResult'
+        "502":
+          description: "Exit 4 — One or more jobs failed."
+
+  # --------------------------------------------------------------------------
+  # manifest — Generate adaptive streaming manifests (HLS/DASH/CMAF)
+  # --------------------------------------------------------------------------
   /manifest:
     post:
-      summary: Generate streaming manifests
+      operationId: manifest
+      summary: Generate adaptive streaming manifests (HLS/DASH) with multi-bitrate variants.
       description: |
-        Generate HLS (.m3u8) and/or MPEG-DASH (.mpd) manifests.
-        Usage: meedya-convert manifest <input-dir> [options]
+        Encode a source file into multiple quality variants and generate
+        adaptive streaming manifests. Supports HLS (.m3u8), MPEG-DASH (.mpd),
+        and CMAF (dual HLS + DASH manifests).
 
+        **Usage:**
+        ```
+        meedya-convert manifest --input <path> --output <dir> [--format hls|dash|cmaf] [options]
+        ```
+
+        **Exit codes:** 0 (success), 1 (general error), 2 (invalid arguments).
+      tags:
+        - Streaming
+      parameters:
+        - name: --input / -i
+          in: query
+          required: true
+          description: Path to the source media file.
+          schema:
+            type: string
+
+        - name: --output / -o
+          in: query
+          required: true
+          description: Output directory for manifest files and media segments.
+          schema:
+            type: string
+
+        - name: --format / -f
+          in: query
+          required: false
+          description: "Manifest format. CMAF produces both HLS and DASH manifests."
+          schema:
+            type: string
+            enum: [hls, dash, cmaf]
+            default: hls
+
+        - name: --video-codec
+          in: query
+          required: false
+          description: Video codec for all variants.
+          schema:
+            type: string
+            enum: [h264, h265, av1]
+            default: h264
+
+        - name: --audio-codec
+          in: query
+          required: false
+          description: Audio codec for all variants.
+          schema:
+            type: string
+            enum: [aac, ac3, eac3, opus]
+            default: aac
+
+        - name: --preset
+          in: query
+          required: false
+          description: Encoder speed/quality preset.
+          schema:
+            type: string
+            enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+            default: medium
+
+        - name: --segment-duration
+          in: query
+          required: false
+          description: Segment duration in seconds.
+          schema:
+            type: number
+            format: double
+            default: 6.0
+
+        - name: --keyframe-interval
+          in: query
+          required: false
+          description: Keyframe interval in seconds for GOP alignment.
+          schema:
+            type: number
+            format: double
+            default: 2.0
+
+        - name: --variants
+          in: query
+          required: false
+          description: "Variant ladder preset: default (1080p and below) or 4k/uhd (includes 2160p)."
+          schema:
+            type: string
+            enum: [default, 4k, uhd]
+            default: default
+
+        - name: --ladder-file
+          in: query
+          required: false
+          description: Path to a JSON file defining a custom variant ladder (array of StreamingVariant objects). Overrides --variants.
+          schema:
+            type: string
+
+        - name: --hdr
+          in: query
+          required: false
+          description: Preserve HDR metadata in output variants.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --pixel-format
+          in: query
+          required: false
+          description: "Pixel format for output. Example: yuv420p, yuv420p10le."
+          schema:
+            type: string
+
+        - name: --hardware
+          in: query
+          required: false
+          description: Use hardware encoder if available.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --dry-run
+          in: query
+          required: false
+          description: Show the FFmpeg commands that would be executed without running them.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --quiet
+          in: query
+          required: false
+          description: Suppress progress output.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --json
+          in: query
+          required: false
+          description: Output result as JSON.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --yes / -y
+          in: query
+          required: false
+          description: Overwrite existing output without prompting.
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — Manifest generation completed successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestResult'
+        "500":
+          description: "Exit 1 — General error (e.g., FFmpeg not available)."
+        "400":
+          description: "Exit 2 — Invalid arguments (bad format, missing input)."
+
+  # --------------------------------------------------------------------------
+  # validate — Validate profiles, manifests, and platform compatibility
+  # --------------------------------------------------------------------------
   /validate:
     get:
-      summary: Validate manifest files
+      operationId: validate
+      summary: Validate encoding profiles, manifest configurations, and platform compatibility.
       description: |
-        Validate HLS or DASH manifest files for spec compliance.
-        Usage: meedya-convert validate <manifest-file>
+        Check that encoding profiles and manifest configurations are valid
+        without performing an encode. Detects codec/container incompatibilities,
+        HDR setting conflicts, CRF range errors, and platform-specific issues.
 
-# JSON Job File Schema
+        **Usage:**
+        ```
+        meedya-convert validate --profile <name> [--platform <name>] [--strict] [--json]
+        meedya-convert validate --profile-file <path> [--platform <name>] [--strict] [--json]
+        meedya-convert validate --manifest <path> [--json]
+        ```
+
+        At least one of `--profile`, `--profile-file`, or `--manifest` is required.
+
+        **Exit codes:** 0 (valid), 6 (errors found or warnings with --strict).
+      tags:
+        - Validation
+      parameters:
+        - name: --profile
+          in: query
+          required: false
+          description: Validate a named built-in encoding profile.
+          schema:
+            type: string
+
+        - name: --profile-file
+          in: query
+          required: false
+          description: Validate an encoding profile from a JSON file on disk.
+          schema:
+            type: string
+
+        - name: --manifest
+          in: query
+          required: false
+          description: Validate a manifest configuration JSON file (checks variant ladder, bitrate ordering, codec compatibility).
+          schema:
+            type: string
+
+        - name: --platform
+          in: query
+          required: false
+          description: "Target platform for compatibility check. Validates codec and container support for the specified platform."
+          schema:
+            type: string
+            enum: [macOS, iOS, tvOS, windows, android, chromecast, webBrowser, plex, jellyfin, roku, fireTV]
+
+        - name: --json
+          in: query
+          required: false
+          description: Output validation results as JSON.
+          schema:
+            type: boolean
+            default: false
+
+        - name: --strict
+          in: query
+          required: false
+          description: Treat warnings as errors. With --strict, any warning causes a non-zero exit code (6).
+          schema:
+            type: boolean
+            default: false
+
+      responses:
+        "200":
+          description: "Exit 0 — Validation passed with no errors (warnings may be present unless --strict)."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        "422":
+          description: "Exit 6 — Validation failed (errors found, or warnings with --strict)."
+
+# ============================================================================
+# Schemas — JSON output formats and job file structures
+# ============================================================================
 components:
   schemas:
-    EncodingJob:
+
+    # -- Encode result (--json output) --
+    EncodeResult:
       type: object
-      description: JSON job definition for complex encoding workflows
-      required:
-        - input
-        - output
+      description: JSON output produced by `encode --json` upon successful completion.
       properties:
+        status:
+          type: string
+          enum: [completed]
         input:
           type: string
-          description: Path to source media file
+          description: Absolute path to the input file.
         output:
           type: string
-          description: Output directory or file path
+          description: Absolute path to the output file.
+        elapsed_seconds:
+          type: number
+          format: double
+          description: Total encoding time in seconds.
         profile:
           type: string
-          description: Named encoding profile
-        temp_dir:
+          description: Name of the encoding profile used.
+
+    # -- Batch result (--json output) --
+    BatchResult:
+      type: object
+      description: JSON summary produced by `batch --json` after all jobs complete.
+      properties:
+        total:
+          type: integer
+          description: Total number of files processed.
+        completed:
+          type: integer
+          description: Number of files successfully encoded.
+        failed:
+          type: integer
+          description: Number of files that failed to encode.
+        skipped:
+          type: integer
+          description: Number of files skipped (output already exists).
+
+    # -- Manifest result (--json output) --
+    ManifestResult:
+      type: object
+      description: JSON output produced by `manifest --json` upon completion.
+      properties:
+        status:
           type: string
-          description: Temporary file directory
+          enum: [completed]
+        format:
+          type: string
+          description: "Manifest format: hls, dash, or cmaf."
+        variants:
+          type: integer
+          description: Number of quality variants encoded.
+        output:
+          type: string
+          description: Absolute path to the output directory.
+        elapsed_seconds:
+          type: number
+          format: double
+          description: Total generation time in seconds.
+
+    # -- Validation result (--json output) --
+    ValidationResult:
+      type: object
+      description: JSON output produced by `validate --json`.
+      properties:
+        valid:
+          type: boolean
+          description: True if no errors were found (and no warnings in --strict mode).
+        errors:
+          type: array
+          items:
+            type: string
+          description: List of validation errors.
+        warnings:
+          type: array
+          items:
+            type: string
+          description: List of validation warnings.
+
+    # -- Probe output (--format json) --
+    MediaFile:
+      type: object
+      description: Full media file information returned by `probe --format json`. Serialised from the engine's MediaFile model.
+      properties:
+        fileName:
+          type: string
+        fileURL:
+          type: string
+          format: uri
+        fileSizeString:
+          type:
+            - string
+            - "null"
+        durationString:
+          type:
+            - string
+            - "null"
+        overallBitrate:
+          type:
+            - integer
+            - "null"
+          description: Overall bitrate in bits per second.
+        containerFormat:
+          type:
+            - string
+            - "null"
+        hasHDR:
+          type: boolean
+        hasDolbyVision:
+          type: boolean
+        hasPQ:
+          type: boolean
+        hasHLG:
+          type: boolean
+        chapters:
+          type: array
+          items:
+            type: object
         streams:
           type: array
           items:
-            $ref: '#/components/schemas/StreamConfig'
+            $ref: '#/components/schemas/MediaStream'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
 
-    StreamConfig:
+    MediaStream:
       type: object
+      description: A single media stream (video, audio, or subtitle).
       properties:
-        type:
+        streamIndex:
+          type: integer
+        codecName:
+          type:
+            - string
+            - "null"
+        codecType:
           type: string
           enum: [video, audio, subtitle]
-        index:
-          type: integer
-          description: Stream index in source file
-        codec:
-          type: string
-          description: Output codec
-        mode:
-          type: string
-          enum: [encode, passthrough, disable]
+        resolutionString:
+          type:
+            - string
+            - "null"
+        frameRate:
+          type:
+            - number
+            - "null"
         bitrate:
-          type: string
-          description: "Target bitrate (e.g., '128k', '4M')"
-        crf:
-          type: integer
-          description: Constant Rate Factor
+          type:
+            - integer
+            - "null"
+        channelLayout:
+          type:
+            - string
+            - "null"
+        sampleRate:
+          type:
+            - integer
+            - "null"
+        language:
+          type:
+            - string
+            - "null"
+        title:
+          type:
+            - string
+            - "null"
+        isDefault:
+          type: boolean
+        isForced:
+          type: boolean
+        hdrFormats:
+          type: array
+          items:
+            type: string
 
+    # -- Streaming variant (for ladder-file) --
+    StreamingVariant:
+      type: object
+      description: A single variant in an adaptive streaming ladder. Used in --ladder-file JSON arrays.
+      required:
+        - label
+        - width
+        - height
+        - videoBitrate
+      properties:
+        label:
+          type: string
+          description: "Human-readable label (e.g., '1080p', '720p')."
+        width:
+          type: integer
+          description: Output width in pixels.
+        height:
+          type: integer
+          description: Output height in pixels.
+        videoBitrate:
+          type: integer
+          description: Target video bitrate in bits per second.
+        audioBitrate:
+          type: integer
+          description: Target audio bitrate in bits per second.
+
+    # -- Batch job file schema --
+    EncodingJobConfig:
+      type: object
+      description: |
+        A single encoding job definition used in batch --job-file JSON arrays.
+        Each object defines an input/output pair and encoding parameters.
+      required:
+        - inputURL
+        - outputURL
+      properties:
+        inputURL:
+          type: string
+          description: Absolute path to the input media file.
+        outputURL:
+          type: string
+          description: Absolute path to the output file.
+        profile:
+          type: object
+          description: Full EncodingProfile object (or reference by name).
+        videoStreamIndex:
+          type:
+            - integer
+            - "null"
+        audioStreamIndex:
+          type:
+            - integer
+            - "null"
+        subtitleStreamIndex:
+          type:
+            - integer
+            - "null"
+        mapAllStreams:
+          type: boolean
+          default: false
+        extraArguments:
+          type: array
+          items:
+            type: string
+          description: Additional raw FFmpeg arguments appended to the command.
+
+    # -- Exit codes --
     ExitCodes:
       type: object
-      description: CLI exit codes
+      description: |
+        POSIX-compliant exit codes for the meedya-convert CLI.
+        These allow scripts and CI pipelines to determine the reason for
+        failure without parsing error messages.
       properties:
-        '0': { description: Success }
-        '1': { description: General error }
-        '2': { description: Invalid arguments }
-        '3': { description: Input file not found }
-        '4': { description: Output write error }
-        '5': { description: Encoding failed }
-        '6': { description: FFmpeg not found }
+        success:
+          type: integer
+          const: 0
+          description: Success — command completed normally.
+        generalError:
+          type: integer
+          const: 1
+          description: General/unspecified error.
+        invalidArguments:
+          type: integer
+          const: 2
+          description: Invalid arguments or usage error.
+        inputNotFound:
+          type: integer
+          const: 3
+          description: Input file not found or unreadable.
+        encodingFailed:
+          type: integer
+          const: 4
+          description: Encoding failed (FFmpeg returned an error).
+        outputWriteError:
+          type: integer
+          const: 5
+          description: Output write error (permissions, disk full, path invalid).
+        validationFailed:
+          type: integer
+          const: 6
+          description: Validation failed (profile or manifest validation errors).
+        interrupted:
+          type: integer
+          const: 130
+          description: Interrupted by signal (SIGINT / Ctrl+C).
+
+    # -- Progress JSON (emitted to stderr during encode) --
+    ProgressEvent:
+      type: object
+      description: JSON progress event emitted to stderr when `encode --json` is active.
+      properties:
+        progress:
+          type: integer
+          description: Completion percentage (0-100).
+          minimum: 0
+          maximum: 100

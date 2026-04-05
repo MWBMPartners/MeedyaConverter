@@ -13,11 +13,13 @@ Solutions for common issues encountered when using MeedyaConverter.
 **Solutions:**
 
 1. **Install FFmpeg via Homebrew:**
+
    ```bash
    brew install ffmpeg
    ```
 
 2. **Verify FFmpeg is accessible:**
+
    ```bash
    which ffmpeg
    ffmpeg -version
@@ -30,6 +32,7 @@ Solutions for common issues encountered when using MeedyaConverter.
    - System PATH.
 
 4. **Set a custom path** using the `FFMPEG_PATH` environment variable:
+
    ```bash
    export FFMPEG_PATH=/path/to/ffmpeg
    ```
@@ -68,6 +71,7 @@ Solutions for common issues encountered when using MeedyaConverter.
 **Solutions:**
 
 1. **Verify source has HDR metadata:**
+
    ```bash
    meedya-convert probe -i source.mkv -f json | grep -A5 "color"
    ```
@@ -94,7 +98,7 @@ Solutions for common issues encountered when using MeedyaConverter.
 **Common incompatible pairings:**
 
 | Combination | Issue |
-|-------------|-------|
+| ----------- | ----- |
 | VP9 in MP4 | VP9 is not supported in MP4. Use WebM or MKV. |
 | FLAC in MP4 | FLAC is not natively supported in MP4. Use MKV or FLAC container. |
 | DTS in MP4 | DTS is not supported in MP4. Use MKV. |
@@ -117,7 +121,7 @@ Solutions for common issues encountered when using MeedyaConverter.
 2. **Common FFmpeg errors:**
 
    | Error | Cause | Fix |
-   |-------|-------|-----|
+   | ----- | ----- | --- |
    | `Encoder not found` | FFmpeg lacks the requested encoder | Install FFmpeg with full codec support |
    | `Invalid option` | Unsupported encoder option for this codec | Check codec-specific settings |
    | `Could not write header` | Codec/container incompatibility | Change container or codec |
@@ -125,9 +129,78 @@ Solutions for common issues encountered when using MeedyaConverter.
    | `No space left on device` | Disk full | Free disk space or change output path |
 
 3. **Try a simpler encode** to isolate the issue:
+
    ```bash
    meedya-convert encode -i input.mkv -o test.mp4 --video-codec h264 --crf 23 --audio-codec aac
    ```
+
+4. **Use FFmpeg command preview** in the GUI to inspect the generated command, then run it manually for more detailed error output.
+
+---
+
+## Encoding Pipeline Failures
+
+**Symptom:** A multi-step encoding pipeline fails partway through.
+
+**Solutions:**
+
+1. **Check step dependencies.** Each pipeline step depends on the previous step's output. If an earlier step fails, subsequent steps cannot run.
+
+2. **Validate each step independently.** Use `meedya-convert validate` to check each profile used in the pipeline.
+
+3. **Check intermediate files.** Pipeline steps produce intermediate files. Ensure sufficient disk space for all intermediate outputs.
+
+4. **Resume from checkpoint.** If the pipeline supports checkpoints, resumable jobs can restart from the last successful step.
+
+---
+
+## Scheduled Encoding Issues
+
+**Symptom:** Scheduled encodes do not run at the expected time or fail silently.
+
+**Solutions:**
+
+1. **Check the Schedule view.** Verify that the schedule is active and the next run time is correct.
+
+2. **App must be running.** Scheduled encodes require MeedyaConverter to be running (or set to launch at login).
+
+3. **File access.** Ensure the input files are accessible at the scheduled time (network drives may not be mounted).
+
+4. **Check log output.** Scheduled job results appear in the activity log.
+
+---
+
+## Watch Folder Issues
+
+**Symptom:** Files added to a watch folder are not automatically encoded.
+
+**Solutions:**
+
+1. **Verify watch folder is active.** Check the watch folder configuration in settings.
+
+2. **File extension filter.** Ensure the file extension matches the configured filter.
+
+3. **File stability.** The watch folder waits for files to finish writing before queuing. Large file copies may have a delay.
+
+4. **Permissions.** Ensure MeedyaConverter has read access to the watch directory and write access to the output directory.
+
+---
+
+## Subscription and Licensing Issues
+
+**Symptom:** Features are locked despite having a subscription, or the paywall appears unexpectedly.
+
+**Solutions:**
+
+1. **Restore purchases.** In the app, go to the licensing/paywall view and tap "Restore Purchases".
+
+2. **Check Apple ID.** Ensure you are signed in with the Apple ID used to purchase the subscription.
+
+3. **Direct distribution license keys.** If using a license key (non-App Store), verify the key in the License Entry view.
+
+4. **Network connectivity.** StoreKit and RevenueCat require internet access to verify entitlements.
+
+5. **Restart the app.** Entitlement state may need a refresh after purchase or restore.
 
 ---
 
@@ -144,10 +217,13 @@ Solutions for common issues encountered when using MeedyaConverter.
 
 1. Sign with a valid Developer ID certificate.
 2. Submit the app for notarisation:
+
    ```bash
    xcrun notarytool submit MeedyaConverter.dmg --apple-id <email> --team-id <team> --password <app-specific-password>
    ```
+
 3. Staple the notarisation ticket:
+
    ```bash
    xcrun stapler staple MeedyaConverter.dmg
    ```
@@ -204,6 +280,22 @@ Solutions for common issues encountered when using MeedyaConverter.
    - Burned into the video (permanent, increases encode time).
 
 3. **ASS/SSA styling** is preserved in MKV. When converting to SRT, styling is stripped.
+
+---
+
+## Media Server Notification Failures
+
+**Symptom:** Plex, Jellyfin, or Emby does not pick up newly encoded files.
+
+**Solutions:**
+
+1. **Verify server URL and API key.** Check the Media Server Settings view for correct configuration.
+
+2. **Library path.** The output file must be in a directory that the media server monitors.
+
+3. **Network access.** Ensure MeedyaConverter can reach the media server's API endpoint.
+
+4. **Manual scan.** Trigger a manual library scan from the media server as a fallback.
 
 ---
 
