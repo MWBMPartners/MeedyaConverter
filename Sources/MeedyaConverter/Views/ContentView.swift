@@ -35,6 +35,11 @@ struct ContentView: View {
         .toolbar {
             toolbarContent
         }
+        // Touch Bar — context-sensitive encoding controls (Issue #181)
+        .touchBar {
+            TouchBarProvider()
+                .environment(viewModel)
+        }
     }
 
     // MARK: - Detail View

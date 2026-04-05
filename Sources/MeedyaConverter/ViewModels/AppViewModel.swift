@@ -146,6 +146,17 @@ final class AppViewModel {
     /// Discovered hardware encoders on this system.
     var availableHardwareEncoders: [HardwareEncoderInfo] = []
 
+    // MARK: - Activity Indicators (Issue #182)
+
+    /// System-level encoding activity indicator (menu bar + dock tile).
+    let activityIndicator = EncodingActivityIndicator()
+
+    // MARK: - Analytics (Phase 12 / Issue #183)
+
+    /// Privacy-respecting, opt-in analytics engine.
+    /// Disabled by default — no data collected until the user enables it.
+    let analytics = AnalyticsEngine()
+
     // MARK: - Activity Log
 
     /// Log entries for the unified activity log.
@@ -162,6 +173,9 @@ final class AppViewModel {
         if let moviesDir = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
             self.outputDirectory = moviesDir
         }
+
+        // Track app launch (no-op if analytics is disabled)
+        analytics.track(.appLaunch)
     }
 
     // MARK: - File Import
@@ -410,8 +424,29 @@ final class AppViewModel {
             jobState.startedAt = Date()
             engine.queue.currentJob = jobState
 
+            // Activate system-level progress indicators (Issue #182)
+            activityIndicator.startTracking(jobState: jobState)
+
             appendLog(.info, "Encoding: \(jobState.config.inputURL.lastPathComponent)",
                       category: .encoding, jobID: jobState.config.id)
+
+            // Track encode start — codec and container only, never file names (Issue #183)
+            var encodeProps: [String: String] = [
+                "container": jobState.config.profile.containerFormat.rawValue
+            ]
+            if let codec = jobState.config.profile.videoCodec {
+                encodeProps["codec"] = codec.rawValue
+            }
+            analytics.track(.encodeStart, properties: encodeProps)
+
+            // Track profile usage for built-in profiles only (Issue #183)
+            let builtInProfileNames: Set<String> = [
+                "Web Standard", "Archive", "Quick Convert", "Apple ProRes",
+                "HDR Passthrough", "Audio Only"
+            ]
+            if builtInProfileNames.contains(jobState.config.profile.name) {
+                analytics.track(.profileUsed, properties: ["profile": jobState.config.profile.name])
+            }
 
             do {
                 try await engine.encode(job: jobState.config) { progressInfo in
@@ -428,6 +463,13 @@ final class AppViewModel {
                             let totalEstimated = elapsed / fraction
                             jobState.eta = totalEstimated - elapsed
                         }
+
+                        // Update system-level activity indicators (Issue #182)
+                        self?.activityIndicator.updateProgress(
+                            fraction: jobState.progress,
+                            speed: jobState.speed,
+                            fileName: jobState.config.inputURL.lastPathComponent
+                        )
 
                         // Log raw FFmpeg output
                         if let raw = progressInfo.rawLine, !raw.isEmpty {
@@ -446,6 +488,17 @@ final class AppViewModel {
                 appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
                           category: .encoding, jobID: jobState.config.id)
 
+                // Track encode completion with duration category (Issue #183)
+                let durationCategory: String
+                if let duration = jobState.elapsedTime {
+                    if duration < 60 { durationCategory = "short" }
+                    else if duration < 600 { durationCategory = "medium" }
+                    else { durationCategory = "long" }
+                } else {
+                    durationCategory = "unknown"
+                }
+                analytics.track(.encodeComplete, properties: ["duration": durationCategory])
+
                 sendNotification(
                     title: "Encoding Complete",
                     body: "\(jobState.config.inputURL.lastPathComponent) finished in \(elapsed)",
@@ -457,6 +510,9 @@ final class AppViewModel {
                 jobState.errorMessage = error.localizedDescription
                 jobState.completedAt = Date()
 
+                // Track encode failure (Issue #183)
+                analytics.track(.encodeFailed)
+
                 appendLog(.error, "Failed: \(jobState.config.inputURL.lastPathComponent) — \(error.localizedDescription)",
                           category: .encoding, jobID: jobState.config.id)
 
@@ -466,6 +522,9 @@ final class AppViewModel {
                     settingKey: "notifyOnFailure"
                 )
             }
+
+            // Deactivate system-level progress indicators (Issue #182)
+            activityIndicator.stopTracking()
 
             engine.queue.currentJob = nil
             activeJobState = nil
@@ -509,6 +568,7 @@ final class AppViewModel {
         engine.stopEncoding()
         activeJobState?.status = .cancelled
         activeJobState?.completedAt = Date()
+        activityIndicator.stopTracking()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
     }
