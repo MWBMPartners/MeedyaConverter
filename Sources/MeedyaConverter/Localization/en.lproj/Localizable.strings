@@ -1,0 +1,204 @@
+/* ============================================================================
+   MeedyaConverter — Localizable.strings (English)
+   Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+   Proprietary and confidential. Unauthorized copying or distribution
+   of this file, via any medium, is strictly prohibited.
+   ============================================================================
+
+   English (en) base localisation for MeedyaConverter.
+
+   Keys are grouped by UI area. Each key uses reverse-domain-style prefixing
+   to avoid collisions as the string catalog grows.
+
+   Phase 9 — Localization / i18n Support (Issue #303)
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   Navigation / Sidebar
+   --------------------------------------------------------------------------- */
+"sidebar.dashboard" = "Dashboard";
+"sidebar.sourceFiles" = "Source Files";
+"sidebar.outputSettings" = "Output Settings";
+"sidebar.encodingQueue" = "Encoding Queue";
+"sidebar.profiles" = "Profiles";
+"sidebar.comparison" = "Comparison";
+"sidebar.qualityMetrics" = "Quality Metrics";
+"sidebar.filterGraph" = "Filter Graph";
+"sidebar.parallelEncoding" = "Parallel Encoding";
+"sidebar.apiServer" = "API Server";
+"sidebar.settings" = "Settings";
+"sidebar.help" = "Help";
+"sidebar.activityLog" = "Activity Log";
+"sidebar.schedule" = "Schedule";
+"sidebar.benchmark" = "Benchmark";
+
+/* ---------------------------------------------------------------------------
+   Common Buttons
+   --------------------------------------------------------------------------- */
+"button.start" = "Start";
+"button.stop" = "Stop";
+"button.pause" = "Pause";
+"button.resume" = "Resume";
+"button.cancel" = "Cancel";
+"button.save" = "Save";
+"button.delete" = "Delete";
+"button.edit" = "Edit";
+"button.add" = "Add";
+"button.remove" = "Remove";
+"button.browse" = "Browse...";
+"button.copy" = "Copy";
+"button.export" = "Export";
+"button.import" = "Import";
+"button.reset" = "Reset";
+"button.apply" = "Apply";
+"button.close" = "Close";
+"button.done" = "Done";
+"button.clear" = "Clear";
+"button.refresh" = "Refresh";
+"button.retry" = "Retry";
+
+/* ---------------------------------------------------------------------------
+   Common Labels
+   --------------------------------------------------------------------------- */
+"label.name" = "Name";
+"label.status" = "Status";
+"label.progress" = "Progress";
+"label.duration" = "Duration";
+"label.size" = "Size";
+"label.format" = "Format";
+"label.codec" = "Codec";
+"label.resolution" = "Resolution";
+"label.bitrate" = "Bitrate";
+"label.frameRate" = "Frame Rate";
+"label.sampleRate" = "Sample Rate";
+"label.channels" = "Channels";
+"label.language" = "Language";
+"label.description" = "Description";
+"label.error" = "Error";
+"label.warning" = "Warning";
+"label.info" = "Info";
+"label.none" = "None";
+"label.unknown" = "Unknown";
+"label.loading" = "Loading...";
+"label.processing" = "Processing...";
+"label.complete" = "Complete";
+"label.failed" = "Failed";
+
+/* ---------------------------------------------------------------------------
+   Dashboard
+   --------------------------------------------------------------------------- */
+"dashboard.title" = "Dashboard";
+"dashboard.recentJobs" = "Recent Jobs";
+"dashboard.quickActions" = "Quick Actions";
+"dashboard.systemStatus" = "System Status";
+"dashboard.noRecentJobs" = "No recent encoding jobs.";
+
+/* ---------------------------------------------------------------------------
+   Source Files
+   --------------------------------------------------------------------------- */
+"sourceFiles.title" = "Source Files";
+"sourceFiles.dropPrompt" = "Drag and drop media files here";
+"sourceFiles.addFiles" = "Add Files";
+"sourceFiles.removeAll" = "Remove All";
+"sourceFiles.fileCount" = "%d files";
+
+/* ---------------------------------------------------------------------------
+   Output Settings
+   --------------------------------------------------------------------------- */
+"output.title" = "Output Settings";
+"output.videoCodec" = "Video Codec";
+"output.audioCodec" = "Audio Codec";
+"output.container" = "Container";
+"output.quality" = "Quality";
+"output.preset" = "Preset";
+"output.destination" = "Destination";
+
+/* ---------------------------------------------------------------------------
+   Encoding Queue
+   --------------------------------------------------------------------------- */
+"queue.title" = "Encoding Queue";
+"queue.startAll" = "Start All";
+"queue.pauseAll" = "Pause All";
+"queue.cancelAll" = "Cancel All";
+"queue.clearCompleted" = "Clear Completed";
+"queue.emptyQueue" = "No jobs in the queue.";
+"queue.jobCount" = "%d jobs";
+"queue.estimatedTime" = "Estimated time: %@";
+
+/* ---------------------------------------------------------------------------
+   Profiles
+   --------------------------------------------------------------------------- */
+"profiles.title" = "Encoding Profiles";
+"profiles.builtIn" = "Built-in";
+"profiles.custom" = "Custom";
+"profiles.createNew" = "Create New Profile";
+"profiles.duplicate" = "Duplicate";
+"profiles.deleteConfirm" = "Are you sure you want to delete this profile?";
+
+/* ---------------------------------------------------------------------------
+   Settings
+   --------------------------------------------------------------------------- */
+"settings.title" = "Settings";
+"settings.general" = "General";
+"settings.encoding" = "Encoding";
+"settings.appearance" = "Appearance";
+"settings.advanced" = "Advanced";
+"settings.about" = "About";
+"settings.language" = "Language";
+"settings.theme" = "Theme";
+"settings.notifications" = "Notifications";
+"settings.updates" = "Updates";
+
+/* ---------------------------------------------------------------------------
+   Quality Metrics
+   --------------------------------------------------------------------------- */
+"quality.title" = "Quality Metrics";
+"quality.reference" = "Reference";
+"quality.distorted" = "Distorted";
+"quality.runAnalysis" = "Run Analysis";
+"quality.vmafScore" = "VMAF Score";
+"quality.ssimScore" = "SSIM Score";
+"quality.psnrScore" = "PSNR Score";
+"quality.excellent" = "Excellent";
+"quality.good" = "Good";
+"quality.fair" = "Fair";
+"quality.poor" = "Poor";
+
+/* ---------------------------------------------------------------------------
+   Filter Graph
+   --------------------------------------------------------------------------- */
+"filterGraph.title" = "Filter Graph Editor";
+"filterGraph.palette" = "Filter Palette";
+"filterGraph.parameters" = "Parameters";
+"filterGraph.copyFilterString" = "Copy Filter String";
+"filterGraph.clearGraph" = "Clear Graph";
+
+/* ---------------------------------------------------------------------------
+   Parallel Encoding
+   --------------------------------------------------------------------------- */
+"parallel.title" = "Parallel Encoding";
+"parallel.maxConcurrent" = "Max Concurrent Jobs";
+"parallel.cpuAffinity" = "CPU Affinity";
+"parallel.gpuSharing" = "GPU Sharing";
+"parallel.activeJobs" = "Active Jobs";
+"parallel.throughput" = "Throughput";
+
+/* ---------------------------------------------------------------------------
+   API Server
+   --------------------------------------------------------------------------- */
+"apiServer.title" = "API Server";
+"apiServer.port" = "Port";
+"apiServer.apiKey" = "API Key";
+"apiServer.startServer" = "Start Server";
+"apiServer.stopServer" = "Stop Server";
+"apiServer.requestLog" = "Request Log";
+"apiServer.endpoints" = "Endpoints";
+
+/* ---------------------------------------------------------------------------
+   Alerts & Confirmations
+   --------------------------------------------------------------------------- */
+"alert.unsavedChanges" = "You have unsaved changes. Do you want to save before closing?";
+"alert.deleteConfirm" = "This action cannot be undone.";
+"alert.encodingComplete" = "Encoding completed successfully.";
+"alert.encodingFailed" = "Encoding failed. Check the activity log for details.";
+"alert.ffmpegNotFound" = "FFmpeg was not found. Please install FFmpeg or configure its path in Settings.";

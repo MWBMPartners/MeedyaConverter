@@ -55,6 +55,14 @@ let package = Package(
     name: "MeedyaConverter",
 
     // ---------------------------------------------------------------------
+    // Default Localisation
+    // ---------------------------------------------------------------------
+    // Required by SPM when the package contains localised resources
+    // (e.g., .lproj directories). English is the development language.
+    // ---------------------------------------------------------------------
+    defaultLocalization: "en",
+
+    // ---------------------------------------------------------------------
     // Supported Platforms
     // ---------------------------------------------------------------------
     // macOS 15.0 (Sequoia) is required for:
