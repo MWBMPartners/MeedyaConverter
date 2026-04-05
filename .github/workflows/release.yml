@@ -265,31 +265,13 @@ jobs:
       # Step 13: Create DMG
       # ---------------------------------------------------------------------
       # Package the signed and notarized .app bundle into a DMG disk image
-      # for distribution.
+      # for distribution using the create-dmg.sh helper script.
       # ---------------------------------------------------------------------
       - name: Create DMG
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          DMG_NAME="MeedyaConverter-${VERSION}-macOS.dmg"
-          VOLUME_NAME="MeedyaConverter ${VERSION}"
-
-          echo "Creating DMG: ${DMG_NAME}"
-
-          # Create a temporary directory for the DMG contents
-          mkdir -p dmg-staging
-          cp -R MeedyaConverter.app dmg-staging/
-
-          # Create a symbolic link to /Applications for drag-install
-          ln -s /Applications dmg-staging/Applications
-
-          # Create the DMG
-          hdiutil create -volname "$VOLUME_NAME" \
-            -srcfolder dmg-staging \
-            -ov -format UDZO \
-            "$DMG_NAME"
-
-          rm -rf dmg-staging
-          echo "DMG created: ${DMG_NAME}"
+          chmod +x scripts/create-dmg.sh
+          scripts/create-dmg.sh "MeedyaConverter.app" "$VERSION"
 
       # ---------------------------------------------------------------------
       # Step 14: Sign and notarize the DMG
@@ -331,30 +313,46 @@ jobs:
       # ---------------------------------------------------------------------
       # Step 16: Generate changelog
       # ---------------------------------------------------------------------
-      # Build a changelog from commit messages between the previous tag and
-      # the current tag. If no previous tag exists (first release), include
-      # all commits. The changelog is written to a temporary file for use
-      # in the GitHub Release body.
+      # Extract the changelog section for this version from CHANGELOG.md
+      # using the extract-changelog.sh helper. Falls back to git log if
+      # no matching section exists. The output is written to a temporary
+      # file for use in the GitHub Release body.
       # ---------------------------------------------------------------------
       - name: Generate changelog
         id: changelog
         run: |
-          # Find the previous tag (the most recent tag before the current one)
-          PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | sed -n '2p')
+          VERSION="${{ steps.version.outputs.version }}"
+          chmod +x scripts/extract-changelog.sh
+          scripts/extract-changelog.sh "$VERSION" > RELEASE_CHANGELOG.md
 
-          if [ -n "$PREVIOUS_TAG" ]; then
-            echo "Generating changelog from ${PREVIOUS_TAG} to ${{ steps.version.outputs.tag }}..."
-            CHANGELOG=$(git log "${PREVIOUS_TAG}..${{ steps.version.outputs.tag }}" \
-              --pretty=format:"- %s (%h)" --no-merges)
+          LINES=$(wc -l < RELEASE_CHANGELOG.md | tr -d ' ')
+          echo "Changelog generated with ${LINES} lines for version ${VERSION}."
+
+      # ---------------------------------------------------------------------
+      # Step 16b: Update CHANGELOG.md with release date
+      # ---------------------------------------------------------------------
+      # Stamp the [Unreleased] or version heading with today's date so
+      # the changelog reflects when the release was actually published.
+      # ---------------------------------------------------------------------
+      - name: Update CHANGELOG.md with release date
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          RELEASE_DATE=$(date +%Y-%m-%d)
+
+          # Replace [Unreleased] with the version and date, and add a new
+          # [Unreleased] section above it
+          if grep -q "^\## \[Unreleased\]" CHANGELOG.md; then
+            sed -i.bak "s/^## \[Unreleased\]/## [Unreleased]\n\n---\n\n## [${VERSION}] - ${RELEASE_DATE}/" CHANGELOG.md
+            rm -f CHANGELOG.md.bak
+            echo "Updated CHANGELOG.md: [Unreleased] -> [${VERSION}] - ${RELEASE_DATE}"
+          elif grep -q "^\## \[${VERSION}\]" CHANGELOG.md; then
+            # If the version heading already exists but has no date, add it
+            sed -i.bak "s/^## \[${VERSION}\].*/## [${VERSION}] - ${RELEASE_DATE}/" CHANGELOG.md
+            rm -f CHANGELOG.md.bak
+            echo "Updated CHANGELOG.md: added date to [${VERSION}]"
           else
-            echo "No previous tag found -- including all commits in changelog."
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+            echo "No matching section found in CHANGELOG.md to update."
           fi
-
-          # Write changelog to a file (multi-line output is tricky with GITHUB_OUTPUT)
-          echo "$CHANGELOG" > RELEASE_CHANGELOG.md
-
-          echo "Changelog generated with $(echo "$CHANGELOG" | wc -l | tr -d ' ') entries."
 
       # ---------------------------------------------------------------------
       # Step 17: Create GitHub Release
