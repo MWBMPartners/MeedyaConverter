@@ -162,8 +162,8 @@ jobs:
       - name: Run SwiftLint
         run: |
           if command -v swiftlint &> /dev/null; then
-            echo "SwiftLint found -- running lint..."
-            swiftlint lint --reporter github-actions-logging --quiet || true
+            echo "SwiftLint found -- running lint on Sources/ and Tests/ only..."
+            swiftlint lint --config .swiftlint.yml --reporter github-actions-logging --quiet || true
           else
             echo "SwiftLint not available -- skipping."
           fi

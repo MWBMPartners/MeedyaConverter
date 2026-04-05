@@ -1,0 +1,41 @@
+# ============================================================================
+# MeedyaConverter — SwiftLint Configuration
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+# ============================================================================
+
+# Only lint our source code — exclude all third-party dependencies,
+# build artifacts, and SPM checkouts.
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - .swiftpm
+  - Package.swift
+  - Plugins
+
+# Disable rules that conflict with the project's coding style
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  - file_length
+  - function_body_length
+  - type_body_length
+  - cyclomatic_complexity
+  - function_parameter_count
+  - large_tuple
+  - nesting
+  - identifier_name
+  - force_cast
+  - force_try
+  - force_unwrapping
+  - todo
+
+# Allow longer type names for descriptive types
+type_name:
+  min_length: 2
+  max_length: 60
+
+# Reporter for GitHub Actions annotation format
+reporter: "github-actions-logging"
