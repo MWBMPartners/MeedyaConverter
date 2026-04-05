@@ -503,6 +503,10 @@ public struct FFmpegArgumentBuilder: Sendable {
         var args: [String] = []
 
         // Per-stream video codec overrides (Phase 3.5 / Issue #41)
+        // FFmpeg supports per-stream codec selection via -c:v:N but some options
+        // (CRF, preset) are global encoder options that don't accept stream specifiers.
+        // For per-stream quality/preset, we apply the first override's values globally
+        // since FFmpeg uses one encoder instance per codec type.
         if !perStreamVideoCodec.isEmpty || !perStreamVideoPassthrough.isEmpty {
             for (index, isPassthrough) in perStreamVideoPassthrough.sorted(by: { $0.key < $1.key }) {
                 if isPassthrough {
@@ -514,19 +518,24 @@ public struct FFmpegArgumentBuilder: Sendable {
                 if let encoderName = codec.ffmpegEncoder {
                     args.append(contentsOf: ["-c:v:\(index)", encoderName])
                 }
-                if let crf = perStreamVideoCRF[index] {
-                    args.append(contentsOf: ["-crf:v:\(index)", "\(crf)"])
-                }
                 if let br = perStreamVideoBitrate[index] {
                     args.append(contentsOf: ["-b:v:\(index)", formatBitrate(br)])
                 }
-                if let preset = perStreamVideoPreset[index] {
-                    args.append(contentsOf: ["-preset:v:\(index)", preset])
-                }
             }
-            // Still apply global settings for streams without overrides
-            if videoPassthrough && perStreamVideoCodec.isEmpty {
-                args.append(contentsOf: ["-c:v", "copy"])
+            // Apply CRF and preset from the first video override (global encoder options)
+            if let firstCRF = perStreamVideoCRF.sorted(by: { $0.key < $1.key }).first?.value {
+                args.append(contentsOf: ["-crf", "\(firstCRF)"])
+            }
+            if let firstPreset = perStreamVideoPreset.sorted(by: { $0.key < $1.key }).first?.value {
+                args.append(contentsOf: ["-preset", firstPreset])
+            }
+            // Apply global codec for streams without per-stream overrides
+            if videoPassthrough {
+                // Only if no per-stream codec overrides set the global default to copy
+                let overriddenIndices = Set(perStreamVideoCodec.keys).union(Set(perStreamVideoPassthrough.keys))
+                if overriddenIndices.isEmpty {
+                    args.append(contentsOf: ["-c:v", "copy"])
+                }
             }
             return args
         }

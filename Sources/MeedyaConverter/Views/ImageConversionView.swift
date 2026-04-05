@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 import ConverterEngine
 
 // MARK: - ImageConversionView

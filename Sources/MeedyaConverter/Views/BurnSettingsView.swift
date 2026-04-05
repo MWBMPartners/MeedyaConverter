@@ -370,36 +370,41 @@ struct BurnSettingsView: View {
     // MARK: - Actions
 
     private func detectDrives() {
-        // Use drutil to detect available drives on macOS
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
-        task.arguments = ["list"]
+        // Run drutil on a background thread to avoid blocking the UI
+        Task.detached {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
+            task.arguments = ["list"]
 
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
+            let pipe = Pipe()
+            task.standardOutput = pipe
+            task.standardError = pipe
 
-        do {
-            try task.run()
-            task.waitUntilExit()
+            do {
+                try task.run()
+                task.waitUntilExit()
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? ""
 
-            if output.contains("No drives") || output.isEmpty {
-                availableDrives = []
-                driveStatus = .noDrive
-            } else {
-                // Parse drutil output for drive info
-                availableDrives = parseDrutilOutput(output)
-                if let first = availableDrives.first {
-                    selectedDevicePath = first.devicePath
-                    driveStatus = .ready
+                await MainActor.run {
+                    if output.contains("No drives") || output.isEmpty {
+                        availableDrives = []
+                        driveStatus = .noDrive
+                    } else {
+                        availableDrives = parseDrutilOutput(output)
+                        if let first = availableDrives.first {
+                            selectedDevicePath = first.devicePath
+                            driveStatus = .ready
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    availableDrives = []
+                    driveStatus = .noDrive
                 }
             }
-        } catch {
-            availableDrives = []
-            driveStatus = .noDrive
         }
     }
 
@@ -546,12 +551,12 @@ struct BurnSettingsView: View {
     }
 
     private func ejectDisc() {
-        let args = DiscBurner.buildEjectArguments(devicePath: selectedDevicePath)
-        Task {
+        Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
-            process.arguments = ["eject"]
+            process.arguments = DiscBurner.buildDrutilArguments(action: "eject")
             try? process.run()
+            process.waitUntilExit()
         }
     }
 

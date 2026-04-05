@@ -414,8 +414,8 @@ final class AppViewModel {
                       category: .encoding, jobID: jobState.config.id)
 
             do {
-                try await engine.encode(job: jobState.config) { [self] progressInfo in
-                    Task { @MainActor in
+                try await engine.encode(job: jobState.config) { progressInfo in
+                    Task { @MainActor [weak self] in
                         jobState.progress = progressInfo.fractionComplete ?? 0
                         jobState.speed = progressInfo.speed
                         jobState.currentBitrate = progressInfo.bitrate
@@ -431,9 +431,9 @@ final class AppViewModel {
 
                         // Log raw FFmpeg output
                         if let raw = progressInfo.rawLine, !raw.isEmpty {
-                            self.appendLog(.debug, raw, source: .ffmpeg,
-                                           category: .progress, rawOutput: raw,
-                                           jobID: jobState.config.id)
+                            self?.appendLog(.debug, raw, source: .ffmpeg,
+                                            category: .progress, rawOutput: raw,
+                                            jobID: jobState.config.id)
                         }
                     }
                 }
