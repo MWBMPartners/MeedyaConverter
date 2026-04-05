@@ -63,6 +63,22 @@ struct StreamInspectorView: View {
                         AudioStreamRow(stream: stream)
                     }
                 }
+
+                // Audio waveform preview (Issue #289)
+                Section("Audio Waveform") {
+                    @Bindable var vm = viewModel
+                    AudioWaveformView(
+                        waveformData: viewModel.currentWaveformData,
+                        selectedChannel: $vm.selectedWaveformChannel,
+                        isAnalysing: viewModel.isAnalysingWaveform,
+                        onAnalyse: {
+                            Task {
+                                await viewModel.analyseAudioWaveform()
+                            }
+                        }
+                    )
+                    .frame(height: 180)
+                }
             }
 
             // Subtitle streams
