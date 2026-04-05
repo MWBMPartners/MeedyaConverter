@@ -13,7 +13,7 @@ Only the latest release within a supported major version receives security updat
 
 If you discover a security vulnerability in MeedyaConverter, we ask that you practice **responsible disclosure**. Please do **not** open a public issue.
 
-Instead, report vulnerabilities by emailing **<security@mwbmpartners.com>** with the following information:
+Instead, report vulnerabilities by emailing **<Security@MWBMpartners.LTD>** with the following information:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce the issue
