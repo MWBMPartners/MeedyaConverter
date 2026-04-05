@@ -120,7 +120,7 @@ struct ProbeCommand: AsyncParsableCommand {
             print("Audio Streams:")
             for stream in audioStreams {
                 var info = "  #\(stream.streamIndex): \(stream.codecName ?? "unknown")"
-                if let layout = stream.channelLayout { info += " \(layout.description)" }
+                if let layout = stream.channelLayout { info += " \(layout.displayName)" }
                 if let sr = stream.sampleRate { info += " \(sr) Hz" }
                 if let br = stream.bitrate { info += " \(br / 1000) kbps" }
                 if let lang = stream.language { info += " [\(lang)]" }
@@ -156,7 +156,7 @@ struct ProbeCommand: AsyncParsableCommand {
     }
 
     private func printColourProperties(_ colour: ColourProperties) {
-        if let primaries = colour.colourPrimaries {
+        if let primaries = colour.primaries {
             print("    Primaries: \(primaries)")
         }
         if let transfer = colour.transferCharacteristics {

@@ -209,7 +209,7 @@ struct MetadataEditorView: View {
     private func loadCurrentMetadata() {
         guard let file = viewModel.sourceFiles.first else { return }
 
-        globalTitle = file.title ?? ""
+        globalTitle = file.metadata["title"] ?? ""
 
         streamEdits = file.streams.map { stream in
             StreamEditState(

@@ -124,13 +124,13 @@ public struct PlatformFormatPolicy: Sendable {
         switch platform {
         case .macOS, .iOS, .tvOS:
             switch codec {
-            case .aacLC, .aacHE, .aacHEv2, .alac, .ac3, .eac3, .flac, .mp3, .pcm:
+            case .aacLC, .heAAC, .heAACv2, .alac, .ac3, .eac3, .flac, .mp3, .pcm:
                 return .supported
             case .trueHD:
                 return .transcodeMayBeRequired(reason: "TrueHD requires compatible AV receiver passthrough")
             case .opus:
                 return .supported // macOS 11+, iOS 14+
-            case .dts, .dtsHDMA, .dtsHDHRA, .dtsX:
+            case .dts, .dtsHD, .dtsX:
                 return .unsupported(reason: "DTS is not natively supported on Apple platforms")
             default:
                 return .transcodeMayBeRequired(reason: "\(codec.rawValue) may need transcoding")
@@ -138,9 +138,9 @@ public struct PlatformFormatPolicy: Sendable {
 
         case .windows:
             switch codec {
-            case .aacLC, .aacHE, .aacHEv2, .ac3, .eac3, .flac, .mp3, .pcm:
+            case .aacLC, .heAAC, .heAACv2, .ac3, .eac3, .flac, .mp3, .pcm:
                 return .supported
-            case .dts, .dtsHDMA, .dtsHDHRA, .dtsX:
+            case .dts, .dtsHD, .dtsX:
                 return .supported
             case .trueHD:
                 return .supported
@@ -152,7 +152,7 @@ public struct PlatformFormatPolicy: Sendable {
 
         case .android, .chromecast, .fireTV:
             switch codec {
-            case .aacLC, .aacHE, .aacHEv2, .ac3, .eac3, .mp3, .opus, .vorbis, .flac:
+            case .aacLC, .heAAC, .heAACv2, .ac3, .eac3, .mp3, .opus, .vorbis, .flac:
                 return .supported
             case .trueHD:
                 return .transcodeMayBeRequired(reason: "TrueHD requires compatible receiver")
@@ -164,7 +164,7 @@ public struct PlatformFormatPolicy: Sendable {
 
         case .webBrowser:
             switch codec {
-            case .aacLC, .aacHE, .mp3, .opus, .vorbis, .flac:
+            case .aacLC, .heAAC, .mp3, .opus, .vorbis, .flac:
                 return .supported
             case .ac3, .eac3:
                 return .transcodeMayBeRequired(reason: "Dolby audio not universally supported in browsers")

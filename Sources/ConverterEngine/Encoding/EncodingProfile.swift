@@ -139,6 +139,13 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Whether to passthrough subtitles.
     public var subtitlePassthrough: Bool
 
+    // MARK: - Per-Stream Overrides (Phase 3.5 / Issue #41)
+
+    /// Per-stream encoding overrides allowing different codec, bitrate, and quality
+    /// settings for each individual stream. When set, these take precedence over the
+    /// profile-level settings for the corresponding stream index.
+    public var perStreamSettings: PerStreamSettings?
+
     // MARK: - Container
 
     /// The output container format.
@@ -191,6 +198,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         loudnessNormalization: String? = nil,
         applyPeakLimiter: Bool = false,
         subtitlePassthrough: Bool = true,
+        perStreamSettings: PerStreamSettings? = nil,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
         videoBufferSize: Int? = nil
@@ -231,6 +239,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.loudnessNormalization = loudnessNormalization
         self.applyPeakLimiter = applyPeakLimiter
         self.subtitlePassthrough = subtitlePassthrough
+        self.perStreamSettings = perStreamSettings
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
         self.videoBufferSize = videoBufferSize
@@ -311,6 +320,39 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
 
         // Subtitles
         builder.subtitlePassthrough = subtitlePassthrough
+
+        // Per-stream overrides (Phase 3.5 / Issue #41)
+        if let perStream = perStreamSettings {
+            // Apply per-stream audio overrides to the builder
+            for (index, audioOverride) in perStream.audioOverrides {
+                if let passthrough = audioOverride.passthrough, passthrough {
+                    // Passthrough: no codec override needed, handled by copy
+                } else if let codec = audioOverride.codec {
+                    builder.perStreamAudioCodec[index] = codec
+                }
+                if let bitrate = audioOverride.bitrate {
+                    builder.perStreamAudioBitrate[index] = bitrate
+                }
+            }
+
+            // Apply per-stream video codec overrides
+            for (index, videoOverride) in perStream.videoOverrides {
+                if let passthrough = videoOverride.passthrough, passthrough {
+                    builder.perStreamVideoPassthrough[index] = true
+                } else if let codec = videoOverride.codec {
+                    builder.perStreamVideoCodec[index] = codec
+                }
+                if let crf = videoOverride.crf {
+                    builder.perStreamVideoCRF[index] = crf
+                }
+                if let bitrate = videoOverride.bitrate {
+                    builder.perStreamVideoBitrate[index] = bitrate
+                }
+                if let preset = videoOverride.preset {
+                    builder.perStreamVideoPreset[index] = preset
+                }
+            }
+        }
 
         // Container
         builder.containerFormat = containerFormat
@@ -922,6 +964,7 @@ public final class EncodingProfileStore: @unchecked Sendable {
             loudnessNormalization: profile.loudnessNormalization,
             applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
+            perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,
             videoBufferSize: profile.videoBufferSize

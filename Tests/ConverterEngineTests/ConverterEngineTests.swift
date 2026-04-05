@@ -948,7 +948,7 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertTrue(mkv.supportsVideoCodec(.vp9))
         XCTAssertTrue(mkv.supportsAudioCodec(.flac))
         XCTAssertTrue(mkv.supportsAudioCodec(.trueHD))
-        XCTAssertTrue(mkv.supportsAudioCodec(.dtsHDMA))
+        XCTAssertTrue(mkv.supportsAudioCodec(.dtsHD))
     }
 
     /// Verifies WebM container restricts to VP8/VP9/AV1 + Opus/Vorbis.

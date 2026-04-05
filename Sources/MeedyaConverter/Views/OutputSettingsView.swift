@@ -25,6 +25,7 @@ struct OutputSettingsView: View {
 
     @State private var showProfileManager = false
     @State private var showStreamMetadataEditor = false
+    @State private var showPerStreamSettings = false
 
     // MARK: - Body
 
@@ -47,6 +48,11 @@ struct OutputSettingsView: View {
         .sheet(isPresented: $showStreamMetadataEditor) {
             if let file = viewModel.selectedFile {
                 StreamMetadataEditorView(mediaFile: file)
+            }
+        }
+        .sheet(isPresented: $showPerStreamSettings) {
+            if let file = viewModel.selectedFile {
+                PerStreamSettingsView(mediaFile: file)
             }
         }
     }
@@ -90,6 +96,16 @@ struct OutputSettingsView: View {
             if let file = viewModel.selectedFile {
                 Section("Stream Selection") {
                     streamSelectionControls(file: file)
+                }
+
+                // Per-stream encoding settings (Phase 3.5 / Issue #41)
+                Section("Per-Stream Encoding") {
+                    perStreamSettingsSummary(file: file)
+
+                    Button("Configure Per-Stream Settings...") {
+                        showPerStreamSettings = true
+                    }
+                    .font(.caption)
                 }
             }
 
@@ -505,6 +521,31 @@ struct OutputSettingsView: View {
         // Map all streams toggle
         Toggle("Map all streams to output", isOn: $vm.mapAllStreams)
             .accessibilityLabel("Include all streams from source in output")
+    }
+
+    // MARK: - Per-Stream Settings Summary (Phase 3.5 / Issue #41)
+
+    @ViewBuilder
+    private func perStreamSettingsSummary(file: MediaFile) -> some View {
+        let perStream = viewModel.selectedProfile.perStreamSettings
+
+        if let perStream, perStream.hasOverrides {
+            let videoCount = perStream.videoOverrides.count
+            let audioCount = perStream.audioOverrides.count
+            let subtitleCount = perStream.subtitleOverrides.count
+
+            HStack(spacing: 4) {
+                Image(systemName: "tuningfork")
+                    .foregroundStyle(.blue)
+                Text("\(videoCount) video, \(audioCount) audio, \(subtitleCount) subtitle override(s) configured")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+            }
+        } else {
+            Text("All streams use profile defaults. Configure per-stream overrides to set different codecs, bitrates, or quality per stream.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Compatibility Validation

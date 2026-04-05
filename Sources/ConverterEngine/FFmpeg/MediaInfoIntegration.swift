@@ -56,15 +56,15 @@ public enum MediaInfoField: String, Sendable {
     case encodedDate = "Encoded_Date"
 
     // Video
-    case videoFormat = "Format"
+    case videoFormat = "Video/Format"
     case videoFormatProfile = "Format_Profile"
-    case videoBitRate = "BitRate"
+    case videoBitRate = "Video/BitRate"
     case width = "Width"
     case height = "Height"
     case displayAspectRatio = "DisplayAspectRatio"
     case frameRate = "FrameRate"
     case frameRateMode = "FrameRate_Mode"
-    case bitDepth = "BitDepth"
+    case bitDepth = "Video/BitDepth"
     case chromaSubsampling = "ChromaSubsampling"
     case colorSpace = "ColorSpace"
     case colorPrimaries = "colour_primaries"
@@ -82,17 +82,17 @@ public enum MediaInfoField: String, Sendable {
     case encoderSettings = "Encoded_Library_Settings"
 
     // Audio
-    case audioFormat = "Format"
+    case audioFormat = "Audio/Format"
     case audioChannels = "Channel_s_"
     case audioChannelLayout = "ChannelLayout"
     case audioSamplingRate = "SamplingRate"
-    case audioBitRate = "BitRate"
-    case audioBitDepth = "BitDepth"
+    case audioBitRate = "Audio/BitRate"
+    case audioBitDepth = "Audio/BitDepth"
     case audioCompressionMode = "Compression_Mode"
     case audioFormatAdditionalFeatures = "Format_AdditionalFeatures"
 
     // Text/Subtitle
-    case subtitleFormat = "Format"
+    case subtitleFormat = "Text/Format"
     case subtitleLanguage = "Language"
     case subtitleForced = "Forced"
     case subtitleDefault = "Default"

@@ -79,7 +79,7 @@ struct HelpView: View {
                 HStack {
                     Image(systemName: topic.systemImage)
                         .font(.title)
-                        .foregroundStyle(.accent)
+                        .foregroundStyle(Color.accentColor)
                     Text(topic.title)
                         .font(.title)
                         .fontWeight(.bold)

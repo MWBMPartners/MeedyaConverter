@@ -277,6 +277,7 @@ struct ActivityLogView: View {
         case .ffmpeg: return .secondary
         case .mediainfo: return .purple
         case .doviTool: return .orange
+        case .hlgTools: return .teal
         case .system: return .green
         }
     }

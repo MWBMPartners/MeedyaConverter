@@ -186,7 +186,7 @@ struct VideoStreamRow: View {
             if stream.isDefault {
                 badge("Default", .blue)
             }
-            for hdr in stream.hdrFormats {
+            ForEach(stream.hdrFormats, id: \.self) { hdr in
                 badge(hdrLabel(hdr), .purple)
             }
             if stream.isStereo3D {
@@ -200,8 +200,10 @@ struct VideoStreamRow: View {
         case .hdr10: return "HDR10"
         case .hdr10Plus: return "HDR10+"
         case .dolbyVision: return "DV"
+        case .dolbyVisionHDR10: return "DV+HDR10"
         case .hlg: return "HLG"
         case .pq: return "PQ"
+        case .sdr: return "SDR"
         }
     }
 

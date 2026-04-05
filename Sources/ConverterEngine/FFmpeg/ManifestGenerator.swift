@@ -450,7 +450,7 @@ public final class ManifestGenerator: @unchecked Sendable {
         let audio: String
         switch audioCodec {
         case .aacLC: audio = "mp4a.40.2"
-        case .aacHE: audio = "mp4a.40.5"
+        case .heAAC: audio = "mp4a.40.5"
         case .ac3: audio = "ac-3"
         case .eac3: audio = "ec-3"
         default: audio = "mp4a.40.2"

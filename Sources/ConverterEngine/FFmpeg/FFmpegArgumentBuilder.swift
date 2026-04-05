@@ -194,6 +194,23 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Per-stream audio bitrate overrides.
     public var perStreamAudioBitrate: [Int: Int] = [:]
 
+    // MARK: - Per-Stream Video Settings (Phase 3.5 / Issue #41)
+
+    /// Per-stream video codec overrides, keyed by output video stream index.
+    public var perStreamVideoCodec: [Int: VideoCodec] = [:]
+
+    /// Per-stream video passthrough flags.
+    public var perStreamVideoPassthrough: [Int: Bool] = [:]
+
+    /// Per-stream video CRF overrides.
+    public var perStreamVideoCRF: [Int: Int] = [:]
+
+    /// Per-stream video bitrate overrides.
+    public var perStreamVideoBitrate: [Int: Int] = [:]
+
+    /// Per-stream video preset overrides.
+    public var perStreamVideoPreset: [Int: String] = [:]
+
     // MARK: - Stream Selection
 
     /// Specific video stream index to use from source. Nil means default.
@@ -477,8 +494,42 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// Build video codec and quality arguments.
+    ///
+    /// Supports two modes:
+    /// 1. **Global**: Single video codec for all streams (default).
+    /// 2. **Per-stream**: Different codecs per output video stream via `perStreamVideoCodec`.
+    ///    Uses FFmpeg stream specifier syntax (-c:v:0, -c:v:1, etc.).
     private func buildVideoArguments() -> [String] {
         var args: [String] = []
+
+        // Per-stream video codec overrides (Phase 3.5 / Issue #41)
+        if !perStreamVideoCodec.isEmpty || !perStreamVideoPassthrough.isEmpty {
+            for (index, isPassthrough) in perStreamVideoPassthrough.sorted(by: { $0.key < $1.key }) {
+                if isPassthrough {
+                    args.append(contentsOf: ["-c:v:\(index)", "copy"])
+                }
+            }
+            for (index, codec) in perStreamVideoCodec.sorted(by: { $0.key < $1.key }) {
+                guard perStreamVideoPassthrough[index] != true else { continue }
+                if let encoderName = codec.ffmpegEncoder {
+                    args.append(contentsOf: ["-c:v:\(index)", encoderName])
+                }
+                if let crf = perStreamVideoCRF[index] {
+                    args.append(contentsOf: ["-crf:v:\(index)", "\(crf)"])
+                }
+                if let br = perStreamVideoBitrate[index] {
+                    args.append(contentsOf: ["-b:v:\(index)", formatBitrate(br)])
+                }
+                if let preset = perStreamVideoPreset[index] {
+                    args.append(contentsOf: ["-preset:v:\(index)", preset])
+                }
+            }
+            // Still apply global settings for streams without overrides
+            if videoPassthrough && perStreamVideoCodec.isEmpty {
+                args.append(contentsOf: ["-c:v", "copy"])
+            }
+            return args
+        }
 
         if videoPassthrough {
             // Passthrough — copy video without re-encoding

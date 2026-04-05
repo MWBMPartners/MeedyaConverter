@@ -280,7 +280,7 @@ struct AboutTab: View {
             // App icon placeholder
             Image(systemName: "film.stack")
                 .font(.system(size: 64))
-                .foregroundStyle(.accent)
+                .foregroundStyle(Color.accentColor)
                 .accessibilityHidden(true)
 
             Text("MeedyaConverter")
