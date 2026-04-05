@@ -124,7 +124,7 @@ struct PipelineEditorView: View {
             }
         } icon: {
             Image(systemName: step.type.systemImage)
-                .foregroundStyle(.accent)
+                .foregroundStyle(Color.accentColor)
         }
     }
 

@@ -209,7 +209,7 @@ final class AppViewModel {
         scheduler.onJobReady = { [weak self] config in
             guard let self else { return }
             Task { @MainActor in
-                self.engine.queue.enqueue(config)
+                self.engine.queue.addJob(config)
                 self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
             }
         }
@@ -237,14 +237,14 @@ final class AppViewModel {
 
         do {
             // Run FFmpeg to extract PCM data
-            try await engine.runFFmpeg(arguments: args)
+            try await engine.runFFmpeg(arguments: args, onProgress: { _ in })
 
             // Parse the raw PCM into waveform data
             let duration = file.duration ?? 0
             if let data = AudioWaveformGenerator.parseWaveformData(
                 from: outputPath,
                 duration: duration,
-                channels: file.audioStreams.first?.channels ?? 1
+                channels: file.audioStreams.first?.channelLayout?.channelCount ?? 1
             ) {
                 currentWaveformData = data
                 appendLog(.info, "Waveform analysis complete for \(file.fileName)")

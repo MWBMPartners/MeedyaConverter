@@ -182,7 +182,7 @@ struct ScheduleView: View {
             Section("Next Scheduled") {
                 HStack {
                     Image(systemName: "clock.badge.checkmark")
-                        .foregroundStyle(.accent)
+                        .foregroundStyle(Color.accentColor)
                         .font(.title2)
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -223,8 +223,8 @@ struct ScheduleView: View {
             .fontWeight(.medium)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(.accent.opacity(0.1))
-            .foregroundStyle(.accent)
+            .background(Color.accentColor.opacity(0.1))
+            .foregroundStyle(Color.accentColor)
             .clipShape(Capsule())
     }
 
