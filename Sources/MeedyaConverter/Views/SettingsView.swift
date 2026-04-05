@@ -57,6 +57,18 @@ struct SettingsView: View {
                 NotificationSettingsTab()
             }
 
+            Tab("Hooks", systemImage: "bolt.horizontal") {
+                PostEncodeActionsView()
+            }
+
+            Tab("Webhooks", systemImage: "globe") {
+                WebhookSettingsView()
+            }
+
+            Tab("Media Server", systemImage: "server.rack") {
+                MediaServerSettingsView()
+            }
+
             Tab("Analytics", systemImage: "chart.bar") {
                 AnalyticsSettingsView()
             }
