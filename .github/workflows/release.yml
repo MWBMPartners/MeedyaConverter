@@ -148,14 +148,41 @@ jobs:
       # export it as an environment variable for use in later steps.
       # Also capture the full tag name for the release title.
       # ---------------------------------------------------------------------
-      - name: Extract version from tag
+      - name: Extract and validate semver from tag
         id: version
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG_NAME#v}"
+
+          # Validate semver format: X.Y.Z or X.Y.Z-prerelease.N
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$'; then
+            echo "::error::Tag '${TAG_NAME}' does not follow semver (expected vX.Y.Z or vX.Y.Z-label.N)"
+            exit 1
+          fi
+
+          # Extract major version for pre-release detection
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+
+          # Versions < v1.0.0 are pre-release by default (semver §11)
+          # Also treat tags with -alpha, -beta, -rc suffixes as pre-release
+          IS_PRERELEASE="false"
+          if [ "$MAJOR" -lt 1 ]; then
+            IS_PRERELEASE="true"
+            echo "Version ${VERSION} is < 1.0.0 — marking as pre-release per semver"
+          elif echo "$VERSION" | grep -qE '-'; then
+            IS_PRERELEASE="true"
+            echo "Version ${VERSION} has pre-release suffix — marking as pre-release"
+          fi
+
+          # Sync VERSION file to match the tag
+          echo "${VERSION}" > VERSION
+          echo "VERSION file updated to: ${VERSION}"
+
           echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Release version: ${VERSION} (tag: ${TAG_NAME})"
+          echo "major=${MAJOR}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION} (tag: ${TAG_NAME}, prerelease: ${IS_PRERELEASE})"
 
       # ---------------------------------------------------------------------
       # Step 9: Create app bundle structure
@@ -360,10 +387,24 @@ jobs:
             ASSETS+=("${CLI_TAR}#meedya-convert ${VERSION} (macOS CLI)")
           fi
 
+          # Determine release flags based on semver pre-release status
+          RELEASE_FLAGS=()
+          IS_PRERELEASE="${{ steps.version.outputs.is_prerelease }}"
+
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            RELEASE_FLAGS+=(--prerelease)
+            TITLE="Pre-Release ${{ steps.version.outputs.tag }}"
+            echo "Creating pre-release (version < 1.0.0 or has pre-release suffix)"
+          else
+            RELEASE_FLAGS+=(--latest)
+            TITLE="Release ${{ steps.version.outputs.tag }}"
+            echo "Creating production release"
+          fi
+
           gh release create "${{ steps.version.outputs.tag }}" \
-            --title "Production Release ${{ steps.version.outputs.tag }}" \
+            --title "$TITLE" \
             --notes-file RELEASE_CHANGELOG.md \
-            --latest \
+            "${RELEASE_FLAGS[@]}" \
             "${ASSETS[@]}"
 
       # ---------------------------------------------------------------------
