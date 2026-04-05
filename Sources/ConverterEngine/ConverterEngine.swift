@@ -75,7 +75,7 @@ public struct ConverterEngine: Sendable {
     /// During development (0.x.y), the public API is not yet considered
     /// stable and may change between minor versions.
     // ---------------------------------------------------------------------
-    public static let version: String = "0.1.0"
+    public static let version: String = AppInfo.Version.number
 
     // ---------------------------------------------------------------------
     // MARK: Build Metadata

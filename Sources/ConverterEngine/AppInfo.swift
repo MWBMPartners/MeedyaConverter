@@ -1,0 +1,112 @@
+// ============================================================================
+// MeedyaConverter — AppInfo (Central Application Identity)
+// Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+// Proprietary and confidential. Unauthorized copying or distribution
+// of this file, via any medium, is strictly prohibited.
+// ============================================================================
+
+import Foundation
+
+/// Central source of truth for application identity, version, vendor,
+/// copyright, and license information.
+///
+/// Follows the pattern established by `infoAppVer.php` in the phpWhoIs project.
+/// All targets (ConverterEngine, meedya-convert, MeedyaConverter) reference
+/// this single file for version and identity data.
+public enum AppInfo {
+
+    // MARK: - Application Identity
+
+    public enum Application {
+        /// Reverse-DNS bundle identifier.
+        public static let id = "com.mwbmpartners.meedyaconverter"
+
+        /// Human-readable application name.
+        public static let name = "MeedyaConverter"
+
+        /// Application website URL.
+        public static let websiteURL = "https://meedya.app"
+
+        /// Short description.
+        public static let synopsis = "Professional cross-platform media conversion with passthrough, HDR, spatial audio, disc ripping, and cloud uploads."
+
+        /// SEO/discovery keywords.
+        public static let keywords = "media converter, video transcoder, FFmpeg, HDR, HLS, DASH, disc ripping, audio conversion, image conversion"
+    }
+
+    // MARK: - Version
+
+    public enum Version {
+        /// Semantic version number (X.Y.Z).
+        public static let number = "0.1.0"
+
+        /// Optional version codename.
+        public static let codename: String? = nil
+
+        /// Development status: "Alpha", "Beta", "RC", or nil for release.
+        public static let developmentStatus: String? = "Alpha"
+
+        /// Full display version string (e.g., "0.1.0-alpha").
+        public static var displayString: String {
+            if let status = developmentStatus {
+                return "\(number)-\(status.lowercased())"
+            }
+            return number
+        }
+
+        /// Repo build metadata (populated by CI at build time).
+        public enum Build {
+            /// Git commit SHA (full). Set by CI via environment or code generation.
+            public static var commitSHA: String? = nil
+
+            /// Git commit SHA (short, 7 chars).
+            public static var commitSHAShort: String? {
+                commitSHA.map { String($0.prefix(7)) }
+            }
+
+            /// Git commit date (ISO 8601).
+            public static var commitDate: String? = nil
+
+            /// GitHub commit URL.
+            public static var commitURL: String? {
+                guard let sha = commitSHA else { return nil }
+                return "https://github.com/MWBMPartners/MeedyaConverter/commit/\(sha)"
+            }
+        }
+    }
+
+    // MARK: - Vendor
+
+    public enum Vendor {
+        public static let name = "MWBM Partners Ltd"
+        public static let websiteURL = "https://www.MWBMpartners.Ltd"
+
+        public enum Parent {
+            public static let name = "MWBM Partners Ltd"
+            public static let websiteURL = "https://www.MWBMpartners.Ltd"
+        }
+    }
+
+    // MARK: - Copyright
+
+    public enum Copyright {
+        public static let startYear = "2026"
+
+        /// Dynamically generates copyright string with current year.
+        public static var statement: String {
+            let currentYear = Calendar.current.component(.year, from: Date())
+            let yearString = currentYear > Int(startYear)! ? "\(startYear)-\(currentYear)" : startYear
+            return "Copyright \u{00A9} \(yearString) \(Vendor.name). All rights reserved."
+        }
+
+        public static let rightsStatement = "All Rights Reserved"
+    }
+
+    // MARK: - License
+
+    public enum License {
+        public static let type = "Proprietary"
+        public static let userLicenseType = "Freemium"
+        public static let userLicenseCost = "Free (with paid tiers)"
+    }
+}

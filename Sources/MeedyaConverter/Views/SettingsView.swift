@@ -303,17 +303,19 @@ struct AboutTab: View {
                 .foregroundStyle(Color.accentColor)
                 .accessibilityHidden(true)
 
-            Text("MeedyaConverter")
+            Text(AppInfo.Application.name)
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Professional Media Conversion")
+            Text(AppInfo.Application.synopsis)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
 
             // Version info
             VStack(spacing: 4) {
-                Text("App Version 0.1.0-alpha")
+                Text("App Version \(AppInfo.Version.displayString)")
                     .font(.caption)
                     .monospacedDigit()
                 Text("Engine \(ConverterEngine.version)")
@@ -326,10 +328,10 @@ struct AboutTab: View {
                 .frame(maxWidth: 200)
 
             // Copyright
-            Text("Copyright \u{00A9} 2026 MWBM Partners Ltd.")
+            Text(AppInfo.Copyright.statement)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("All rights reserved.")
+            Text(AppInfo.Copyright.rightsStatement)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
 
@@ -337,7 +339,7 @@ struct AboutTab: View {
 
             // Links
             HStack(spacing: 20) {
-                Link("Website", destination: URL(string: "https://meedya.app")!)
+                Link("Website", destination: URL(string: AppInfo.Application.websiteURL)!)
                     .font(.caption)
                 Link("Privacy Policy", destination: URL(string: "https://meedya.app/privacy")!)
                     .font(.caption)
