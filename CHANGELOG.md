@@ -1,4 +1,6 @@
-# 📝 MeedyaConverter — Changelog
+<!-- Copyright © 2026 MWBM Partners Ltd. All rights reserved. -->
+
+# MeedyaConverter — Changelog
 
 > All notable changes to this project will be documented in this file.
 >
@@ -11,7 +13,23 @@
 
 ## [Unreleased]
 
-### 🏗️ Added — 2026-04-03
+### Added — 2026-04-05
+
+- **Wiki documentation** — 10 wiki pages in `docs/`: Home, Getting Started, User Guide, CLI Reference, Architecture, Building from Source, Contributing, Codec Reference, Troubleshooting, FAQ (#184)
+- **Final documentation pass** — Updated CHANGELOG and PROJECT_STATUS with full phase history and current status (#185)
+
+### Added — 2026-04-04
+
+- **AccurateRip verification engine** — Checksum calculation and database parsing for audio disc ripping
+- **Audio disc fidelity module** — CDTOC, cuesheet, chapters, and whole-disc ripping support
+- **AccurateRip database submission** — Submit verified checksums to the AccurateRip database
+
+### Fixed — 2026-04-04
+
+- **CropRect Codable conformance** — Fixed compilation error in SmartCropConfig
+- **Swift extension recommendation** — Updated to current `swiftlang.swift-lang` (was deprecated `sswg.swift-lang`)
+
+### Added — 2026-04-03
 
 - **Project Plan** — Comprehensive 19-phase project plan with 215+ tasks, release gates, feature gating ([Project_Plan.md](Project_Plan.md))
 - **README** — Complete project overview with architecture, supported formats, and roadmap ([README.md](README.md))
@@ -41,10 +59,10 @@
 - **Physical disc to image copy** — Bit-for-bit disc cloning via optical drive (Phase 11.26)
 - **Teletext subtitle support** — EBU/DVB Teletext extraction and conversion (Phase 5.5a)
 - **GitHub project setup** — 19 milestones, 26+ labels, 246 issues, project board, 9 wiki pages, 3 CI/CD workflows, issue templates, security policy
-- **Phase reorganisation** — 18 phases reorganised into 19 with explicit release gates (Alpha 0.1 → v3.0+). CLI moved earlier, settings/code signing moved to MVP, Phase 3 split into core + extended
+- **Phase reorganisation** — 18 phases reorganised into 19 with explicit release gates (Alpha 0.1 to v3.0+). CLI moved earlier, settings/code signing moved to MVP, Phase 3 split into core + extended
 - **Three-tier file access** — Sandbox strategy for App Store: user-selected, bookmarks, Full Disk Access
 
-### 🔄 Changed — 2026-04-03
+### Changed — 2026-04-03
 
 - **Architecture** — Redesigned from prior implementation to modular ConverterEngine + meedya-convert + MeedyaConverter structure
 - **Technology** — Confirmed Swift 6.3, SwiftUI, SPM
@@ -53,7 +71,7 @@
 - **Architecture names** — Renamed internal targets to avoid confusion with Meedya product family (MeedyaDL, MeedyaManager, MeedyaDB)
 - **Git remote** — Updated from `MWBMPartners/Adaptix` to `MWBMPartners/MeedyaConverter`
 
-### 🗑️ Removed — 2026-04-03
+### Removed — 2026-04-03
 
 - **Legacy code** — All prior iteration Swift files (core/, modules/, ui/, viewmodels/, views/, apple/)
 - **Old branding** — Adaptix logos and placeholder assets (branding/)
@@ -61,15 +79,51 @@
 
 ---
 
+## [0.1.0-alpha] — Unreleased
+
+> Alpha milestone targeting Phases 0-2 completion.
+
+### Added
+
+- SPM package with three targets: ConverterEngine (library), meedya-convert (CLI), MeedyaConverter (SwiftUI app)
+- FFmpeg bundle manager with binary discovery, version detection, and validation
+- FFmpeg process controller with start/pause/resume/stop and progress monitoring
+- Media file probing via FFprobe — streams, HDR detection, chapters, metadata
+- Complete data models — MediaFile, MediaStream, 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
+- FFmpeg argument builder translating encoding settings to CLI arguments
+- Encoding profile system with 7+ built-in presets and JSON persistence
+- Encoding job queue with priority ordering, state tracking, batch management
+- Temp file management with per-job directories and disk space monitoring
+- Encoding engine orchestrating full video/audio conversion pipeline
+- 30 unit tests covering all Phase 1 components
+- Feature gating system (free/pro/studio tiers)
+- Full macOS SwiftUI app: sidebar navigation, source import, stream inspector, output settings, queue, log
+- Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
+- HDR-to-SDR tone mapping (hable/reinhard/mobius/bt2390/clip), auto-trigger for incompatible settings
+- PQ-to-HLG conversion via hlg-tools (preferred) or FFmpeg zscale fallback
+- PQ-to-DV Profile 8.4 + HLG combined conversion: three-tier DV-to-HLG-to-SDR fallback
+- Dolby Vision preservation pipeline: RPU extract, encode, inject via dovi_tool
+- HLG-to-DV auto-conversion via dovi_tool generate (Profile 8.4)
+- Container-codec compatibility matrix with validation and UI warnings
+- Automatic black bar crop detection via FFmpeg cropdetect
+- Hardware encoder detection (VideoToolbox/NVENC/QSV/AMF/VA-API)
+- In-app help system, settings view, profile management
+- AccurateRip verification engine for audio disc ripping
+- Audio disc fidelity module (CDTOC, cuesheet, chapters, whole-disc ripping)
+
+---
+
 ## Version History
 
-> Releases will be documented here as development progresses.
->
 > **Version format:** `MAJOR.MINOR.PATCH`
 >
 > - **MAJOR** — Breaking changes or significant milestones
 > - **MINOR** — New features or capabilities
 > - **PATCH** — Bug fixes and minor improvements
+
+| Version       | Date | Highlights                                                  |
+|---------------|------|-------------------------------------------------------------|
+| 0.1.0-alpha   | TBD  | Core engine, SwiftUI app, HDR workflows, encoding profiles  |
 
 ---
 
