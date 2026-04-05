@@ -79,6 +79,14 @@ struct MeedyaConverterApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
 
+            // App menu — Check for Updates (Phase 9 / Issue #94)
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    appViewModel.updateChecker.checkForUpdates()
+                }
+                .disabled(!appViewModel.updateChecker.canCheckForUpdates)
+            }
+
             // Help menu — In-app help
             CommandGroup(replacing: .help) {
                 Button("MeedyaConverter Help") {

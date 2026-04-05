@@ -57,6 +57,10 @@ struct SettingsView: View {
                 NotificationSettingsTab()
             }
 
+            Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
+                UpdateSettingsTab()
+            }
+
             Tab("About", systemImage: "info.circle") {
                 AboutTab()
             }
@@ -327,5 +331,87 @@ struct AboutTab: View {
             .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - UpdateSettingsTab
+
+/// Update settings: Sparkle auto-check configuration and manual update check.
+///
+/// In direct distribution builds (non-App Store), this integrates with Sparkle 2
+/// for auto-update checking. In App Store builds, it shows that updates are
+/// managed by the Mac App Store.
+///
+/// Phase 9 — Update Checker (Issue #94)
+struct UpdateSettingsTab: View {
+    @Environment(AppViewModel.self) private var viewModel
+
+    var body: some View {
+        let updateChecker = viewModel.updateChecker
+
+        Form {
+            if updateChecker.isSparkleAvailable {
+                Section("Automatic Updates") {
+                    Toggle("Automatically check for updates", isOn: Binding(
+                        get: { updateChecker.automaticallyChecksForUpdates },
+                        set: { updateChecker.automaticallyChecksForUpdates = $0 }
+                    ))
+                    .accessibilityLabel("Enable automatic update checking on launch")
+
+                    if let lastCheck = updateChecker.lastUpdateCheckDate {
+                        LabeledContent("Last checked") {
+                            Text(lastCheck, style: .relative)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section("Manual Check") {
+                    HStack {
+                        Button {
+                            updateChecker.checkForUpdates()
+                        } label: {
+                            Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(!updateChecker.canCheckForUpdates || updateChecker.isCheckingForUpdates)
+
+                        Spacer()
+
+                        if updateChecker.isCheckingForUpdates {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Text(updateChecker.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Text("Updates are verified using EdDSA (Ed25519) code signatures before installation.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Updates") {
+                    HStack(spacing: 8) {
+                        Image(systemName: "apple.logo")
+                            .foregroundStyle(.secondary)
+                        Text("Updates are managed by the Mac App Store.")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("Open App Store Updates") {
+                        if let url = URL(string: "macappstore://showUpdatesPage") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Updates")
     }
 }
