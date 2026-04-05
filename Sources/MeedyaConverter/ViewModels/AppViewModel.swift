@@ -88,6 +88,11 @@ final class AppViewModel {
     /// Application update checker (Sparkle 2 for direct builds, no-op for App Store).
     let updateChecker: AppUpdateChecker
 
+    // MARK: - Store Manager (Phase 15 / Issue #309)
+
+    /// StoreKit 2 manager for in-app purchases and subscription tracking.
+    let storeManager: StoreManager
+
     // MARK: - Source Files
 
     /// The list of imported source media files awaiting configuration.
@@ -195,6 +200,7 @@ final class AppViewModel {
     init() {
         self.engine = EncodingEngine()
         self.updateChecker = AppUpdateChecker()
+        self.storeManager = StoreManager()
         self.selectedProfile = .webStandard
 
         // Set default output directory to user's Movies folder

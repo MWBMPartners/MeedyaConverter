@@ -64,9 +64,14 @@ struct MeedyaConverterApp: App {
         WindowGroup {
             ContentView()
                 .environment(appViewModel)
+                .environment(appViewModel.storeManager)
                 .preferredColorScheme(currentColorScheme)
                 .onAppear {
                     requestNotificationPermission()
+                    appViewModel.storeManager.listenForTransactions()
+                    Task {
+                        await appViewModel.storeManager.loadProducts()
+                    }
                 }
         }
         .defaultSize(width: 1100, height: 700)
@@ -100,6 +105,7 @@ struct MeedyaConverterApp: App {
         Settings {
             SettingsView()
                 .environment(appViewModel)
+                .environment(appViewModel.storeManager)
                 .preferredColorScheme(currentColorScheme)
         }
 
