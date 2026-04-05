@@ -58,7 +58,7 @@ public struct TrimSegment: Identifiable, Codable, Sendable {
 /// ``TrimSegment`` instances that compose the final output.
 ///
 /// Phase 12 — Video Trimming and Splitting (Issue #318)
-public struct SnipRegion: Identifiable, Codable, Sendable {
+public struct SnipRegion: Identifiable, Codable, Sendable, Equatable {
 
     /// Unique identifier for this snip region.
     public let id: UUID

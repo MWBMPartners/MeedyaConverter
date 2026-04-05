@@ -57,7 +57,7 @@ struct LoudnessReportView: View {
     // MARK: - Export Format
 
     /// Supported export formats for loudness reports.
-    private enum ExportFormat: String, CaseIterable, Identifiable {
+    fileprivate enum ExportFormat: String, CaseIterable, Identifiable {
         case html = "HTML"
         case json = "JSON"
 
@@ -398,7 +398,7 @@ struct LoudnessReportView: View {
 /// A `FileDocument` wrapper for exporting loudness reports.
 ///
 /// Supports HTML and JSON export formats via `fileExporter`.
-struct LoudnessReportDocument: FileDocument {
+fileprivate struct LoudnessReportDocument: FileDocument {
 
     /// The reports to export.
     let reports: [LoudnessReport]
@@ -421,7 +421,7 @@ struct LoudnessReportDocument: FileDocument {
     /// Initialize from a read configuration (required by protocol, not used for export).
     init(configuration: ReadConfiguration) throws {
         self.reports = []
-        self.format = .html
+        self.format = LoudnessReportView.ExportFormat.html
     }
 
     /// Write the document content to the specified file wrapper.

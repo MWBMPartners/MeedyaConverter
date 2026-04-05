@@ -371,7 +371,7 @@ struct VideoTrimmerView: View {
                         ForEach(resultSegments) { segment in
                             HStack {
                                 Image(systemName: "film")
-                                    .foregroundStyle(.accentColor)
+                                    .foregroundStyle(Color.accentColor)
                                 Text(segment.label ?? "Segment")
                                     .font(.caption)
                                 Spacer()
