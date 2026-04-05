@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MeedyaConverter — Full Logo (Icon + Wordmark)
+  Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120">
+  <defs>
+    <linearGradient id="iconBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1A1A2E"/>
+      <stop offset="100%" style="stop-color:#0F3460"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E94560"/>
+      <stop offset="100%" style="stop-color:#533483"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon mark (small version) -->
+  <g transform="translate(10, 10)">
+    <rect width="100" height="100" rx="22" fill="url(#iconBg)"/>
+    <!-- Simplified film strips + arrow -->
+    <rect x="18" y="25" width="25" height="35" rx="3" fill="none" stroke="#E94560" stroke-width="2.5"/>
+    <polygon points="25,35 25,52 36,43" fill="#E94560" opacity="0.8"/>
+    <path d="M48,43 L55,43 L55,39 L62,45 L55,51 L55,47 L48,47 Z" fill="url(#accent)"/>
+    <rect x="65" y="25" width="25" height="35" rx="3" fill="none" stroke="#533483" stroke-width="2.5"/>
+    <path d="M72,45 L76,49 L85,38" fill="none" stroke="#533483" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="50" y="80" text-anchor="middle" font-family="'SF Pro Display', sans-serif"
+          font-size="11" font-weight="700" fill="white" opacity="0.9">MC</text>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="130" y="72" font-family="'SF Pro Display', 'Helvetica Neue', sans-serif"
+        font-size="42" font-weight="300" fill="#E8E8E8" letter-spacing="1">
+    Meedya<tspan font-weight="600">Converter</tspan>
+  </text>
+</svg>

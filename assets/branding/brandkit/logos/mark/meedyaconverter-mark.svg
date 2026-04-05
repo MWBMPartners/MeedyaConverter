@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MeedyaConverter — Icon Mark (standalone, no wordmark)
+  Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+  For use as favicon, small icons, social media avatars.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1A1A2E"/>
+      <stop offset="100%" style="stop-color:#0F3460"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E94560"/>
+      <stop offset="100%" style="stop-color:#533483"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="90" y="130" width="125" height="175" rx="10" fill="none" stroke="#E94560" stroke-width="6"/>
+  <polygon points="125,175 125,260 175,217" fill="#E94560" opacity="0.8"/>
+  <path d="M235,217 L265,217 L265,202 L300,222 L265,242 L265,227 L235,227 Z" fill="url(#acc)"/>
+  <rect x="310" y="130" width="125" height="175" rx="10" fill="none" stroke="#533483" stroke-width="6"/>
+  <path d="M350,225 L365,240 L400,195" fill="none" stroke="#533483" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="256" y="390" text-anchor="middle" font-family="'SF Pro Display', sans-serif"
+        font-size="52" font-weight="700" fill="white" opacity="0.9" letter-spacing="3">MC</text>
+</svg>

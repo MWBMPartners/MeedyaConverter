@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MeedyaConverter — Wordmark Only (no icon)
+  Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+  For use in headers, documentation, splash screens.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 60" width="400" height="60">
+  <text x="0" y="45" font-family="'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+        font-size="48" font-weight="300" fill="#E8E8E8" letter-spacing="1">
+    Meedya<tspan font-weight="600">Converter</tspan>
+  </text>
+</svg>
