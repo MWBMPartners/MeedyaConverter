@@ -133,6 +133,7 @@ struct PerStreamSettingsView: View {
                 get: { override.wrappedValue.passthrough ?? false },
                 set: { override.wrappedValue.passthrough = $0 ? true : nil }
             ))
+            .accessibilityLabel("Copy video stream without re-encoding")
 
             if override.wrappedValue.passthrough != true {
                 Picker("Codec", selection: Binding(
@@ -143,6 +144,7 @@ struct PerStreamSettingsView: View {
                         Text(codec.displayName).tag(codec as VideoCodec?)
                     }
                 }
+                .accessibilityLabel("Video codec for stream \(index)")
 
                 HStack {
                     Text("CRF")
@@ -152,6 +154,7 @@ struct PerStreamSettingsView: View {
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 80)
+                    .accessibilityLabel("Constant rate factor")
 
                     Text("Bitrate (bps)")
                     TextField("Bitrate", value: Binding(
@@ -160,6 +163,7 @@ struct PerStreamSettingsView: View {
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 120)
+                    .accessibilityLabel("Video bitrate in bits per second")
                 }
 
                 TextField("Preset", text: Binding(
@@ -168,6 +172,7 @@ struct PerStreamSettingsView: View {
                 ), prompt: Text("e.g., medium, slow"))
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 200)
+                .accessibilityLabel("Encoding preset")
             }
         }
     }
@@ -227,6 +232,7 @@ struct PerStreamSettingsView: View {
                 get: { override.wrappedValue.passthrough ?? false },
                 set: { override.wrappedValue.passthrough = $0 ? true : nil }
             ))
+            .accessibilityLabel("Copy audio stream without re-encoding")
 
             if override.wrappedValue.passthrough != true {
                 Picker("Codec", selection: Binding(
@@ -237,6 +243,7 @@ struct PerStreamSettingsView: View {
                         Text(codec.displayName).tag(codec as AudioCodec?)
                     }
                 }
+                .accessibilityLabel("Audio codec for stream \(index)")
 
                 HStack {
                     Text("Bitrate (bps)")
@@ -246,6 +253,7 @@ struct PerStreamSettingsView: View {
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 120)
+                    .accessibilityLabel("Audio bitrate in bits per second")
 
                     Text("Sample Rate (Hz)")
                     TextField("Sample Rate", value: Binding(
@@ -254,6 +262,7 @@ struct PerStreamSettingsView: View {
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 100)
+                    .accessibilityLabel("Audio sample rate in hertz")
 
                     Text("Channels")
                     TextField("Channels", value: Binding(
@@ -262,6 +271,7 @@ struct PerStreamSettingsView: View {
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 60)
+                    .accessibilityLabel("Number of audio channels")
                 }
             }
         }
@@ -291,6 +301,7 @@ struct PerStreamSettingsView: View {
                     )
                 }
             ))
+            .accessibilityLabel("Include subtitle stream \(stream.streamIndex) in output")
 
             if hasOverride {
                 Text("Custom")

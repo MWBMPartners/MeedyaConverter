@@ -298,6 +298,7 @@ struct MenuBarPopoverView: View {
             HStack {
                 Image(systemName: "film")
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 Text("Encoding")
                     .font(.headline)
                 Spacer()

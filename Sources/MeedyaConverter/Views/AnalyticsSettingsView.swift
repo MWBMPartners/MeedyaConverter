@@ -98,6 +98,8 @@ struct AnalyticsSettingsView: View {
                     Text("\(viewModel.analytics.queuedEventCount)")
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityLabel("Queued analytics events")
+                .accessibilityValue("\(viewModel.analytics.queuedEventCount)")
 
                 HStack(spacing: 12) {
                     Button("View Collected Data") {
@@ -153,6 +155,7 @@ struct AnalyticsSettingsView: View {
             Image(systemName: negative ? "xmark.circle" : "checkmark.circle")
                 .foregroundStyle(negative ? .red : .green)
                 .font(.caption2)
+                .accessibilityHidden(true)
             Text(text)
         }
     }

@@ -164,6 +164,7 @@ struct BurnSettingsView: View {
         HStack(spacing: 6) {
             Image(systemName: driveStatus.systemImage)
                 .foregroundStyle(driveStatus.color)
+                .accessibilityHidden(true)
             Text(driveStatus.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -176,7 +177,10 @@ struct BurnSettingsView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
                     .font(.caption)
             }
+            .accessibilityLabel("Refresh drive list")
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue("Drive status: \(driveStatus.rawValue)")
     }
 
     // MARK: - Source Selection
@@ -239,10 +243,13 @@ struct BurnSettingsView: View {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
                 Text("Simulation mode — no data will be written to disc")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Warning: Simulation mode enabled, no data will be written to disc")
         }
     }
 
@@ -263,6 +270,8 @@ struct BurnSettingsView: View {
 
             ProgressView(value: progress.fraction)
                 .progressViewStyle(.linear)
+                .accessibilityLabel("Burn progress")
+                .accessibilityValue("\(progress.percentage) percent")
 
             HStack {
                 if let speed = progress.writeSpeed {
@@ -292,6 +301,9 @@ struct BurnSettingsView: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Write buffer fill")
+                .accessibilityValue("\(bufferFill) percent")
             }
         }
     }
@@ -304,6 +316,7 @@ struct BurnSettingsView: View {
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(result.success ? .green : .red)
                 .font(.title2)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading) {
                 Text(result.success ? "Burn Successful" : "Burn Failed")
@@ -320,6 +333,7 @@ struct BurnSettingsView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.shield.fill")
                             .foregroundStyle(.green)
+                            .accessibilityHidden(true)
                         Text("Verification passed")
                             .font(.caption)
                             .foregroundStyle(.green)
@@ -327,6 +341,8 @@ struct BurnSettingsView: View {
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(result.success ? "Burn successful\(result.verified ? ", verification passed" : "")" : "Burn failed: \(result.message ?? "unknown error")")
     }
 
     // MARK: - Action Buttons
