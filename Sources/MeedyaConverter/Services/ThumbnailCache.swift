@@ -67,16 +67,15 @@ final class ThumbnailCache {
             return cached
         }
 
-        // Generate thumbnail off the main thread
-        let image = await Task.detached(priority: .utility) {
-            Self.generateThumbnail(url: url, maxPixelSize: size)
+        // Generate thumbnail data off the main thread, then create NSImage on main actor.
+        // NSImage is not Sendable, so we transfer raw image data (Data) across the boundary.
+        let imageData: Data? = await Task.detached(priority: .utility) {
+            Self.generateThumbnailData(url: url, maxPixelSize: size)
         }.value
 
-        if let image {
-            let cost = image.tiffRepresentation?.count ?? 0
-            cache.setObject(image, forKey: key, cost: cost)
-        }
-
+        guard let imageData, let image = NSImage(data: imageData) else { return nil }
+        let cost = imageData.count
+        cache.setObject(image, forKey: key, cost: cost)
         return image
     }
 
@@ -126,7 +125,10 @@ final class ThumbnailCache {
     ///   - url: The source image file URL.
     ///   - maxPixelSize: The maximum pixel dimension (width or height).
     /// - Returns: An `NSImage` of the thumbnail, or `nil` on failure.
-    nonisolated private static func generateThumbnail(url: URL, maxPixelSize: CGFloat) -> NSImage? {
+    /// Generates a downscaled thumbnail as raw PNG `Data` using `CGImageSource`.
+    /// Returns `Data` (which is `Sendable`) instead of `NSImage` to allow safe
+    /// transfer across actor boundaries in Swift 6 strict concurrency.
+    nonisolated private static func generateThumbnailData(url: URL, maxPixelSize: CGFloat) -> Data? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }
@@ -134,7 +136,7 @@ final class ThumbnailCache {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            kCGImageSourceCreateThumbnailWithTransform: true, // respect EXIF orientation
+            kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
         ]
 
@@ -142,9 +144,8 @@ final class ThumbnailCache {
             return nil
         }
 
-        return NSImage(
-            cgImage: cgImage,
-            size: NSSize(width: cgImage.width, height: cgImage.height)
-        )
+        // Convert CGImage to PNG Data for Sendable transfer
+        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+        return bitmapRep.representation(using: .png, properties: [:])
     }
 }
