@@ -55,6 +55,8 @@ struct ContentView: View {
             ActivityLogView()
         case .burn:
             BurnSettingsView()
+        case .images:
+            ImageConversionView()
         case nil:
             ContentUnavailableView(
                 "Select a Section",

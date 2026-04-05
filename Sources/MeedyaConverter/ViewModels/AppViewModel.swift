@@ -31,6 +31,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Disc burning — write to physical optical media.
     case burn = "Burn"
 
+    /// Image conversion — batch image format conversion.
+    case images = "Images"
+
     var id: String { rawValue }
 
     /// SF Symbol name for sidebar icon.
@@ -42,6 +45,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .queue: return "list.number"
         case .log: return "text.page"
         case .burn: return "opticaldisc"
+        case .images: return "photo.on.rectangle.angled"
         }
     }
 
@@ -54,6 +58,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .queue: return "View encoding queue"
         case .log: return "View activity log"
         case .burn: return "Burn disc"
+        case .images: return "Convert images"
         }
     }
 }

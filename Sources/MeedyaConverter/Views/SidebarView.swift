@@ -41,8 +41,9 @@ struct SidebarView: View {
                     .badge(viewModel.logEntries.count)
             }
 
-            // Disc section — disc burning
-            Section("Disc") {
+            // Tools section — disc burning and image conversion
+            Section("Tools") {
+                sidebarLabel(for: .images)
                 sidebarLabel(for: .burn)
             }
         }
