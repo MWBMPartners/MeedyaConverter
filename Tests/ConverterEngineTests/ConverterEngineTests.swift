@@ -9307,4 +9307,246 @@ final class ConverterEngineTests: XCTestCase {
             XCTAssertEqual(idx, 99)
         }
     }
+
+    // MARK: - AccurateRip Verifier Tests
+
+    /// Verifies AccurateRip checksum hex formatting.
+    func test_accurateRip_checksumHex() {
+        let cs = AccurateRipChecksum(
+            trackNumber: 1,
+            checksumV1: 0xDEADBEEF,
+            checksumV2: 0x12345678
+        )
+        XCTAssertEqual(cs.v1Hex, "DEADBEEF")
+        XCTAssertEqual(cs.v2Hex, "12345678")
+    }
+
+    /// Verifies AccurateRip checksum calculation with known data.
+    func test_accurateRip_calculateChecksum() {
+        // Create 4 seconds of silence (44100 * 4 stereo samples * 4 bytes)
+        // Silence should produce a checksum of 0
+        let sampleCount = 44100 * 4
+        let data = Data(count: sampleCount * 4) // All zeros
+
+        let cs = AccurateRipVerifier.calculateChecksum(
+            audioData: data,
+            trackNumber: 1,
+            totalTracks: 1,
+            isFirstTrack: true,
+            isLastTrack: true
+        )
+        // Silence with zero samples should give 0 checksums
+        XCTAssertEqual(cs.checksumV1, 0)
+        XCTAssertEqual(cs.checksumV2, 0)
+        XCTAssertEqual(cs.trackNumber, 1)
+    }
+
+    /// Verifies AccurateRip checksum with non-zero data.
+    func test_accurateRip_checksumNonZero() {
+        // Create simple pattern: 4 bytes per sample, 3000 samples
+        // (small enough to be > skipSamples for middle track)
+        var data = Data(count: 12000) // 3000 samples
+        // Write a pattern: each sample = 0x00000001
+        for i in stride(from: 0, to: 12000, by: 4) {
+            data[i] = 1
+            data[i+1] = 0
+            data[i+2] = 0
+            data[i+3] = 0
+        }
+
+        // Middle track (not first, not last) — no skip
+        let cs = AccurateRipVerifier.calculateChecksum(
+            audioData: data,
+            trackNumber: 5,
+            totalTracks: 12,
+            isFirstTrack: false,
+            isLastTrack: false
+        )
+        // Each sample is 1, so v1 = sum(1 * (i+1)) for i=0..2999
+        // = sum(1..3000) = 3000 * 3001 / 2 = 4501500
+        XCTAssertEqual(cs.checksumV1, 4501500)
+        XCTAssertTrue(cs.checksumV2 > 0)
+    }
+
+    /// Verifies database response parsing with empty data.
+    func test_accurateRip_parseEmpty() {
+        let entries = AccurateRipVerifier.parseDatabaseResponse(Data())
+        XCTAssertTrue(entries.isEmpty)
+    }
+
+    /// Verifies database response parsing with constructed binary data.
+    func test_accurateRip_parseDatabaseEntry() {
+        // Construct a minimal AccurateRip database entry:
+        // 1 byte: trackCount = 2
+        // 4 bytes: discId1
+        // 4 bytes: discId2
+        // 4 bytes: cddbDiscId
+        // Per track (9 bytes each): 1 byte confidence + 4 bytes CRC + 4 bytes reserved
+        var data = Data()
+        data.append(2) // trackCount = 2
+        // discId1 = 0x00000001
+        data.append(contentsOf: [0x01, 0x00, 0x00, 0x00])
+        // discId2 = 0x00000002
+        data.append(contentsOf: [0x02, 0x00, 0x00, 0x00])
+        // cddbDiscId = 0x00000003
+        data.append(contentsOf: [0x03, 0x00, 0x00, 0x00])
+        // Track 1: confidence=5, CRC=0xAABBCCDD, reserved=0
+        data.append(5)
+        data.append(contentsOf: [0xDD, 0xCC, 0xBB, 0xAA])
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        // Track 2: confidence=3, CRC=0x11223344, reserved=0
+        data.append(3)
+        data.append(contentsOf: [0x44, 0x33, 0x22, 0x11])
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        let entries = AccurateRipVerifier.parseDatabaseResponse(data)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].trackCount, 2)
+        XCTAssertEqual(entries[0].discId1, 1)
+        XCTAssertEqual(entries[0].discId2, 2)
+        XCTAssertEqual(entries[0].trackChecksums.count, 2)
+        XCTAssertEqual(entries[0].trackChecksums[0].confidence, 5)
+        XCTAssertEqual(entries[0].trackChecksums[0].checksumV1, 0xAABBCCDD)
+        XCTAssertEqual(entries[0].trackChecksums[1].confidence, 3)
+        XCTAssertEqual(entries[0].trackChecksums[1].checksumV1, 0x11223344)
+    }
+
+    /// Verifies verification against empty database returns notInDatabase.
+    func test_accurateRip_verifyNotInDatabase() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 123, checksumV2: 456),
+        ]
+        let result = AccurateRipVerifier.verify(checksums: checksums, databaseEntries: [])
+        XCTAssertEqual(result.trackResults.count, 1)
+        XCTAssertEqual(result.trackResults[0].status, .notInDatabase)
+        XCTAssertEqual(result.overallStatus, .notInDatabase)
+    }
+
+    /// Verifies successful v1 checksum match.
+    func test_accurateRip_verifyMatch() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 0xAABBCCDD, checksumV2: 0),
+        ]
+        let dbEntry = AccurateRipDatabaseEntry(
+            trackCount: 1,
+            discId1: 1,
+            discId2: 2,
+            cddbDiscId: 3,
+            trackChecksums: [
+                .init(confidence: 10, checksumV1: 0xAABBCCDD, checksumV2: nil),
+            ],
+            confidence: 10
+        )
+        let result = AccurateRipVerifier.verify(
+            checksums: checksums,
+            databaseEntries: [dbEntry]
+        )
+        XCTAssertEqual(result.trackResults[0].status, .verified)
+        XCTAssertEqual(result.trackResults[0].confidence, 10)
+        XCTAssertEqual(result.trackResults[0].matchVersion, 1)
+        XCTAssertEqual(result.overallStatus, .verified)
+    }
+
+    /// Verifies checksum mismatch detection.
+    func test_accurateRip_verifyMismatch() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 0x11111111, checksumV2: 0x22222222),
+        ]
+        let dbEntry = AccurateRipDatabaseEntry(
+            trackCount: 1,
+            discId1: 1,
+            discId2: 2,
+            cddbDiscId: 3,
+            trackChecksums: [
+                .init(confidence: 5, checksumV1: 0xAAAAAAAA, checksumV2: nil),
+            ],
+            confidence: 5
+        )
+        let result = AccurateRipVerifier.verify(
+            checksums: checksums,
+            databaseEntries: [dbEntry]
+        )
+        XCTAssertEqual(result.trackResults[0].status, .mismatch)
+        XCTAssertEqual(result.overallStatus, .mismatch)
+    }
+
+    /// Verifies disc result summary strings.
+    func test_accurateRip_discResultSummary() {
+        let allVerified = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .verified, confidence: 5,
+                                   checksumV1: 1, checksumV2: 2, matchVersion: 1),
+            AccurateRipTrackResult(trackNumber: 2, status: .verified, confidence: 3,
+                                   checksumV1: 3, checksumV2: 4, matchVersion: 1),
+        ])
+        XCTAssertTrue(allVerified.summary.contains("All 2 tracks verified"))
+        XCTAssertEqual(allVerified.minimumConfidence, 3)
+        XCTAssertEqual(allVerified.verifiedCount, 2)
+    }
+
+    /// Verifies WAV PCM extraction.
+    func test_accurateRip_extractPCMFromWAV() {
+        // Minimal valid WAV header
+        var wavData = Data()
+        // RIFF header
+        wavData.append(contentsOf: [0x52, 0x49, 0x46, 0x46]) // "RIFF"
+        wavData.append(contentsOf: [0x24, 0x00, 0x00, 0x00]) // file size - 8
+        wavData.append(contentsOf: [0x57, 0x41, 0x56, 0x45]) // "WAVE"
+        // fmt chunk
+        wavData.append(contentsOf: [0x66, 0x6D, 0x74, 0x20]) // "fmt "
+        wavData.append(contentsOf: [0x10, 0x00, 0x00, 0x00]) // chunk size = 16
+        wavData.append(contentsOf: [0x01, 0x00])             // PCM
+        wavData.append(contentsOf: [0x02, 0x00])             // 2 channels
+        wavData.append(contentsOf: [0x44, 0xAC, 0x00, 0x00]) // 44100 Hz
+        wavData.append(contentsOf: [0x10, 0xB1, 0x02, 0x00]) // byte rate
+        wavData.append(contentsOf: [0x04, 0x00])             // block align
+        wavData.append(contentsOf: [0x10, 0x00])             // bits per sample
+        // data chunk
+        wavData.append(contentsOf: [0x64, 0x61, 0x74, 0x61]) // "data"
+        wavData.append(contentsOf: [0x04, 0x00, 0x00, 0x00]) // chunk size = 4
+        wavData.append(contentsOf: [0xAA, 0xBB, 0xCC, 0xDD]) // audio data
+
+        let pcm = AccurateRipVerifier.extractPCMFromWAV(wavData)
+        XCTAssertNotNil(pcm)
+        XCTAssertEqual(pcm?.count, 4)
+        XCTAssertEqual(pcm?[0], 0xAA)
+        XCTAssertEqual(pcm?[1], 0xBB)
+    }
+
+    /// Verifies drive offset application.
+    func test_accurateRip_driveOffset() {
+        let data = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+
+        // Zero offset = no change
+        let zero = AccurateRipVerifier.applyDriveOffset(audioData: data, offsetSamples: 0)
+        XCTAssertEqual(zero, data)
+
+        // Positive offset: skip leading, pad trailing
+        let positive = AccurateRipVerifier.applyDriveOffset(audioData: data, offsetSamples: 1)
+        XCTAssertEqual(positive.count, data.count)
+        XCTAssertEqual(positive[0], 0x05) // Skipped 4 bytes (1 sample)
+
+        // Negative offset: pad leading, truncate trailing
+        let negative = AccurateRipVerifier.applyDriveOffset(audioData: data, offsetSamples: -1)
+        XCTAssertEqual(negative.count, data.count)
+        XCTAssertEqual(negative[0], 0x00) // Zero-padded
+    }
+
+    /// Verifies common drive offsets table is populated.
+    func test_accurateRip_driveOffsets() {
+        XCTAssertFalse(AccurateRipVerifier.commonDriveOffsets.isEmpty)
+        // PLEXTOR drives typically have +30 offset
+        let plextor = AccurateRipVerifier.commonDriveOffsets.first {
+            $0.model.contains("PX-716A")
+        }
+        XCTAssertNotNil(plextor)
+        XCTAssertEqual(plextor?.offset, 30)
+    }
+
+    /// Verifies verification status properties.
+    func test_accurateRip_verificationStatus() {
+        XCTAssertTrue(AccurateRipTrackResult.VerificationStatus.verified.isAccurate)
+        XCTAssertFalse(AccurateRipTrackResult.VerificationStatus.mismatch.isAccurate)
+        XCTAssertFalse(AccurateRipTrackResult.VerificationStatus.notInDatabase.isAccurate)
+        XCTAssertEqual(AccurateRipTrackResult.VerificationStatus.verified.displayName, "Verified")
+    }
 }
