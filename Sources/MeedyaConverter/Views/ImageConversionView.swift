@@ -53,6 +53,9 @@ struct ImageConversionView: View {
     // Preview
     @State private var previewImage: ImageFileItem?
 
+    // Thumbnail cache
+    @State private var thumbnailCache = ThumbnailCache()
+
     // MARK: - Body
 
     var body: some View {
@@ -94,6 +97,8 @@ struct ImageConversionView: View {
                     ProgressView(value: conversionProgress) {
                         Text("\(completedCount)/\(imagesToConvert.count) converted")
                     }
+                    .accessibilityLabel("Conversion progress")
+                    .accessibilityValue("\(completedCount) of \(imagesToConvert.count) images converted")
                 }
 
                 if !conversionErrors.isEmpty {
@@ -127,6 +132,7 @@ struct ImageConversionView: View {
         HStack(spacing: 8) {
             Image(systemName: "photo")
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.fileName)
                     .font(.subheadline)
@@ -200,28 +206,30 @@ struct ImageConversionView: View {
         let isSelected = selectedImages.contains(item.id)
 
         return VStack(spacing: 4) {
-            // Thumbnail placeholder
+            // Thumbnail — served from cache or loaded asynchronously
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary)
                     .aspectRatio(1, contentMode: .fit)
 
-                if let nsImage = NSImage(contentsOf: item.url) {
-                    Image(nsImage: nsImage)
+                if let cached = thumbnailCache.thumbnail(for: item.url, size: thumbnailSize.cellSize) {
+                    Image(nsImage: cached)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .padding(4)
                 } else {
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
             )
+            .task(id: item.url) {
+                _ = await thumbnailCache.loadThumbnail(for: item.url, size: thumbnailSize.cellSize)
+            }
 
             Text(item.fileName)
                 .font(.caption2)
@@ -268,15 +276,25 @@ struct ImageConversionView: View {
         }
     }
 
+    /// Maximum pixel dimension used for the detail preview thumbnail.
+    private static let previewThumbnailSize: CGFloat = 600
+
     @ViewBuilder
     private func imagePreview(_ item: ImageFileItem) -> some View {
         VStack(spacing: 8) {
-            if let nsImage = NSImage(contentsOf: item.url) {
-                Image(nsImage: nsImage)
+            if let cached = thumbnailCache.thumbnail(for: item.url, size: Self.previewThumbnailSize) {
+                Image(nsImage: cached)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxHeight: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityLabel("Preview of \(item.fileName)")
+            } else {
+                ProgressView("Loading preview…")
+                    .frame(height: 200)
+                    .task(id: item.url) {
+                        _ = await thumbnailCache.loadThumbnail(for: item.url, size: Self.previewThumbnailSize)
+                    }
             }
 
             // Metadata overlay
@@ -291,6 +309,8 @@ struct ImageConversionView: View {
                     .font(.caption)
             }
             .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(item.fileName), \(item.dimensionsString), \(item.fileSizeString), \(item.formatDescription)")
         }
     }
 
@@ -327,6 +347,8 @@ struct ImageConversionView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Format capabilities: \(outputFormat.supportsAlpha ? "Alpha, " : "")\(outputFormat.supportsHDR ? "HDR, " : "")\(outputFormat.supportsLossless ? "Lossless" : "")")
 
             // Quality
             if !quality.lossless {
@@ -336,6 +358,8 @@ struct ImageConversionView: View {
                         get: { Double(quality.quality) },
                         set: { quality = ImageQuality(quality: Int($0), effort: quality.effort, lossless: quality.lossless) }
                     ), in: 1...100)
+                    .accessibilityLabel("Image quality")
+                    .accessibilityValue("\(quality.quality) percent")
                 }
             }
 
@@ -357,10 +381,13 @@ struct ImageConversionView: View {
                 TextField("Width", value: $resizeWidth, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 80)
+                    .accessibilityLabel("Resize width in pixels")
                 Text("x")
+                    .accessibilityHidden(true)
                 TextField("Height", value: $resizeHeight, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 80)
+                    .accessibilityLabel("Resize height in pixels")
 
                 Picker("Mode", selection: $resizeMode) {
                     Text("Fit").tag(ImageResizeMode.fit)
@@ -369,6 +396,7 @@ struct ImageConversionView: View {
                     Text("Downscale").tag(ImageResizeMode.downscaleOnly)
                 }
                 .frame(maxWidth: 120)
+                .accessibilityLabel("Resize mode")
             }
 
             Divider()
@@ -429,10 +457,13 @@ struct ImageConversionView: View {
                     ProgressView(value: conversionProgress) {
                         Text("Converting \(completedCount + failedCount)/\(imagesToConvert.count)...")
                     }
+                    .accessibilityLabel("Batch conversion progress")
+                    .accessibilityValue("\(completedCount + failedCount) of \(imagesToConvert.count) processed")
 
                     Button("Cancel") {
                         isConverting = false
                     }
+                    .accessibilityLabel("Cancel image conversion")
                 }
             }
         }
@@ -457,6 +488,7 @@ struct ImageConversionView: View {
                 imageFiles.removeAll()
                 selectedImages.removeAll()
                 previewImage = nil
+                thumbnailCache.clearCache()
             } label: {
                 Label("Clear", systemImage: "trash")
             }
@@ -513,6 +545,9 @@ struct ImageConversionView: View {
         for url in panel.urls {
             addImageFile(url)
         }
+
+        // Preload thumbnails for the newly imported images
+        thumbnailCache.preload(urls: imageFiles.map(\.url), size: thumbnailSize.cellSize)
     }
 
     private func addImageFile(_ url: URL) {
