@@ -82,6 +82,27 @@ jobs:
         run: swift --version
 
       # ---------------------------------------------------------------------
+      # Step 3: Import signing certificate
+      # ---------------------------------------------------------------------
+      # Decode the base64-encoded .p12 certificate from repository secrets
+      # and import it into a temporary keychain for code signing. The
+      # keychain is configured with a 6-hour timeout to outlast the build.
+      # ---------------------------------------------------------------------
+      - name: Import signing certificate
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN_PATH"
+
+      # ---------------------------------------------------------------------
       # Step 4: Cache SPM dependencies
       # ---------------------------------------------------------------------
       # Reuse cached dependencies to speed up the release build.
@@ -137,50 +158,151 @@ jobs:
           echo "Release version: ${VERSION} (tag: ${TAG_NAME})"
 
       # ---------------------------------------------------------------------
-      # Step 9: Create DMG (placeholder)
+      # Step 9: Create app bundle structure
       # ---------------------------------------------------------------------
-      # TODO: Replace this placeholder with actual DMG creation once the
-      # macOS SwiftUI application target is in place. The final step will:
-      #   1. Build the .app bundle via xcodebuild
-      #   2. Code-sign with Developer ID
-      #   3. Notarise with Apple
-      #   4. Package into a DMG using create-dmg or hdiutil
-      #
-      # For now, this step packages the release CLI binary as a placeholder
-      # to validate the rest of the pipeline.
+      # Assemble a proper macOS .app bundle from the release binary and
+      # resource files (Info.plist, entitlements).
       # ---------------------------------------------------------------------
-      - name: Package release artifacts (placeholder DMG)
+      - name: Create app bundle
         run: |
-          echo "=== DMG Packaging Placeholder ==="
-          echo ""
-          echo "TODO: Implement full DMG creation pipeline:"
-          echo "  1. Build .app bundle (xcodebuild)"
-          echo "  2. Code-sign with Developer ID"
-          echo "  3. Notarise with Apple (xcrun notarytool)"
-          echo "  4. Create DMG (hdiutil / create-dmg)"
-          echo ""
-          echo "For now, packaging the release CLI binary..."
+          VERSION="${{ steps.version.outputs.version }}"
+          APP_NAME="MeedyaConverter"
+          APP_BUNDLE="${APP_NAME}.app"
 
-          # Create a staging directory for the release artifact
-          mkdir -p release-artifacts
+          echo "Creating app bundle: ${APP_BUNDLE}"
 
-          # Copy the release binary (if it exists) into the staging area
-          if [ -f .build/release/meedya-convert ]; then
-            cp .build/release/meedya-convert release-artifacts/
-            echo "Copied meedya-convert CLI binary to release-artifacts/"
+          # Create the bundle directory structure
+          mkdir -p "${APP_BUNDLE}/Contents/MacOS"
+          mkdir -p "${APP_BUNDLE}/Contents/Resources"
+
+          # Copy the release binary into the bundle
+          if [ -f ".build/release/${APP_NAME}" ]; then
+            cp ".build/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
           else
-            echo "No CLI binary found -- creating placeholder artifact"
-            echo "MeedyaConverter ${{ steps.version.outputs.version }}" > release-artifacts/VERSION.txt
+            echo "::error::GUI binary not found at .build/release/${APP_NAME}"
+            exit 1
           fi
 
-          # Create a compressed archive as the release asset
-          tar -czf "MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz" \
-            -C release-artifacts .
+          # Copy Info.plist with version substitution
+          sed -e "s/<string>0.1.0</<string>${VERSION}</" \
+            "Sources/${APP_NAME}/Resources/Info.plist" \
+            > "${APP_BUNDLE}/Contents/Info.plist"
 
-          echo "Release artifact created: MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz"
+          # Set the executable bit
+          chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+
+          echo "App bundle created successfully."
+          ls -la "${APP_BUNDLE}/Contents/"
+          ls -la "${APP_BUNDLE}/Contents/MacOS/"
 
       # ---------------------------------------------------------------------
-      # Step 10: Generate changelog
+      # Step 10: Sign the app bundle
+      # ---------------------------------------------------------------------
+      # Use the codesign script to sign all binaries inside the .app bundle
+      # with hardened runtime and the GUI entitlements.
+      # ---------------------------------------------------------------------
+      - name: Sign app bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          chmod +x scripts/codesign.sh
+          ./scripts/codesign.sh "MeedyaConverter.app"
+
+      # ---------------------------------------------------------------------
+      # Step 11: Sign the CLI binary
+      # ---------------------------------------------------------------------
+      - name: Sign CLI binary
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -f .build/release/meedya-convert ]; then
+            chmod +x scripts/codesign.sh
+            ./scripts/codesign.sh .build/release/meedya-convert
+          else
+            echo "::warning::CLI binary not found, skipping CLI signing."
+          fi
+
+      # ---------------------------------------------------------------------
+      # Step 12: Notarize the app bundle
+      # ---------------------------------------------------------------------
+      - name: Notarize app bundle
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          chmod +x scripts/notarize.sh
+          ./scripts/notarize.sh "MeedyaConverter.app"
+
+      # ---------------------------------------------------------------------
+      # Step 13: Create DMG
+      # ---------------------------------------------------------------------
+      # Package the signed and notarized .app bundle into a DMG disk image
+      # for distribution.
+      # ---------------------------------------------------------------------
+      - name: Create DMG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="MeedyaConverter-${VERSION}-macOS.dmg"
+          VOLUME_NAME="MeedyaConverter ${VERSION}"
+
+          echo "Creating DMG: ${DMG_NAME}"
+
+          # Create a temporary directory for the DMG contents
+          mkdir -p dmg-staging
+          cp -R MeedyaConverter.app dmg-staging/
+
+          # Create a symbolic link to /Applications for drag-install
+          ln -s /Applications dmg-staging/Applications
+
+          # Create the DMG
+          hdiutil create -volname "$VOLUME_NAME" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+          rm -rf dmg-staging
+          echo "DMG created: ${DMG_NAME}"
+
+      # ---------------------------------------------------------------------
+      # Step 14: Sign and notarize the DMG
+      # ---------------------------------------------------------------------
+      - name: Sign and notarize DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="MeedyaConverter-${VERSION}-macOS.dmg"
+
+          # Sign the DMG
+          codesign --sign "$APPLE_SIGNING_IDENTITY" --force --timestamp "$DMG_NAME"
+
+          # Notarize the DMG
+          ./scripts/notarize.sh "$DMG_NAME"
+
+          echo "DMG signed and notarized: ${DMG_NAME}"
+
+      # ---------------------------------------------------------------------
+      # Step 15: Package CLI binary
+      # ---------------------------------------------------------------------
+      # Create a tarball of the signed CLI binary as an additional artifact.
+      # ---------------------------------------------------------------------
+      - name: Package CLI binary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -f .build/release/meedya-convert ]; then
+            mkdir -p cli-staging
+            cp .build/release/meedya-convert cli-staging/
+            tar -czf "meedya-convert-${VERSION}-macOS.tar.gz" -C cli-staging .
+            rm -rf cli-staging
+            echo "CLI package created: meedya-convert-${VERSION}-macOS.tar.gz"
+          fi
+
+      # ---------------------------------------------------------------------
+      # Step 16: Generate changelog
       # ---------------------------------------------------------------------
       # Build a changelog from commit messages between the previous tag and
       # the current tag. If no previous tag exists (first release), include
@@ -208,12 +330,12 @@ jobs:
           echo "Changelog generated with $(echo "$CHANGELOG" | wc -l | tr -d ' ') entries."
 
       # ---------------------------------------------------------------------
-      # Step 11: Create GitHub Release
+      # Step 17: Create GitHub Release
       # ---------------------------------------------------------------------
       # Publish a GitHub Release with:
       #   - The version tag as the release name
       #   - The auto-generated changelog as the release body
-      #   - The packaged artifact attached as a release asset
+      #   - The signed/notarized DMG and CLI tarball as release assets
       #   - Marked as a full (non-pre-release) production release
       #
       # Uses the GitHub CLI (gh) which is pre-installed on GitHub-hosted
@@ -223,8 +345,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ASSETS=()
+
+          # DMG (primary distribution artifact)
+          DMG="MeedyaConverter-${VERSION}-macOS.dmg"
+          if [ -f "$DMG" ]; then
+            ASSETS+=("${DMG}#MeedyaConverter ${VERSION} (macOS DMG)")
+          fi
+
+          # CLI tarball (optional additional artifact)
+          CLI_TAR="meedya-convert-${VERSION}-macOS.tar.gz"
+          if [ -f "$CLI_TAR" ]; then
+            ASSETS+=("${CLI_TAR}#meedya-convert ${VERSION} (macOS CLI)")
+          fi
+
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "Production Release ${{ steps.version.outputs.tag }}" \
             --notes-file RELEASE_CHANGELOG.md \
             --latest \
-            "MeedyaConverter-${{ steps.version.outputs.version }}-macOS.tar.gz#MeedyaConverter ${{ steps.version.outputs.version }} (macOS)"
+            "${ASSETS[@]}"
+
+      # ---------------------------------------------------------------------
+      # Step 18: Clean up keychain
+      # ---------------------------------------------------------------------
+      # Remove the temporary keychain to avoid leaking the signing
+      # certificate on shared runners. Runs even if previous steps fail.
+      # ---------------------------------------------------------------------
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f $RUNNER_TEMP/certificate.p12 || true
