@@ -92,7 +92,7 @@ final class StoreManager {
     // MARK: - Private
 
     /// Background task handle for the transaction listener.
-    private var transactionListenerTask: Task<Void, Never>?
+    nonisolated(unsafe) private var transactionListenerTask: Task<Void, Never>?
 
     // MARK: - Initialiser
 
@@ -150,7 +150,7 @@ final class StoreManager {
     /// - Returns: The verified `Transaction`, or `nil` if the user cancelled.
     /// - Throws: `StoreKit.StoreKitError` or verification errors.
     @discardableResult
-    func purchase(_ product: Product) async throws -> Transaction? {
+    func purchase(_ product: Product) async throws -> StoreKit.Transaction? {
         isPurchasing = true
         lastError = nil
 
@@ -215,7 +215,7 @@ final class StoreManager {
         #if canImport(StoreKit)
         transactionListenerTask?.cancel()
         transactionListenerTask = Task.detached { [weak self] in
-            for await result in Transaction.updates {
+            for await result in StoreKit.Transaction.updates {
                 guard let self else { return }
 
                 do {
@@ -249,7 +249,7 @@ final class StoreManager {
     /// - Parameter result: The `VerificationResult` from StoreKit.
     /// - Returns: The verified `Transaction`.
     /// - Throws: `StoreKitError` if verification fails.
-    private func checkVerified(_ result: VerificationResult<Transaction>) throws -> Transaction {
+    private func checkVerified(_ result: VerificationResult<StoreKit.Transaction>) throws -> StoreKit.Transaction {
         switch result {
         case .verified(let transaction):
             return transaction
@@ -267,7 +267,7 @@ final class StoreManager {
         #if canImport(StoreKit)
         var purchased = Set<String>()
 
-        for await result in Transaction.currentEntitlements {
+        for await result in StoreKit.Transaction.currentEntitlements {
             if case .verified(let transaction) = result {
                 // Only include active transactions (not revoked/expired)
                 if transaction.revocationDate == nil {

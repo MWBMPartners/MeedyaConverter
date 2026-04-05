@@ -213,7 +213,7 @@ struct PaywallView: View {
     /// A checkmark or dash icon for tier inclusion.
     private func checkMark(_ included: Bool) -> some View {
         Image(systemName: included ? "checkmark.circle.fill" : "minus.circle")
-            .foregroundStyle(included ? .green : .quaternary)
+            .foregroundStyle(included ? .green : .gray.opacity(0.2))
             .font(.caption)
     }
 

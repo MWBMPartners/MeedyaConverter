@@ -73,16 +73,18 @@ struct SettingsView: View {
                 AnalyticsSettingsView()
             }
 
-            Tab("Subscription", systemImage: "creditcard") {
-                SubscriptionSettingsTab()
-            }
+            TabSection {
+                Tab("Subscription", systemImage: "creditcard") {
+                    SubscriptionSettingsTab()
+                }
 
-            Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
-                UpdateSettingsTab()
-            }
+                Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
+                    UpdateSettingsTab()
+                }
 
-            Tab("About", systemImage: "info.circle") {
-                AboutTab()
+                Tab("About", systemImage: "info.circle") {
+                    AboutTab()
+                }
             }
         }
         .frame(width: 550, height: 400)

@@ -19,13 +19,13 @@ public enum AppInfo {
 
     public enum Application {
         /// Reverse-DNS bundle identifier.
-        public static let id = "com.mwbmpartners.meedyaconverter"
+        public static let id = "ltd.MWBMpartners.MeedyaConverter"
 
         /// Human-readable application name.
         public static let name = "MeedyaConverter"
 
         /// Application website URL.
-        public static let websiteURL = "https://meedya.app"
+        public static let websiteURL = ""
 
         /// Short description.
         public static let synopsis = "Professional cross-platform media conversion with passthrough, HDR, spatial audio, disc ripping, and cloud uploads."
@@ -57,7 +57,7 @@ public enum AppInfo {
         /// Repo build metadata (populated by CI at build time).
         public enum Build {
             /// Git commit SHA (full). Set by CI via environment or code generation.
-            public static var commitSHA: String? = nil
+            nonisolated(unsafe) public static var commitSHA: String? = nil
 
             /// Git commit SHA (short, 7 chars).
             public static var commitSHAShort: String? {
@@ -65,7 +65,7 @@ public enum AppInfo {
             }
 
             /// Git commit date (ISO 8601).
-            public static var commitDate: String? = nil
+            nonisolated(unsafe) public static var commitDate: String? = nil
 
             /// GitHub commit URL.
             public static var commitURL: String? {
