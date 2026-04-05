@@ -109,7 +109,7 @@ public enum HLSEncryptionError: LocalizedError, Sendable {
 
 extension Data {
     /// Initialize Data from a hex-encoded string.
-    init?(hexString: String) {
+    public init?(hexString: String) {
         let hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard hex.count % 2 == 0 else { return nil }
 

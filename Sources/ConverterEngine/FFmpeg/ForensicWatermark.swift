@@ -21,7 +21,7 @@ public enum WatermarkStrength: String, Codable, Sendable, CaseIterable {
     case strong = "strong"
 
     /// The opacity value for the invisible text overlay (0.0–1.0).
-    var opacity: Double {
+    public var opacity: Double {
         switch self {
         case .light: return 0.005
         case .standard: return 0.01
@@ -30,7 +30,7 @@ public enum WatermarkStrength: String, Codable, Sendable, CaseIterable {
     }
 
     /// The blend factor for frequency-domain embedding.
-    var blendFactor: Double {
+    public var blendFactor: Double {
         switch self {
         case .light: return 0.15
         case .standard: return 0.25

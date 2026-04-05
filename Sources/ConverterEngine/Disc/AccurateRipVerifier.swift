@@ -59,6 +59,23 @@ public struct AccurateRipDatabaseEntry: Codable, Sendable {
     /// Confidence count (number of submissions that match).
     public let confidence: Int
 
+    /// Memberwise initializer.
+    public init(
+        trackCount: Int,
+        discId1: UInt32,
+        discId2: UInt32,
+        cddbDiscId: UInt32,
+        trackChecksums: [TrackEntry],
+        confidence: Int
+    ) {
+        self.trackCount = trackCount
+        self.discId1 = discId1
+        self.discId2 = discId2
+        self.cddbDiscId = cddbDiscId
+        self.trackChecksums = trackChecksums
+        self.confidence = confidence
+    }
+
     /// A single track's database entry.
     public struct TrackEntry: Codable, Sendable {
         /// Track confidence count.
@@ -69,6 +86,13 @@ public struct AccurateRipDatabaseEntry: Codable, Sendable {
 
         /// AccurateRip CRC32 checksum (v2, from newer database entries).
         public let checksumV2: UInt32?
+
+        /// Memberwise initializer.
+        public init(confidence: Int, checksumV1: UInt32, checksumV2: UInt32?) {
+            self.confidence = confidence
+            self.checksumV1 = checksumV1
+            self.checksumV2 = checksumV2
+        }
     }
 }
 
@@ -139,6 +163,11 @@ public struct AccurateRipTrackResult: Codable, Sendable, Identifiable {
 public struct AccurateRipDiscResult: Codable, Sendable {
     /// Per-track verification results.
     public let trackResults: [AccurateRipTrackResult]
+
+    /// Memberwise initializer.
+    public init(trackResults: [AccurateRipTrackResult]) {
+        self.trackResults = trackResults
+    }
 
     /// Overall disc status.
     public var overallStatus: AccurateRipTrackResult.VerificationStatus {
@@ -578,6 +607,29 @@ public struct AccurateRipVerifier: Sendable {
 
         /// Whether all tracks were ripped without errors.
         public let errorFreeRip: Bool
+
+        /// Memberwise initializer.
+        public init(
+            trackCount: Int,
+            discId1: UInt32,
+            discId2: UInt32,
+            cddbDiscId: String,
+            trackChecksums: [AccurateRipChecksum],
+            driveModel: String,
+            driveOffset: Int,
+            softwareId: String,
+            errorFreeRip: Bool
+        ) {
+            self.trackCount = trackCount
+            self.discId1 = discId1
+            self.discId2 = discId2
+            self.cddbDiscId = cddbDiscId
+            self.trackChecksums = trackChecksums
+            self.driveModel = driveModel
+            self.driveOffset = driveOffset
+            self.softwareId = softwareId
+            self.errorFreeRip = errorFreeRip
+        }
     }
 
     /// Build a submission payload from rip results.

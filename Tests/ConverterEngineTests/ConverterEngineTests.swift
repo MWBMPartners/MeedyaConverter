@@ -1575,7 +1575,7 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertTrue(AudioCodec.iamf.isSpatial)
         XCTAssertTrue(AudioCodec.ambisonics.isSpatial)
         XCTAssertTrue(AudioCodec.nhk222.isSpatial)
-        XCTAssertFalse(AudioCodec.aac.isSpatial)
+        XCTAssertFalse(AudioCodec.aacLC.isSpatial)
         XCTAssertFalse(AudioCodec.flac.isSpatial)
     }
 
@@ -1587,7 +1587,7 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertTrue(AudioCodec.ac4AJOC.isObjectBased)
         XCTAssertFalse(AudioCodec.ambisonics.isObjectBased)
         XCTAssertFalse(AudioCodec.nhk222.isObjectBased)
-        XCTAssertFalse(AudioCodec.aac.isObjectBased)
+        XCTAssertFalse(AudioCodec.aacLC.isObjectBased)
     }
 
     /// Verifies maxChannels for spatial codecs.
@@ -2131,7 +2131,7 @@ final class ConverterEngineTests: XCTestCase {
 
     /// Verifies SceneChange formatted timestamp.
     func test_sceneChange_formattedTimestamp() {
-        let change = SceneChange(timestamp: 3723.456)
+        let change = SceneChange(timestamp: 3723.456, score: 0.9)
         XCTAssertEqual(change.formattedTimestamp, "01:02:03.456")
     }
 

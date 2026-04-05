@@ -66,6 +66,21 @@ public struct CropDetectionResult: Sendable {
     public let sourceWidth: Int
     public let sourceHeight: Int
 
+    /// Memberwise initializer.
+    public init(
+        recommendedCrop: CropRect,
+        detectedCrops: [CropRect],
+        confidence: Double,
+        sourceWidth: Int,
+        sourceHeight: Int
+    ) {
+        self.recommendedCrop = recommendedCrop
+        self.detectedCrops = detectedCrops
+        self.confidence = confidence
+        self.sourceWidth = sourceWidth
+        self.sourceHeight = sourceHeight
+    }
+
     /// Whether cropping would actually change the output dimensions.
     public var willCrop: Bool {
         recommendedCrop.isCropping(sourceWidth: sourceWidth, sourceHeight: sourceHeight)
@@ -245,7 +260,7 @@ public final class CropDetector: @unchecked Sendable {
     ///
     /// FFmpeg outputs lines like:
     /// `[Parsed_cropdetect_0 @ 0x...] x1:0 x2:1919 y1:140 y2:939 w:1920 h:800 x:0 y:140 pts:12345 ...`
-    static func parseCropDetectOutput(_ output: String) -> [CropRect] {
+    public static func parseCropDetectOutput(_ output: String) -> [CropRect] {
         let lines = output.split(separator: "\n")
         var crops: [CropRect] = []
 
