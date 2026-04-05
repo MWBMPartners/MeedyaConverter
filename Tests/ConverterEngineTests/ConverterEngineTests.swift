@@ -699,7 +699,6 @@ final class ConverterEngineTests: XCTestCase {
         builder.audioCodec = .aacLC
 
         let args = builder.build()
-        let argStr = args.joined(separator: " ")
 
         // Should have a -vf with the tone mapping filter chain
         XCTAssertTrue(args.contains("-vf"), "Should have video filter for tone mapping")
@@ -723,7 +722,6 @@ final class ConverterEngineTests: XCTestCase {
         builder.audioPassthrough = true
 
         let args = builder.build()
-        let argStr = args.joined(separator: " ")
 
         XCTAssertTrue(args.contains("-vf"), "Should have video filter for PQ→HLG")
         if let vfIdx = args.firstIndex(of: "-vf") {
