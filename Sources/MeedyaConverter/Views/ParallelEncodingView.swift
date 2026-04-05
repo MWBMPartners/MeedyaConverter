@@ -202,10 +202,12 @@ struct ParallelEncodingView: View {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.yellow)
+                            .accessibilityHidden(true)
                         Text("Exceeds recommended maximum of \(viewModel.recommendedMax). Performance may degrade.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
                 }
 
                 Divider()
@@ -299,6 +301,7 @@ struct ParallelEncodingView: View {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text("No active encoding jobs")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -326,6 +329,7 @@ struct ParallelEncodingView: View {
                 Image(systemName: job.isGPUAccelerated ? "cpu" : "memorychip")
                     .foregroundStyle(job.isGPUAccelerated ? .green : .blue)
                     .help(job.isGPUAccelerated ? "GPU-accelerated" : "CPU encoding")
+                    .accessibilityLabel(job.isGPUAccelerated ? "GPU-accelerated encoding" : "CPU encoding")
 
                 Text(job.fileName)
                     .font(.body.bold())

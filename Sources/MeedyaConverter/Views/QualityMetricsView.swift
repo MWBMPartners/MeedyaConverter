@@ -288,6 +288,7 @@ struct QualityMetricsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!viewModel.canRunAnalysis)
+                .accessibilityLabel(viewModel.isAnalysing ? "Analysis in progress" : "Run quality analysis")
 
                 Button {
                     viewModel.clearResults()
@@ -295,6 +296,7 @@ struct QualityMetricsView: View {
                     Label("Clear", systemImage: "trash")
                 }
                 .disabled(viewModel.result == nil && viewModel.generatedCommand.isEmpty)
+                .accessibilityLabel("Clear analysis results")
             }
             .padding(8)
         }
@@ -351,6 +353,9 @@ struct QualityMetricsView: View {
                             .help(result.meetsRecommendedThresholds
                                   ? "Meets recommended quality thresholds"
                                   : "Below recommended quality thresholds")
+                            .accessibilityLabel(result.meetsRecommendedThresholds
+                                  ? "Passes quality thresholds"
+                                  : "Below quality thresholds")
                     }
                 }
             }
@@ -450,6 +455,7 @@ struct QualityMetricsView: View {
                             Label("Copy Command", systemImage: "doc.on.doc")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Copy generated command to clipboard")
                     }
                 }
             }
@@ -464,6 +470,7 @@ struct QualityMetricsView: View {
         HStack {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
             Text(message)
                 .font(.callout)
             Spacer()
@@ -471,6 +478,7 @@ struct QualityMetricsView: View {
                 viewModel.errorMessage = nil
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Dismiss error message")
         }
         .padding(12)
         .background(Color.red.opacity(0.1))

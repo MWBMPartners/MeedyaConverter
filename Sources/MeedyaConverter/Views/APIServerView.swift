@@ -222,11 +222,13 @@ struct APIServerView: View {
                         Image(systemName: viewModel.isAPIKeyVisible ? "eye.slash" : "eye")
                     }
                     .help(viewModel.isAPIKeyVisible ? "Hide API key" : "Show API key")
+                    .accessibilityLabel(viewModel.isAPIKeyVisible ? "Hide API key" : "Show API key")
 
                     Button("Generate") {
                         viewModel.generateAPIKey()
                     }
                     .disabled(viewModel.isRunning)
+                    .accessibilityLabel("Generate new API key")
 
                     Button {
                         NSPasteboard.general.clearContents()
@@ -235,6 +237,7 @@ struct APIServerView: View {
                         Image(systemName: "doc.on.doc")
                     }
                     .help("Copy API key to clipboard")
+                    .accessibilityLabel("Copy API key to clipboard")
                 }
             }
             .padding(8)
@@ -267,6 +270,7 @@ struct APIServerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(viewModel.isRunning ? .red : .green)
+                .accessibilityLabel(viewModel.isRunning ? "Stop API server" : "Start API server")
             }
             .padding(8)
         }
@@ -279,6 +283,7 @@ struct APIServerView: View {
         HStack {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
             Text(message)
                 .font(.callout)
             Spacer()

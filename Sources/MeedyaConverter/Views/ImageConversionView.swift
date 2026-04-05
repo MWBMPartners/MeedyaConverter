@@ -623,9 +623,9 @@ struct ImageConversionView: View {
             autoRotate: autoRotate
         )
 
-        Task {
+        Task.detached { [filesToConvert, outputDirectory, outputFormat, config] in
             for (index, file) in filesToConvert.enumerated() {
-                guard isConverting else { break }
+                guard await MainActor.run(body: { isConverting }) else { break }
 
                 let outputDir = outputDirectory ?? file.url.deletingLastPathComponent()
                 let baseName = file.url.deletingPathExtension().lastPathComponent

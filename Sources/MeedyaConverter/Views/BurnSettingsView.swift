@@ -488,22 +488,27 @@ struct BurnSettingsView: View {
 
         viewModel.appendLog(.info, "Starting disc burn: \(discFormat.displayName) to \(selectedDevicePath)")
 
-        // Build and execute burn command
-        Task {
+        // Capture main-actor-isolated values before entering detached context
+        let capturedDiscFormat = discFormat
+        let capturedSourcePath = sourcePath
+        let capturedVerifyAfterBurn = verifyAfterBurn
+
+        // Build and execute burn command on a background thread to avoid blocking UI
+        Task.detached {
             do {
                 let args: [String]
                 let executable: String
 
-                switch discFormat {
+                switch capturedDiscFormat {
                 case .audioCd:
                     executable = "cdrecord"
-                    args = DiscBurner.buildAudioCDBurnArguments(config: config, wavFiles: [sourcePath])
+                    args = DiscBurner.buildAudioCDBurnArguments(config: config, wavFiles: [capturedSourcePath])
                 case .dvdVideo, .bluray:
                     executable = "growisofs"
                     args = DiscBurner.buildGrowisofsArguments(config: config)
                 default:
                     executable = "hdiutil"
-                    args = DiscBurner.buildHdiutilBurnArguments(isoPath: sourcePath, verify: verifyAfterBurn)
+                    args = DiscBurner.buildHdiutilBurnArguments(isoPath: capturedSourcePath, verify: capturedVerifyAfterBurn)
                 }
 
                 let process = Process()
@@ -522,7 +527,7 @@ struct BurnSettingsView: View {
                 await MainActor.run {
                     if exitCode == 0 {
                         burnProgress = BurnProgress(phase: .complete, bytesWritten: 0, totalBytes: 0)
-                        burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: verifyAfterBurn)
+                        burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: capturedVerifyAfterBurn)
                         viewModel.appendLog(.info, "Disc burn completed successfully")
                     } else {
                         burnProgress = BurnProgress(phase: .failed, bytesWritten: 0, totalBytes: 0)
@@ -547,7 +552,7 @@ struct BurnSettingsView: View {
         let args = DiscBurner.buildBlankArguments(devicePath: selectedDevicePath)
         viewModel.appendLog(.info, "Erasing disc on \(selectedDevicePath)")
 
-        Task {
+        Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = ["cdrecord"] + args

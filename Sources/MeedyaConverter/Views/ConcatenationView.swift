@@ -104,6 +104,7 @@ struct ConcatenationView: View {
             } label: {
                 Label("Add Files", systemImage: "plus")
             }
+            .accessibilityLabel("Add files to concatenation list")
 
             Button {
                 removeSelectedFile()
@@ -111,6 +112,7 @@ struct ConcatenationView: View {
                 Label("Remove", systemImage: "minus")
             }
             .disabled(selectedFileID == nil)
+            .accessibilityLabel("Remove selected file")
 
             Button {
                 files.removeAll()
@@ -119,6 +121,7 @@ struct ConcatenationView: View {
                 Label("Clear All", systemImage: "trash")
             }
             .disabled(files.isEmpty)
+            .accessibilityLabel("Clear all files")
 
             Spacer()
 
@@ -163,6 +166,7 @@ struct ConcatenationView: View {
                     HStack {
                         Image(systemName: "film")
                             .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.lastPathComponent)

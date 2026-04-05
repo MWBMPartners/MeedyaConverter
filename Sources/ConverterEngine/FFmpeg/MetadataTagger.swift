@@ -138,8 +138,12 @@ public struct MetadataTagger: Sendable {
         let bracketPattern = "\\[.+?\\]"
         let parenPattern = "\\(.+?\\)"
 
-        let bracketCount = sampleText.matches(of: try! Regex(bracketPattern)).count
-        let parenDescCount = sampleText.matches(of: try! Regex(parenPattern)).count
+        guard let bracketRegex = try? Regex(bracketPattern),
+              let parenRegex = try? Regex(parenPattern) else {
+            return false
+        }
+        let bracketCount = sampleText.matches(of: bracketRegex).count
+        let parenDescCount = sampleText.matches(of: parenRegex).count
 
         // SDH indicators: multiple bracketed descriptions
         let descriptionCount = bracketCount + parenDescCount

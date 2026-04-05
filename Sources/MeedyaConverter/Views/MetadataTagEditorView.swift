@@ -120,6 +120,7 @@ struct MetadataTagEditorView: View {
             } label: {
                 Label("Add Tag", systemImage: "plus")
             }
+            .accessibilityLabel("Add metadata tag")
 
             Button {
                 editSelectedTag()
@@ -127,6 +128,7 @@ struct MetadataTagEditorView: View {
                 Label("Edit", systemImage: "pencil")
             }
             .disabled(selectedTagID == nil)
+            .accessibilityLabel("Edit selected tag")
 
             Button {
                 removeSelectedTag()
@@ -134,6 +136,7 @@ struct MetadataTagEditorView: View {
                 Label("Remove", systemImage: "minus")
             }
             .disabled(selectedTagID == nil)
+            .accessibilityLabel("Remove selected tag")
 
             Divider()
                 .frame(height: 16)
@@ -144,6 +147,7 @@ struct MetadataTagEditorView: View {
                 Label("Clear All", systemImage: "trash")
             }
             .disabled(tags.isEmpty)
+            .accessibilityLabel("Clear all metadata tags")
 
             Spacer()
 

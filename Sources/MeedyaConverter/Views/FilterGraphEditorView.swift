@@ -579,6 +579,7 @@ struct FilterGraphEditorView: View {
             Image(systemName: type.isAudioFilter ? "waveform" : "film")
                 .foregroundStyle(type.isAudioFilter ? .purple : .blue)
                 .frame(width: 20)
+                .accessibilityHidden(true)
             Text(type.displayName)
                 .font(.body)
             Spacer()
@@ -606,6 +607,7 @@ struct FilterGraphEditorView: View {
                 Image(systemName: "sidebar.left")
             }
             .help("Toggle filter palette")
+            .accessibilityLabel("Toggle filter palette")
 
             Divider().frame(height: 16)
 
@@ -615,6 +617,7 @@ struct FilterGraphEditorView: View {
                 Image(systemName: "minus.magnifyingglass")
             }
             .help("Zoom out")
+            .accessibilityLabel("Zoom out")
 
             Text("\(Int(canvasScale * 100))%")
                 .font(.caption)
@@ -627,6 +630,7 @@ struct FilterGraphEditorView: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .help("Zoom in")
+            .accessibilityLabel("Zoom in")
 
             Button {
                 canvasScale = 1.0
@@ -635,6 +639,7 @@ struct FilterGraphEditorView: View {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
             }
             .help("Reset zoom and position")
+            .accessibilityLabel("Reset zoom and position")
 
             Spacer()
 
