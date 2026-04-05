@@ -73,6 +73,10 @@ struct SettingsView: View {
                 AnalyticsSettingsView()
             }
 
+            Tab("Subscription", systemImage: "creditcard") {
+                SubscriptionSettingsTab()
+            }
+
             Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
                 UpdateSettingsTab()
             }
@@ -431,5 +435,107 @@ struct UpdateSettingsTab: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Updates")
+    }
+}
+
+// MARK: - SubscriptionSettingsTab
+
+/// Subscription management tab showing the current tier, upgrade options,
+/// and license key entry for direct-distribution builds.
+///
+/// Phase 15 — Monetization / Licensing (Issues #309, #310, #311)
+struct SubscriptionSettingsTab: View {
+    @Environment(StoreManager.self) private var storeManager
+
+    /// Whether the paywall sheet is presented.
+    @State private var showPaywall: Bool = false
+
+    var body: some View {
+        Form {
+            // Current tier section
+            Section("Current Plan") {
+                HStack(spacing: 12) {
+                    Image(systemName: storeManager.currentTier.systemImage)
+                        .font(.title2)
+                        .foregroundStyle(tierColor(storeManager.currentTier))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MeedyaConverter \(storeManager.currentTier.displayName)")
+                            .font(.headline)
+                        Text(storeManager.currentTier.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if storeManager.currentTier != .pro {
+                    Button {
+                        showPaywall = true
+                    } label: {
+                        Label("Upgrade", systemImage: "arrow.up.circle")
+                    }
+                }
+            }
+
+            // Entitled features summary
+            Section("Your Features") {
+                let entitled = FeatureGateManager.shared.entitledFeatures
+                if entitled.isEmpty {
+                    Text("No features available.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entitled, id: \.self) { feature in
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text(feature.displayName)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+
+            // License key section (for direct distribution)
+            Section("License Key") {
+                LicenseEntryView()
+            }
+
+            // Subscription management
+            Section("Manage") {
+                Button("Restore Purchases") {
+                    Task {
+                        await storeManager.restorePurchases()
+                    }
+                }
+                .font(.caption)
+
+                Link(
+                    "Manage App Store Subscriptions",
+                    destination: URL(string: "https://apps.apple.com/account/subscriptions")!
+                )
+                .font(.caption)
+
+                Link(
+                    "Purchase License Key (Direct)",
+                    destination: URL(string: "https://meedya.app/purchase")!
+                )
+                .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Subscription")
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+        }
+    }
+
+    /// Color for the current tier badge.
+    private func tierColor(_ tier: MonetizationTier) -> Color {
+        switch tier {
+        case .free: return .secondary
+        case .plus: return .blue
+        case .pro:  return .orange
+        }
     }
 }
