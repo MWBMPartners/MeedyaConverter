@@ -518,6 +518,210 @@ public struct AccurateRipVerifier: Sendable {
         }
     }
 
+    // MARK: - Submission
+
+    /// Configuration for submitting rip results to AccurateRip.
+    public struct SubmissionConfig: Codable, Sendable {
+        /// Whether the user has opted in to AccurateRip submission.
+        public var enabled: Bool
+
+        /// Drive model name (used for offset lookup and statistics).
+        public var driveModel: String
+
+        /// Drive read offset in samples.
+        public var driveOffset: Int
+
+        /// Software identifier string sent with submissions.
+        public var softwareId: String
+
+        public init(
+            enabled: Bool = false,
+            driveModel: String = "",
+            driveOffset: Int = 0,
+            softwareId: String = "MeedyaConverter"
+        ) {
+            self.enabled = enabled
+            self.driveModel = driveModel
+            self.driveOffset = driveOffset
+            self.softwareId = softwareId
+        }
+    }
+
+    /// Data payload for an AccurateRip submission.
+    ///
+    /// Contains all the information needed to report a successful rip
+    /// back to the AccurateRip database.
+    public struct SubmissionPayload: Codable, Sendable {
+        /// Number of tracks.
+        public let trackCount: Int
+
+        /// AccurateRip disc ID 1.
+        public let discId1: UInt32
+
+        /// AccurateRip disc ID 2.
+        public let discId2: UInt32
+
+        /// CDDB disc ID.
+        public let cddbDiscId: String
+
+        /// Per-track checksums (v1 and v2).
+        public let trackChecksums: [AccurateRipChecksum]
+
+        /// Drive model that performed the rip.
+        public let driveModel: String
+
+        /// Drive read offset applied.
+        public let driveOffset: Int
+
+        /// Software identifier.
+        public let softwareId: String
+
+        /// Whether all tracks were ripped without errors.
+        public let errorFreeRip: Bool
+    }
+
+    /// Build a submission payload from rip results.
+    ///
+    /// Call this after a successful rip to prepare data for submission.
+    /// Only verified or not-in-database results should be submitted — never
+    /// submit mismatched rips as that would pollute the database.
+    ///
+    /// - Parameters:
+    ///   - checksums: Calculated checksums for each track.
+    ///   - discResult: Verification result (used to determine if submission is appropriate).
+    ///   - discId1: AccurateRip disc ID 1.
+    ///   - discId2: AccurateRip disc ID 2.
+    ///   - cddbDiscId: CDDB disc ID hex string.
+    ///   - config: Submission configuration.
+    ///   - errorFreeRip: Whether cdparanoia reported zero errors.
+    /// - Returns: Submission payload, or nil if the rip should not be submitted
+    ///   (e.g., checksums mismatch an existing database entry).
+    public static func buildSubmissionPayload(
+        checksums: [AccurateRipChecksum],
+        discResult: AccurateRipDiscResult,
+        discId1: UInt32,
+        discId2: UInt32,
+        cddbDiscId: String,
+        config: SubmissionConfig,
+        errorFreeRip: Bool
+    ) -> SubmissionPayload? {
+        guard config.enabled else { return nil }
+
+        // Do not submit if any track has a mismatch — this would indicate
+        // a bad rip and submitting would pollute the database.
+        if discResult.overallStatus == .mismatch { return nil }
+
+        // Must have error-free rip for reliable submission
+        guard errorFreeRip else { return nil }
+
+        return SubmissionPayload(
+            trackCount: checksums.count,
+            discId1: discId1,
+            discId2: discId2,
+            cddbDiscId: cddbDiscId,
+            trackChecksums: checksums,
+            driveModel: config.driveModel,
+            driveOffset: config.driveOffset,
+            softwareId: config.softwareId,
+            errorFreeRip: errorFreeRip
+        )
+    }
+
+    /// Build the binary data for AccurateRip submission.
+    ///
+    /// Encodes the submission payload into the binary format expected by
+    /// the AccurateRip submission endpoint.
+    ///
+    /// - Parameter payload: The submission payload.
+    /// - Returns: Binary data for the HTTP POST body.
+    public static func encodeSubmissionData(
+        _ payload: SubmissionPayload
+    ) -> Data {
+        var data = Data()
+
+        // Track count (1 byte)
+        data.append(UInt8(payload.trackCount))
+
+        // Disc IDs (little-endian)
+        var d1 = payload.discId1.littleEndian
+        data.append(Data(bytes: &d1, count: 4))
+
+        var d2 = payload.discId2.littleEndian
+        data.append(Data(bytes: &d2, count: 4))
+
+        // CDDB disc ID (convert hex string to UInt32)
+        let cddbValue = UInt32(payload.cddbDiscId, radix: 16) ?? 0
+        var cddb = cddbValue.littleEndian
+        data.append(Data(bytes: &cddb, count: 4))
+
+        // Per-track: confidence (1) + CRC v1 (4) + CRC v2 (4)
+        for checksum in payload.trackChecksums {
+            data.append(UInt8(1)) // Confidence = 1 (our single submission)
+
+            var crcV1 = checksum.checksumV1.littleEndian
+            data.append(Data(bytes: &crcV1, count: 4))
+
+            var crcV2 = checksum.checksumV2.littleEndian
+            data.append(Data(bytes: &crcV2, count: 4))
+        }
+
+        return data
+    }
+
+    /// Build the AccurateRip submission URL.
+    ///
+    /// - Parameters:
+    ///   - trackCount: Number of tracks.
+    ///   - discId1: AccurateRip disc ID 1.
+    ///   - discId2: AccurateRip disc ID 2.
+    ///   - cddbDiscId: CDDB disc ID hex string.
+    /// - Returns: Submission URL string.
+    public static func buildSubmissionURL(
+        trackCount: Int,
+        discId1: UInt32,
+        discId2: UInt32,
+        cddbDiscId: String
+    ) -> String {
+        let d1 = String(format: "%08x", discId1)
+        let d2 = String(format: "%08x", discId2)
+        return "http://www.accuraterip.com/accuraterip/submit/dBAR-\(String(format: "%03d", trackCount))-\(d1)-\(d2)-\(cddbDiscId).bin"
+    }
+
+    /// Submit rip checksums to AccurateRip.
+    ///
+    /// Sends the rip results to the AccurateRip database so other users
+    /// can verify their rips against ours. This is opt-in and requires
+    /// an error-free rip.
+    ///
+    /// - Parameter payload: The submission payload.
+    /// - Returns: True if submission was accepted, false otherwise.
+    public static func submitToDatabase(
+        _ payload: SubmissionPayload
+    ) async -> Bool {
+        let urlString = buildSubmissionURL(
+            trackCount: payload.trackCount,
+            discId1: payload.discId1,
+            discId2: payload.discId2,
+            cddbDiscId: payload.cddbDiscId
+        )
+
+        guard let url = URL(string: urlString) else { return false }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = encodeSubmissionData(payload)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(payload.softwareId, forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let httpResponse = response as? HTTPURLResponse
+            return httpResponse?.statusCode == 200
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Drive Offset
 
     /// Common drive read offset corrections (samples).

@@ -9550,6 +9550,176 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(AccurateRipTrackResult.VerificationStatus.verified.displayName, "Verified")
     }
 
+    // MARK: - AccurateRip Submission Tests
+
+    /// Verifies submission config defaults.
+    func test_accurateRip_submissionConfigDefaults() {
+        let config = AccurateRipVerifier.SubmissionConfig()
+        XCTAssertFalse(config.enabled)
+        XCTAssertEqual(config.driveModel, "")
+        XCTAssertEqual(config.driveOffset, 0)
+        XCTAssertEqual(config.softwareId, "MeedyaConverter")
+    }
+
+    /// Verifies submission payload is built for verified rips.
+    func test_accurateRip_buildSubmissionPayload_verified() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 0xAABBCCDD, checksumV2: 0x11223344),
+        ]
+        let discResult = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .verified, confidence: 5,
+                                   checksumV1: 0xAABBCCDD, checksumV2: 0x11223344, matchVersion: 1),
+        ])
+        let config = AccurateRipVerifier.SubmissionConfig(
+            enabled: true, driveModel: "PLEXTOR PX-716A", driveOffset: 30
+        )
+
+        let payload = AccurateRipVerifier.buildSubmissionPayload(
+            checksums: checksums, discResult: discResult,
+            discId1: 100, discId2: 200, cddbDiscId: "AABB1122",
+            config: config, errorFreeRip: true
+        )
+
+        XCTAssertNotNil(payload)
+        XCTAssertEqual(payload?.trackCount, 1)
+        XCTAssertEqual(payload?.discId1, 100)
+        XCTAssertEqual(payload?.driveModel, "PLEXTOR PX-716A")
+        XCTAssertEqual(payload?.driveOffset, 30)
+        XCTAssertTrue(payload?.errorFreeRip ?? false)
+    }
+
+    /// Verifies submission payload is built for not-in-database rips (new disc).
+    func test_accurateRip_buildSubmissionPayload_notInDatabase() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 0x12345678, checksumV2: 0x87654321),
+        ]
+        let discResult = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .notInDatabase,
+                                   checksumV1: 0x12345678, checksumV2: 0x87654321),
+        ])
+        let config = AccurateRipVerifier.SubmissionConfig(enabled: true, driveModel: "Test Drive")
+
+        let payload = AccurateRipVerifier.buildSubmissionPayload(
+            checksums: checksums, discResult: discResult,
+            discId1: 1, discId2: 2, cddbDiscId: "00000001",
+            config: config, errorFreeRip: true
+        )
+
+        // Not-in-database is acceptable — this adds a new entry
+        XCTAssertNotNil(payload)
+    }
+
+    /// Verifies submission is blocked for mismatched rips.
+    func test_accurateRip_buildSubmissionPayload_mismatchBlocked() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 0x11111111, checksumV2: 0x22222222),
+        ]
+        let discResult = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .mismatch,
+                                   checksumV1: 0x11111111, checksumV2: 0x22222222),
+        ])
+        let config = AccurateRipVerifier.SubmissionConfig(enabled: true)
+
+        let payload = AccurateRipVerifier.buildSubmissionPayload(
+            checksums: checksums, discResult: discResult,
+            discId1: 1, discId2: 2, cddbDiscId: "00000001",
+            config: config, errorFreeRip: true
+        )
+
+        // Mismatched rips must not be submitted
+        XCTAssertNil(payload)
+    }
+
+    /// Verifies submission is blocked when disabled.
+    func test_accurateRip_buildSubmissionPayload_disabled() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 1, checksumV2: 2),
+        ]
+        let discResult = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .verified, confidence: 5,
+                                   checksumV1: 1, checksumV2: 2, matchVersion: 1),
+        ])
+        let config = AccurateRipVerifier.SubmissionConfig(enabled: false)
+
+        let payload = AccurateRipVerifier.buildSubmissionPayload(
+            checksums: checksums, discResult: discResult,
+            discId1: 1, discId2: 2, cddbDiscId: "00000001",
+            config: config, errorFreeRip: true
+        )
+
+        XCTAssertNil(payload)
+    }
+
+    /// Verifies submission is blocked for rips with errors.
+    func test_accurateRip_buildSubmissionPayload_ripErrors() {
+        let checksums = [
+            AccurateRipChecksum(trackNumber: 1, checksumV1: 1, checksumV2: 2),
+        ]
+        let discResult = AccurateRipDiscResult(trackResults: [
+            AccurateRipTrackResult(trackNumber: 1, status: .verified, confidence: 5,
+                                   checksumV1: 1, checksumV2: 2, matchVersion: 1),
+        ])
+        let config = AccurateRipVerifier.SubmissionConfig(enabled: true)
+
+        let payload = AccurateRipVerifier.buildSubmissionPayload(
+            checksums: checksums, discResult: discResult,
+            discId1: 1, discId2: 2, cddbDiscId: "00000001",
+            config: config, errorFreeRip: false
+        )
+
+        XCTAssertNil(payload)
+    }
+
+    /// Verifies binary encoding of submission data.
+    func test_accurateRip_encodeSubmissionData() {
+        let payload = AccurateRipVerifier.SubmissionPayload(
+            trackCount: 2,
+            discId1: 0x00000001,
+            discId2: 0x00000002,
+            cddbDiscId: "00000003",
+            trackChecksums: [
+                AccurateRipChecksum(trackNumber: 1, checksumV1: 0xAABBCCDD, checksumV2: 0x11223344),
+                AccurateRipChecksum(trackNumber: 2, checksumV1: 0x55667788, checksumV2: 0x99AABBCC),
+            ],
+            driveModel: "Test",
+            driveOffset: 0,
+            softwareId: "MeedyaConverter",
+            errorFreeRip: true
+        )
+
+        let data = AccurateRipVerifier.encodeSubmissionData(payload)
+
+        // Track count (1 byte) + disc IDs (12 bytes) + 2 tracks * 9 bytes = 31 bytes
+        XCTAssertEqual(data.count, 1 + 12 + 2 * 9)
+
+        // First byte = track count
+        XCTAssertEqual(data[0], 2)
+
+        // Disc ID 1 at offset 1 (LE)
+        XCTAssertEqual(data[1], 0x01)
+        XCTAssertEqual(data[2], 0x00)
+        XCTAssertEqual(data[3], 0x00)
+        XCTAssertEqual(data[4], 0x00)
+
+        // First track: confidence=1 at offset 13
+        XCTAssertEqual(data[13], 1)
+    }
+
+    /// Verifies submission URL format.
+    func test_accurateRip_submissionURL() {
+        let url = AccurateRipVerifier.buildSubmissionURL(
+            trackCount: 12,
+            discId1: 0x0012ABCD,
+            discId2: 0x00ABCDEF,
+            cddbDiscId: "deadbeef"
+        )
+        XCTAssertTrue(url.contains("accuraterip/submit/"))
+        XCTAssertTrue(url.contains("dBAR-012-"))
+        XCTAssertTrue(url.contains("0012abcd"))
+        XCTAssertTrue(url.contains("00abcdef"))
+        XCTAssertTrue(url.contains("deadbeef"))
+    }
+
     // MARK: - AudioDiscFidelity Tests
 
     /// Helper to create a sample TOC for testing.
