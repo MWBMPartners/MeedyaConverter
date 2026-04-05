@@ -35,6 +35,7 @@ struct ProfileManagementView: View {
     @State private var profileToDelete: EncodingProfile?
     @State private var showImportError = false
     @State private var importErrorMessage = ""
+    @State private var showShareCopiedToast = false
 
     // MARK: - Body
 
@@ -176,6 +177,16 @@ struct ProfileManagementView: View {
         }
         .disabled(selectedProfileID == nil)
         .help("Export selected profile as JSON")
+
+        // Share
+        Button("Share", systemImage: "link") {
+            if let id = selectedProfileID,
+               let profile = viewModel.engine.profileStore.profile(id: id) {
+                shareProfile(profile)
+            }
+        }
+        .disabled(selectedProfileID == nil)
+        .help("Copy a share link to the clipboard")
     }
 
     // MARK: - Context Menu
@@ -199,6 +210,10 @@ struct ProfileManagementView: View {
 
         Button("Export") {
             exportProfile(profile)
+        }
+
+        Button("Share Link") {
+            shareProfile(profile)
         }
 
         if !profile.isBuiltIn {
@@ -318,6 +333,13 @@ struct ProfileManagementView: View {
         } catch {
             viewModel.appendLog(.error, "Failed to export profile: \(error.localizedDescription)")
         }
+    }
+
+    private func shareProfile(_ profile: EncodingProfile) {
+        let link = ProfileSharing.generateShareLink(profile)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
+        viewModel.appendLog(.info, "Copied share link for profile: \(profile.name)")
     }
 
     // MARK: - Helpers
