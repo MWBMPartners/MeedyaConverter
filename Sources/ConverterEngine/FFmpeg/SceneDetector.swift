@@ -104,6 +104,90 @@ public struct SceneDetectionResult: Sendable {
     }
 }
 
+// MARK: - DetectedScene (Issue #288)
+
+/// A single scene change detected in a video file with unique identity.
+///
+/// Each scene represents a significant visual transition (hard cut, fade,
+/// dissolve) identified by FFmpeg's scene detection filter. The ``score``
+/// indicates detection confidence: values closer to 1.0 indicate a more
+/// dramatic visual change between consecutive frames.
+public struct DetectedScene: Identifiable, Codable, Sendable {
+
+    /// Unique identifier for this scene.
+    public let id: UUID
+
+    /// Timestamp of the scene change in seconds from the start of the video.
+    public let timestamp: TimeInterval
+
+    /// Scene detection confidence score (0.0 to 1.0).
+    /// Higher values indicate more dramatic visual transitions.
+    public let score: Double
+
+    /// Optional path to a thumbnail image extracted at this scene's timestamp.
+    public var thumbnailPath: String?
+
+    /// Memberwise initializer.
+    public init(
+        id: UUID = UUID(),
+        timestamp: TimeInterval,
+        score: Double,
+        thumbnailPath: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.score = score
+        self.thumbnailPath = thumbnailPath
+    }
+
+    /// Human-readable timestamp formatted as HH:MM:SS.mmm.
+    public var formattedTimestamp: String {
+        let hours = Int(timestamp) / 3600
+        let minutes = (Int(timestamp) % 3600) / 60
+        let seconds = Int(timestamp) % 60
+        let millis = Int((timestamp.truncatingRemainder(dividingBy: 1)) * 1000)
+        return String(format: "%02d:%02d:%02d.%03d", hours, minutes, seconds, millis)
+    }
+}
+
+// MARK: - ChapterFormat (Issue #288)
+
+/// Supported chapter file output formats for export.
+///
+/// Each format is compatible with different container types and toolchains:
+/// - OGM chapters are widely supported and human-readable.
+/// - Matroska XML chapters support hierarchical chapter structures.
+/// - FFmetadata chapters can be injected directly via FFmpeg's `-i metadata.txt`.
+public enum ChapterFormat: String, CaseIterable, Sendable {
+
+    /// OGM chapter format (simple key=value pairs).
+    case ogm
+
+    /// Matroska XML chapter format (hierarchical, supports nested editions).
+    case matroskaXML
+
+    /// FFmpeg metadata format (INI-style, used with `-i metadata.txt`).
+    case ffmetadata
+
+    /// Human-readable display name.
+    public var displayName: String {
+        switch self {
+        case .ogm:         return "OGM Chapters"
+        case .matroskaXML: return "Matroska XML"
+        case .ffmetadata:  return "FFmpeg Metadata"
+        }
+    }
+
+    /// Typical file extension for export.
+    public var fileExtension: String {
+        switch self {
+        case .ogm:         return "txt"
+        case .matroskaXML: return "xml"
+        case .ffmetadata:  return "txt"
+        }
+    }
+}
+
 // MARK: - SceneDetector
 
 /// Detects scene changes in video files using FFmpeg's scene detection filter
@@ -112,7 +196,7 @@ public struct SceneDetectionResult: Sendable {
 /// Supports configurable sensitivity, minimum chapter duration, and multiple
 /// chapter generation strategies.
 ///
-/// Phase 7.13
+/// Phase 7.13 / Phase 11 (Issue #288)
 public struct SceneDetector: Sendable {
 
     /// Determine whether auto-chaptering should run for a given source.
@@ -146,6 +230,32 @@ public struct SceneDetector: Sendable {
             "-vsync", "vfr",
             "-f", "null",
             "-hide_banner",
+            "-"
+        ]
+    }
+
+    /// Build FFmpeg arguments for scene detection with metadata output to file.
+    ///
+    /// Uses the `metadata=print` filter to write scene timestamps and scores
+    /// to a separate file for parsing via ``parseSceneOutput(_:)``.
+    ///
+    /// - Parameters:
+    ///   - inputPath: Absolute path to the source video file.
+    ///   - threshold: Scene detection threshold (0.0 to 1.0).
+    ///   - outputPath: Path to write scene metadata output file.
+    /// - Returns: An array of command-line arguments for FFmpeg.
+    public static func buildDetectionArguments(
+        inputPath: String,
+        threshold: Double,
+        outputPath: String
+    ) -> [String] {
+        let thresholdStr = String(format: "%.2f", threshold)
+        return [
+            "-i", inputPath,
+            "-filter:v",
+            "select='gt(scene,\(thresholdStr))',metadata=print:file=\(outputPath)",
+            "-an",
+            "-f", "null",
             "-"
         ]
     }
@@ -280,6 +390,137 @@ public struct SceneDetector: Sendable {
             output += "CHAPTER\(num)NAME=\(chapter.title)\n"
         }
         return output
+    }
+
+    // MARK: - Metadata-Print Output Parsing (Issue #288)
+
+    /// Parse FFmpeg metadata=print scene detection output into ``DetectedScene`` array.
+    ///
+    /// Handles the key=value output written by `metadata=print:file=` filter,
+    /// extracting `pts_time` and `lavfi.scene_score` from each frame block.
+    ///
+    /// - Parameter output: Raw content of the metadata output file.
+    /// - Returns: Array of ``DetectedScene`` sorted by timestamp.
+    public static func parseSceneOutput(_ output: String) -> [DetectedScene] {
+        var scenes: [DetectedScene] = []
+        let lines = output.components(separatedBy: .newlines)
+        var currentTimestamp: TimeInterval?
+        var currentScore: Double?
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Extract pts_time from metadata
+            if let range = trimmed.range(of: "pts_time:") {
+                let valueStr = String(trimmed[range.upperBound...])
+                    .trimmingCharacters(in: .whitespaces)
+                    .prefix(while: { $0.isNumber || $0 == "." || $0 == "-" })
+                if let timestamp = Double(valueStr) {
+                    currentTimestamp = timestamp
+                }
+            }
+
+            // Extract scene_score from metadata
+            if let range = trimmed.range(of: "lavfi.scene_score=") {
+                let valueStr = String(trimmed[range.upperBound...])
+                    .trimmingCharacters(in: .whitespaces)
+                if let score = Double(valueStr) {
+                    currentScore = score
+                }
+            }
+
+            // When we have both, create a scene
+            if let timestamp = currentTimestamp, let score = currentScore {
+                scenes.append(DetectedScene(timestamp: timestamp, score: score))
+                currentTimestamp = nil
+                currentScore = nil
+            }
+        }
+
+        return scenes.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    // MARK: - Chapter File Generation (Issue #288)
+
+    /// Generate a chapter file string from detected scenes in the specified format.
+    ///
+    /// Convenience method that dispatches to the appropriate format generator
+    /// (OGM, Matroska XML, or FFmetadata).
+    ///
+    /// - Parameters:
+    ///   - scenes: The detected scenes to convert to chapters.
+    ///   - format: The output chapter format.
+    /// - Returns: A string containing the formatted chapter file content.
+    public static func generateChapterFile(
+        scenes: [DetectedScene],
+        format: ChapterFormat
+    ) -> String {
+        switch format {
+        case .ogm:
+            return generateOGMFromScenes(scenes: scenes)
+        case .matroskaXML:
+            return generateMatroskaXMLFromScenes(scenes: scenes)
+        case .ffmetadata:
+            return generateFFmetadataFromScenes(scenes: scenes)
+        }
+    }
+
+    /// Generate OGM-format chapter markers from detected scenes.
+    private static func generateOGMFromScenes(scenes: [DetectedScene]) -> String {
+        var lines: [String] = []
+        for (index, scene) in scenes.enumerated() {
+            let num = String(format: "%02d", index + 1)
+            let hours = Int(scene.timestamp) / 3600
+            let minutes = (Int(scene.timestamp) % 3600) / 60
+            let secs = Int(scene.timestamp) % 60
+            let millis = Int((scene.timestamp.truncatingRemainder(dividingBy: 1)) * 1000)
+            let ts = String(format: "%02d:%02d:%02d.%03d", hours, minutes, secs, millis)
+            lines.append("CHAPTER\(num)=\(ts)")
+            lines.append("CHAPTER\(num)NAME=Chapter \(index + 1)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Generate Matroska XML chapter markers from detected scenes.
+    private static func generateMatroskaXMLFromScenes(scenes: [DetectedScene]) -> String {
+        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml += "<Chapters>\n"
+        xml += "  <EditionEntry>\n"
+        xml += "    <EditionFlagDefault>1</EditionFlagDefault>\n"
+        for (index, scene) in scenes.enumerated() {
+            let timeNanos = UInt64(scene.timestamp * 1_000_000_000)
+            xml += "    <ChapterAtom>\n"
+            xml += "      <ChapterTimeStart>\(timeNanos)</ChapterTimeStart>\n"
+            xml += "      <ChapterDisplay>\n"
+            xml += "        <ChapterString>Chapter \(index + 1)</ChapterString>\n"
+            xml += "        <ChapterLanguage>eng</ChapterLanguage>\n"
+            xml += "      </ChapterDisplay>\n"
+            xml += "    </ChapterAtom>\n"
+        }
+        xml += "  </EditionEntry>\n"
+        xml += "</Chapters>\n"
+        return xml
+    }
+
+    /// Generate FFmetadata chapter markers from detected scenes.
+    private static func generateFFmetadataFromScenes(scenes: [DetectedScene]) -> String {
+        var lines: [String] = [";FFMETADATA1"]
+        for (index, scene) in scenes.enumerated() {
+            let startMs = Int(scene.timestamp * 1000)
+            let endMs: Int
+            if index + 1 < scenes.count {
+                endMs = Int(scenes[index + 1].timestamp * 1000)
+            } else {
+                endMs = startMs + 30_000
+            }
+            lines.append("")
+            lines.append("[CHAPTER]")
+            lines.append("TIMEBASE=1/1000")
+            lines.append("START=\(startMs)")
+            lines.append("END=\(endMs)")
+            lines.append("title=Chapter \(index + 1)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Private Helpers
