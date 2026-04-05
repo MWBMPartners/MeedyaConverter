@@ -4,7 +4,7 @@
 
 {
     "recommendations": [
-      "sswg.swift-lang",
+      "swiftlang.swift-lang",
       "vadimcn.vscode-lldb",
       "ms-vscode.cpptools",
       "ms-azuretools.vscode-docker",
