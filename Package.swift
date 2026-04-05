@@ -263,6 +263,7 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/meedya-convert",
+            exclude: ["Resources/meedya-convert.entitlements"],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -291,6 +292,13 @@ let package = Package(
                 // .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/MeedyaConverter",
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/MeedyaConverter.entitlements",
+            ],
+            resources: [
+                .copy("Resources/Assets.xcassets"),
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]

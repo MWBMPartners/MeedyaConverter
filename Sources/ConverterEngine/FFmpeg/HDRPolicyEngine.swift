@@ -327,7 +327,7 @@ public struct HDRPolicyEngine: Sendable {
         sideDataList: [String] = []
     ) -> HDRFormat {
         let transfer = (colorTransfer ?? "").lowercased()
-        let primaries = (colorPrimaries ?? "").lowercased()
+        _ = (colorPrimaries ?? "").lowercased()
 
         // Check for Dolby Vision
         let hasDV = sideDataList.contains { $0.lowercased().contains("dolby vision") }

@@ -19,6 +19,9 @@ on:
     # Run every Monday at 06:00 UTC for ongoing security monitoring
     - cron: '0 6 * * 1'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Prevent duplicate runs on the same PR
 concurrency:
   group: codeql-${{ github.event.pull_request.number || github.ref }}

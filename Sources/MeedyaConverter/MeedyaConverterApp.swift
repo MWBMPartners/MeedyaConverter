@@ -164,11 +164,14 @@ struct MeedyaConverterApp: App {
 
     /// Request permission for macOS notifications on first launch.
     private func requestNotificationPermission() {
+        let viewModel = appViewModel
         UNUserNotificationCenter.current().requestAuthorization(
             options: [.alert, .sound, .badge]
         ) { granted, error in
             if let error = error {
-                appViewModel.appendLog(.warning, "Notification permission error: \(error.localizedDescription)")
+                Task { @MainActor in
+                    viewModel.appendLog(.warning, "Notification permission error: \(error.localizedDescription)")
+                }
             }
         }
     }

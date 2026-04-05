@@ -67,7 +67,7 @@ struct ProbeCommand: AsyncParsableCommand {
         if !streamsOnly {
             print("File: \(file.fileName)")
             print("Path: \(file.fileURL.path)")
-            print("Size: \(file.fileSizeString)")
+            print("Size: \(file.fileSizeString ?? "unknown")")
             if let duration = file.durationString {
                 print("Duration: \(duration)")
             }

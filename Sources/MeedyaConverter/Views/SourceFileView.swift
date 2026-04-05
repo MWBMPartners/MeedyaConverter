@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import ConverterEngine
+import os
 
 // MARK: - SourceFileView
 
@@ -129,20 +130,21 @@ struct SourceFileView: View {
 
     /// Handle dropped file URL items.
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        var urls: [URL] = []
+        let collected = OSAllocatedUnfairLock(initialState: [URL]())
 
         let group = DispatchGroup()
         for provider in providers {
             group.enter()
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 if let url = url, url.isFileURL {
-                    urls.append(url)
+                    collected.withLock { $0.append(url) }
                 }
                 group.leave()
             }
         }
 
-        group.notify(queue: .main) {
+        group.notify(queue: .main) { [viewModel] in
+            let urls = collected.withLock { $0 }
             guard !urls.isEmpty else { return }
             Task {
                 await viewModel.importFiles(urls)

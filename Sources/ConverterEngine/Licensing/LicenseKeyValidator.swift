@@ -189,7 +189,7 @@ public struct LicenseKeyValidator: Sendable {
     public static func generateMachineId() -> String {
         // Retrieve the hardware UUID from IOKit
         let platformExpert = IOServiceGetMatchingService(
-            kIOMasterPortDefault,
+            kIOMainPortDefault,
             IOServiceMatching("IOPlatformExpertDevice")
         )
 

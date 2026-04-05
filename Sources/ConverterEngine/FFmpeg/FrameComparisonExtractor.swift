@@ -126,7 +126,7 @@ public struct FrameComparisonExtractor: Sendable {
         outputPath: String,
         amplify: Int = 5
     ) -> [String] {
-        let clampedAmplify = max(1, min(10, amplify))
+        _ = max(1, min(10, amplify))
         return [
             "-i", sourcePath,
             "-i", encodedPath,

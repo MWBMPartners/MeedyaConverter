@@ -92,6 +92,7 @@ final class StoreManager {
     // MARK: - Private
 
     /// Background task handle for the transaction listener.
+    @ObservationIgnored
     nonisolated(unsafe) private var transactionListenerTask: Task<Void, Never>?
 
     // MARK: - Initialiser
@@ -223,7 +224,7 @@ final class StoreManager {
                         try self.checkVerified(result)
                     }
                     await transaction.finish()
-                    await MainActor.run {
+                    _ = await MainActor.run {
                         Task {
                             await self.updatePurchasedProducts()
                             self.syncEntitlement()

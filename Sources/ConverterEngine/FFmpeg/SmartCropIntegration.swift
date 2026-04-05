@@ -386,7 +386,7 @@ public struct SmartCropIntegration: Sendable {
         crop: CropRect,
         existingFilters: [String] = []
     ) -> [String] {
-        var filters = [crop.filterString] + existingFilters
+        let filters = [crop.filterString] + existingFilters
         return ["-vf", filters.joined(separator: ",")]
     }
 

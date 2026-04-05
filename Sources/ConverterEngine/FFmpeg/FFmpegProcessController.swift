@@ -174,7 +174,7 @@ public final class FFmpegProcessController: @unchecked Sendable {
 
         // Add -progress pipe:1 for machine-readable progress output
         // and -nostdin to prevent FFmpeg waiting for input
-        var fullArgs = ["-nostdin", "-y"] + arguments + ["-progress", "pipe:1"]
+        let fullArgs = ["-nostdin", "-y"] + arguments + ["-progress", "pipe:1"]
         proc.arguments = fullArgs
 
         // Set up pipes for stdout (progress) and stderr (logs/errors)

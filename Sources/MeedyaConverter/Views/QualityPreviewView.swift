@@ -80,7 +80,7 @@ struct QualityPreviewView: View {
             Divider()
 
             // Main comparison area
-            if let previewURL {
+            if previewURL != nil {
                 comparisonContent
             } else if isGenerating {
                 generatingState
