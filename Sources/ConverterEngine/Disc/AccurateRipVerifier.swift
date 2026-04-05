@@ -300,11 +300,15 @@ public struct AccurateRipVerifier: Sendable {
         let endIndex = sampleCount - skipEnd
 
         audioData.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            let samples = baseAddress.assumingMemoryBound(to: UInt32.self)
-
             for i in skipStart..<endIndex {
-                let sample = UInt32(littleEndian: samples[i])
+                // Read UInt32 sample from potentially unaligned offset using byte-by-byte load
+                let byteOffset = i * 4
+                guard byteOffset + 4 <= rawBuffer.count else { return }
+                var sampleRaw: UInt32 = 0
+                withUnsafeMutableBytes(of: &sampleRaw) { dest in
+                    dest.copyBytes(from: rawBuffer[byteOffset..<byteOffset + 4])
+                }
+                let sample = UInt32(littleEndian: sampleRaw)
                 let position = UInt32(i + 1)
 
                 // AccurateRip v1: simple multiply-accumulate
@@ -334,19 +338,21 @@ public struct AccurateRipVerifier: Sendable {
 
         // Search for "data" marker
         let dataMarker: [UInt8] = [0x64, 0x61, 0x74, 0x61] // "data"
+        let bytes = [UInt8](wavData)
         var offset = 12 // Skip RIFF header (12 bytes)
 
-        while offset < wavData.count - 8 {
-            let chunkId = [UInt8](wavData[offset..<offset+4])
-            let chunkSize = wavData.withUnsafeBytes { buffer in
-                buffer.load(fromByteOffset: offset + 4, as: UInt32.self)
-            }
-            let size = UInt32(littleEndian: chunkSize)
+        while offset < bytes.count - 8 {
+            let chunkId = Array(bytes[offset..<offset+4])
+            // Read chunk size as little-endian UInt32 from individual bytes
+            let size = UInt32(bytes[offset + 4])
+                     | (UInt32(bytes[offset + 5]) << 8)
+                     | (UInt32(bytes[offset + 6]) << 16)
+                     | (UInt32(bytes[offset + 7]) << 24)
 
             if chunkId == dataMarker {
                 let dataStart = offset + 8
-                let dataEnd = min(dataStart + Int(size), wavData.count)
-                return wavData[dataStart..<dataEnd]
+                let dataEnd = min(dataStart + Int(size), bytes.count)
+                return Data(bytes[dataStart..<dataEnd])
             }
 
             offset += 8 + Int(size)
@@ -355,6 +361,18 @@ public struct AccurateRipVerifier: Sendable {
         }
 
         return nil
+    }
+
+    // MARK: - Safe Unaligned Read
+
+    /// Read a little-endian UInt32 from Data at a potentially unaligned offset.
+    /// Uses individual byte reads to avoid SIGTRAP from misaligned memory access.
+    private static func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
+        guard offset + 4 <= data.count else { return 0 }
+        return UInt32(data[data.startIndex + offset])
+             | (UInt32(data[data.startIndex + offset + 1]) << 8)
+             | (UInt32(data[data.startIndex + offset + 2]) << 16)
+             | (UInt32(data[data.startIndex + offset + 3]) << 24)
     }
 
     // MARK: - Database Response Parsing
@@ -390,19 +408,13 @@ public struct AccurateRipVerifier: Sendable {
             guard offset + entrySize <= data.count else { break }
 
             // Read disc IDs (little-endian)
-            let discId1 = data.withUnsafeBytes { buf in
-                buf.load(fromByteOffset: offset, as: UInt32.self)
-            }
+            let discId1 = readUInt32LE(data, at: offset)
             offset += 4
 
-            let discId2 = data.withUnsafeBytes { buf in
-                buf.load(fromByteOffset: offset, as: UInt32.self)
-            }
+            let discId2 = readUInt32LE(data, at: offset)
             offset += 4
 
-            let cddbId = data.withUnsafeBytes { buf in
-                buf.load(fromByteOffset: offset, as: UInt32.self)
-            }
+            let cddbId = readUInt32LE(data, at: offset)
             offset += 4
 
             // Read per-track data
@@ -413,9 +425,7 @@ public struct AccurateRipVerifier: Sendable {
                 let confidence = Int(data[offset])
                 offset += 1
 
-                let checksum = data.withUnsafeBytes { buf in
-                    buf.load(fromByteOffset: offset, as: UInt32.self)
-                }
+                let checksum = readUInt32LE(data, at: offset)
                 offset += 4
 
                 // Skip reserved bytes
