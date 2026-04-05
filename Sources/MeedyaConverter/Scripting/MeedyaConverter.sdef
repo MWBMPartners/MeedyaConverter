@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<!--
+    MeedyaConverter — AppleScript Scripting Dictionary
+    Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+    Proprietary and confidential. Unauthorized copying or distribution
+    of this file, via any medium, is strictly prohibited.
+
+    This scripting definition (.sdef) file declares the AppleScript and JXA
+    commands that MeedyaConverter exposes to the macOS Open Scripting
+    Architecture (OSA). Each <command> element maps to an @objc method
+    in ScriptingBridge.swift.
+
+    Phase 11 / Issue #302
+-->
+<dictionary title="MeedyaConverter Scripting">
+
+    <!-- =================================================================
+         MeedyaConverter Suite
+         ================================================================= -->
+    <suite name="MeedyaConverter Suite" code="MDYA"
+           description="MeedyaConverter scripting commands for media encoding, probing, and queue management.">
+
+        <!-- ============================================================
+             encode — Start an encoding job
+             ============================================================ -->
+        <command name="encode" code="MDYAencd"
+                 description="Encode a media file using a specified profile.">
+            <direct-parameter type="text"
+                              description="Absolute POSIX path to the input media file."/>
+            <parameter name="using profile" code="prof" type="text"
+                       description="Name of the encoding profile to use (e.g. 'Web Standard')."/>
+            <parameter name="to" code="outp" type="text"
+                       description="Absolute POSIX path for the output file."/>
+            <result type="text"
+                    description="UUID string identifying the queued job, or an error message."/>
+        </command>
+
+        <!-- ============================================================
+             probe — Analyse a media file
+             ============================================================ -->
+        <command name="probe" code="MDYAprob"
+                 description="Analyse a media file and return its metadata as JSON.">
+            <direct-parameter type="text"
+                              description="Absolute POSIX path to the media file."/>
+            <result type="text"
+                    description="JSON string containing streams, format, duration, and codec information."/>
+        </command>
+
+        <!-- ============================================================
+             list profiles — List available encoding profiles
+             ============================================================ -->
+        <command name="list profiles" code="MDYAlprf"
+                 description="List all available encoding profile names.">
+            <result type="text"
+                    description="Newline-separated list of profile names."/>
+        </command>
+
+    </suite>
+
+</dictionary>
