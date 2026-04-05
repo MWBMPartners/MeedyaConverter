@@ -110,6 +110,10 @@ final class AppViewModel {
     /// The output directory URL for encoded files.
     var outputDirectory: URL?
 
+    /// How output files are organised relative to the output directory.
+    /// Defaults to `.flatten` (all files in the output directory).
+    var outputMode: OutputMode = .flatten
+
     // MARK: - Stream Selection (Phase 3.4–3.5)
 
     /// Selected video stream index (nil = default/first).
@@ -157,6 +161,30 @@ final class AppViewModel {
     /// Disabled by default — no data collected until the user enables it.
     let analytics = AnalyticsEngine()
 
+    // MARK: - Encoding Scheduler (Issue #279)
+
+    /// Manages scheduled encoding jobs that fire at user-specified times.
+    let scheduler = EncodingScheduler()
+
+    // MARK: - Audio Waveform (Issue #289)
+
+    /// Waveform data for the currently selected audio stream.
+    var currentWaveformData: WaveformData?
+
+    /// Whether waveform analysis is currently in progress.
+    var isAnalysingWaveform: Bool = false
+
+    /// Selected audio channel for waveform display (0-based).
+    var selectedWaveformChannel: Int = 0
+
+    // MARK: - Pipeline (Issue #278)
+
+    /// Whether the pipeline editor sheet is presented.
+    var showPipelineEditor: Bool = false
+
+    /// Whether the schedule view sheet is presented.
+    var showScheduleView: Bool = false
+
     // MARK: - Activity Log
 
     /// Log entries for the unified activity log.
@@ -176,6 +204,62 @@ final class AppViewModel {
 
         // Track app launch (no-op if analytics is disabled)
         analytics.track(.appLaunch)
+
+        // Wire up the encoding scheduler callback (Issue #279)
+        scheduler.onJobReady = { [weak self] config in
+            guard let self else { return }
+            Task { @MainActor in
+                self.engine.queue.enqueue(config)
+                self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
+            }
+        }
+    }
+
+    // MARK: - Audio Waveform Analysis (Issue #289)
+
+    /// Analyse the currently selected file's audio and generate waveform data.
+    ///
+    /// Uses FFmpeg to extract raw PCM data, then parses it into
+    /// ``WaveformData`` for display in ``AudioWaveformView``.
+    func analyseAudioWaveform() async {
+        guard let file = selectedFile else { return }
+        isAnalysingWaveform = true
+        currentWaveformData = nil
+
+        let inputPath = file.fileURL.path
+        let tempDir = FileManager.default.temporaryDirectory
+        let outputPath = tempDir.appendingPathComponent("meedya_waveform_\(file.id.uuidString).raw").path
+
+        let args = AudioWaveformGenerator.buildWaveformArguments(
+            inputPath: inputPath,
+            outputPath: outputPath
+        )
+
+        do {
+            // Run FFmpeg to extract PCM data
+            try await engine.runFFmpeg(arguments: args)
+
+            // Parse the raw PCM into waveform data
+            let duration = file.duration ?? 0
+            if let data = AudioWaveformGenerator.parseWaveformData(
+                from: outputPath,
+                duration: duration,
+                channels: file.audioStreams.first?.channels ?? 1
+            ) {
+                currentWaveformData = data
+                appendLog(.info, "Waveform analysis complete for \(file.fileName)")
+            } else {
+                appendLog(.warning, "Failed to parse waveform data for \(file.fileName)")
+            }
+
+            // Clean up temp file
+            try? FileManager.default.removeItem(atPath: outputPath)
+        } catch {
+            appendLog(.error, "Waveform analysis failed: \(error.localizedDescription)")
+            try? FileManager.default.removeItem(atPath: outputPath)
+        }
+
+        isAnalysingWaveform = false
     }
 
     // MARK: - File Import
@@ -351,13 +435,17 @@ final class AppViewModel {
         // Log PQ → HLG conversion status (Issue #254)
         logPQToHLGStatus()
 
-        // Determine output URL
+        // Determine output URL using filename template (Issue #272)
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory
         let outputExtension = selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
-        let baseName = file.fileURL.deletingPathExtension().lastPathComponent
-        let outputURL = outputDir
-            .appendingPathComponent("\(baseName)_converted")
-            .appendingPathExtension(outputExtension)
+        let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
+        let template = FilenameTemplate(template: templateString)
+        let outputURL = template.resolveWithCollisionHandling(
+            sourceFile: file,
+            profile: selectedProfile,
+            outputDirectory: outputDir,
+            fileExtension: outputExtension
+        )
 
         // Apply auto-crop filter if enabled and a crop was detected
         var cropFilter: String? = nil

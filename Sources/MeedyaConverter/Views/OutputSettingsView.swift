@@ -26,6 +26,13 @@ struct OutputSettingsView: View {
     @State private var showProfileManager = false
     @State private var showStreamMetadataEditor = false
     @State private var showPerStreamSettings = false
+    @State private var showNormalizationSettings = false
+    @State private var showFFmpegPreview = false
+
+    // MARK: - AppStorage (Issue #272)
+
+    /// User-configured output filename template.
+    @AppStorage("filenameTemplate") private var filenameTemplate = "{title}_converted"
 
     // MARK: - Body
 
@@ -54,6 +61,25 @@ struct OutputSettingsView: View {
             if let file = viewModel.selectedFile {
                 PerStreamSettingsView(mediaFile: file)
             }
+        }
+        .sheet(isPresented: $showNormalizationSettings) {
+            NormalizationSettingsView()
+                .frame(minWidth: 500, minHeight: 400)
+        }
+        .sheet(isPresented: $showFFmpegPreview) {
+            FFmpegPreviewView()
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.showPipelineEditor },
+            set: { viewModel.showPipelineEditor = $0 }
+        )) {
+            PipelineEditorView()
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.showScheduleView },
+            set: { viewModel.showScheduleView = $0 }
+        )) {
+            ScheduleView()
         }
     }
 
@@ -90,6 +116,12 @@ struct OutputSettingsView: View {
             // Audio settings
             Section("Audio") {
                 audioSettingsSummary
+
+                // Audio normalization (Issue #292)
+                Button("Normalization Settings...") {
+                    showNormalizationSettings = true
+                }
+                .font(.caption)
             }
 
             // Stream selection
@@ -127,7 +159,32 @@ struct OutputSettingsView: View {
             // Output destination
             Section("Output") {
                 outputDirectoryPicker
+                outputModePicker
                 containerInfo
+                filenameTemplateField
+            }
+
+            // Size estimate (Issue #274)
+            if let file = viewModel.selectedFile {
+                Section("Size Estimate") {
+                    sizeEstimateView(file: file)
+                }
+            }
+
+            // Pipeline & Scheduling (Issues #278, #279)
+            Section("Automation") {
+                HStack {
+                    Button("Pipeline Editor...") {
+                        viewModel.showPipelineEditor = true
+                    }
+                    .help("Configure multi-step encoding pipelines.")
+
+                    Button("Schedule Encoding...") {
+                        viewModel.showScheduleView = true
+                    }
+                    .disabled(viewModel.selectedFile == nil)
+                    .help("Schedule this job to run at a specific time.")
+                }
             }
 
             // Actions
@@ -135,6 +192,11 @@ struct OutputSettingsView: View {
                 HStack {
                     addToQueueButton
                     Spacer()
+                    Button("Preview FFmpeg Command...") {
+                        showFFmpegPreview = true
+                    }
+                    .disabled(viewModel.selectedFile == nil)
+                    .accessibilityLabel("Preview the FFmpeg command that will be generated")
                     Button("Edit Stream Metadata...") {
                         showStreamMetadataEditor = true
                     }
@@ -607,6 +669,104 @@ struct OutputSettingsView: View {
 
     private var containerInfo: some View {
         LabeledContent("Container", value: viewModel.selectedProfile.containerFormat.displayName)
+    }
+
+    // MARK: - Output Mode (Issue #275)
+
+    private var outputModePicker: some View {
+        @Bindable var vm = viewModel
+
+        return Picker("Folder Structure", selection: $vm.outputMode) {
+            ForEach(OutputMode.allCases, id: \.self) { mode in
+                Text(mode.displayName).tag(mode)
+            }
+        }
+        .accessibilityLabel("Output folder structure mode")
+    }
+
+    // MARK: - Filename Template (Issue #272)
+
+    @ViewBuilder
+    private var filenameTemplateField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField("Filename Template", text: $filenameTemplate)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .accessibilityLabel("Output filename template")
+
+            if let file = viewModel.selectedFile {
+                let template = FilenameTemplate(template: filenameTemplate)
+                let preview = template.resolve(sourceFile: file, profile: viewModel.selectedProfile)
+                let ext = viewModel.selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
+                Text("Preview: \(preview).\(ext)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Text("Variables: {title}, {resolution}, {codec}, {container}, {profile}, {date}, {date:FORMAT}, {width}, {height}, {fps}, {channels}")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Size Estimate (Issue #274)
+
+    @ViewBuilder
+    private func sizeEstimateView(file: MediaFile) -> some View {
+        let estimate = FileSizeEstimator.estimateOutputSize(
+            profile: viewModel.selectedProfile,
+            duration: file.duration ?? 0,
+            sourceFileSize: file.fileSize
+        )
+
+        LabeledContent("Estimated Size", value: estimate.formattedSize)
+            .accessibilityLabel("Estimated output file size: \(estimate.formattedSize)")
+
+        HStack(spacing: 4) {
+            Image(systemName: confidenceIcon(estimate.confidenceLevel))
+                .foregroundStyle(confidenceColor(estimate.confidenceLevel))
+            Text("Confidence: \(estimate.confidenceLevel)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        HStack(spacing: 12) {
+            HStack(spacing: 4) {
+                Image(systemName: estimate.fitsOnDVD ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(estimate.fitsOnDVD ? .green : .red)
+                Text("DVD (4.7 GB)")
+                    .font(.caption)
+            }
+            .accessibilityLabel(estimate.fitsOnDVD ? "Fits on DVD" : "Does not fit on DVD")
+
+            HStack(spacing: 4) {
+                Image(systemName: estimate.fitsOnBluRay ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(estimate.fitsOnBluRay ? .green : .red)
+                Text("Blu-ray (25 GB)")
+                    .font(.caption)
+            }
+            .accessibilityLabel(estimate.fitsOnBluRay ? "Fits on Blu-ray" : "Does not fit on Blu-ray")
+        }
+    }
+
+    /// SF Symbol icon for the confidence level.
+    private func confidenceIcon(_ level: String) -> String {
+        switch level {
+        case "high": return "gauge.with.dots.needle.100percent"
+        case "medium": return "gauge.with.dots.needle.50percent"
+        default: return "gauge.with.dots.needle.0percent"
+        }
+    }
+
+    /// Colour for the confidence level indicator.
+    private func confidenceColor(_ level: String) -> Color {
+        switch level {
+        case "high": return .green
+        case "medium": return .orange
+        default: return .red
+        }
     }
 
     // MARK: - Queue Button
