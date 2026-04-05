@@ -57,6 +57,10 @@ struct SettingsView: View {
                 NotificationSettingsTab()
             }
 
+            Tab("Analytics", systemImage: "chart.bar") {
+                AnalyticsSettingsView()
+            }
+
             Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
                 UpdateSettingsTab()
             }
