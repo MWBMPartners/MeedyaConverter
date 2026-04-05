@@ -9549,4 +9549,431 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertFalse(AccurateRipTrackResult.VerificationStatus.notInDatabase.isAccurate)
         XCTAssertEqual(AccurateRipTrackResult.VerificationStatus.verified.displayName, "Verified")
     }
+
+    // MARK: - AudioDiscFidelity Tests
+
+    /// Helper to create a sample TOC for testing.
+    private func makeSampleTOC(
+        trackCount: Int = 3,
+        withIndexes: Bool = false,
+        withCDText: Bool = false
+    ) -> DiscTableOfContents {
+        let tracks = (1...trackCount).map { i in
+            DiscTrack(
+                number: i,
+                title: "Track \(i)",
+                artist: "Artist",
+                duration: 240.0,
+                startSector: (i - 1) * 18000,
+                sectorCount: 18000,
+                isData: false,
+                hasPreEmphasis: i == 2
+            )
+        }
+
+        var indexes: [TrackIndex] = []
+        if withIndexes {
+            // Add INDEX 02 at 1 minute into track 1
+            indexes.append(TrackIndex(
+                trackNumber: 1,
+                indexNumber: 2,
+                sector: 4500,
+                offsetInTrack: 60.0,
+                absoluteTime: 60.0
+            ))
+            // Add INDEX 03 at 2 minutes into track 1
+            indexes.append(TrackIndex(
+                trackNumber: 1,
+                indexNumber: 3,
+                sector: 9000,
+                offsetInTrack: 120.0,
+                absoluteTime: 120.0
+            ))
+        }
+
+        let cdText: CDTextInfo? = withCDText ? CDTextInfo(
+            albumTitle: "Test Album",
+            albumArtist: "Test Artist",
+            trackTitles: Dictionary(uniqueKeysWithValues: (1...trackCount).map { ($0, "Song \($0)") }),
+            trackArtists: Dictionary(uniqueKeysWithValues: (1...trackCount).map { ($0, "Artist \($0)") })
+        ) : nil
+
+        return DiscTableOfContents(
+            discType: "Audio CD",
+            tracks: tracks,
+            indexes: indexes,
+            leadOutSector: trackCount * 18000,
+            firstTrackNumber: 1,
+            lastTrackNumber: trackCount,
+            cddbDiscId: "AB0CD123",
+            musicBrainzDiscId: "mb-disc-id-test",
+            catalogNumber: "1234567890123",
+            cdText: cdText
+        )
+    }
+
+    // MARK: CDTOC
+
+    /// Verifies CDTOC string format.
+    func test_audioDiscFidelity_buildCDTOCString() {
+        let toc = makeSampleTOC()
+        let tocString = AudioDiscFidelity.buildCDTOCString(toc: toc)
+        XCTAssertEqual(tocString, "1 3 54000 0 18000 36000")
+    }
+
+    /// Verifies CDTOC FFmpeg arguments include all metadata.
+    func test_audioDiscFidelity_buildCDTOCArguments() {
+        let toc = makeSampleTOC()
+        let args = AudioDiscFidelity.buildCDTOCArguments(toc: toc, format: .flac)
+
+        XCTAssertTrue(args.contains("-metadata"))
+        XCTAssertTrue(args.contains("CDTOC=1 3 54000 0 18000 36000"))
+        XCTAssertTrue(args.contains("MUSICBRAINZ_DISCID=mb-disc-id-test"))
+        XCTAssertTrue(args.contains("CDDB_DISCID=AB0CD123"))
+        XCTAssertTrue(args.contains("MCN=1234567890123"))
+        XCTAssertTrue(args.contains("UPC=1234567890123"))
+        XCTAssertTrue(args.contains("DISCTYPE=Audio CD"))
+        XCTAssertTrue(args.contains("TOTALTRACKS=3"))
+    }
+
+    /// Verifies CDTOC works for ALL formats (not just lossless).
+    func test_audioDiscFidelity_cdtocAllFormats() {
+        let toc = makeSampleTOC(trackCount: 1)
+        for format in CDDAFormat.allCases {
+            XCTAssertTrue(AudioDiscFidelity.supportsCDTOC(format),
+                          "\(format) should support CDTOC")
+            let args = AudioDiscFidelity.buildCDTOCArguments(toc: toc, format: format)
+            XCTAssertFalse(args.isEmpty, "\(format) should produce CDTOC arguments")
+        }
+    }
+
+    // MARK: Cuesheet
+
+    /// Verifies cuesheet generation.
+    func test_audioDiscFidelity_generateCuesheet() {
+        let toc = makeSampleTOC(withCDText: true)
+        let cue = AudioDiscFidelity.generateCuesheet(toc: toc, audioFileName: "disc.flac")
+
+        XCTAssertTrue(cue.contains("CATALOG 1234567890123"))
+        XCTAssertTrue(cue.contains("TITLE \"Test Album\""))
+        XCTAssertTrue(cue.contains("PERFORMER \"Test Artist\""))
+        XCTAssertTrue(cue.contains("FILE \"disc.flac\" WAVE"))
+        XCTAssertTrue(cue.contains("TRACK 01 AUDIO"))
+        XCTAssertTrue(cue.contains("TRACK 02 AUDIO"))
+        XCTAssertTrue(cue.contains("TRACK 03 AUDIO"))
+        XCTAssertTrue(cue.contains("TITLE \"Song 1\""))
+        XCTAssertTrue(cue.contains("PERFORMER \"Artist 1\""))
+        XCTAssertTrue(cue.contains("INDEX 01 00:00:00"))
+        XCTAssertTrue(cue.contains("REM DISCID AB0CD123"))
+    }
+
+    /// Verifies cuesheet includes pre-emphasis flags.
+    func test_audioDiscFidelity_cuesheetPreEmphasis() {
+        let toc = makeSampleTOC()
+        let cue = AudioDiscFidelity.generateCuesheet(toc: toc, audioFileName: "disc.wav")
+        XCTAssertTrue(cue.contains("FLAGS PRE"))
+    }
+
+    /// Verifies cuesheet embedding with sub-track indexes.
+    func test_audioDiscFidelity_cuesheetWithIndexes() {
+        let toc = makeSampleTOC(withIndexes: true)
+        let cue = AudioDiscFidelity.generateCuesheet(toc: toc, audioFileName: "disc.flac")
+        XCTAssertTrue(cue.contains("INDEX 02"))
+        XCTAssertTrue(cue.contains("INDEX 03"))
+    }
+
+    /// Verifies cuesheet supported for all formats.
+    func test_audioDiscFidelity_cuesheetAllFormats() {
+        for format in CDDAFormat.allCases {
+            XCTAssertTrue(AudioDiscFidelity.supportsCuesheet(format),
+                          "\(format) should support cuesheet")
+        }
+    }
+
+    /// Verifies cuesheet arguments.
+    func test_audioDiscFidelity_buildCuesheetArguments() {
+        let toc = makeSampleTOC()
+        let args = AudioDiscFidelity.buildCuesheetArguments(
+            toc: toc, audioFileName: "disc.mp3", format: .mp3
+        )
+        XCTAssertTrue(args.contains { $0.hasPrefix("CUESHEET=") })
+    }
+
+    /// Verifies cue sidecar path generation.
+    func test_audioDiscFidelity_cueSidecarPath() {
+        let path = AudioDiscFidelity.buildCueSidecarPath(audioFilePath: "/music/disc.flac")
+        XCTAssertEqual(path, "/music/disc.cue")
+    }
+
+    // MARK: Chapter Marks
+
+    /// Verifies whole-disc chapter marks from track boundaries.
+    func test_audioDiscFidelity_wholeDiscChapters() {
+        let toc = makeSampleTOC()
+        let chapters = AudioDiscFidelity.buildChapterMarks(toc: toc, wholeDiscMode: true)
+
+        XCTAssertEqual(chapters.count, 3)
+        XCTAssertEqual(chapters[0].title, "Track 1")
+        XCTAssertEqual(chapters[0].startTime, 0.0, accuracy: 0.01)
+        XCTAssertEqual(chapters[1].startTime, 240.0, accuracy: 0.01)
+        XCTAssertEqual(chapters[2].startTime, 480.0, accuracy: 0.01)
+        // End times
+        XCTAssertEqual(chapters[0].endTime!, 240.0, accuracy: 0.01)
+        XCTAssertEqual(chapters[2].endTime!, 720.0, accuracy: 0.01)
+    }
+
+    /// Verifies chapter marks include sub-track indexes.
+    func test_audioDiscFidelity_chaptersWithIndexes() {
+        let toc = makeSampleTOC(withIndexes: true)
+        let chapters = AudioDiscFidelity.buildChapterMarks(
+            toc: toc, wholeDiscMode: true, includeIndexes: true
+        )
+
+        // 3 tracks + 2 indexes in track 1
+        XCTAssertEqual(chapters.count, 5)
+        let indexChapters = chapters.filter { $0.title.contains("Index") }
+        XCTAssertEqual(indexChapters.count, 2)
+    }
+
+    /// Verifies per-track chapter marks from sub-track indexes.
+    func test_audioDiscFidelity_perTrackIndexChapters() {
+        let toc = makeSampleTOC(withIndexes: true)
+        let chapters = AudioDiscFidelity.buildChapterMarks(
+            toc: toc, wholeDiscMode: false, trackNumber: 1
+        )
+
+        XCTAssertEqual(chapters.count, 2)
+        XCTAssertEqual(chapters[0].title, "Index 2")
+        XCTAssertEqual(chapters[0].startTime, 60.0, accuracy: 0.01)
+        XCTAssertEqual(chapters[1].title, "Index 3")
+        XCTAssertEqual(chapters[1].startTime, 120.0, accuracy: 0.01)
+    }
+
+    /// Verifies no chapters when no sub-track indexes for a track.
+    func test_audioDiscFidelity_noIndexesNoChapters() {
+        let toc = makeSampleTOC(withIndexes: true)
+        let chapters = AudioDiscFidelity.buildChapterMarks(
+            toc: toc, wholeDiscMode: false, trackNumber: 3
+        )
+        XCTAssertTrue(chapters.isEmpty)
+    }
+
+    /// Verifies chapter support detection.
+    func test_audioDiscFidelity_supportsChapters() {
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.mp3))
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.aacLC))
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.alac))
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.flac))
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.oggVorbis))
+        XCTAssertTrue(AudioDiscFidelity.supportsChapters(.opus))
+        XCTAssertFalse(AudioDiscFidelity.supportsChapters(.wav))
+        XCTAssertFalse(AudioDiscFidelity.supportsChapters(.aiff))
+    }
+
+    // MARK: FFMETADATA
+
+    /// Verifies FFMETADATA chapter file generation.
+    func test_audioDiscFidelity_ffmetadataChapterFile() {
+        let chapters = [
+            ChapterMark(title: "Intro", startTime: 0.0, endTime: 60.0),
+            ChapterMark(title: "Verse", startTime: 60.0, endTime: 180.0),
+        ]
+        let content = AudioDiscFidelity.buildFFmetadataChapterFile(chapters: chapters)
+
+        XCTAssertTrue(content.hasPrefix(";FFMETADATA1\n"))
+        XCTAssertTrue(content.contains("[CHAPTER]"))
+        XCTAssertTrue(content.contains("TIMEBASE=1/1000"))
+        XCTAssertTrue(content.contains("START=0"))
+        XCTAssertTrue(content.contains("END=60000"))
+        XCTAssertTrue(content.contains("title=Intro"))
+        XCTAssertTrue(content.contains("START=60000"))
+        XCTAssertTrue(content.contains("END=180000"))
+        XCTAssertTrue(content.contains("title=Verse"))
+    }
+
+    /// Verifies FFMETADATA infers end time from next chapter.
+    func test_audioDiscFidelity_ffmetadataInferredEndTime() {
+        let chapters = [
+            ChapterMark(title: "A", startTime: 0.0),
+            ChapterMark(title: "B", startTime: 30.0),
+        ]
+        let content = AudioDiscFidelity.buildFFmetadataChapterFile(chapters: chapters)
+        // First chapter end = second chapter start
+        XCTAssertTrue(content.contains("END=30000"))
+    }
+
+    // MARK: Vorbis Chapter Tags
+
+    /// Verifies Vorbis comment chapter arguments.
+    func test_audioDiscFidelity_vorbisChapterArguments() {
+        let chapters = [
+            ChapterMark(title: "Track 1", startTime: 0.0),
+            ChapterMark(title: "Track 2", startTime: 120.5),
+        ]
+        let args = AudioDiscFidelity.buildVorbisChapterArguments(chapters: chapters)
+
+        XCTAssertTrue(args.contains("CHAPTER01=00:00:00.000"))
+        XCTAssertTrue(args.contains("CHAPTER01NAME=Track 1"))
+        XCTAssertTrue(args.contains("CHAPTER02=00:02:00.500"))
+        XCTAssertTrue(args.contains("CHAPTER02NAME=Track 2"))
+    }
+
+    // MARK: ChapterMark / TrackIndex
+
+    /// Verifies ChapterMark FFmpeg timestamp formatting.
+    func test_chapterMark_ffmpegTimestamp() {
+        let ch1 = ChapterMark(title: "T", startTime: 0.0)
+        XCTAssertEqual(ch1.ffmpegTimestamp, "00:00:00.000")
+
+        let ch2 = ChapterMark(title: "T", startTime: 3661.5)
+        XCTAssertEqual(ch2.ffmpegTimestamp, "01:01:01.500")
+    }
+
+    /// Verifies TrackIndex MSF string formatting.
+    func test_trackIndex_msfString() {
+        let idx = TrackIndex(trackNumber: 1, indexNumber: 1, sector: 0)
+        XCTAssertEqual(idx.msfString, "00:00:00")
+
+        let idx2 = TrackIndex(trackNumber: 1, indexNumber: 2, sector: 9075)
+        // 9075 / (75*60) = 2 min, (9075/75)%60 = 1 sec, 9075%75 = 0 frames
+        XCTAssertEqual(idx2.msfString, "02:01:00")
+    }
+
+    /// Verifies DiscTableOfContents computed properties.
+    func test_discTableOfContents_properties() {
+        let toc = makeSampleTOC(withIndexes: true)
+
+        XCTAssertEqual(toc.totalDuration, Double(54000) / 75.0, accuracy: 0.01)
+        XCTAssertEqual(toc.trackOffsets, [0, 18000, 36000])
+        XCTAssertEqual(toc.chapterIndexes.count, 2)
+        XCTAssertTrue(toc.hasSubTrackIndexes)
+    }
+
+    /// Verifies disc without indexes reports no sub-tracks.
+    func test_discTableOfContents_noIndexes() {
+        let toc = makeSampleTOC()
+        XCTAssertFalse(toc.hasSubTrackIndexes)
+        XCTAssertTrue(toc.chapterIndexes.isEmpty)
+    }
+
+    // MARK: Whole-Disc Ripping
+
+    /// Verifies cdparanoia arguments for whole-disc rip.
+    func test_audioDiscFidelity_wholeDiscRipArguments() {
+        let args = AudioDiscFidelity.buildWholeDiscRipArguments(
+            devicePath: "/dev/cdrom",
+            outputPath: "/tmp/disc.wav",
+            paranoia: .full,
+            readSpeed: 8
+        )
+
+        XCTAssertTrue(args.contains("-d"))
+        XCTAssertTrue(args.contains("/dev/cdrom"))
+        XCTAssertTrue(args.contains("-S"))
+        XCTAssertTrue(args.contains("8"))
+        XCTAssertTrue(args.contains("[.0]-"))
+        XCTAssertTrue(args.contains("/tmp/disc.wav"))
+    }
+
+    /// Verifies whole-disc encode arguments combine all fidelity features.
+    func test_audioDiscFidelity_wholeDiscEncodeArguments() {
+        let toc = makeSampleTOC(withIndexes: true, withCDText: true)
+        let args = AudioDiscFidelity.buildWholeDiscEncodeArguments(
+            inputWavPath: "/tmp/disc.wav",
+            outputPath: "/music/disc.flac",
+            format: .flac,
+            toc: toc,
+            embedCuesheet: true,
+            embedCDTOC: true,
+            embedChapters: true,
+            chapterMetadataPath: "/tmp/chapters.txt"
+        )
+
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/disc.wav"))
+        XCTAssertTrue(args.contains("/tmp/chapters.txt"))
+        XCTAssertTrue(args.contains("-c:a"))
+        XCTAssertTrue(args.contains("flac"))
+        XCTAssertTrue(args.contains("-compression_level"))
+        XCTAssertTrue(args.contains { $0.hasPrefix("CDTOC=") })
+        XCTAssertTrue(args.contains { $0.hasPrefix("CUESHEET=") })
+        XCTAssertTrue(args.contains { $0.hasPrefix("CHAPTER01=") })
+        XCTAssertTrue(args.contains("-y"))
+        XCTAssertTrue(args.contains("/music/disc.flac"))
+    }
+
+    /// Verifies whole-disc encode with lossy format includes bitrate.
+    func test_audioDiscFidelity_wholeDiscEncodeLossy() {
+        let toc = makeSampleTOC()
+        let args = AudioDiscFidelity.buildWholeDiscEncodeArguments(
+            inputWavPath: "/tmp/disc.wav",
+            outputPath: "/music/disc.mp3",
+            format: .mp3,
+            toc: toc,
+            bitrate: 320,
+            embedChapters: false
+        )
+
+        XCTAssertTrue(args.contains("-b:a"))
+        XCTAssertTrue(args.contains("320k"))
+        XCTAssertFalse(args.contains("-compression_level"))
+    }
+
+    // MARK: Filename Generation
+
+    /// Verifies whole-disc filename generation with CD-TEXT.
+    func test_audioDiscFidelity_wholeDiscFilename() {
+        let cdText = CDTextInfo(
+            albumTitle: "Greatest Hits",
+            albumArtist: "The Band",
+            trackTitles: [:],
+            trackArtists: [:]
+        )
+        let name = AudioDiscFidelity.buildWholeDiscFilename(cdText: cdText, format: .flac)
+        XCTAssertEqual(name, "The Band - Greatest Hits.flac")
+    }
+
+    /// Verifies filename generation without CD-TEXT.
+    func test_audioDiscFidelity_wholeDiscFilenameNoText() {
+        let name = AudioDiscFidelity.buildWholeDiscFilename(cdText: nil, format: .wav)
+        XCTAssertEqual(name, "Full Disc.wav")
+    }
+
+    /// Verifies filename sanitization.
+    func test_audioDiscFidelity_filenameSanitization() {
+        let cdText = CDTextInfo(
+            albumTitle: "AC/DC: Live",
+            albumArtist: nil,
+            trackTitles: [:],
+            trackArtists: [:]
+        )
+        let name = AudioDiscFidelity.buildWholeDiscFilename(cdText: cdText, format: .mp3)
+        XCTAssertEqual(name, "AC-DC- Live.mp3")
+        XCTAssertFalse(name.contains("/"))
+        XCTAssertFalse(name.contains(":"))
+    }
+
+    // MARK: CuesheetEmbedMethod
+
+    /// Verifies CuesheetEmbedMethod raw values.
+    func test_cuesheetEmbedMethod_rawValues() {
+        XCTAssertEqual(CuesheetEmbedMethod.flacNative.rawValue, "flac_native")
+        XCTAssertEqual(CuesheetEmbedMethod.vorbisComment.rawValue, "vorbis_comment")
+        XCTAssertEqual(CuesheetEmbedMethod.id3v2.rawValue, "id3v2")
+        XCTAssertEqual(CuesheetEmbedMethod.mp4Tag.rawValue, "mp4_tag")
+        XCTAssertEqual(CuesheetEmbedMethod.wmaTag.rawValue, "wma_tag")
+        XCTAssertEqual(CuesheetEmbedMethod.apeTag.rawValue, "ape_tag")
+    }
+
+    /// Verifies chapter embed arguments reference the metadata file.
+    func test_audioDiscFidelity_chapterEmbedArguments() {
+        let args = AudioDiscFidelity.buildChapterEmbedArguments(
+            metadataFilePath: "/tmp/meta.txt"
+        )
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/meta.txt"))
+        XCTAssertTrue(args.contains("-map_metadata"))
+        XCTAssertTrue(args.contains("-map_chapters"))
+        XCTAssertTrue(args.contains("1"))
+    }
 }
