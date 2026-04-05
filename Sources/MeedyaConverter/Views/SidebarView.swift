@@ -40,6 +40,11 @@ struct SidebarView: View {
                 sidebarLabel(for: .log)
                     .badge(viewModel.logEntries.count)
             }
+
+            // Disc section — disc burning
+            Section("Disc") {
+                sidebarLabel(for: .burn)
+            }
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)

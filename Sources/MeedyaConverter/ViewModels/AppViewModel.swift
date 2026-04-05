@@ -28,6 +28,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Activity log — structured app events and FFmpeg output.
     case log = "Log"
 
+    /// Disc burning — write to physical optical media.
+    case burn = "Burn"
+
     var id: String { rawValue }
 
     /// SF Symbol name for sidebar icon.
@@ -38,6 +41,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .output: return "gearshape.2"
         case .queue: return "list.number"
         case .log: return "text.page"
+        case .burn: return "opticaldisc"
         }
     }
 
@@ -49,6 +53,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .output: return "Configure output settings"
         case .queue: return "View encoding queue"
         case .log: return "View activity log"
+        case .burn: return "Burn disc"
         }
     }
 }

@@ -53,6 +53,8 @@ struct ContentView: View {
             JobQueueView()
         case .log:
             ActivityLogView()
+        case .burn:
+            BurnSettingsView()
         case nil:
             ContentUnavailableView(
                 "Select a Section",
