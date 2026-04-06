@@ -7003,9 +7003,10 @@ final class ConverterEngineTests: XCTestCase {
     func test_toolBundleManifest_defaultManifest() {
         let manifest = ToolBundleManifest.defaultManifest
         XCTAssertEqual(manifest.schemaVersion, 1)
-        XCTAssertEqual(manifest.tools.count, 4)
+        XCTAssertEqual(manifest.tools.count, 5)
         XCTAssertNotNil(manifest.tool(id: "dovi_tool"))
         XCTAssertNotNil(manifest.tool(id: "hlg_tools"))
+        XCTAssertNotNil(manifest.tool(id: "hdr10plus_tool"))
         XCTAssertNotNil(manifest.tool(id: "mediainfo"))
         XCTAssertNotNil(manifest.tool(id: "fpcalc"))
     }
