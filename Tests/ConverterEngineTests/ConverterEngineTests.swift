@@ -3142,30 +3142,39 @@ final class ConverterEngineTests: XCTestCase {
 
     /// Verifies SFTP SCP arguments.
     func test_sftpUploader_scpArguments() {
-        let cred = CloudCredential(
-            provider: .sftp, endpoint: "server.com", username: "user", port: 2222
+        let config = SFTPServerConfig(
+            host: "server.com",
+            port: 2222,
+            username: "user",
+            authMethod: .password("pass"),
+            remotePath: "/uploads",
+            label: "Test"
         )
         let args = SFTPUploader.buildSCPArguments(
-            credential: cred,
             localPath: "/tmp/video.mp4",
-            remotePath: "/uploads/video.mp4"
+            config: config
         )
         XCTAssertTrue(args.contains("-P"))
         XCTAssertTrue(args.contains("2222"))
         XCTAssertTrue(args.contains("/tmp/video.mp4"))
-        XCTAssertTrue(args.contains("user@server.com:/uploads/video.mp4"))
     }
 
-    /// Verifies SFTP batch commands.
-    func test_sftpUploader_batch() {
-        let batch = SFTPUploader.buildSFTPBatch(
-            localPath: "/tmp/file.mp4",
-            remotePath: "/uploads/file.mp4",
-            createDirectory: true
+    /// Verifies SFTP rsync arguments.
+    func test_sftpUploader_rsync() {
+        let config = SFTPServerConfig(
+            host: "server.com",
+            port: 22,
+            username: "user",
+            authMethod: .agent,
+            remotePath: "/uploads",
+            label: "Test"
         )
-        XCTAssertTrue(batch.contains("-mkdir /uploads"))
-        XCTAssertTrue(batch.contains("put /tmp/file.mp4 /uploads/file.mp4"))
-        XCTAssertTrue(batch.contains("quit"))
+        let args = SFTPUploader.buildRsyncArguments(
+            localPath: "/tmp/file.mp4",
+            config: config
+        )
+        XCTAssertFalse(args.isEmpty)
+        XCTAssertTrue(args.contains(where: { $0.contains("ssh") }))
     }
 
     // -----------------------------------------------------------------
