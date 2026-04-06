@@ -139,6 +139,7 @@ struct MetadataEditorView: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: 250)
+                    .accessibilityLabel("Language for stream \(edit.wrappedValue.streamIndex)")
                 }
 
                 // Disposition flags

@@ -365,15 +365,21 @@ public struct PostEncodeActionChain: Codable, Sendable {
     /// - Parameters:
     ///   - title: The notification title.
     ///   - body: The notification body text.
+    /// Send a macOS user notification without blocking the main thread.
+    ///
+    /// The `osascript` process runs on a detached task so that `waitUntilExit()`
+    /// does not stall the main actor's run-loop.
     @MainActor
     private func sendMacOSNotification(title: String, body: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = [
-            "-e",
-            "display notification \"\(body)\" with title \"\(title)\""
-        ]
-        try? process.run()
-        process.waitUntilExit()
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = [
+                "-e",
+                "display notification \"\(body)\" with title \"\(title)\""
+            ]
+            try? process.run()
+            process.waitUntilExit()
+        }
     }
 }

@@ -225,6 +225,7 @@ struct ComparisonView: View {
                         Image(systemName: "chevron.left")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Previous frame")
 
                     Text("Frame \(selectedFrameIndex + 1) / \(frames.count)")
                         .font(.caption.monospacedDigit())
@@ -239,6 +240,7 @@ struct ComparisonView: View {
                         Image(systemName: "chevron.right")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Next frame")
                 }
 
                 Slider(
@@ -250,6 +252,8 @@ struct ComparisonView: View {
                     step: 1
                 )
                 .frame(maxWidth: 200)
+                .accessibilityLabel("Frame scrubber")
+                .accessibilityValue("Frame \(selectedFrameIndex + 1) of \(frames.count)")
             }
 
             Spacer()
