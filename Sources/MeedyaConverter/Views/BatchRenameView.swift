@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - BatchRenameView
@@ -54,6 +55,9 @@ struct BatchRenameView: View {
     /// Whether to show the error alert.
     @State private var showError = false
 
+    /// Whether a drag operation is hovering over this view.
+    @State private var isDragTargeted = false
+
     // MARK: - Body
 
     var body: some View {
@@ -72,6 +76,28 @@ struct BatchRenameView: View {
                 // MARK: Preview Table
                 previewTable
                     .frame(minWidth: 400)
+            }
+        }
+        // Drop files to add to the rename list (Issue #366).
+        .onDrop(
+            of: [.fileURL],
+            isTargeted: $isDragTargeted
+        ) { providers in
+            DropHandler.extractURLs(from: providers) { urls in
+                guard !urls.isEmpty else { return }
+                Task { @MainActor in
+                    files.append(contentsOf: urls)
+                    updatePreview()
+                }
+            }
+            return true
+        }
+        .overlay {
+            if isDragTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.blue, lineWidth: 3)
+                    .opacity(0.5)
+                    .allowsHitTesting(false)
             }
         }
         .alert("Rename Error", isPresented: $showError) {

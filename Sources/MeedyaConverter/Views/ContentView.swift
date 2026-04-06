@@ -22,6 +22,11 @@ struct ContentView: View {
 
     @Environment(AppViewModel.self) private var viewModel
 
+    // MARK: - State
+
+    /// Whether a drag operation is currently hovering over the window.
+    @State private var isDragTargeted = false
+
     // MARK: - Body
 
     var body: some View {
@@ -39,6 +44,29 @@ struct ContentView: View {
         .touchBar {
             TouchBarProvider()
                 .environment(viewModel)
+        }
+        // Global drag-and-drop — import files dropped anywhere on the
+        // window and switch to the Source view (Issue #366).
+        .onDrop(
+            of: [.fileURL, .movie, .video, .audio],
+            isTargeted: $isDragTargeted
+        ) { providers in
+            DropHandler.extractURLs(from: providers) { urls in
+                guard !urls.isEmpty else { return }
+                Task {
+                    await viewModel.importFiles(urls)
+                    viewModel.selectedNavItem = .source
+                }
+            }
+            return true
+        }
+        .overlay {
+            if isDragTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(.blue, lineWidth: 3)
+                    .opacity(0.5)
+                    .allowsHitTesting(false)
+            }
         }
     }
 

@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - VideoTrimmerView
@@ -84,6 +85,9 @@ struct VideoTrimmerView: View {
     /// Whether to snap to keyframes for lossless cutting.
     @State private var keyframeAlign: Bool = true
 
+    /// Whether a drag operation is hovering over this view.
+    @State private var isDragTargeted = false
+
     // MARK: - Body
 
     var body: some View {
@@ -101,6 +105,27 @@ struct VideoTrimmerView: View {
         .onChange(of: trimEndFraction) { _, _ in recalculateSegments() }
         .onChange(of: snipRegions) { _, _ in recalculateSegments() }
         .onAppear { recalculateSegments() }
+        // Drop a single video file to set as the trim source (Issue #366).
+        .onDrop(
+            of: [.fileURL, .movie, .video],
+            isTargeted: $isDragTargeted
+        ) { providers in
+            DropHandler.extractURLs(from: providers) { urls in
+                guard let url = urls.first else { return }
+                Task {
+                    await viewModel.importFiles([url])
+                }
+            }
+            return true
+        }
+        .overlay {
+            if isDragTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.blue, lineWidth: 3)
+                    .opacity(0.5)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: - Controls Section

@@ -57,6 +57,9 @@ struct ConcatenationView: View {
     /// The currently selected file ID for drag-to-reorder.
     @State private var selectedFileID: URL?
 
+    /// Whether a drag operation is hovering over this view.
+    @State private var isDragTargeted = false
+
     // MARK: - Body
 
     var body: some View {
@@ -80,6 +83,28 @@ struct ConcatenationView: View {
             }
         }
         .navigationTitle("Concatenation")
+        // Drop video files to add to the concatenation list (Issue #366).
+        .onDrop(
+            of: [.fileURL, .movie, .video, .audio],
+            isTargeted: $isDragTargeted
+        ) { providers in
+            DropHandler.extractURLs(from: providers) { urls in
+                guard !urls.isEmpty else { return }
+                Task { @MainActor in
+                    files.append(contentsOf: urls)
+                    validateFiles()
+                }
+            }
+            return true
+        }
+        .overlay {
+            if isDragTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.blue, lineWidth: 3)
+                    .opacity(0.5)
+                    .allowsHitTesting(false)
+            }
+        }
         .alert("Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: {

@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - MediaBrowserView
@@ -79,6 +80,9 @@ struct MediaBrowserView: View {
     /// Maximum duration in seconds (0 = no maximum).
     @State private var filterMaxDuration: Double = 0
 
+    /// Whether a drag operation is hovering over this view.
+    @State private var isDragTargeted = false
+
     // MARK: - Sort State
 
     /// The column currently used for sorting.
@@ -135,6 +139,35 @@ struct MediaBrowserView: View {
         }
         .padding()
         .frame(minWidth: 800, minHeight: 500)
+        // Drop a folder to set as the scan directory (Issue #366).
+        .onDrop(
+            of: [.fileURL, .folder],
+            isTargeted: $isDragTargeted
+        ) { providers in
+            DropHandler.extractURLs(from: providers) { urls in
+                guard let url = urls.first else { return }
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+                   isDir.boolValue {
+                    Task { @MainActor in
+                        selectedDirectory = url
+                        scannedFiles = []
+                        displayedFiles = []
+                        selectedFileIDs = []
+                        await performScan()
+                    }
+                }
+            }
+            return true
+        }
+        .overlay {
+            if isDragTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.blue, lineWidth: 3)
+                    .opacity(0.5)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     // MARK: - Header
