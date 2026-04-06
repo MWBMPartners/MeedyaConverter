@@ -136,6 +136,16 @@ public struct ToolBundleManifest: Codable, Sendable {
                 description: "Audio fingerprint generation for AcoustID lookup",
                 license: "LGPL-2.1"
             ),
+            BundledTool(
+                id: "hdr10plus_tool",
+                name: "hdr10plus_tool",
+                version: "1.6.1",
+                sourceURL: "https://github.com/quietvoid/hdr10plus_tool",
+                lastUpdated: "2026-04-05",
+                binaryName: "hdr10plus_tool",
+                description: "HDR10+ dynamic metadata extraction, injection, and validation",
+                license: "MIT"
+            ),
         ],
         schemaVersion: 1,
         generatedDate: "2026-04-01"
