@@ -41,39 +41,66 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") {
-                GeneralSettingsTab()
+            // -- Appearance & Behaviour ------------------------------------
+            TabSection("Appearance") {
+                Tab("General", systemImage: "gearshape") {
+                    GeneralSettingsTab()
+                }
+
+                Tab("Theme", systemImage: "paintpalette") {
+                    ThemeSettingsView()
+                }
+
+                Tab("Shortcuts", systemImage: "keyboard") {
+                    KeyboardShortcutsView()
+                        .environment(viewModel.shortcutManager)
+                }
             }
 
-            Tab("Encoding", systemImage: "film.stack") {
-                EncodingSettingsTab()
+            // -- Encoding & Processing -------------------------------------
+            TabSection("Encoding") {
+                Tab("Encoding", systemImage: "film.stack") {
+                    EncodingSettingsTab()
+                }
+
+                Tab("Paths", systemImage: "folder") {
+                    PathSettingsTab()
+                }
+
+                Tab("Watch Folder", systemImage: "eye") {
+                    WatchFolderView()
+                }
+
+                Tab("Hooks", systemImage: "bolt.horizontal") {
+                    PostEncodeActionsView()
+                }
             }
 
-            Tab("Paths", systemImage: "folder") {
-                PathSettingsTab()
+            // -- Integration & Services ------------------------------------
+            TabSection("Services") {
+                Tab("Notifications", systemImage: "bell") {
+                    NotificationSettingsTab()
+                }
+
+                Tab("Webhooks", systemImage: "globe") {
+                    WebhookSettingsView()
+                }
+
+                Tab("Media Server", systemImage: "server.rack") {
+                    MediaServerSettingsView()
+                }
+
+                Tab("Analytics", systemImage: "chart.bar") {
+                    AnalyticsSettingsView()
+                }
+
+                Tab("Plugins", systemImage: "puzzlepiece") {
+                    PluginManagerView()
+                }
             }
 
-            Tab("Notifications", systemImage: "bell") {
-                NotificationSettingsTab()
-            }
-
-            Tab("Hooks", systemImage: "bolt.horizontal") {
-                PostEncodeActionsView()
-            }
-
-            Tab("Webhooks", systemImage: "globe") {
-                WebhookSettingsView()
-            }
-
-            Tab("Media Server", systemImage: "server.rack") {
-                MediaServerSettingsView()
-            }
-
-            Tab("Analytics", systemImage: "chart.bar") {
-                AnalyticsSettingsView()
-            }
-
-            TabSection {
+            // -- Account & Info --------------------------------------------
+            TabSection("Account") {
                 Tab("Subscription", systemImage: "creditcard") {
                     SubscriptionSettingsTab()
                 }
@@ -87,7 +114,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(width: 550, height: 400)
+        .frame(width: 600, height: 450)
     }
 }
 

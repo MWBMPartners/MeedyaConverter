@@ -12,7 +12,14 @@ import ConverterEngine
 // MARK: - NavigationItem
 
 /// Sidebar navigation items for the main app window.
+///
+/// Organised into logical sections: Workflow (encoding pipeline),
+/// Monitor (queue, log, dashboard, performance), Tools (editing,
+/// analysis, batch operations), and Distribution (upload, cloud).
 enum NavigationItem: String, CaseIterable, Identifiable {
+
+    // -- Workflow ----------------------------------------------------------
+
     /// Source file import and metadata display.
     case source = "Source"
 
@@ -22,43 +29,175 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Output settings — container, codec, quality selection.
     case output = "Output"
 
+    // -- Monitor -----------------------------------------------------------
+
     /// Encoding queue — job list with progress.
     case queue = "Queue"
 
     /// Activity log — structured app events and FFmpeg output.
     case log = "Log"
 
-    /// Disc burning — write to physical optical media.
-    case burn = "Burn"
+    /// Aggregate encoding statistics dashboard.
+    case dashboard = "Dashboard"
+
+    /// Live CPU / memory / disk resource monitor.
+    case resourceMonitor = "Resource Monitor"
+
+    // -- Tools -------------------------------------------------------------
 
     /// Image conversion — batch image format conversion.
     case images = "Images"
+
+    /// Disc burning — write to physical optical media.
+    case burn = "Burn"
+
+    /// Video trimming, splitting, and snipping.
+    case trimEdit = "Trim / Edit"
+
+    /// Analysis hub — scene detection, bitrate heatmap, quality check,
+    /// quality metrics, loudness report, audio waveform.
+    case analyze = "Analyze"
+
+    /// Metadata tag editor for source and output files.
+    case metadataTags = "Metadata"
+
+    /// Batch rename output files using templates.
+    case batchRename = "Batch Rename"
+
+    /// Concatenation — join multiple media files.
+    case concatenation = "Concatenate"
+
+    /// Watermark overlay editor.
+    case watermark = "Watermark"
+
+    /// Multi-output encoding — one source to many outputs.
+    case multiOutput = "Multi-Output"
+
+    /// Visual FFmpeg filter graph editor.
+    case filterGraph = "Filter Graph"
+
+    /// EDL (Edit Decision List) editor for import/export.
+    case edlEditor = "EDL Editor"
+
+    /// Animated image (GIF / APNG / WebP) creation.
+    case animatedImage = "Animated Image"
+
+    /// Duplicate file finder across media library.
+    case duplicateFinder = "Duplicate Finder"
+
+    /// Parallel encoding — multi-job concurrency settings.
+    case parallelEncoding = "Parallel Encoding"
+
+    /// Queue optimizer — reorder and optimise the queue.
+    case queueOptimizer = "Queue Optimizer"
+
+    /// Benchmark — hardware encoding performance test.
+    case benchmark = "Benchmark"
+
+    /// Storage analysis — disk usage by output files.
+    case storageAnalysis = "Storage Analysis"
+
+    /// Comparison library — saved before/after comparisons.
+    case comparisonLibrary = "Comparisons"
+
+    /// Recently opened source files.
+    case recentFiles = "Recent Files"
+
+    // -- Distribution ------------------------------------------------------
+
+    /// Video upload to platforms (YouTube, Vimeo, etc.).
+    case videoUpload = "Upload"
+
+    /// Cloud storage integration (S3, GCS, etc.).
+    case cloudStorage = "Cloud Storage"
+
+    /// SFTP upload configuration.
+    case sftp = "SFTP"
+
+    /// Podcast RSS feed generation.
+    case podcastFeed = "Podcast Feed"
+
+    /// Team profile sharing and collaboration.
+    case teamProfile = "Team Profile"
+
+    /// Cloud sync of settings and profiles.
+    case cloudSync = "Cloud Sync"
 
     var id: String { rawValue }
 
     /// SF Symbol name for sidebar icon.
     var systemImage: String {
         switch self {
-        case .source: return "doc.badge.plus"
-        case .streams: return "list.bullet.rectangle"
-        case .output: return "gearshape.2"
-        case .queue: return "list.number"
-        case .log: return "text.page"
-        case .burn: return "opticaldisc"
-        case .images: return "photo.on.rectangle.angled"
+        case .source:            return "doc.badge.plus"
+        case .streams:           return "list.bullet.rectangle"
+        case .output:            return "gearshape.2"
+        case .queue:             return "list.number"
+        case .log:               return "text.page"
+        case .dashboard:         return "chart.bar.xaxis"
+        case .resourceMonitor:   return "gauge.with.dots.needle.33percent"
+        case .images:            return "photo.on.rectangle.angled"
+        case .burn:              return "opticaldisc"
+        case .trimEdit:          return "scissors"
+        case .analyze:           return "waveform.and.magnifyingglass"
+        case .metadataTags:      return "tag"
+        case .batchRename:       return "pencil.and.list.clipboard"
+        case .concatenation:     return "link"
+        case .watermark:         return "text.below.photo"
+        case .multiOutput:       return "arrow.triangle.branch"
+        case .filterGraph:       return "flowchart"
+        case .edlEditor:         return "list.clipboard"
+        case .animatedImage:     return "photo.stack"
+        case .duplicateFinder:   return "doc.on.doc"
+        case .parallelEncoding:  return "cpu"
+        case .queueOptimizer:    return "arrow.up.arrow.down"
+        case .benchmark:         return "speedometer"
+        case .storageAnalysis:   return "internaldrive"
+        case .comparisonLibrary: return "square.split.2x1"
+        case .recentFiles:       return "clock.arrow.circlepath"
+        case .videoUpload:       return "icloud.and.arrow.up"
+        case .cloudStorage:      return "cloud"
+        case .sftp:              return "network"
+        case .podcastFeed:       return "antenna.radiowaves.left.and.right"
+        case .teamProfile:       return "person.2"
+        case .cloudSync:         return "arrow.triangle.2.circlepath.icloud"
         }
     }
 
     /// Short description for accessibility labels.
     var accessibilityLabel: String {
         switch self {
-        case .source: return "Import source media files"
-        case .streams: return "Inspect media streams"
-        case .output: return "Configure output settings"
-        case .queue: return "View encoding queue"
-        case .log: return "View activity log"
-        case .burn: return "Burn disc"
-        case .images: return "Convert images"
+        case .source:            return "Import source media files"
+        case .streams:           return "Inspect media streams"
+        case .output:            return "Configure output settings"
+        case .queue:             return "View encoding queue"
+        case .log:               return "View activity log"
+        case .dashboard:         return "View encoding statistics dashboard"
+        case .resourceMonitor:   return "Monitor system resources"
+        case .images:            return "Convert images"
+        case .burn:              return "Burn disc"
+        case .trimEdit:          return "Trim and edit video"
+        case .analyze:           return "Analyse media files"
+        case .metadataTags:      return "Edit metadata tags"
+        case .batchRename:       return "Batch rename output files"
+        case .concatenation:     return "Join media files together"
+        case .watermark:         return "Add watermark overlay"
+        case .multiOutput:       return "Encode to multiple outputs"
+        case .filterGraph:       return "Edit FFmpeg filter graph"
+        case .edlEditor:         return "Edit decision list editor"
+        case .animatedImage:     return "Create animated images"
+        case .duplicateFinder:   return "Find duplicate media files"
+        case .parallelEncoding:  return "Configure parallel encoding"
+        case .queueOptimizer:    return "Optimise encoding queue"
+        case .benchmark:         return "Run encoding benchmark"
+        case .storageAnalysis:   return "Analyse storage usage"
+        case .comparisonLibrary: return "View saved comparisons"
+        case .recentFiles:       return "View recently opened files"
+        case .videoUpload:       return "Upload video to platforms"
+        case .cloudStorage:      return "Manage cloud storage"
+        case .sftp:              return "Configure SFTP upload"
+        case .podcastFeed:       return "Generate podcast RSS feed"
+        case .teamProfile:       return "Manage team profiles"
+        case .cloudSync:         return "Sync settings via cloud"
         }
     }
 }
@@ -154,6 +293,16 @@ final class AppViewModel {
 
     /// Discovered hardware encoders on this system.
     var availableHardwareEncoders: [HardwareEncoderInfo] = []
+
+    // MARK: - Mini Player (Issue #280)
+
+    /// Floating mini player controller for compact encoding progress display.
+    let miniPlayer = MiniPlayerController()
+
+    // MARK: - Keyboard Shortcuts (Issue #331)
+
+    /// Manager for user-assignable keyboard shortcuts.
+    let shortcutManager = KeyboardShortcutManager()
 
     // MARK: - Activity Indicators (Issue #182)
 

@@ -48,20 +48,81 @@ struct ContentView: View {
     @ViewBuilder
     private var detailView: some View {
         switch viewModel.selectedNavItem {
+
+        // -- Workflow ------------------------------------------------------
         case .source:
             SourceFileView()
         case .streams:
             StreamInspectorView()
         case .output:
             OutputSettingsView()
+
+        // -- Monitor -------------------------------------------------------
         case .queue:
             JobQueueView()
         case .log:
             ActivityLogView()
-        case .burn:
-            BurnSettingsView()
+        case .dashboard:
+            DashboardView()
+        case .resourceMonitor:
+            ResourceMonitorView()
+
+        // -- Tools ---------------------------------------------------------
         case .images:
             ImageConversionView()
+        case .burn:
+            BurnSettingsView()
+        case .trimEdit:
+            VideoTrimmerView()
+        case .analyze:
+            AnalysisHubView()
+        case .metadataTags:
+            MetadataTagEditorView()
+        case .batchRename:
+            BatchRenameView()
+        case .concatenation:
+            ConcatenationView()
+        case .watermark:
+            WatermarkView()
+        case .multiOutput:
+            MultiOutputView()
+        case .filterGraph:
+            FilterGraphEditorView()
+        case .edlEditor:
+            EDLEditorView()
+        case .animatedImage:
+            AnimatedImageView()
+        case .duplicateFinder:
+            DuplicateFinderView()
+
+        // -- Performance ---------------------------------------------------
+        case .parallelEncoding:
+            ParallelEncodingView()
+        case .queueOptimizer:
+            QueueOptimizerView()
+        case .benchmark:
+            BenchmarkView()
+        case .storageAnalysis:
+            StorageAnalysisView()
+        case .comparisonLibrary:
+            ComparisonLibraryView()
+        case .recentFiles:
+            RecentFilesView()
+
+        // -- Distribution --------------------------------------------------
+        case .videoUpload:
+            VideoUploadView()
+        case .cloudStorage:
+            CloudStorageView()
+        case .sftp:
+            SFTPSettingsView()
+        case .podcastFeed:
+            PodcastFeedView()
+        case .teamProfile:
+            TeamProfileView()
+        case .cloudSync:
+            CloudSyncView()
+
         case nil:
             ContentUnavailableView(
                 "Select a Section",
@@ -98,6 +159,20 @@ struct ContentView: View {
             .disabled(viewModel.selectedFile == nil)
             .help("Add selected file to encoding queue (Cmd+Return)")
             .accessibilityLabel("Add to encoding queue")
+        }
+
+        // Mini player toggle (Issue #280)
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                viewModel.miniPlayer.toggle()
+            } label: {
+                Label(
+                    viewModel.miniPlayer.isVisible ? "Hide Mini Player" : "Show Mini Player",
+                    systemImage: viewModel.miniPlayer.isVisible ? "pip.exit" : "pip.enter"
+                )
+            }
+            .help("Toggle floating mini player (progress overlay)")
+            .accessibilityLabel("Toggle mini player")
         }
 
         // Engine status indicator

@@ -56,6 +56,9 @@ struct MeedyaConverterApp: App {
     /// User's preferred appearance mode (persisted).
     @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
+    /// Whether the user has completed the first-launch onboarding wizard.
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
     // -----------------------------------------------------------------
     // MARK: - Scene Declaration
     // -----------------------------------------------------------------
@@ -65,6 +68,7 @@ struct MeedyaConverterApp: App {
             ContentView()
                 .environment(appViewModel)
                 .environment(appViewModel.storeManager)
+                .environment(appViewModel.shortcutManager)
                 .preferredColorScheme(currentColorScheme)
                 .onAppear {
                     requestNotificationPermission()
@@ -72,6 +76,14 @@ struct MeedyaConverterApp: App {
                     Task {
                         await appViewModel.storeManager.loadProducts()
                     }
+                }
+                .sheet(isPresented: Binding(
+                    get: { !hasCompletedOnboarding },
+                    set: { if !$0 { hasCompletedOnboarding = true } }
+                )) {
+                    OnboardingView()
+                        .environment(appViewModel)
+                        .interactiveDismissDisabled()
                 }
         }
         .defaultSize(width: 1100, height: 700)
@@ -92,6 +104,16 @@ struct MeedyaConverterApp: App {
                 .disabled(!appViewModel.updateChecker.canCheckForUpdates)
             }
 
+            // View menu — Mini player toggle (Issue #280)
+            CommandGroup(after: .toolbar) {
+                Button(appViewModel.miniPlayer.isVisible
+                       ? "Hide Mini Player"
+                       : "Show Mini Player") {
+                    appViewModel.miniPlayer.toggle()
+                }
+                .keyboardShortcut("m", modifiers: [.command, .option])
+            }
+
             // Help menu — In-app help
             CommandGroup(replacing: .help) {
                 Button("MeedyaConverter Help") {
@@ -106,6 +128,7 @@ struct MeedyaConverterApp: App {
             SettingsView()
                 .environment(appViewModel)
                 .environment(appViewModel.storeManager)
+                .environment(appViewModel.shortcutManager)
                 .preferredColorScheme(currentColorScheme)
         }
 
