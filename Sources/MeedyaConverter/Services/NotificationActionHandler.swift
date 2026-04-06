@@ -159,10 +159,10 @@ final class NotificationActionHandler: NSObject, UNUserNotificationCenterDelegat
     ///   - response: The user's response, including the action identifier
     ///     and the original notification content with `userInfo`.
     ///   - completionHandler: Must be called when processing is complete.
-    nonisolated func userNotificationCenter(
+    @preconcurrency nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+        withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         // Extract sendable values before crossing isolation boundaries.
         // `userInfo` is `[AnyHashable: Any]` (non-Sendable), so we pull
@@ -172,6 +172,9 @@ final class NotificationActionHandler: NSObject, UNUserNotificationCenterDelegat
         let inputPath = response.notification.request.content.userInfo[Self.inputPathKey] as? String
         let outputDirectory = response.notification.request.content.userInfo[Self.outputDirectoryKey] as? String
 
+        // Dispatch action handling to the main actor asynchronously.
+        // completionHandler is called synchronously to satisfy the delegate
+        // contract — the action handling continues in the background.
         Task { @MainActor in
             switch actionIdentifier {
             case Self.openFinderAction:
@@ -190,16 +193,15 @@ final class NotificationActionHandler: NSObject, UNUserNotificationCenterDelegat
                 handleOpenOutputFolder(directoryPath: outputDirectory)
 
             case UNNotificationDefaultActionIdentifier:
-                // User tapped the notification itself (not an action button).
-                // Bring the app to the foreground.
                 NSApp.activate(ignoringOtherApps: true)
 
             default:
                 break
             }
-
-            completionHandler()
         }
+
+        // Call completion handler synchronously to avoid sending across actors.
+        completionHandler()
     }
 
     /// Called when a notification is about to be presented while the app is
@@ -209,10 +211,10 @@ final class NotificationActionHandler: NSObject, UNUserNotificationCenterDelegat
     ///   - center: The notification centre.
     ///   - notification: The notification about to be delivered.
     ///   - completionHandler: Call with the desired presentation options.
-    nonisolated func userNotificationCenter(
+    @preconcurrency nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         // Show banner and play sound even when the app is in the foreground
         completionHandler([.banner, .sound])

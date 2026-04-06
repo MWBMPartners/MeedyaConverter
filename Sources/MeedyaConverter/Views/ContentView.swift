@@ -53,7 +53,7 @@ struct ContentView: View {
         ) { providers in
             DropHandler.extractURLs(from: providers) { urls in
                 guard !urls.isEmpty else { return }
-                Task {
+                Task { @MainActor in
                     await viewModel.importFiles(urls)
                     viewModel.selectedNavItem = .source
                 }

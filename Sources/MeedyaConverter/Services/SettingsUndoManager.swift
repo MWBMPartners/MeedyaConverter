@@ -124,18 +124,23 @@ final class SettingsUndoManager {
     ) {
         // Use ReferenceWritableKeyPath so we can mutate the class instance
         // directly without needing a `var` binding.
-        undoManager.registerUndo(withTarget: self) { [weak self] _ in
-            guard let self else { return }
-
+        //
+        // Capture `undoManager` locally to avoid referencing the
+        // @MainActor-isolated property from within a @Sendable closure.
+        let manager = undoManager
+        manager.registerUndo(withTarget: self) { handler in
             // Apply the old value via the reference-writable key path.
-            target[keyPath: keyPath] = oldValue
+            MainActor.assumeIsolated {
+                target[keyPath: keyPath] = oldValue
 
-            // Register the redo action (restores the new value).
-            self.undoManager.registerUndo(withTarget: self) { [weak self] _ in
-                guard self != nil else { return }
-                target[keyPath: keyPath] = newValue
+                // Register the redo action (restores the new value).
+                manager.registerUndo(withTarget: handler) { _ in
+                    MainActor.assumeIsolated {
+                        target[keyPath: keyPath] = newValue
+                    }
+                }
+                manager.setActionName(description)
             }
-            self.undoManager.setActionName(description)
         }
 
         undoManager.setActionName(description)
