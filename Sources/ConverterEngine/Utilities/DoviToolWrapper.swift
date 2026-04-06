@@ -209,22 +209,42 @@ public final class DoviToolWrapper: @unchecked Sendable {
 
     /// Convert a Dolby Vision RPU between profiles.
     ///
-    /// Common conversions:
-    /// - Profile 7 → Profile 8.1 (dual-layer to single-layer for streaming compatibility)
-    /// - Profile 5 → Profile 8.1 (for HDR10 fallback compatibility)
+    /// ## Supported Conversion Matrix
     ///
-    /// Runs: `dovi_tool convert --discard -i input.hevc -o output.hevc`
-    ///       or `dovi_tool convert -m <mode> -i input.rpu -o output.rpu`
+    /// | Source → Target | Method | Base Layer | Fallback Chain |
+    /// |----------------|--------|------------|----------------|
+    /// | Profile 5 → 8.1 | `--discard` | HDR10 (PQ) | DV → HDR10 → SDR |
+    /// | Profile 5 → 8.4 | `--discard` | HLG | DV → HLG → SDR |
+    /// | Profile 7 → 8.1 | `--discard` | HDR10 (PQ) | DV → HDR10 → SDR |
+    /// | Profile 7 → 8.4 | `--discard` | HLG | DV → HLG → SDR |
+    /// | Profile 8.1 → 8.4 | mode change | HLG | DV → HLG → SDR |
+    /// | Profile 8.4 → 8.1 | mode change | HDR10 (PQ) | DV → HDR10 → SDR |
+    ///
+    /// The `--discard` flag is required when converting FROM Profile 5 or 7
+    /// because these profiles use proprietary IPTPQc2 colour space (Profile 5)
+    /// or dual-layer FEL (Profile 7) that must be discarded to create a
+    /// single-layer Profile 8.x output.
+    ///
+    /// For Profile 5 → 8.4, the base layer must also be converted from PQ to HLG
+    /// via a separate FFmpeg/hlg-tools step. dovi_tool only handles the RPU metadata.
+    ///
+    /// For dual dynamic HDR (DV + HDR10+), see issue #370 which chains
+    /// dovi_tool with hdr10plus_tool to embed both metadata types.
+    ///
+    /// Runs: `dovi_tool convert --discard -m <mode> -i input.hevc -o output.hevc`
     ///
     /// - Parameters:
     ///   - inputPath: Path to the source RPU or HEVC stream.
     ///   - outputPath: Path for the converted output.
     ///   - targetProfile: The target DV profile.
+    ///   - sourceProfile: The source DV profile (if known). Used to determine
+    ///     whether `--discard` is needed. Defaults to nil (auto-detect).
     /// - Throws: `DoviToolError` if conversion fails.
     public func convertProfile(
         inputPath: String,
         outputPath: String,
-        targetProfile: DoviProfile
+        targetProfile: DoviProfile,
+        sourceProfile: DoviProfile? = nil
     ) async throws {
         guard let binary = locateBinary() else {
             throw DoviToolError.binaryNotFound
@@ -232,8 +252,22 @@ public final class DoviToolWrapper: @unchecked Sendable {
 
         var args = ["convert", "-m", "\(targetProfile.modeValue)"]
 
-        // Profile 7 → 8.1 requires --discard to remove enhancement layer
-        if targetProfile == .profile8_1 {
+        // --discard is required when converting FROM Profile 5 or Profile 7.
+        // Profile 5 uses IPTPQc2 proprietary colour space that must be remapped.
+        // Profile 7 uses dual-layer FEL that must be collapsed to single-layer.
+        // For Profile 8.x → 8.x conversions, no discard is needed (already single-layer).
+        let needsDiscard: Bool
+        if let source = sourceProfile {
+            // Explicit source profile provided — discard if Profile 5 or 7
+            needsDiscard = (source == .profile5 || source == .profile7)
+        } else {
+            // No source profile known — discard for safety when targeting Profile 8.x
+            // This handles the common case where we don't know the exact source profile
+            // but know we're converting to a single-layer output format.
+            needsDiscard = (targetProfile == .profile8_1 || targetProfile == .profile8_4)
+        }
+
+        if needsDiscard {
             args.append("--discard")
         }
 
@@ -243,6 +277,33 @@ public final class DoviToolWrapper: @unchecked Sendable {
 
         if !result.success {
             throw DoviToolError.operationFailed(result.stderr)
+        }
+    }
+
+    /// Check if a conversion between two DV profiles is supported.
+    ///
+    /// - Parameters:
+    ///   - source: The source Dolby Vision profile.
+    ///   - target: The target Dolby Vision profile.
+    /// - Returns: True if the conversion is supported by dovi_tool.
+    public static func isConversionSupported(from source: DoviProfile, to target: DoviProfile) -> Bool {
+        // Same profile — no conversion needed
+        if source == target { return true }
+
+        // All source profiles can convert to Profile 8.1 (HDR10 base)
+        // and Profile 8.4 (HLG base) via dovi_tool
+        switch (source, target) {
+        case (.profile5, .profile8_1),   // P5 → P8.1 (discard IPTPQc2)
+             (.profile5, .profile8_4),   // P5 → P8.4 (discard + PQ→HLG base)
+             (.profile7, .profile8_1),   // P7 → P8.1 (discard FEL)
+             (.profile7, .profile8_4),   // P7 → P8.4 (discard FEL + PQ→HLG base)
+             (.profile8_1, .profile8_4), // P8.1 → P8.4 (mode change + PQ→HLG base)
+             (.profile8_4, .profile8_1): // P8.4 → P8.1 (mode change + HLG→PQ base)
+            return true
+        default:
+            // Converting TO Profile 5 or 7 is not supported
+            // (can't recreate IPTPQc2 or dual-layer from single-layer)
+            return false
         }
     }
 
