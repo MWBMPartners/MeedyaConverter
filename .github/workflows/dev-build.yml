@@ -1,0 +1,371 @@
+# =============================================================================
+# MeedyaConverter -- Dev Build (Downloadable macOS App)
+# =============================================================================
+#
+# Purpose:
+#   Builds a signed macOS .app bundle and DMG that developers and testers
+#   can download directly from the GitHub Actions artifacts tab. This is
+#   for internal testing BEFORE TestFlight or App Store submission.
+#
+# Trigger:
+#   - Manual dispatch (workflow_dispatch) with optional version override
+#   - Push to the 'alpha' branch
+#
+# Output:
+#   - Signed .app bundle (zipped)
+#   - Signed DMG disk image
+#   - Signed CLI binary (tarball)
+#   All uploaded as GitHub Actions artifacts (available for 14 days)
+#
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: "Dev Build (macOS)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: true
+        type: choice
+        options:
+          - direct
+          - appstore
+        default: "direct"
+      sign_build:
+        description: "Sign with Developer ID"
+        required: true
+        type: boolean
+        default: true
+      create_dmg:
+        description: "Create DMG disk image"
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches:
+      - alpha
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dev-build:
+    name: Build macOS App
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      # -----------------------------------------------------------------
+      # Step 1: Checkout
+      # -----------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------
+      # Step 2: Swift version
+      # -----------------------------------------------------------------
+      - name: Verify Swift version
+        run: |
+          swift --version
+          echo "Xcode: $(xcodebuild -version | head -1)"
+
+      # -----------------------------------------------------------------
+      # Step 3: Cache SPM
+      # -----------------------------------------------------------------
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-dev-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-dev-
+            ${{ runner.os }}-spm-
+
+      # -----------------------------------------------------------------
+      # Step 4: Resolve dependencies
+      # -----------------------------------------------------------------
+      - name: Resolve package dependencies
+        run: swift package resolve
+
+      # -----------------------------------------------------------------
+      # Step 5: Determine version and build number
+      # -----------------------------------------------------------------
+      - name: Compute version info
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'direct' }}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "build_type=${BUILD_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=MeedyaConverter-${VERSION}-build${BUILD_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          echo "Version: ${VERSION}"
+          echo "Build: ${BUILD_NUMBER}"
+          echo "SHA: ${SHORT_SHA}"
+          echo "Type: ${BUILD_TYPE}"
+
+      # -----------------------------------------------------------------
+      # Step 6: Build
+      # -----------------------------------------------------------------
+      - name: Build (release)
+        run: |
+          BUILD_TYPE="${{ steps.version.outputs.build_type }}"
+          if [ "$BUILD_TYPE" = "appstore" ]; then
+            echo "Building for App Store (sandboxed, APP_STORE flag)..."
+            swift build -c release -Xswiftc -DAPP_STORE
+          else
+            echo "Building for Direct Distribution..."
+            swift build -c release
+          fi
+
+      # -----------------------------------------------------------------
+      # Step 7: Run tests
+      # -----------------------------------------------------------------
+      - name: Run tests
+        run: swift test --parallel
+
+      # -----------------------------------------------------------------
+      # Step 8: Create app bundle
+      # -----------------------------------------------------------------
+      - name: Create app bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build_number }}"
+          BUILD_TYPE="${{ steps.version.outputs.build_type }}"
+          APP="MeedyaConverter.app"
+
+          echo "Creating app bundle: ${APP}"
+
+          mkdir -p "${APP}/Contents/MacOS"
+          mkdir -p "${APP}/Contents/Resources"
+
+          # Copy binary
+          cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
+          chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
+
+          # Info.plist with version substitution
+          if [ "$BUILD_TYPE" = "appstore" ]; then
+            sed -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
+                -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
+                Sources/MeedyaConverter/Resources/Info.plist \
+                > "${APP}/Contents/Info.plist"
+          else
+            sed -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
+                Sources/MeedyaConverter/Resources/Info.plist \
+                > "${APP}/Contents/Info.plist"
+          fi
+
+          # Set build number
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${APP}/Contents/Info.plist"
+
+          # Copy resources
+          if [ -f Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy ]; then
+            cp Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/"
+          fi
+
+          echo "App bundle created: ${APP} (${BUILD_TYPE}, v${VERSION} build ${BUILD})"
+
+      # -----------------------------------------------------------------
+      # Step 9: Import signing certificate (if signing enabled)
+      # -----------------------------------------------------------------
+      - name: Import signing certificate
+        if: ${{ github.event.inputs.sign_build != 'false' }}
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "No signing certificate available — skipping signing"
+            echo "SIGN_AVAILABLE=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN_PATH"
+          echo "SIGN_AVAILABLE=true" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------
+      # Step 10: Sign app bundle
+      # -----------------------------------------------------------------
+      - name: Sign app bundle
+        if: ${{ env.SIGN_AVAILABLE == 'true' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          BUILD_TYPE="${{ steps.version.outputs.build_type }}"
+
+          if [ "$BUILD_TYPE" = "appstore" ]; then
+            ENTITLEMENTS="Sources/MeedyaConverter/Resources/MeedyaConverter-AppStore.entitlements"
+          else
+            ENTITLEMENTS="Sources/MeedyaConverter/Resources/MeedyaConverter.entitlements"
+          fi
+
+          echo "Signing with: ${APPLE_SIGNING_IDENTITY}"
+          echo "Entitlements: ${ENTITLEMENTS}"
+
+          codesign --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements "$ENTITLEMENTS" \
+            --options runtime --force --timestamp \
+            "MeedyaConverter.app/Contents/MacOS/MeedyaConverter"
+
+          codesign --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements "$ENTITLEMENTS" \
+            --options runtime --force --timestamp \
+            "MeedyaConverter.app"
+
+          echo "Verifying signature..."
+          codesign --verify --deep --strict "MeedyaConverter.app"
+          echo "Signature verified."
+
+      # -----------------------------------------------------------------
+      # Step 11: Create DMG
+      # -----------------------------------------------------------------
+      - name: Create DMG
+        if: ${{ github.event.inputs.create_dmg != 'false' }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build_number }}"
+          SHORT_SHA="${{ steps.version.outputs.short_sha }}"
+          DMG_NAME="MeedyaConverter-${VERSION}-build${BUILD}-${SHORT_SHA}-macOS.dmg"
+
+          echo "Creating DMG: ${DMG_NAME}"
+
+          mkdir -p dmg-staging
+          cp -R MeedyaConverter.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          hdiutil create -volname "MeedyaConverter ${VERSION}" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+          rm -rf dmg-staging
+
+          # Sign DMG if certificate available
+          if [ "$SIGN_AVAILABLE" = "true" ]; then
+            codesign --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" --force --timestamp "$DMG_NAME"
+            echo "DMG signed."
+          fi
+
+          echo "dmg_name=${DMG_NAME}" >> "$GITHUB_ENV"
+          echo "DMG created: ${DMG_NAME}"
+
+      # -----------------------------------------------------------------
+      # Step 12: Package CLI binary
+      # -----------------------------------------------------------------
+      - name: Package CLI binary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHORT_SHA="${{ steps.version.outputs.short_sha }}"
+
+          if [ -f .build/release/meedya-convert ]; then
+            # Sign CLI if available
+            if [ "$SIGN_AVAILABLE" = "true" ]; then
+              codesign --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" \
+                --entitlements "Sources/meedya-convert/Resources/meedya-convert.entitlements" \
+                --options runtime --force --timestamp \
+                .build/release/meedya-convert
+            fi
+
+            mkdir -p cli-staging
+            cp .build/release/meedya-convert cli-staging/
+            tar -czf "meedya-convert-${VERSION}-${SHORT_SHA}-macOS.tar.gz" -C cli-staging .
+            rm -rf cli-staging
+            echo "CLI packaged."
+          fi
+
+      # -----------------------------------------------------------------
+      # Step 13: Upload app bundle artifact
+      # -----------------------------------------------------------------
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ steps.version.outputs.artifact_name }}-app"
+          path: MeedyaConverter.app
+          retention-days: 14
+
+      # -----------------------------------------------------------------
+      # Step 14: Upload DMG artifact
+      # -----------------------------------------------------------------
+      - name: Upload DMG
+        if: ${{ github.event.inputs.create_dmg != 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ steps.version.outputs.artifact_name }}-dmg"
+          path: "*.dmg"
+          retention-days: 14
+
+      # -----------------------------------------------------------------
+      # Step 15: Upload CLI artifact
+      # -----------------------------------------------------------------
+      - name: Upload CLI binary
+        if: ${{ hashFiles('meedya-convert-*-macOS.tar.gz') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ steps.version.outputs.artifact_name }}-cli"
+          path: "meedya-convert-*-macOS.tar.gz"
+          retention-days: 14
+
+      # -----------------------------------------------------------------
+      # Step 16: Build summary
+      # -----------------------------------------------------------------
+      - name: Build summary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build_number }}"
+          SHORT_SHA="${{ steps.version.outputs.short_sha }}"
+          BUILD_TYPE="${{ steps.version.outputs.build_type }}"
+
+          echo "## Dev Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${BUILD} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${SHORT_SHA} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Type | ${BUILD_TYPE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Signed | ${SIGN_AVAILABLE:-false} |" >> $GITHUB_STEP_SUMMARY
+          echo "| DMG | ${{ github.event.inputs.create_dmg != 'false' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Download" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts are available for **14 days** from the Actions tab." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### For testers:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# If macOS blocks the app:" >> $GITHUB_STEP_SUMMARY
+          echo "xattr -cr MeedyaConverter.app" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # -----------------------------------------------------------------
+      # Step 17: Clean up keychain
+      # -----------------------------------------------------------------
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f $RUNNER_TEMP/certificate.p12 || true
