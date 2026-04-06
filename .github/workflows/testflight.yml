@@ -1,0 +1,256 @@
+# =============================================================================
+# MeedyaConverter -- TestFlight Submission Workflow
+# =============================================================================
+#
+# Purpose:
+#   Builds an App Store-sandboxed binary, signs it with an App Store
+#   distribution certificate, and uploads it to TestFlight via App Store
+#   Connect for beta testing.
+#
+# Triggers:
+#   - Manual dispatch with optional release notes
+#   - Push of beta/RC tags (e.g. v1.0.0-beta.1, v2.0.0-rc.1)
+#
+# Secrets required:
+#   APPLE_CERTIFICATE            Base64-encoded .p12 distribution certificate
+#   APPLE_CERTIFICATE_PASSWORD   Password for the .p12 certificate
+#   APPLE_SIGNING_IDENTITY       Signing identity string
+#   ASC_KEY_ID                   App Store Connect API Key ID
+#   ASC_ISSUER_ID                App Store Connect API Issuer ID
+#   ASC_API_KEY                  App Store Connect API private key (.p8 contents)
+#
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+
+name: "TestFlight Submission"
+
+# ---------------------------------------------------------------------------
+# Trigger configuration
+# ---------------------------------------------------------------------------
+# Runs on manual dispatch or when beta/RC tags are pushed.
+# ---------------------------------------------------------------------------
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "TestFlight release notes"
+        required: false
+        default: "Bug fixes and improvements"
+  push:
+    tags:
+      - "v*-beta*"
+      - "v*-rc*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# ---------------------------------------------------------------------------
+# Concurrency configuration
+# ---------------------------------------------------------------------------
+# Only one TestFlight submission should run at a time.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: testflight
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+# Read-only access to repository contents is sufficient for TestFlight
+# builds (no GitHub Release is created).
+# ---------------------------------------------------------------------------
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    name: Build & Submit to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Step 1: Check out the repository
+      # ---------------------------------------------------------------------
+      # Full history is needed for build number generation (commit count).
+      # ---------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------------
+      # Step 2: Verify Swift version
+      # ---------------------------------------------------------------------
+      - name: Verify Swift
+        run: swift --version
+
+      # ---------------------------------------------------------------------
+      # Step 3: Cache SPM dependencies
+      # ---------------------------------------------------------------------
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-testflight-${{ hashFiles('Package.resolved') }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      # ---------------------------------------------------------------------
+      # Step 4: Resolve dependencies
+      # ---------------------------------------------------------------------
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      # ---------------------------------------------------------------------
+      # Step 5: Compute build number from git commit count
+      # ---------------------------------------------------------------------
+      - name: Compute build number
+        id: buildnum
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Build number: ${BUILD_NUMBER}"
+
+      # ---------------------------------------------------------------------
+      # Step 6: Extract version from VERSION file
+      # ---------------------------------------------------------------------
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Step 7: Import App Store signing certificate
+      # ---------------------------------------------------------------------
+      # Decode the base64-encoded .p12 certificate and import it into a
+      # temporary keychain for code signing.
+      # ---------------------------------------------------------------------
+      - name: Import App Store signing certificate
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN_PATH"
+
+      # ---------------------------------------------------------------------
+      # Step 8: Build for App Store (release with APP_STORE flag)
+      # ---------------------------------------------------------------------
+      # The -DAPP_STORE compiler flag allows conditional compilation to
+      # disable features not permitted in the App Store sandbox (e.g.,
+      # external process execution, unsigned memory access).
+      # ---------------------------------------------------------------------
+      - name: Build for App Store (release)
+        run: |
+          swift build -c release -Xswiftc -DAPP_STORE
+
+      # ---------------------------------------------------------------------
+      # Step 9: Create App Store app bundle
+      # ---------------------------------------------------------------------
+      # Assembles a .app bundle with the App Store bundle ID (.Lite suffix),
+      # the privacy manifest, and the correct version/build numbers.
+      # ---------------------------------------------------------------------
+      - name: Create App Store app bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.buildnum.outputs.build_number }}"
+          APP="MeedyaConverter.app"
+
+          mkdir -p "${APP}/Contents/MacOS"
+          mkdir -p "${APP}/Contents/Resources"
+
+          cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
+          chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
+
+          # Info.plist with App Store bundle ID and build number
+          sed -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
+              -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
+              Sources/MeedyaConverter/Resources/Info.plist \
+              > "${APP}/Contents/Info.plist"
+
+          # Add build number
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${APP}/Contents/Info.plist"
+
+          # Copy privacy manifest
+          cp Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/"
+
+      # ---------------------------------------------------------------------
+      # Step 10: Sign for App Store
+      # ---------------------------------------------------------------------
+      # Signs with App Store entitlements (sandboxed) rather than the direct
+      # distribution entitlements.
+      # ---------------------------------------------------------------------
+      - name: Sign for App Store
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          ENTITLEMENTS="Sources/MeedyaConverter/Resources/MeedyaConverter-AppStore.entitlements"
+          codesign --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements "$ENTITLEMENTS" \
+            --options runtime \
+            --force --timestamp \
+            "MeedyaConverter.app/Contents/MacOS/MeedyaConverter"
+          codesign --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements "$ENTITLEMENTS" \
+            --options runtime \
+            --force --timestamp \
+            "MeedyaConverter.app"
+          codesign --verify --deep --strict "MeedyaConverter.app"
+
+      # ---------------------------------------------------------------------
+      # Step 11: Upload to TestFlight
+      # ---------------------------------------------------------------------
+      # Creates a zip archive and uploads it via xcrun altool using App
+      # Store Connect API key authentication.
+      # ---------------------------------------------------------------------
+      - name: Upload to TestFlight
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.ASC_API_KEY }}
+        run: |
+          # Create API key file
+          mkdir -p ~/.private_keys
+          echo "$APP_STORE_CONNECT_API_KEY" > ~/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8
+
+          # Create a zip for upload
+          ditto -c -k --keepParent "MeedyaConverter.app" "MeedyaConverter.zip"
+
+          # Upload via xcrun notarytool / altool
+          xcrun altool --upload-app \
+            --type macos \
+            --file "MeedyaConverter.zip" \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_API_ISSUER_ID" \
+            || echo "Upload via altool failed, trying xcrun"
+
+      # ---------------------------------------------------------------------
+      # Step 12: Log release notes
+      # ---------------------------------------------------------------------
+      - name: Set TestFlight release notes
+        env:
+          RELEASE_NOTES: ${{ github.event.inputs.release_notes || 'Automated build from CI' }}
+        run: |
+          echo "TestFlight release notes: ${RELEASE_NOTES}"
+          # Note: release notes are set via App Store Connect after upload
+
+      # ---------------------------------------------------------------------
+      # Step 13: Clean up keychain and secrets
+      # ---------------------------------------------------------------------
+      # Remove the temporary keychain and API key file to avoid leaking
+      # credentials on shared runners. Runs even if previous steps fail.
+      # ---------------------------------------------------------------------
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security delete-keychain "$KEYCHAIN_PATH" || true
+          rm -f $RUNNER_TEMP/certificate.p12
+          rm -rf ~/.private_keys

@@ -303,6 +303,8 @@ let package = Package(
             exclude: [
                 "Resources/Info.plist",
                 "Resources/MeedyaConverter.entitlements",
+                "Resources/MeedyaConverter-AppStore.entitlements",
+                "Resources/PrivacyInfo.xcprivacy",
             ],
             resources: [
                 .copy("Resources/Assets.xcassets"),
