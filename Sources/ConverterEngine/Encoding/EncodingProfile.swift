@@ -411,6 +411,7 @@ extension EncodingProfile {
         .hdrToSDR,
         .pqToHLG,
         .pqToDVHLG,
+        .dvPlusHDR10Plus,
 
         // Passthrough / Remux
         .remuxToMKV,
@@ -597,6 +598,24 @@ extension EncodingProfile {
         preserveHDR: true,
         convertPQToHLG: true,
         convertPQToDVHLG: true,
+        audioCodec: .eac3,
+        audioBitrate: 640_000,
+        audioChannels: 8,
+        containerFormat: .mkv
+    )
+
+    /// DV Profile 8.1 + HDR10+ — dual dynamic HDR for maximum device compatibility.
+    /// Four-tier playback: Dolby Vision -> HDR10+ -> HDR10 -> SDR.
+    public static let dvPlusHDR10Plus = EncodingProfile(
+        name: "DV + HDR10+ (Max Compat)",
+        description: "Dolby Vision Profile 8.1 + HDR10+ — four-tier dynamic HDR for all displays",
+        category: .quickStart,
+        isBuiltIn: true,
+        videoCodec: .h265,
+        videoCRF: 18,
+        videoPreset: "medium",
+        pixelFormat: "yuv420p10le",
+        preserveHDR: true,
         audioCodec: .eac3,
         audioBitrate: 640_000,
         audioChannels: 8,

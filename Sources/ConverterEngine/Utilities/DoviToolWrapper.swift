@@ -37,7 +37,7 @@ public enum DoviToolError: LocalizedError, Sendable {
 // MARK: - DoviProfile
 
 /// Dolby Vision profiles for RPU generation and conversion.
-public enum DoviProfile: Int, Sendable, CaseIterable {
+public enum DoviProfile: Int, Codable, Sendable, CaseIterable {
     /// Profile 5 — IPTPQc2 single-layer, used in streaming (Netflix, Disney+).
     case profile5 = 5
 
