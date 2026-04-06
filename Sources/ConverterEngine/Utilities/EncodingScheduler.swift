@@ -144,7 +144,7 @@ public final class EncodingScheduler: @unchecked Sendable {
 
     /// The dispatch queue on which timers fire.
     private let timerQueue = DispatchQueue(
-        label: "com.mwbmpartners.meedyaconverter.scheduler",
+        label: "Ltd.MWBMpartners.MeedyaConverter.scheduler",
         qos: .utility
     )
 

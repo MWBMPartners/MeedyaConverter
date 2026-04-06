@@ -18,8 +18,31 @@ public enum AppInfo {
     // MARK: - Application Identity
 
     public enum Application {
-        /// Reverse-DNS bundle identifier.
-        public static let id = "ltd.MWBMpartners.MeedyaConverter"
+
+        // MARK: Bundle Identifiers
+
+        /// Bundle ID for Apple App Store distribution (sandboxed, FFmpegKit, no Sparkle).
+        public static let appStoreBundleId = "Ltd.MWBMpartners.MeedyaConverter.Lite"
+
+        /// Bundle ID for direct distribution (macOS, Windows, Linux).
+        /// Hardened runtime, system FFmpeg via Process, Sparkle updates.
+        public static let directBundleId = "Ltd.MWBMpartners.MeedyaConverter"
+
+        /// The active bundle ID for the current build configuration.
+        /// App Store builds use the `.Lite` suffix; all other platforms share the direct ID.
+        public static var id: String {
+            #if APP_STORE
+            return appStoreBundleId
+            #else
+            return directBundleId
+            #endif
+        }
+
+        /// Shared App Group identifier for data sharing between App Store and direct builds.
+        /// Allows users to switch distribution channels without losing profiles/settings.
+        public static let appGroupId = "group.Ltd.MWBMpartners.MeedyaConverter"
+
+        // MARK: Application Metadata
 
         /// Human-readable application name.
         public static let name = "MeedyaConverter"

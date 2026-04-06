@@ -295,12 +295,12 @@ extension Notification.Name {
 
     /// Posted when the user taps "Start Next" on an encode-complete notification.
     static let notificationActionEncodeNext = Notification.Name(
-        "com.mwbmpartners.meedyaconverter.notificationActionEncodeNext"
+        "Ltd.MWBMpartners.MeedyaConverter.notificationActionEncodeNext"
     )
 
     /// Posted when the user taps "View Log" on an encode-failed notification.
     static let notificationActionViewLog = Notification.Name(
-        "com.mwbmpartners.meedyaconverter.notificationActionViewLog"
+        "Ltd.MWBMpartners.MeedyaConverter.notificationActionViewLog"
     )
 
     /// Posted when the user taps "Retry" on an encode-failed notification.
@@ -308,6 +308,6 @@ extension Notification.Name {
     /// The `userInfo` dictionary contains:
     /// - ``NotificationActionHandler/inputPathKey``: `URL` — the source file to retry.
     static let notificationActionRetry = Notification.Name(
-        "com.mwbmpartners.meedyaconverter.notificationActionRetry"
+        "Ltd.MWBMpartners.MeedyaConverter.notificationActionRetry"
     )
 }

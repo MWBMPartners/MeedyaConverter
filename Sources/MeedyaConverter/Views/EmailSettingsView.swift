@@ -339,7 +339,7 @@ struct EmailSettingsView: View {
     // MARK: - Keychain Helpers
 
     /// The Keychain service identifier for the SMTP password.
-    private static let keychainService = "com.mwbmpartners.MeedyaConverter.smtp"
+    private static let keychainService = "Ltd.MWBMpartners.MeedyaConverter.smtp"
 
     /// The Keychain account key for the SMTP password.
     private static let keychainAccount = "smtpPassword"

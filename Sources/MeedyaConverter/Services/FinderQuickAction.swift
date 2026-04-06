@@ -57,10 +57,10 @@ final class FinderQuickAction: NSObject {
     // MARK: - Service User Data Keys
 
     /// User data string passed by the "Convert" service menu item.
-    static let convertUserData = "com.mwbmpartners.meedyaconverter.convert"
+    static let convertUserData = "Ltd.MWBMpartners.MeedyaConverter.convert"
 
     /// User data string passed by the "Analyze" service menu item.
-    static let analyzeUserData = "com.mwbmpartners.meedyaconverter.analyze"
+    static let analyzeUserData = "Ltd.MWBMpartners.MeedyaConverter.analyze"
 
     // MARK: - Supported Types
 
@@ -213,7 +213,7 @@ extension Notification.Name {
     /// - ``FinderQuickActionUserInfoKey/shouldEncode``: `Bool` — whether to
     ///   start encoding immediately with the default profile.
     static let finderQuickActionFilesReceived = Notification.Name(
-        "com.mwbmpartners.meedyaconverter.finderQuickActionFilesReceived"
+        "Ltd.MWBMpartners.MeedyaConverter.finderQuickActionFilesReceived"
     )
 }
 

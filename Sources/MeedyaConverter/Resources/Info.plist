@@ -13,7 +13,8 @@
     <key>CFBundleExecutable</key>
     <string>MeedyaConverter</string>
     <key>CFBundleIdentifier</key>
-    <string>com.mwbmpartners.meedyaconverter</string>
+    <!-- Direct distribution bundle ID. CI substitutes Ltd.MWBMpartners.MeedyaConverter.Lite for App Store builds. -->
+    <string>Ltd.MWBMpartners.MeedyaConverter</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

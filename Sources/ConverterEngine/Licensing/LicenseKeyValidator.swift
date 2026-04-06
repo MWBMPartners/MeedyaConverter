@@ -100,7 +100,7 @@ public struct LicenseKey: Codable, Sendable, Equatable {
 ///
 /// ### Keychain Storage
 /// Activated keys are stored as JSON in the macOS login keychain under
-/// the service name `com.mwbmpartners.meedyaconverter.license`.
+/// the service name `Ltd.MWBMpartners.MeedyaConverter.license`.
 // ---------------------------------------------------------------------------
 public struct LicenseKeyValidator: Sendable {
 
@@ -110,7 +110,7 @@ public struct LicenseKeyValidator: Sendable {
     private static let keyPrefix = "MC"
 
     /// The Keychain service identifier for license storage.
-    private static let keychainService = "com.mwbmpartners.meedyaconverter.license"
+    private static let keychainService = "Ltd.MWBMpartners.MeedyaConverter.license"
 
     /// The Keychain account name for the license entry.
     private static let keychainAccount = "activeLicense"

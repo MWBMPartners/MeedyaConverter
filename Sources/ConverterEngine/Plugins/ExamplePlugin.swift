@@ -47,7 +47,7 @@ public struct TimestampMetadataPlugin: MeedyaPlugin {
     // MARK: - Identity
 
     /// Unique identifier for this plugin.
-    public let id: String = "com.mwbmpartners.meedyaconverter.plugin.timestamp-metadata"
+    public let id: String = "Ltd.MWBMpartners.MeedyaConverter.plugin.timestamp-metadata"
 
     /// Human-readable name displayed in the Plugin Manager UI.
     public let name: String = "Timestamp Metadata"

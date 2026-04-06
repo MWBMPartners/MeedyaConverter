@@ -23,7 +23,7 @@ final class HandoffManager {
     // MARK: - Constants
 
     /// The activity type registered in Info.plist for Handoff eligibility.
-    static let activityType = "com.mwbmpartners.meedyaconverter.encoding-config"
+    static let activityType = "Ltd.MWBMpartners.MeedyaConverter.encoding-config"
 
     // MARK: - UserInfo Keys
 

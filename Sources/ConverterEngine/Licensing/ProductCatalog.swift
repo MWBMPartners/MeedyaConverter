@@ -100,7 +100,7 @@ public enum MonetizationTier: String, Codable, Sendable, CaseIterable {
 /// entitlement levels.
 ///
 /// Product IDs follow the reverse-DNS convention:
-///   `com.mwbmpartners.meedyaconverter.<tier>[.<period>]`
+///   `Ltd.MWBMpartners.MeedyaConverter.<tier>[.<period>]`
 // ---------------------------------------------------------------------------
 public struct ProductDefinition: Identifiable, Codable, Sendable {
 
@@ -169,7 +169,7 @@ public enum ProductCatalog {
     /// This is the entry-level paid tier, designed for enthusiasts who
     /// want expanded features without a recurring commitment.
     public static let plusLifetime = ProductDefinition(
-        id: "com.mwbmpartners.meedyaconverter.plus",
+        id: "Ltd.MWBMpartners.MeedyaConverter.plus",
         tier: .plus,
         isSubscription: false,
         periodMonths: nil
@@ -180,7 +180,7 @@ public enum ProductCatalog {
     /// Billed monthly with no long-term commitment. Ideal for
     /// professionals with project-based needs.
     public static let proMonthly = ProductDefinition(
-        id: "com.mwbmpartners.meedyaconverter.pro.monthly",
+        id: "Ltd.MWBMpartners.MeedyaConverter.pro.monthly",
         tier: .pro,
         isSubscription: true,
         periodMonths: 1
@@ -191,7 +191,7 @@ public enum ProductCatalog {
     /// Best value for full-time professionals. Typically priced at
     /// approximately 2 months free compared to the monthly plan.
     public static let proAnnual = ProductDefinition(
-        id: "com.mwbmpartners.meedyaconverter.pro.annual",
+        id: "Ltd.MWBMpartners.MeedyaConverter.pro.annual",
         tier: .pro,
         isSubscription: true,
         periodMonths: 12

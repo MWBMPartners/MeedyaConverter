@@ -405,10 +405,10 @@ public final class FeatureGateManager: @unchecked Sendable {
     // MARK: Cache Keys
 
     /// UserDefaults key for the cached entitlement level raw value.
-    private static let cachedLevelKey = "com.mwbmpartners.meedyaconverter.cachedEntitlementLevel"
+    private static let cachedLevelKey = "Ltd.MWBMpartners.MeedyaConverter.cachedEntitlementLevel"
 
     /// UserDefaults key for the cache expiry timestamp.
-    private static let cacheExpiryKey = "com.mwbmpartners.meedyaconverter.entitlementCacheExpiry"
+    private static let cacheExpiryKey = "Ltd.MWBMpartners.MeedyaConverter.entitlementCacheExpiry"
 
     /// How long the cached entitlement level remains valid (24 hours).
     private static let cacheValidityInterval: TimeInterval = 24 * 60 * 60
