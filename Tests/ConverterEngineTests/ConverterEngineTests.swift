@@ -7003,12 +7003,13 @@ final class ConverterEngineTests: XCTestCase {
     func test_toolBundleManifest_defaultManifest() {
         let manifest = ToolBundleManifest.defaultManifest
         XCTAssertEqual(manifest.schemaVersion, 1)
-        XCTAssertEqual(manifest.tools.count, 5)
+        XCTAssertEqual(manifest.tools.count, 6)
         XCTAssertNotNil(manifest.tool(id: "dovi_tool"))
         XCTAssertNotNil(manifest.tool(id: "hlg_tools"))
         XCTAssertNotNil(manifest.tool(id: "hdr10plus_tool"))
         XCTAssertNotNil(manifest.tool(id: "mediainfo"))
         XCTAssertNotNil(manifest.tool(id: "fpcalc"))
+        XCTAssertNotNil(manifest.tool(id: "subtitle_tonemap"))
     }
 
     /// Verifies tool lookup by binary name.
@@ -10354,5 +10355,95 @@ final class ConverterEngineTests: XCTestCase {
                 "Expected \(codec) to be classified lossless"
             )
         }
+    }
+
+    // MARK: - SubtitleTonemapWrapper (#369)
+
+    /// Verifies supported subtitle formats.
+    func test_subtitleTonemap_supportedFormats() {
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "sup"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: ".sup"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "SUP"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "sub"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "idx"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ass"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ssa"))
+    }
+
+    /// Plain-text formats without colour tags are rejected.
+    func test_subtitleTonemap_rejectsPlainTextFormats() {
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "srt"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "vtt"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ttml"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "txt"))
+    }
+
+    /// Argument builder produces the expected CLI invocation.
+    func test_subtitleTonemap_argumentsForHDR10() {
+        let config = SubtitleTonemapConfig(
+            sourceProfile: .hdr10,
+            targetLuminanceNits: 100,
+            preserveAlpha: true
+        )
+        let args = SubtitleTonemapWrapper.buildArguments(
+            inputPath: "/tmp/in.sup",
+            outputPath: "/tmp/out.sup",
+            config: config
+        )
+        XCTAssertEqual(args[0], "-i")
+        XCTAssertEqual(args[1], "/tmp/in.sup")
+        XCTAssertEqual(args[2], "-o")
+        XCTAssertEqual(args[3], "/tmp/out.sup")
+        XCTAssertTrue(args.contains("--hdr10"))
+        XCTAssertTrue(args.contains("--target-nits"))
+        XCTAssertTrue(args.contains("100"))
+        XCTAssertTrue(args.contains("--preserve-alpha"))
+    }
+
+    /// `--preserve-alpha` is omitted when disabled.
+    func test_subtitleTonemap_argumentsWithoutAlpha() {
+        let config = SubtitleTonemapConfig(
+            sourceProfile: .dolbyVision,
+            targetLuminanceNits: 203,
+            preserveAlpha: false
+        )
+        let args = SubtitleTonemapWrapper.buildArguments(
+            inputPath: "/tmp/in.sup",
+            outputPath: "/tmp/out.sup",
+            config: config
+        )
+        XCTAssertTrue(args.contains("--dolby-vision"))
+        XCTAssertTrue(args.contains("203"))
+        XCTAssertFalse(args.contains("--preserve-alpha"))
+    }
+
+    /// Each HDR profile maps to the correct CLI flag.
+    func test_subtitleTonemap_hdrProfileFlags() {
+        XCTAssertEqual(SubtitleHDRSourceProfile.hdr10.cliFlag, "--hdr10")
+        XCTAssertEqual(SubtitleHDRSourceProfile.hdr10Plus.cliFlag, "--hdr10plus")
+        XCTAssertEqual(SubtitleHDRSourceProfile.dolbyVision.cliFlag, "--dolby-vision")
+        XCTAssertEqual(SubtitleHDRSourceProfile.hlg.cliFlag, "--hlg")
+    }
+
+    /// Default config uses HDR10 with 100-nit SDR target.
+    func test_subtitleTonemap_defaultConfig() {
+        let config = SubtitleTonemapConfig()
+        XCTAssertEqual(config.sourceProfile, .hdr10)
+        XCTAssertEqual(config.targetLuminanceNits, 100.0)
+        XCTAssertTrue(config.preserveAlpha)
+    }
+
+    /// Config Codable round-trips.
+    func test_subtitleTonemap_configCodableRoundTrip() throws {
+        let original = SubtitleTonemapConfig(
+            sourceProfile: .hlg,
+            targetLuminanceNits: 203.5,
+            preserveAlpha: false
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SubtitleTonemapConfig.self, from: data)
+        XCTAssertEqual(decoded.sourceProfile, .hlg)
+        XCTAssertEqual(decoded.targetLuminanceNits, 203.5, accuracy: 0.01)
+        XCTAssertFalse(decoded.preserveAlpha)
     }
 }
