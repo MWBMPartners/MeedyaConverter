@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-04-05
+> **Last Updated:** 2026-04-20
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -191,15 +191,38 @@
 - AI upscaler, forensic watermark, DCP generator, image converter
 - Colour space converter, stereo 3D converter, TrueHD MP4 muxer, VVC encoder
 - Speech-to-text engine, multi-stream selector, streaming enhancements
+- MeedyaSuite-core integration scaffolding: Swift Package dependency
+  (feature-flagged via `SUITE_CORE=1`), bridge + adapters for metadata
+  and codec classification, and 12+ additional providers available
+  through the unified system (#371, #372, #373, #374)
+- Subtitle tone-mapping via quietvoid/subtitle_tonemap integration (#369)
+- Render-farm submission subsystem: agent registry, chunked upload with
+  per-chunk SHA-256, progress AsyncStream, pluggable transport (#346)
+- Raster ↔ vector image conversion scaffolding with 30+ raster formats,
+  SVG 1.1/2.0 output, 4 tracing modes, 6 editability presets (#376)
+- ProRes alpha → animated SVG scaffolding with 4444 / 4444 XQ / 4444 HDR
+  variants, rational-accurate frame rates, SMIL/CSS/hybrid assembly (#377)
+- Full FFmpeg component bundling (ffmpeg + ffprobe + **ffplay**) via
+  `scripts/bundle-ffmpeg.sh` for arm64 and x86_64 (#378)
+- App Store Connect metadata suite under `metadata/` and submission
+  runbook at `docs/distribution/app-store-submission.md` (#178)
 
 ---
 
 ## What's Next
 
-1. **Integration testing** -- End-to-end testing of CLI commands with real media files
-2. **Alpha 0.2 release** -- Package CLI + GUI for first external testing
-3. **Phase 5/6 completion** -- Finish subtitle conversion and streaming features
-4. **Beta 0.5 release** -- Feature-complete for core use cases
+1. **UI surfacing** (#381) -- Expose new Configuration types in SwiftUI for
+   subtitle tone-mapping, render farm, metadata backend, AccurateRip
+   submission, and vector conversion
+2. **MeedyaSuite-core binding stabilisation** -- Once MeedyaSuite-core
+   publishes a Swift Package tag, flip `SUITE_CORE` to default-on and
+   execute the #374 cleanup checklist
+3. **Render-farm agent binary** -- Standalone agent app that runs on
+   remote Macs and services the REST protocol defined in #346
+4. **App Store submission** -- Produce screenshot captures, verify the
+   FFmpegKit LGPL variant, tag a `v1.0.0-beta.1`, soak in TestFlight
+5. **Phase 5/6 completion** -- Finish subtitle conversion and streaming
+   features; still at 70% and 80% respectively
 
 ---
 
