@@ -223,7 +223,10 @@ public struct SFTPUploader: Sendable {
         // Upload flag
         args.append(contentsOf: ["-T", localPath])
 
-        // Credentials
+        // Credentials: FIXME(#380) password is passed on the command line
+        // and appears in `ps aux` for the duration of the upload. Follow-up
+        // work will switch to `-K <0600-perm config file>` written by the
+        // caller to a temp path. Tracked in issue #380.
         args.append(contentsOf: ["-u", "\(config.username):\(config.password)"])
 
         // Build the target URL
@@ -306,13 +309,18 @@ public struct SFTPUploader: Sendable {
         // Archive mode with progress and compression
         args.append(contentsOf: ["-avz", "--progress"])
 
-        // Build the SSH command with port and auth options
+        // Build the SSH command with port and auth options. Shell-escape
+        // the key file path with single quotes so spaces/metacharacters
+        // in the path cannot break the rsync -e arg or, worse, execute
+        // arbitrary commands. The port is validated to be numeric by
+        // SFTPServerConfig.init so direct interpolation is safe.
         var sshCmd = "ssh -p \(config.port)"
         switch config.authMethod {
         case .password:
             sshCmd += " -o BatchMode=no"
         case .keyFile(let path):
-            sshCmd += " -i \(path)"
+            let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+            sshCmd += " -i '\(escaped)'"
         case .agent:
             break
         }

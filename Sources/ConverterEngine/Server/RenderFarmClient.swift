@@ -179,10 +179,23 @@ public final class RenderFarmClient: @unchecked Sendable {
         pollIntervalSeconds: UInt64 = 2
     ) -> AsyncThrowingStream<RenderFarmJobStatus, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            // Assign the task to a box BEFORE setting onTermination so the
+            // cancellation closure always sees the live task — otherwise a
+            // caller that aborts the stream between `init` and the first
+            // status poll can leave a detached task running.
+            final class TaskBox: @unchecked Sendable {
+                var task: Task<Void, Never>?
+            }
+            let box = TaskBox()
+            continuation.onTermination = { _ in box.task?.cancel() }
+            box.task = Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
                 do {
                     while !Task.isCancelled {
-                        let snapshot = try await status(jobId: jobId, agentID: agentID)
+                        let snapshot = try await self.status(jobId: jobId, agentID: agentID)
                         continuation.yield(snapshot)
                         if Self.isTerminal(state: snapshot.state) {
                             continuation.finish()
@@ -195,7 +208,6 @@ public final class RenderFarmClient: @unchecked Sendable {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
