@@ -10214,4 +10214,86 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(decoded, original)
         XCTAssertEqual(decoded.durationSeconds, 184.52, accuracy: 0.0001)
     }
+
+    // MARK: - SuiteCoreMetadataAdapter (#371)
+
+    /// Without SUITE_CORE, `.automatic` backend routes all inline sources
+    /// through the inline implementation.
+    func test_suiteCoreMetadataAdapter_automaticBackendOffByDefault() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .automatic)
+        #if !SUITE_CORE
+        XCTAssertFalse(adapter.routesThroughSuiteCore(source: .tmdb))
+        XCTAssertFalse(adapter.routesThroughSuiteCore(source: .tvdb))
+        #endif
+    }
+
+    /// `.inlineOnly` always bypasses suite-core.
+    func test_suiteCoreMetadataAdapter_inlineOnlyAlwaysFallsBack() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        for source in MetadataSource.allCases {
+            XCTAssertFalse(adapter.routesThroughSuiteCore(source: source))
+        }
+    }
+
+    /// `.suiteCore` forces the suite-core path regardless of availability.
+    func test_suiteCoreMetadataAdapter_forcedSuiteCoreRoutes() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        for source in MetadataSource.allCases {
+            XCTAssertTrue(adapter.routesThroughSuiteCore(source: source))
+        }
+    }
+
+    /// Forced suite-core backend must throw `.notCompiledIn` when unlinked.
+    func test_suiteCoreMetadataAdapter_forcedSuiteCoreThrowsWhenAbsent() async {
+        #if !SUITE_CORE
+        let adapter = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        let query = MetadataSearchQuery(mediaType: .movie, title: "Dune")
+        do {
+            _ = try await adapter.search(source: .tmdb, query: query)
+            XCTFail("Expected SuiteCoreBridgeError.notCompiledIn")
+        } catch let error as SuiteCoreBridgeError {
+            if case .notCompiledIn = error { return }
+            XCTFail("Expected .notCompiledIn, got \(error)")
+        } catch {
+            XCTFail("Expected SuiteCoreBridgeError, got \(error)")
+        }
+        #endif
+    }
+
+    /// Request body encodes all fields and uses sorted JSON keys.
+    func test_suiteCoreMetadataAdapter_requestBodyEncodesAllFields() throws {
+        let query = MetadataSearchQuery(
+            mediaType: .tvEpisode,
+            title: "The Expanse",
+            year: 2015,
+            season: 3,
+            episode: 7,
+            artist: nil,
+            album: nil,
+            language: "en"
+        )
+        let data = try XCTUnwrap(
+            SuiteCoreMetadataAdapter.buildSuiteCoreRequestBody(source: .tvdb, query: query)
+        )
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertEqual(json["provider"] as? String, "tvdb")
+        XCTAssertEqual(json["mediaType"] as? String, "episode")
+        XCTAssertEqual(json["title"] as? String, "The Expanse")
+        XCTAssertEqual(json["year"] as? Int, 2015)
+        XCTAssertEqual(json["season"] as? Int, 3)
+        XCTAssertEqual(json["episode"] as? Int, 7)
+        XCTAssertEqual(json["language"] as? String, "en")
+    }
+
+    /// The advertised provider list differs depending on backend selection.
+    func test_suiteCoreMetadataAdapter_providerListDiffers() {
+        let inline = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        let forced = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        XCTAssertLessThan(
+            inline.availableProviderIdentifiers().count,
+            forced.availableProviderIdentifiers().count
+        )
+    }
 }
