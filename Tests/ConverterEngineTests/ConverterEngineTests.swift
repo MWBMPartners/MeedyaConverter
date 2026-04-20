@@ -10880,6 +10880,39 @@ extension ConverterEngineTests {
             )
         )
     }
+
+    // MARK: - FFmpegBundleManager FFplay support (#378)
+
+    /// `FFmpegBundleError.ffplayNotFound` surfaces a distinct, actionable
+    /// error message that mentions the preview feature.
+    func test_ffmpegBundle_ffplayErrorMessage() {
+        let error = FFmpegBundleError.ffplayNotFound
+        XCTAssertNotNil(error.errorDescription)
+        XCTAssertTrue(error.errorDescription!.contains("FFplay"))
+        XCTAssertTrue(error.errorDescription!.contains("preview") || error.errorDescription!.contains("ffplay"))
+    }
+
+    /// The manager accepts an ffplayPath override in the initialiser.
+    func test_ffmpegBundle_initAcceptsFFplayPath() {
+        let manager = FFmpegBundleManager(
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            ffprobePath: "/opt/homebrew/bin/ffprobe",
+            ffplayPath: "/opt/homebrew/bin/ffplay"
+        )
+        XCTAssertEqual(manager.userFFmpegPath, "/opt/homebrew/bin/ffmpeg")
+        XCTAssertEqual(manager.userFFprobePath, "/opt/homebrew/bin/ffprobe")
+        XCTAssertEqual(manager.userFFplayPath, "/opt/homebrew/bin/ffplay")
+    }
+
+    /// `isFFplayAvailable()` soft-fails rather than throwing when ffplay is
+    /// absent — UI surfaces check this before enabling preview playback.
+    func test_ffmpegBundle_isFFplayAvailableSoftFails() {
+        let manager = FFmpegBundleManager(
+            ffplayPath: "/tmp/definitely-not-a-real-ffplay-binary-\(UUID().uuidString)"
+        )
+        // Soft-fails — must return false, not throw.
+        XCTAssertFalse(manager.isFFplayAvailable())
+    }
 }
 
 /// Trivial transport adapter used to exercise the client without a live agent.
