@@ -10737,6 +10737,149 @@ extension ConverterEngineTests {
         XCTAssertTrue(args.contains("192"))
         XCTAssertTrue(args.contains("png"))
     }
+
+    // MARK: - ProResToVectorConverter (#377)
+
+    func test_proResVariant_bitsPerChannel() {
+        XCTAssertEqual(ProResVariant.proRes4444.bitsPerChannel, 8)
+        XCTAssertEqual(ProResVariant.proRes4444XQ.bitsPerChannel, 12)
+        XCTAssertEqual(ProResVariant.proRes4444HDR.bitsPerChannel, 12)
+    }
+
+    func test_proResVariant_hdrRequiresTonemapping() {
+        XCTAssertFalse(ProResVariant.proRes4444.requiresTonemapping)
+        XCTAssertFalse(ProResVariant.proRes4444XQ.requiresTonemapping)
+        XCTAssertTrue(ProResVariant.proRes4444HDR.requiresTonemapping)
+    }
+
+    func test_proResFrameRate_doubleValue() {
+        XCTAssertEqual(ProResFrameRate.fps24.doubleValue, 24.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps23_976.doubleValue, 24000.0 / 1001.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps29_97.doubleValue, 30000.0 / 1001.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps60.doubleValue, 60.0, accuracy: 0.0001)
+    }
+
+    func test_proResConfig_defaults() {
+        let config = ProResToVectorConfig()
+        XCTAssertEqual(config.sourceVariant, .proRes4444)
+        XCTAssertEqual(config.frameRate, .fps24)
+        XCTAssertEqual(config.frameStride, 1)
+        XCTAssertEqual(config.alphaHandling, .preservePerFrame)
+        XCTAssertTrue(config.shapePersistence)
+        XCTAssertTrue(config.keyframeExtraction)
+    }
+
+    func test_proResConfig_estimatedFrameCount() {
+        // 5 seconds at 24 fps stride 1 = 120 frames
+        let c1 = ProResToVectorConfig(frameRate: .fps24, frameStride: 1)
+        XCTAssertEqual(c1.estimatedFrameCount(sourceDurationSeconds: 5.0), 120)
+        // Stride 2 halves the count
+        let c2 = ProResToVectorConfig(frameRate: .fps24, frameStride: 2)
+        XCTAssertEqual(c2.estimatedFrameCount(sourceDurationSeconds: 5.0), 60)
+        // Time range clamps
+        let c3 = ProResToVectorConfig(
+            frameRate: .fps24,
+            startTimeSeconds: 1.0,
+            endTimeSeconds: 3.0
+        )
+        XCTAssertEqual(c3.estimatedFrameCount(sourceDurationSeconds: 10.0), 48)
+    }
+
+    func test_proResFrameExtractionArguments_includesSSAndDuration() {
+        let config = ProResToVectorConfig(
+            frameRate: .fps24,
+            startTimeSeconds: 1.0,
+            endTimeSeconds: 3.0
+        )
+        let args = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/in.mov",
+            framePatternPath: "/tmp/frame_%06d.png",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-ss"))
+        XCTAssertTrue(args.contains("1.000"))
+        XCTAssertTrue(args.contains("-t"))
+        XCTAssertTrue(args.contains("2.000"))
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/in.mov"))
+        XCTAssertTrue(args.contains("/tmp/frame_%06d.png"))
+        XCTAssertTrue(args.contains("png"))
+        XCTAssertTrue(args.contains("rgba"))
+    }
+
+    func test_proResFrameExtractionArguments_hdrTonemappingApplied() {
+        let config = ProResToVectorConfig(
+            sourceVariant: .proRes4444HDR,
+            frameRate: .fps24
+        )
+        let args = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/hdr.mov",
+            framePatternPath: "/tmp/f_%06d.png",
+            config: config
+        )
+        // Tone-mapping filter chain must be present for HDR.
+        let hasTonemap = args.contains { $0.contains("tonemap=hable") }
+        XCTAssertTrue(hasTonemap, "Expected HDR tonemap filter in args")
+    }
+
+    func test_svgAnimationRoot_smil() {
+        let root = ProResToVectorConverter.buildSVGAnimationRoot(
+            widthPixels: 1920,
+            heightPixels: 1080,
+            frameCount: 120,
+            frameRate: 24.0,
+            method: .smil
+        )
+        XCTAssertTrue(root.contains("data-frame-count=\"120\""))
+        XCTAssertTrue(root.contains("data-animation-method=\"smil\""))
+        XCTAssertTrue(root.contains("viewBox=\"0 0 1920 1080\""))
+    }
+
+    func test_smilFrameWrapper_hasCorrectTiming() {
+        let wrapper = ProResToVectorConverter.buildSMILFrameWrapper(
+            frameIndex: 12,
+            frameCount: 120,
+            frameRate: 24.0
+        )
+        XCTAssertTrue(wrapper.contains("id=\"frame-12\""))
+        XCTAssertTrue(wrapper.contains("begin=\"0.500000s\""))    // 12 / 24 = 0.5s
+        XCTAssertTrue(wrapper.contains("fill=\"freeze\""))
+    }
+
+    func test_shouldWarnAboutOutputSize_longClip() {
+        let config = ProResToVectorConfig(frameRate: .fps24)
+        XCTAssertFalse(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 5.0
+            )
+        )
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 15.0
+            )
+        )
+    }
+
+    func test_shouldWarnAboutOutputSize_photorealistic() {
+        let tracing = RasterToVectorConfig(
+            inputFormat: .png,
+            tracingMode: .photorealistic,
+            preset: .photorealistic
+        )
+        let config = ProResToVectorConfig(
+            frameRate: .fps24,
+            tracing: tracing
+        )
+        // Even a 3-second photorealistic clip should warn.
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 3.0
+            )
+        )
+    }
 }
 
 /// Trivial transport adapter used to exercise the client without a live agent.
