@@ -10296,4 +10296,63 @@ final class ConverterEngineTests: XCTestCase {
             forced.availableProviderIdentifiers().count
         )
     }
+
+    // MARK: - SuiteCoreCodecClassifier (#372)
+
+    /// FLAC classifies as lossless, non-spatial.
+    func test_codecClassifier_flacIsLossless() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "flac")
+        XCTAssertTrue(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+        XCTAssertEqual(d.displayName, "FLAC")
+    }
+
+    /// Opus classifies as lossy, non-spatial.
+    func test_codecClassifier_opusIsLossy() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "opus")
+        XCTAssertFalse(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+    }
+
+    /// E-AC-3 JOC (Atmos) classifies as spatial.
+    func test_codecClassifier_eac3AtmosIsSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "eac3_atmos")
+        XCTAssertTrue(d.isSpatial)
+        XCTAssertFalse(d.isLossless)
+    }
+
+    /// TrueHD Atmos is both lossless and spatial.
+    func test_codecClassifier_truehdAtmosIsLosslessAndSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "truehd_atmos")
+        XCTAssertTrue(d.isLossless)
+        XCTAssertTrue(d.isSpatial)
+    }
+
+    /// Channel layout alone can promote a codec to spatial (7.1.4 height channels).
+    func test_codecClassifier_spatialChannelLayoutPromotesSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(
+            ffprobeCodecName: "eac3",
+            channelLayout: "7.1.4"
+        )
+        XCTAssertTrue(d.isSpatial)
+    }
+
+    /// Unknown codecs fall back to an uppercased identifier as display name.
+    func test_codecClassifier_unknownCodecFallback() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "xyz_custom")
+        XCTAssertEqual(d.identifier, "xyz_custom")
+        XCTAssertEqual(d.displayName, "XYZ_CUSTOM")
+        XCTAssertFalse(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+    }
+
+    /// PCM variants are all lossless.
+    func test_codecClassifier_pcmIsLossless() {
+        for codec in ["pcm_s16le", "pcm_s24le", "pcm_f32le"] {
+            XCTAssertTrue(
+                SuiteCoreCodecClassifier.isLossless(ffprobeCodecName: codec),
+                "Expected \(codec) to be classified lossless"
+            )
+        }
+    }
 }
