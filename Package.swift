@@ -34,11 +34,55 @@ import PackageDescription
 //   swift build                   # Neither conditional dependency
 // ---------------------------------------------------------------------------
 // Note: ProcessInfo is available in Package.swift via Foundation (implicitly
-// imported by the Swift package manifest runtime). Uncomment these lines when
-// the conditional Sparkle / FFmpegKit dependencies below are activated.
+// imported by the Swift package manifest runtime).
+import Foundation
+
+let isDirectBuild   = ProcessInfo.processInfo.environment["DIRECT"] != nil
+let isAppStoreBuild = ProcessInfo.processInfo.environment["APP_STORE"] != nil
+// SUITE_CORE enables the MeedyaSuite-core Swift Package dependency which wraps
+// the Rust meedya-core static library via C FFI. Kept off by default until the
+// Swift bindings are stable and the binary artefact is published (#373).
+let isSuiteCoreBuild = ProcessInfo.processInfo.environment["SUITE_CORE"] != nil
+// Local path override for MeedyaSuite-core (useful during development when the
+// repo is checked out alongside MeedyaConverter).
+let suiteCorePath   = ProcessInfo.processInfo.environment["SUITE_CORE_PATH"]
+
+// ---------------------------------------------------------------------------
+// MARK: - Conditional Dependency Construction
+// ---------------------------------------------------------------------------
+// MeedyaSuite-core is a Rust workspace providing shared metadata, codec, and
+// fingerprint APIs across the MeedyaSuite ecosystem. The Swift bindings live
+// at `bindings/swift/` within that repo and wrap the compiled Rust static
+// library via C FFI.
 //
-// let isDirectBuild  = ProcessInfo.processInfo.environment["DIRECT"] != nil
-// let isAppStoreBuild = ProcessInfo.processInfo.environment["APP_STORE"] != nil
+// Integration is feature-flagged because the Rust artefact is not yet shipped
+// as a versioned binary dependency. When SUITE_CORE=1 is set, the Swift
+// Package manager will pull in meedya-core. The #373 scaffolding under
+// Sources/ConverterEngine/SuiteCore provides protocol shims so that the rest
+// of the codebase compiles whether the flag is on or off.
+// ---------------------------------------------------------------------------
+var extraPackageDependencies: [Package.Dependency] = []
+var converterEngineProductDeps: [Target.Dependency] = []
+var suiteCoreSwiftSettings: [SwiftSetting] = []
+
+if isSuiteCoreBuild {
+    if let localPath = suiteCorePath {
+        extraPackageDependencies.append(.package(path: localPath))
+    } else {
+        // Default: assume the Swift bindings are published as a top-level
+        // Swift Package. Until this exists as a versioned tag, SUITE_CORE_PATH
+        // should be used to point at a local checkout.
+        extraPackageDependencies.append(
+            .package(url: "https://github.com/MWBMPartners/MeedyaSuite-core.git", branch: "main")
+        )
+    }
+    converterEngineProductDeps.append(
+        .product(name: "MeedyaCore", package: "MeedyaSuite-core")
+    )
+    suiteCoreSwiftSettings.append(.define("SUITE_CORE"))
+}
+
+let baseConverterEngineSwiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)] + suiteCoreSwiftSettings
 
 // ---------------------------------------------------------------------------
 // MARK: - Package Definition
@@ -124,6 +168,7 @@ let package = Package(
         // Repository : https://github.com/apple/swift-argument-parser.git
         // Pin        : ~> 1.5.0
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+    ] + extraPackageDependencies + [
 
         // -- swift-log ----------------------------------------------------
         // Apple's structured logging facade. All subsystems log through
@@ -239,16 +284,9 @@ let package = Package(
                 // .product(name: "SwiftSoup", package: "SwiftSoup"),
                 // .product(name: "Yams", package: "Yams"),
                 // .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-            ],
+            ] + converterEngineProductDeps,
             path: "Sources/ConverterEngine",
-            swiftSettings: [
-                // Enable strict concurrency checking at the "complete" level
-                // to surface all Sendable violations at compile time. This is
-                // the default in Swift 6 language mode, but we state it
-                // explicitly for clarity and to prevent accidental regression
-                // if the tools version were ever rolled back.
-                .swiftLanguageMode(.v6),
-            ]
+            swiftSettings: baseConverterEngineSwiftSettings
         ),
 
         // =================================================================

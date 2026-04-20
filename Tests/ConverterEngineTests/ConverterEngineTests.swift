@@ -10153,4 +10153,65 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertTrue(args.contains("-map_chapters"))
         XCTAssertTrue(args.contains("1"))
     }
+
+    // MARK: - SuiteCore (#373)
+
+    /// Verifies that the suite-core availability flag reflects the build flag.
+    /// In CI (without SUITE_CORE=1 set) this must be false so the fallback
+    /// codepaths are exercised.
+    func test_suiteCore_availabilityMatchesBuildFlag() {
+        #if SUITE_CORE
+        XCTAssertTrue(SuiteCoreAvailability.isAvailable)
+        XCTAssertNotNil(SuiteCoreAvailability.linkedVersion)
+        #else
+        XCTAssertFalse(SuiteCoreAvailability.isAvailable)
+        XCTAssertNil(SuiteCoreAvailability.linkedVersion)
+        #endif
+    }
+
+    /// The smoke test must throw `.notCompiledIn` when the suite-core
+    /// dependency is absent.
+    func test_suiteCore_smokeTestThrowsWhenNotCompiledIn() {
+        #if !SUITE_CORE
+        XCTAssertThrowsError(try SuiteCoreSmokeTest.ping()) { error in
+            guard let bridgeError = error as? SuiteCoreBridgeError else {
+                XCTFail("Expected SuiteCoreBridgeError, got \(error)")
+                return
+            }
+            if case .notCompiledIn = bridgeError {
+                // expected
+            } else {
+                XCTFail("Expected .notCompiledIn, got \(bridgeError)")
+            }
+        }
+        #endif
+    }
+
+    /// Verifies the SuiteCoreCodecDescriptor is Codable and preserves values
+    /// through an encode/decode round trip.
+    func test_suiteCore_codecDescriptorRoundTrip() throws {
+        let original = SuiteCoreCodecDescriptor(
+            identifier: "eac3_atmos",
+            displayName: "Dolby Digital Plus with Atmos",
+            isLossless: false,
+            isSpatial: true,
+            channelLayout: "7.1.4"
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SuiteCoreCodecDescriptor.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.channelLayout, "7.1.4")
+    }
+
+    /// Verifies fingerprint result round-trips through Codable.
+    func test_suiteCore_fingerprintResultRoundTrip() throws {
+        let original = SuiteCoreFingerprintResult(
+            fingerprint: "AQADtEmSRImSJImSRImSJEmUJEn",
+            durationSeconds: 184.52
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SuiteCoreFingerprintResult.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.durationSeconds, 184.52, accuracy: 0.0001)
+    }
 }
