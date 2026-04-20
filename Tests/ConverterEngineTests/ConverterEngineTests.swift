@@ -10600,6 +10600,145 @@ final class ConverterEngineTests: XCTestCase {
 
 // MARK: - Test fixtures
 
+// MARK: - RasterVectorConverter (#376)
+
+extension ConverterEngineTests {
+
+    func test_rasterFormat_recognisesAliases() {
+        XCTAssertEqual(RasterFormat.from(fileExtension: "jpg"), .jpeg)
+        XCTAssertEqual(RasterFormat.from(fileExtension: ".JPG"), .jpeg)
+        XCTAssertEqual(RasterFormat.from(fileExtension: "tif"), .tiff)
+        XCTAssertEqual(RasterFormat.from(fileExtension: "png"), .png)
+        XCTAssertNil(RasterFormat.from(fileExtension: "docx"))
+    }
+
+    func test_rasterFormat_animatedFlag() {
+        XCTAssertTrue(RasterFormat.gif.isAnimated)
+        XCTAssertTrue(RasterFormat.apng.isAnimated)
+        XCTAssertTrue(RasterFormat.webp.isAnimated)
+        XCTAssertFalse(RasterFormat.jpeg.isAnimated)
+        XCTAssertFalse(RasterFormat.png.isAnimated)
+    }
+
+    func test_rasterFormat_alphaSupport() {
+        XCTAssertTrue(RasterFormat.png.hasAlphaSupport)
+        XCTAssertTrue(RasterFormat.apng.hasAlphaSupport)
+        XCTAssertTrue(RasterFormat.tiff.hasAlphaSupport)
+        XCTAssertFalse(RasterFormat.jpeg.hasAlphaSupport)
+        XCTAssertFalse(RasterFormat.bmp.hasAlphaSupport)
+    }
+
+    func test_rasterFormat_hdrCapable() {
+        XCTAssertTrue(RasterFormat.exr.isHDRCapable)
+        XCTAssertTrue(RasterFormat.hdr.isHDRCapable)
+        XCTAssertTrue(RasterFormat.avif.isHDRCapable)
+        XCTAssertTrue(RasterFormat.jxl.isHDRCapable)
+        XCTAssertFalse(RasterFormat.gif.isHDRCapable)
+    }
+
+    func test_editabilityPreset_defaultsAreSensible() {
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultTracingMode, .outline)
+        XCTAssertEqual(EditabilityPreset.photorealistic.defaultTracingMode, .photorealistic)
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultColorCount, 8)
+        XCTAssertGreaterThan(
+            EditabilityPreset.photorealistic.defaultColorCount,
+            EditabilityPreset.logoIcon.defaultColorCount
+        )
+    }
+
+    func test_rasterToVectorConfig_defaultsFromPreset() {
+        let config = RasterToVectorConfig(
+            inputFormat: .png,
+            preset: .logoIcon
+        )
+        XCTAssertEqual(config.tracingMode, .outline)
+        XCTAssertEqual(config.colorCount, 8)
+        XCTAssertEqual(config.alpha, .clipPathWithOpacity)
+        XCTAssertTrue(config.preserveMetadata)
+    }
+
+    func test_rasterToVectorConfig_validationRejectsBadColorCount() {
+        let tooFew = RasterToVectorConfig(inputFormat: .png, colorCount: 1)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooFew))
+        let tooMany = RasterToVectorConfig(inputFormat: .png, colorCount: 512)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooMany))
+        let ok = RasterToVectorConfig(inputFormat: .png, colorCount: 64)
+        XCTAssertNil(RasterVectorConverter.validate(ok))
+    }
+
+    func test_rasterToVectorConfig_validationRejectsBadSimplification() {
+        let tooLow = RasterToVectorConfig(inputFormat: .png, curveSimplification: -1)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooLow))
+        let tooHigh = RasterToVectorConfig(inputFormat: .png, curveSimplification: 100)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooHigh))
+    }
+
+    func test_preferredTracingTool() {
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .outline), "potrace")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .monochrome), "potrace")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .colorQuantization), "vtracer")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .photorealistic), "vtracer")
+    }
+
+    func test_vtracerArguments_includeInputAndOutput() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .illustration)
+        let args = RasterVectorConverter.buildVTracerArguments(
+            inputPath: "/tmp/in.png",
+            outputPath: "/tmp/out.svg",
+            config: config
+        )
+        XCTAssertEqual(args[0], "-i")
+        XCTAssertEqual(args[1], "/tmp/in.png")
+        XCTAssertEqual(args[2], "-o")
+        XCTAssertEqual(args[3], "/tmp/out.svg")
+        XCTAssertTrue(args.contains("--colormode"))
+        XCTAssertTrue(args.contains("color"))
+    }
+
+    func test_vtracerArguments_monochromeBinary() {
+        let config = RasterToVectorConfig(inputFormat: .png, tracingMode: .monochrome, preset: .custom)
+        let args = RasterVectorConverter.buildVTracerArguments(
+            inputPath: "/tmp/in.png", outputPath: "/tmp/out.svg", config: config
+        )
+        guard let idx = args.firstIndex(of: "--colormode") else {
+            XCTFail("expected --colormode"); return
+        }
+        XCTAssertEqual(args[idx + 1], "binary")
+    }
+
+    func test_potraceArguments_svgOutput() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .logoIcon)
+        let args = RasterVectorConverter.buildPotraceArguments(
+            inputPath: "/tmp/in.bmp",
+            outputPath: "/tmp/out.svg",
+            config: config
+        )
+        XCTAssertTrue(args.contains("/tmp/in.bmp"))
+        XCTAssertTrue(args.contains("-s"))
+        XCTAssertTrue(args.contains("--svg"))
+        XCTAssertTrue(args.contains("/tmp/out.svg"))
+    }
+
+    func test_rsvgConvertArguments_dimensionsAndDPI() {
+        let config = VectorToRasterConfig(
+            outputFormat: .png,
+            targetWidthPixels: 1024,
+            targetHeightPixels: 768,
+            dpi: 192
+        )
+        let args = RasterVectorConverter.buildRsvgConvertArguments(
+            inputPath: "/tmp/logo.svg",
+            outputPath: "/tmp/logo.png",
+            config: config
+        )
+        XCTAssertEqual(args[0], "/tmp/logo.svg")
+        XCTAssertTrue(args.contains("1024"))
+        XCTAssertTrue(args.contains("768"))
+        XCTAssertTrue(args.contains("192"))
+        XCTAssertTrue(args.contains("png"))
+    }
+}
+
 /// Trivial transport adapter used to exercise the client without a live agent.
 private struct FakeRenderFarmTransport: RenderFarmTransportAdapter {
     func submit(
