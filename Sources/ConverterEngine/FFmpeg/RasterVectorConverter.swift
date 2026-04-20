@@ -316,8 +316,10 @@ public enum RasterVectorConverter: Sendable {
         ]
         // Turdsize: remove speckles below this pixel count.
         args.append(contentsOf: ["-t", String(Int((config.curveSimplification * 4).rounded()))])
-        // Alphamax: curve smoothness.
-        args.append(contentsOf: ["-a", String(format: "%.2f", min(1.3, max(0.0, 1.0))) ])
+        // Alphamax: curve smoothness, mapped from the 0..10 simplification
+        // knob onto potrace's 0.0..1.3 range.
+        let alphamax = min(1.3, max(0.0, config.curveSimplification * 0.13))
+        args.append(contentsOf: ["-a", String(format: "%.2f", alphamax)])
         switch config.outputFormat {
         case .svg2: args.append(contentsOf: ["--svg", "--opttolerance", "0.2"])
         case .svg11: args.append("--svg")
