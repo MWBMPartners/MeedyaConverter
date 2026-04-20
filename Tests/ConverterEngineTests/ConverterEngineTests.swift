@@ -10446,4 +10446,179 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertEqual(decoded.targetLuminanceNits, 203.5, accuracy: 0.01)
         XCTAssertFalse(decoded.preserveAlpha)
     }
+
+    // MARK: - RenderFarm (#346)
+
+    /// Default chunk size and port are the published constants.
+    func test_renderFarm_protocolDefaults() {
+        XCTAssertEqual(RenderFarmProtocol.defaultChunkSizeBytes, 4 * 1024 * 1024)
+        XCTAssertEqual(RenderFarmProtocol.defaultAgentPort, 2229)
+        XCTAssertEqual(RenderFarmProtocol.bonjourServiceType, "_meedyaconverter-agent._tcp")
+    }
+
+    /// Exact-multiple file sizes produce exact chunk counts.
+    func test_renderFarm_chunkCountExactMultiple() {
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 0, chunkSizeBytes: 1024),
+            0
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 4096, chunkSizeBytes: 1024),
+            4
+        )
+    }
+
+    /// Non-exact file sizes round up to include the remainder chunk.
+    func test_renderFarm_chunkCountRoundUp() {
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 4097, chunkSizeBytes: 1024),
+            5
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 1, chunkSizeBytes: 1024),
+            1
+        )
+    }
+
+    /// Checksum validation accepts matching strings (case-insensitive).
+    func test_renderFarm_checksumValidateMatches() throws {
+        try RenderFarmProtocol.validateAssembledChecksum(
+            expected: "ABCDEF01",
+            observed: "abcdef01"
+        )
+    }
+
+    /// Checksum validation rejects mismatches.
+    func test_renderFarm_checksumValidateMismatches() {
+        XCTAssertThrowsError(
+            try RenderFarmProtocol.validateAssembledChecksum(
+                expected: "abcdef01",
+                observed: "ffffffff"
+            )
+        ) { error in
+            guard case RenderFarmError.transferIntegrityFailed = error else {
+                XCTFail("Expected transferIntegrityFailed, got \(error)")
+                return
+            }
+        }
+    }
+
+    /// REST paths are versioned and use the lowercased UUID.
+    func test_renderFarm_restPaths() {
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        XCTAssertEqual(
+            RenderFarmProtocol.submitPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkPath(jobId: id, index: 7),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/chunks/7"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.statusPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/status"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.downloadPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/output"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.cancelPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/cancel"
+        )
+    }
+
+    /// Terminal states stop the progress stream.
+    func test_renderFarm_terminalStates() {
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .completed))
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .failed))
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .cancelled))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .queued))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .transferring))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .encoding))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .finalising))
+    }
+
+    /// Agent info endpoint formatting.
+    func test_renderFarm_agentEndpointString() {
+        let agent = RenderFarmAgentInfo(
+            displayName: "studio-tower",
+            host: "192.168.1.42",
+            port: 2229
+        )
+        XCTAssertEqual(agent.endpoint, "192.168.1.42:2229")
+    }
+
+    /// Agent registry add/remove works as expected.
+    func test_renderFarm_clientRegistry() {
+        let client = RenderFarmClient(transport: FakeRenderFarmTransport())
+        let a = RenderFarmAgentInfo(displayName: "alpha", host: "10.0.0.1")
+        let b = RenderFarmAgentInfo(displayName: "bravo", host: "10.0.0.2")
+        client.register(agent: a)
+        client.register(agent: b)
+        let all = client.allAgents()
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual(all[0].displayName, "alpha")  // sorted
+        XCTAssertEqual(all[1].displayName, "bravo")
+        client.unregister(agentID: a.id)
+        XCTAssertEqual(client.allAgents().count, 1)
+        XCTAssertNil(client.agent(id: a.id))
+        XCTAssertNotNil(client.agent(id: b.id))
+    }
+
+    /// Insecure transports must be explicitly allowed by configuration.
+    func test_renderFarm_insecureTransportRejectedByDefault() {
+        let client = RenderFarmClient(transport: FakeRenderFarmTransport())
+        let submission = RenderFarmJobSubmission(
+            agentId: UUID(),
+            profileIdentifier: "test",
+            sourceFilename: "a.mov",
+            sourceSHA256: "deadbeef",
+            sourceSizeBytes: 10,
+            transport: .plainHTTP
+        )
+        XCTAssertThrowsError(try client.validate(submission: submission))
+    }
+
+    /// Insecure transports are accepted when configuration allows.
+    func test_renderFarm_insecureTransportAllowedWhenConfigured() {
+        let client = RenderFarmClient(
+            transport: FakeRenderFarmTransport(),
+            configuration: RenderFarmClient.Configuration(allowInsecureTransports: true)
+        )
+        let submission = RenderFarmJobSubmission(
+            agentId: UUID(),
+            profileIdentifier: "test",
+            sourceFilename: "a.mov",
+            sourceSHA256: "deadbeef",
+            sourceSizeBytes: 10,
+            transport: .plainHTTP
+        )
+        XCTAssertNoThrow(try client.validate(submission: submission))
+    }
+}
+
+// MARK: - Test fixtures
+
+/// Trivial transport adapter used to exercise the client without a live agent.
+private struct FakeRenderFarmTransport: RenderFarmTransportAdapter {
+    func submit(
+        agent: RenderFarmAgentInfo,
+        submission: RenderFarmJobSubmission
+    ) async throws -> RenderFarmJobStatus {
+        RenderFarmJobStatus(jobId: submission.jobId, state: .queued, progress: 0)
+    }
+    func uploadChunk(agent: RenderFarmAgentInfo, chunk: RenderFarmChunk) async throws { }
+    func status(
+        agent: RenderFarmAgentInfo,
+        jobId: UUID
+    ) async throws -> RenderFarmJobStatus {
+        RenderFarmJobStatus(jobId: jobId, state: .completed, progress: 1.0)
+    }
+    func download(
+        agent: RenderFarmAgentInfo,
+        jobId: UUID,
+        destination: URL
+    ) async throws -> URL { destination }
+    func cancel(agent: RenderFarmAgentInfo, jobId: UUID) async throws { }
 }
