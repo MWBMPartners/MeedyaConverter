@@ -10921,7 +10921,7 @@ extension ConverterEngineTests {
 }
 
 /// Trivial transport adapter used to exercise the client without a live agent.
-private struct FakeRenderFarmTransport: RenderFarmTransportAdapter {
+private struct FakeRenderFarmTransport: RenderFarmTransportAdapter, Sendable {
     func submit(
         agent: RenderFarmAgentInfo,
         submission: RenderFarmJobSubmission
