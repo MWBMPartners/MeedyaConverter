@@ -132,16 +132,34 @@ jobs:
       # it here if you need detailed build output for troubleshooting.
       # ---------------------------------------------------------------------
       - name: Build (debug)
-        run: swift build
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee /tmp/build-output.txt
 
-      # ---------------------------------------------------------------------
-      # Step 7: Run tests
-      # ---------------------------------------------------------------------
-      # Execute all test targets defined in Package.swift. The --parallel
-      # flag runs test cases concurrently for faster feedback.
-      # ---------------------------------------------------------------------
       - name: Run tests
-        run: swift test --parallel
+        run: |
+          set -o pipefail
+          swift test --parallel 2>&1 | tee /tmp/test-output.txt
+
+      - name: Post failure details to PR
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### CI Failure Details'
+            echo ''
+            echo '**Build output (last 80 lines):**'
+            echo '```'
+            tail -80 /tmp/build-output.txt 2>/dev/null || echo "(no build output)"
+            echo '```'
+            echo ''
+            echo '**Test output (last 80 lines):**'
+            echo '```'
+            tail -80 /tmp/test-output.txt 2>/dev/null || echo "(no test output)"
+            echo '```'
+          } > /tmp/ci-comment.txt
+          gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/ci-comment.txt
 
       # ---------------------------------------------------------------------
       # Step 8: SwiftLint (optional)
