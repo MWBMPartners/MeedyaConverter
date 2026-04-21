@@ -221,7 +221,7 @@ public struct MegaUploader: Sendable {
             "user": email,
             "uh": passwordHash,
         ]]
-        guard let data = try? JSONSerialization.data(withJSONObject: body),
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
               let json = String(data: data, encoding: .utf8) else {
             return "[]"
         }
@@ -260,7 +260,7 @@ public struct MegaUploader: Sendable {
                 "k": fileKey,
             ]],
         ]]
-        guard let data = try? JSONSerialization.data(withJSONObject: body),
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
               let json = String(data: data, encoding: .utf8) else {
             return "[]"
         }
@@ -353,7 +353,7 @@ public struct MuxUploader: Sendable {
             "cors_origin": corsOrigin,
             "new_asset_settings": assetSettings,
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: body),
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
         }

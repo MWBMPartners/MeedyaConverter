@@ -80,7 +80,7 @@ public enum SuiteCoreCodecClassifier: Sendable {
     /// Codec identifiers that are lossless regardless of parameters.
     static let losslessCodecs: Set<String> = [
         "flac", "alac", "ape", "wavpack", "tta", "tak",
-        "truehd", "mlp", "dts-hd ma", "dts_hd_ma",
+        "truehd", "truehd_atmos", "mlp", "dts-hd ma", "dts_hd_ma",
         "pcm_s8", "pcm_u8", "pcm_s16le", "pcm_s16be",
         "pcm_s24le", "pcm_s24be", "pcm_s32le", "pcm_s32be",
         "pcm_f32le", "pcm_f64le",
