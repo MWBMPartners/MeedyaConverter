@@ -124,6 +124,11 @@ struct OutputSettingsView: View {
                 .font(.caption)
             }
 
+            // Subtitle tone-mapping (Issues #369 engine, #381 / #396 UI)
+            Section("Subtitles") {
+                subtitleTonemapControls
+            }
+
             // Stream selection
             if let file = viewModel.selectedFile {
                 Section("Stream Selection") {
@@ -257,6 +262,104 @@ struct OutputSettingsView: View {
             Text("Both video and audio are set to passthrough — the output will be a remux (no re-encoding).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Subtitle Tone-Mapping (Issues #369 engine / #381 / #396 UI)
+    //
+    // HDR subtitle tone-mapping converts the colour values of PGS / VobSub
+    // / ASS subtitles from the HDR source's gamut into an SDR-friendly
+    // gamut, so that subtitles remain legible when the rest of the
+    // pipeline tone-maps the video. The engine is `SubtitleTonemapWrapper`
+    // in `ConverterEngine.Utilities` — see issue #369.
+    //
+    // UI design:
+    //  * Master toggle binds to `EncodingProfile.subtitleTonemap != nil`.
+    //    Turning it on installs a default `SubtitleTonemapConfig`;
+    //    turning it off clears the config to `nil` so the profile JSON
+    //    on disk stays small for users who don't need this.
+    //  * The picker / stepper / alpha toggle are only rendered when the
+    //    master is on, so the section stays visually quiet by default.
+    //  * Each subordinate control is bound through a non-optional
+    //    `Binding<SubtitleTonemapConfig>` that round-trips through the
+    //    optional on the profile.
+
+    @ViewBuilder
+    private var subtitleTonemapControls: some View {
+        @Bindable var vm = viewModel
+
+        // Master enable toggle — flips the optional config on/off.
+        // When the user turns it on we install a default config so the
+        // subordinate controls have something to bind against.
+        let isEnabled = Binding<Bool>(
+            get: { vm.selectedProfile.subtitleTonemap != nil },
+            set: { newValue in
+                vm.selectedProfile.subtitleTonemap =
+                    newValue ? SubtitleTonemapConfig() : nil
+            }
+        )
+
+        Toggle("Tone-map HDR subtitle colours", isOn: isEnabled)
+            .accessibilityLabel("Enable HDR-to-SDR subtitle colour tone-mapping")
+            .help(
+                "When enabled, PGS / VobSub / ASS subtitles are passed through "
+                + "subtitle_tonemap to remap their colour values from the HDR "
+                + "source's gamut into an SDR-friendly gamut, keeping them "
+                + "legible on tone-mapped output."
+            )
+
+        if vm.selectedProfile.subtitleTonemap != nil {
+            // Non-optional binding into the wrapped config. The setter
+            // never sees a nil because the surrounding `if` already
+            // guaranteed the config exists when these controls render;
+            // the getter has a defensive default to satisfy the type
+            // system in the unlikely case the optional flips during
+            // a SwiftUI redraw race.
+            let config = Binding<SubtitleTonemapConfig>(
+                get: { vm.selectedProfile.subtitleTonemap ?? SubtitleTonemapConfig() },
+                set: { vm.selectedProfile.subtitleTonemap = $0 }
+            )
+
+            // Picker — HDR source profile. `SubtitleHDRSourceProfile`
+            // conforms to `CaseIterable` and `Identifiable` via its
+            // raw value, so we iterate over `allCases` and use the
+            // case itself as the tag.
+            Picker("HDR source profile", selection: config.sourceProfile) {
+                ForEach(SubtitleHDRSourceProfile.allCases, id: \.self) { profile in
+                    Text(profile.displayName).tag(profile)
+                }
+            }
+            .accessibilityLabel("HDR source profile for subtitle tone-mapping")
+
+            // Stepper — target SDR peak luminance in nits.
+            // The acceptance criteria pin the range to 50–200 with a
+            // step of 10. The default of 100 matches the engine config
+            // default (`SubtitleTonemapConfig.targetLuminanceNits`).
+            Stepper(
+                value: config.targetLuminanceNits,
+                in: 50...200,
+                step: 10
+            ) {
+                HStack {
+                    Text("Target luminance")
+                    Spacer()
+                    Text("\(Int(config.wrappedValue.targetLuminanceNits)) nits")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .accessibilityLabel(
+                "Target SDR peak luminance in nits — typically 100"
+            )
+
+            // Toggle — preserve alpha on PGS. Important for PGS
+            // subtitles which carry per-pixel alpha; users colour-
+            // grading their output to dark levels will usually want
+            // this on so subtitle edges don't develop hard halos.
+            Toggle("Preserve alpha on PGS", isOn: config.preserveAlpha)
+                .accessibilityLabel(
+                    "Preserve per-pixel alpha on PGS subtitles during tone-mapping"
+                )
         }
     }
 

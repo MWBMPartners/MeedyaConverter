@@ -10534,6 +10534,50 @@ final class ConverterEngineTests: XCTestCase {
 
     // MARK: - SubtitleTonemapWrapper (#369)
 
+    /// Pins the SubtitleTonemapConfig default-initialised values against
+    /// the explicit defaults baked into the UI in
+    /// `OutputSettingsView.subtitleTonemapControls` (#381 / #396). If the
+    /// engine defaults drift, the UI's master-toggle-installs-a-default
+    /// behaviour would silently produce different settings than a user
+    /// constructing the config explicitly — surface that as a test
+    /// failure rather than a runtime surprise.
+    func test_subtitleTonemapConfig_defaultsMatchEngineAndUI() {
+        let defaults = SubtitleTonemapConfig()
+        XCTAssertEqual(defaults.sourceProfile, .hdr10,
+                       "UI Picker first selection assumes .hdr10 default")
+        XCTAssertEqual(defaults.targetLuminanceNits, 100.0,
+                       "UI Stepper default value is 100 nits")
+        XCTAssertTrue(defaults.preserveAlpha,
+                      "UI Toggle default is on (alpha preserved)")
+    }
+
+    /// `EncodingProfile.subtitleTonemap` defaults to `nil` so existing
+    /// profile JSON on disk decodes cleanly under the auto-synthesised
+    /// `Decodable`. The UI relies on this: turning the master toggle
+    /// OFF must clear the optional, not leave a stale default behind.
+    func test_encodingProfile_subtitleTonemapDefaultIsNil() {
+        let profile = EncodingProfile(name: "test")
+        XCTAssertNil(profile.subtitleTonemap)
+    }
+
+    /// Round-trips an `EncodingProfile` with a non-nil tonemap config
+    /// through `JSONEncoder`/`JSONDecoder` to verify on-disk profile
+    /// persistence preserves the new field. Without this, a UI that
+    /// stores tonemap settings would lose them on the next launch.
+    func test_encodingProfile_subtitleTonemap_codableRoundTrip() throws {
+        var profile = EncodingProfile(name: "tonemap-test")
+        profile.subtitleTonemap = SubtitleTonemapConfig(
+            sourceProfile: .dolbyVision,
+            targetLuminanceNits: 150,
+            preserveAlpha: false
+        )
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(EncodingProfile.self, from: data)
+        XCTAssertEqual(decoded.subtitleTonemap?.sourceProfile, .dolbyVision)
+        XCTAssertEqual(decoded.subtitleTonemap?.targetLuminanceNits, 150)
+        XCTAssertEqual(decoded.subtitleTonemap?.preserveAlpha, false)
+    }
+
     /// Verifies supported subtitle formats.
     func test_subtitleTonemap_supportedFormats() {
         XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "sup"))

@@ -139,6 +139,25 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Whether to passthrough subtitles.
     public var subtitlePassthrough: Bool
 
+    /// HDR subtitle tone-mapping settings.
+    ///
+    /// When `nil` (the default), HDR-coloured subtitles are passed
+    /// through unchanged — appropriate for HDR-aware players and for
+    /// HDR output containers. When non-`nil`, the encoding pipeline
+    /// runs `subtitle_tonemap` against PGS / VobSub / ASS streams to
+    /// remap their colour values into the SDR gamut described by the
+    /// nested `SubtitleTonemapConfig` (HDR source profile, target peak
+    /// luminance in nits, alpha preservation).
+    ///
+    /// Optional with a default of `nil` so existing profile JSON on
+    /// disk continues to decode cleanly — the auto-synthesised
+    /// `Decodable` treats a missing field as `nil` here.
+    ///
+    /// Surfaced in the UI via the "Subtitles" section of
+    /// `OutputSettingsView`. See issues #369 (engine) and #381 / #396
+    /// (UI binding).
+    public var subtitleTonemap: SubtitleTonemapConfig?
+
     // MARK: - Per-Stream Overrides (Phase 3.5 / Issue #41)
 
     /// Per-stream encoding overrides allowing different codec, bitrate, and quality
@@ -198,6 +217,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         loudnessNormalization: String? = nil,
         applyPeakLimiter: Bool = false,
         subtitlePassthrough: Bool = true,
+        subtitleTonemap: SubtitleTonemapConfig? = nil,
         perStreamSettings: PerStreamSettings? = nil,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
@@ -239,6 +259,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.loudnessNormalization = loudnessNormalization
         self.applyPeakLimiter = applyPeakLimiter
         self.subtitlePassthrough = subtitlePassthrough
+        self.subtitleTonemap = subtitleTonemap
         self.perStreamSettings = perStreamSettings
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
