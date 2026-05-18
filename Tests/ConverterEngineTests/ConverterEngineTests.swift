@@ -10532,6 +10532,40 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - SuiteCoreMetadataBackend (#371 / #381 / #398)
+
+    /// `SuiteCoreMetadataBackend` is persisted as its rawValue String via
+    /// `@AppStorage("metadataBackend")` in the SettingsView. Pin the three
+    /// expected rawValues so a rename in the engine doesn't silently
+    /// invalidate every user's persisted preference at next launch.
+    func test_suiteCoreMetadataBackend_rawValuesAreStableForAppStorage() {
+        XCTAssertEqual(SuiteCoreMetadataBackend.automatic.rawValue, "automatic")
+        XCTAssertEqual(SuiteCoreMetadataBackend.suiteCore.rawValue, "suiteCore")
+        XCTAssertEqual(SuiteCoreMetadataBackend.inlineOnly.rawValue, "inlineOnly")
+    }
+
+    /// Verifies that all three cases round-trip through their rawValue,
+    /// which is what the UI's AppStorage binding relies on. If a future
+    /// case is added without a stable rawValue, this test catches it.
+    func test_suiteCoreMetadataBackend_allCasesRoundTripThroughRawValue() {
+        for backend in SuiteCoreMetadataBackend.allCases {
+            let raw = backend.rawValue
+            let recovered = SuiteCoreMetadataBackend(rawValue: raw)
+            XCTAssertEqual(recovered, backend,
+                           "Backend \(backend) does not round-trip via "
+                           + "rawValue '\(raw)'")
+        }
+    }
+
+    /// The UI falls back to `.automatic` when AppStorage contains an
+    /// unrecognised rawValue (e.g. a value written by a future build that
+    /// added a case this one doesn't know). Verify the parsing behaviour
+    /// this fallback depends on.
+    func test_suiteCoreMetadataBackend_unknownRawValueReturnsNil() {
+        XCTAssertNil(SuiteCoreMetadataBackend(rawValue: "futureBackendName"))
+        XCTAssertNil(SuiteCoreMetadataBackend(rawValue: ""))
+    }
+
     // MARK: - SubtitleTonemapWrapper (#369)
 
     /// Pins the SubtitleTonemapConfig default-initialised values against
