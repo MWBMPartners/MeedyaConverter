@@ -98,6 +98,8 @@ struct ContentView: View {
         // -- Tools ---------------------------------------------------------
         case .images:
             ImageConversionView()
+        case .vectorConversion:
+            VectorConversionView()
         case .burn:
             BurnSettingsView()
         case .trimEdit:

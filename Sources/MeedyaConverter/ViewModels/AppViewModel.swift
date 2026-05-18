@@ -48,6 +48,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Image conversion — batch image format conversion.
     case images = "Images"
 
+    /// Raster → vector (SVG) conversion. Issues #376 engine / #381 / #402 UI.
+    case vectorConversion = "Vector Conversion"
+
     /// Disc burning — write to physical optical media.
     case burn = "Burn"
 
@@ -136,6 +139,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .dashboard:         return "chart.bar.xaxis"
         case .resourceMonitor:   return "gauge.with.dots.needle.33percent"
         case .images:            return "photo.on.rectangle.angled"
+        case .vectorConversion:  return "scribble.variable"
         case .burn:              return "opticaldisc"
         case .trimEdit:          return "scissors"
         case .analyze:           return "waveform.and.magnifyingglass"
@@ -174,6 +178,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .dashboard:         return "View encoding statistics dashboard"
         case .resourceMonitor:   return "Monitor system resources"
         case .images:            return "Convert images"
+        case .vectorConversion:  return "Convert raster images to vector SVG"
         case .burn:              return "Burn disc"
         case .trimEdit:          return "Trim and edit video"
         case .analyze:           return "Analyse media files"
