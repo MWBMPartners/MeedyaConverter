@@ -444,6 +444,78 @@ final class ConverterEngineTests: XCTestCase {
     }
 
     // -----------------------------------------------------------------
+    // MARK: - Issue #380: TempFileManager orphan cleanup on init
+    // -----------------------------------------------------------------
+    //
+    // Previously, orphan job directories were only removed when the host
+    // app remembered to invoke `cleanupOrphanedJobs()`. A crash on the
+    // very next run would silently accumulate gigabytes of demuxed-stream
+    // debris. The audit follow-up makes the cleanup happen automatically
+    // at construction (default `cleanupOrphansOnInit: true`); the tests
+    // below verify both the default behaviour and the opt-out.
+
+    /// Verifies that constructing a `TempFileManager` against a base
+    /// directory containing a `meedya-job-*` orphan removes it.
+    func test_tempManager_initRemovesOrphansByDefault() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory
+            .appendingPathComponent("tempmanager-init-cleanup-\(UUID().uuidString)")
+        try fm.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandbox) }
+
+        // Hand-plant an orphan directory as if a previous run had crashed
+        // mid-job, plus a non-MeedyaConverter directory that must NOT be
+        // touched.
+        let orphan = sandbox.appendingPathComponent(
+            "meedya-job-\(UUID().uuidString)"
+        )
+        try fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+
+        let unrelated = sandbox.appendingPathComponent("other-app-scratch")
+        try fm.createDirectory(at: unrelated, withIntermediateDirectories: true)
+
+        // Default construction should sweep the orphan but leave anything
+        // outside our prefix alone.
+        _ = TempFileManager(baseDirectory: sandbox)
+
+        XCTAssertFalse(
+            fm.fileExists(atPath: orphan.path),
+            "Default init must remove `meedya-job-*` orphans so a "
+            + "post-crash restart doesn't leak gigabytes of scratch data."
+        )
+        XCTAssertTrue(
+            fm.fileExists(atPath: unrelated.path),
+            "Init must not touch directories outside the "
+            + "`meedya-job-` prefix — other apps share the temp dir."
+        )
+    }
+
+    /// Verifies that `cleanupOrphansOnInit: false` preserves pre-existing
+    /// `meedya-job-*` directories. This is the escape hatch tests and
+    /// recovery tools use when they want to inspect or repair fixtures
+    /// before the manager touches them.
+    func test_tempManager_initOptOutPreservesOrphans() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory
+            .appendingPathComponent("tempmanager-init-optout-\(UUID().uuidString)")
+        try fm.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandbox) }
+
+        let orphan = sandbox.appendingPathComponent(
+            "meedya-job-\(UUID().uuidString)"
+        )
+        try fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+
+        _ = TempFileManager(baseDirectory: sandbox, cleanupOrphansOnInit: false)
+
+        XCTAssertTrue(
+            fm.fileExists(atPath: orphan.path),
+            "When opt-out is requested, init must leave pre-existing "
+            + "orphan directories in place for later inspection."
+        )
+    }
+
+    // -----------------------------------------------------------------
     // MARK: - HDR Format Detection Tests
     // -----------------------------------------------------------------
 
