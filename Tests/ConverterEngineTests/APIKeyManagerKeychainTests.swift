@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import XCTest
+import Security
 @testable import ConverterEngine
 
 final class APIKeyManagerKeychainTests: XCTestCase {
@@ -44,21 +45,108 @@ final class APIKeyManagerKeychainTests: XCTestCase {
     /// `tearDown` to keep the test sandbox clean.
     private var storageDirectory: URL!
 
-    override func setUp() {
-        super.setUp()
+    // `setUpWithError` can throw `XCTSkip`, which `setUp` cannot. We use
+    // it so we can bail out cleanly on hosts that cannot persist
+    // Keychain items — see `probeKeychainPersistence()` below for the
+    // rationale and the conditions that trigger a skip.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         keychainService = "Ltd.MWBMpartners.MeedyaConverter.Tests.APIKeys.\(UUID().uuidString)"
         storageDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("apikeymanager-tests-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(
+        try FileManager.default.createDirectory(
             at: storageDirectory,
             withIntermediateDirectories: true
         )
+        try probeKeychainPersistence()
     }
 
     override func tearDown() {
         APIKeyManagerTestSupport.clearKeychain(service: keychainService)
         try? FileManager.default.removeItem(at: storageDirectory)
         super.tearDown()
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Keychain availability probe
+    // -----------------------------------------------------------------
+    //
+    // On a fresh GitHub Actions `macos-15` runner — and in some other
+    // headless / sandboxed environments — the default user Keychain is
+    // not unlocked (or, in release-mode test runs, not present at all).
+    // `SecItemAdd` then returns a non-success status and the test would
+    // see all subsequent `SecItemCopyMatching` calls return nothing.
+    //
+    // The production code path *correctly* surfaces the failure as a
+    // logged warning — Keychain persistence is best-effort, and the
+    // manager keeps secrets in-memory for the rest of the process even
+    // if persistence is impossible. But for the assertions in this
+    // file, "Keychain unwritable on this host" is not a failure of the
+    // code under test; it's the wrong question to be asking here. We
+    // therefore probe the round-trip in setUp and `XCTSkip` cleanly
+    // when it doesn't work, so that:
+    //
+    //   * Developer machines (and CI environments with a usable
+    //     Keychain) actually run the tests and validate behaviour.
+    //   * Headless environments report SKIPPED with a clear reason
+    //     instead of a misleading FAILURE.
+    private func probeKeychainPersistence() throws {
+        let probeAccount = "keychain-probe-\(UUID().uuidString)"
+        let probeData = Data("probe".utf8)
+
+        // Best-effort delete of any leftover from a previous run.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService!,
+            kSecAttrAccount as String: probeAccount,
+        ] as CFDictionary)
+
+        // 1. Write.
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService!,
+            kSecAttrAccount as String: probeAccount,
+            kSecValueData as String: probeData,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+        ]
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+
+        // 2. Read it back.
+        var readResult: AnyObject?
+        let readQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService!,
+            kSecAttrAccount as String: probeAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        let readStatus = SecItemCopyMatching(readQuery as CFDictionary, &readResult)
+        let recoveredData = readResult as? Data
+
+        // 3. Clean up the probe item regardless of outcome.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService!,
+            kSecAttrAccount as String: probeAccount,
+        ] as CFDictionary)
+
+        // Skip — not fail — if any leg of the round-trip is unsupported.
+        if addStatus != errSecSuccess
+            || readStatus != errSecSuccess
+            || recoveredData != probeData
+        {
+            throw XCTSkip(
+                "Keychain round-trip not supported on this host "
+                + "(addStatus=\(addStatus), readStatus=\(readStatus), "
+                + "data-match=\(recoveredData == probeData)). "
+                + "This typically means the runner has no unlocked "
+                + "default user Keychain — e.g. a fresh GitHub Actions "
+                + "macos-15 runner. The production code already handles "
+                + "this gracefully by keeping secrets in-memory; the "
+                + "assertions below have nothing meaningful to check "
+                + "without persistence, so we skip them."
+            )
+        }
     }
 
     /// Absolute path the manager uses for its envelope file.
