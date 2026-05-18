@@ -10532,6 +10532,88 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - ProResToVectorConfig + ProResVectorView (#377 / #381 / #404)
+
+    /// `ProResVectorView` persists its enum fields as their rawValue
+    /// `String`s via `@AppStorage`. Pin the rawValues so a rename on
+    /// the engine side doesn't silently invalidate every user's
+    /// persisted preference.
+    func test_proResEnums_rawValuesAreStableForAppStorage() {
+        XCTAssertEqual(ProResVariant.proRes4444.rawValue, "prores_4444")
+        XCTAssertEqual(ProResVariant.proRes4444XQ.rawValue, "prores_4444_xq")
+        XCTAssertEqual(ProResVariant.proRes4444HDR.rawValue, "prores_4444_hdr")
+
+        XCTAssertEqual(ProResFrameRate.fps23_976.rawValue, "23.976")
+        XCTAssertEqual(ProResFrameRate.fps24.rawValue, "24")
+        XCTAssertEqual(ProResFrameRate.fps29_97.rawValue, "29.97")
+        XCTAssertEqual(ProResFrameRate.fps59_94.rawValue, "59.94")
+
+        XCTAssertEqual(ProResAlphaHandling.preservePerFrame.rawValue, "preserve_per_frame")
+        XCTAssertEqual(ProResAlphaHandling.alphaMatteOnly.rawValue, "alpha_matte_only")
+        XCTAssertEqual(ProResAlphaHandling.flatten.rawValue, "flatten")
+    }
+
+    /// Pins the engine's `ProResToVectorConfig` default-init against the
+    /// AppStorage defaults baked into `ProResVectorView`. Drift would
+    /// mean a user who never opens the view gets a different config
+    /// than an engine consumer using the type's defaults.
+    func test_proResToVectorConfig_defaultsMatchUIAppStorage() {
+        let defaults = ProResToVectorConfig()
+        XCTAssertEqual(defaults.sourceVariant, .proRes4444)
+        XCTAssertEqual(defaults.frameRate, .fps24)
+        XCTAssertNil(defaults.startTimeSeconds,
+                     "UI sentinel of 0 maps to engine nil (clip start)")
+        XCTAssertNil(defaults.endTimeSeconds,
+                     "UI sentinel of -1 maps to engine nil (until end of clip)")
+        XCTAssertEqual(defaults.frameStride, 1)
+        XCTAssertEqual(defaults.alphaHandling, .preservePerFrame)
+        XCTAssertEqual(defaults.animation, .smil)
+        XCTAssertTrue(defaults.shapePersistence)
+        XCTAssertTrue(defaults.keyframeExtraction)
+    }
+
+    /// `ProResVectorView`'s warning callout uses the engine's
+    /// `shouldWarnAboutOutputSize(...)` helper. Verify the helper fires
+    /// when settings select photorealistic tracing regardless of length,
+    /// AND when the projected effective duration exceeds the engine's
+    /// recommended cap.
+    func test_proResToVector_outputSizeWarning_firesAsExpected() {
+        let cap = ProResToVectorConverter.recommendedMaxDurationSeconds
+
+        // Case A — photorealistic tracing always fires the warning.
+        var configA = ProResToVectorConfig()
+        configA.tracing.tracingMode = .photorealistic
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: configA,
+                sourceDurationSeconds: 1.0
+            ),
+            "Photorealistic tracing must fire the warning regardless "
+            + "of source duration."
+        )
+
+        // Case B — non-photorealistic tracing on a short clip does NOT fire.
+        var configB = ProResToVectorConfig()
+        configB.tracing.tracingMode = .outline
+        XCTAssertFalse(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: configB,
+                sourceDurationSeconds: cap / 2
+            ),
+            "Outline tracing on a sub-cap clip must not fire the warning."
+        )
+
+        // Case C — non-photorealistic tracing on a long clip fires.
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: configB,
+                sourceDurationSeconds: cap * 3
+            ),
+            "Effective duration past the recommended cap must fire the "
+            + "warning even for cheap tracing modes."
+        )
+    }
+
     // MARK: - RasterToVectorConfig + VectorConversionView (#376 / #381 / #402)
 
     /// Pins the per-preset auto-drive table that `VectorConversionView`'s

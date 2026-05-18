@@ -100,6 +100,8 @@ struct ContentView: View {
             ImageConversionView()
         case .vectorConversion:
             VectorConversionView()
+        case .proresVector:
+            ProResVectorView()
         case .burn:
             BurnSettingsView()
         case .trimEdit:
