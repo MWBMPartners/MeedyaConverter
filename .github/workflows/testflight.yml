@@ -27,8 +27,22 @@ name: "TestFlight Submission"
 # ---------------------------------------------------------------------------
 # Trigger configuration
 # ---------------------------------------------------------------------------
-# Runs on manual dispatch or when beta/RC tags are pushed.
-# ---------------------------------------------------------------------------
+# Manual dispatch ONLY. The previous tag-push trigger has been intentionally
+# removed because TestFlight uploads must not happen automatically while the
+# App Store build (ITMS-90230/-90236/-90237/-90264/-90270/-90889) still
+# has open compliance work. This guard is BELT-AND-BRACES with
+# `gh workflow disable` at the registry level — both must be reversed
+# before automated TestFlight submissions resume.
+#
+# To re-enable automated submissions:
+#   1. Resolve every open ITMS-* issue tracked under the `app-store-compliance`
+#      label so a TestFlight upload won't be rejected by Apple's validators.
+#   2. Restore the tag-push trigger here (see the `# DISABLED:` block below).
+#   3. Run `gh workflow enable "TestFlight Submission"`.
+#
+# Until then, the workflow can still be triggered MANUALLY via
+# `gh workflow run "TestFlight Submission"` after `gh workflow enable …`,
+# which is an explicit two-step operator action.
 on:
   workflow_dispatch:
     inputs:
@@ -36,10 +50,14 @@ on:
         description: "TestFlight release notes"
         required: false
         default: "Bug fixes and improvements"
-  push:
-    tags:
-      - "v*-beta*"
-      - "v*-rc*"
+  # DISABLED: see header comment above. Restoring this block re-arms the
+  # tag-push auto-trigger that uploaded build 244 to App Store Connect
+  # before the App Store toolchain compliance work was done.
+  #
+  # push:
+  #   tags:
+  #     - "v*-beta*"
+  #     - "v*-rc*"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
