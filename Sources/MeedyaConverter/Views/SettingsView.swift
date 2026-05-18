@@ -67,6 +67,10 @@ struct SettingsView: View {
                     PathSettingsTab()
                 }
 
+                Tab("Metadata", systemImage: "tag") {
+                    MetadataSettingsTab()
+                }
+
                 Tab("Watch Folder", systemImage: "eye") {
                     WatchFolderView()
                 }
@@ -196,6 +200,139 @@ struct EncodingSettingsTab: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Encoding")
+    }
+}
+
+// MARK: - MetadataSettingsTab (Issues #371 engine / #381 / #398 UI)
+//
+// Lets the user pick which backend strategy MeedyaConverter uses for metadata
+// lookups (cover art, episode info, IDs, etc.). Three options:
+//
+//   * Automatic — Prefer MeedyaSuite-core when linked; fall back to the
+//                 built-in inline providers otherwise. This is the safest
+//                 default and what existing users get with no action.
+//   * Suite-core — Force suite-core. Throws `.notCompiledIn` at lookup time
+//                  if the binary wasn't built with `SUITE_CORE=1`, which is
+//                  why this option is *disabled* in the picker when
+//                  `SuiteCoreAvailability.isAvailable` is false.
+//   * Inline only — Bypass suite-core even when it is linked in. Useful
+//                   when debugging provider parity between the two backends.
+//
+// Persistence: a single `@AppStorage` key (`metadataBackend`) holding the
+// enum's rawValue. Engine consumers construct a `SuiteCoreMetadataAdapter`
+// from that key (read via `UserDefaults.standard` in the engine layer, or
+// passed through from the view-model — both work).
+
+/// Metadata-backend selection settings.
+struct MetadataSettingsTab: View {
+
+    /// Persisted backend choice. Default is `automatic` so existing
+    /// installs (no key written) behave exactly as before.
+    @AppStorage("metadataBackend") private var rawBackend: String =
+        SuiteCoreMetadataBackend.automatic.rawValue
+
+    /// Bridged `SuiteCoreMetadataBackend` binding. Parses the persisted
+    /// rawValue on read; if a corrupt value sneaks into UserDefaults (e.g.
+    /// from a future build that adds a case this binary doesn't know),
+    /// we silently fall back to `.automatic` so the UI never crashes.
+    private var backend: Binding<SuiteCoreMetadataBackend> {
+        Binding<SuiteCoreMetadataBackend>(
+            get: {
+                SuiteCoreMetadataBackend(rawValue: rawBackend) ?? .automatic
+            },
+            set: { rawBackend = $0.rawValue }
+        )
+    }
+
+    var body: some View {
+        Form {
+            Section("Provider backend") {
+                Picker("Strategy", selection: backend) {
+                    ForEach(SuiteCoreMetadataBackend.allCases, id: \.self) { option in
+                        // Disable `.suiteCore` when the binary wasn't built
+                        // with SUITE_CORE=1; otherwise picking it would mean
+                        // every lookup throws `.notCompiledIn`.
+                        let isOptionDisabled =
+                            option == .suiteCore
+                            && !SuiteCoreAvailability.isAvailable
+                        Text(displayName(for: option))
+                            .tag(option)
+                            .foregroundStyle(isOptionDisabled ? .secondary : .primary)
+                    }
+                }
+                .pickerStyle(.inline)
+                .accessibilityLabel("Metadata provider backend strategy")
+
+                // Help text — matches the copy specified in #381 verbatim
+                // so a future audit can grep for it.
+                Text(
+                    "Automatic uses MeedyaSuite-core when linked, "
+                    + "else the built-in providers."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                // Live status line. Surfaces what's actually going to happen
+                // right now, which is more useful than just describing the
+                // options abstractly — especially when `.automatic` is the
+                // default and the user might not realise suite-core isn't
+                // available in this build.
+                statusLine
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Metadata")
+    }
+
+    // MARK: - Helpers
+
+    /// User-facing label for each `SuiteCoreMetadataBackend` case. Kept
+    /// in this file (rather than as a property on the engine enum) because
+    /// it is purely a UI string and shouldn't pollute the engine's public
+    /// API surface.
+    private func displayName(for backend: SuiteCoreMetadataBackend) -> String {
+        switch backend {
+        case .automatic:  return "Automatic (recommended)"
+        case .suiteCore:
+            return SuiteCoreAvailability.isAvailable
+                ? "MeedyaSuite-core only"
+                : "MeedyaSuite-core only (unavailable — rebuild with SUITE_CORE=1)"
+        case .inlineOnly: return "Built-in providers only"
+        }
+    }
+
+    /// One-line summary of which backend will service the next lookup,
+    /// given the current selection AND the runtime suite-core availability.
+    @ViewBuilder
+    private var statusLine: some View {
+        let selected = SuiteCoreMetadataBackend(rawValue: rawBackend) ?? .automatic
+        let suiteCoreLinked = SuiteCoreAvailability.isAvailable
+
+        switch selected {
+        case .automatic:
+            if suiteCoreLinked {
+                Text("Currently routing through MeedyaSuite-core "
+                     + "(version \(SuiteCoreAvailability.linkedVersion ?? "unknown")).")
+            } else {
+                Text("MeedyaSuite-core is not linked in this build — "
+                     + "using the built-in providers.")
+            }
+        case .suiteCore:
+            if suiteCoreLinked {
+                Text("Forcing MeedyaSuite-core. Lookups for sources without "
+                     + "a suite-core mapping will throw.")
+            } else {
+                Text("MeedyaSuite-core is not available; this option will "
+                     + "throw at lookup time. Switch to Automatic or "
+                     + "Built-in providers.")
+                    .foregroundStyle(.orange)
+            }
+        case .inlineOnly:
+            Text("Bypassing MeedyaSuite-core. Using the built-in providers "
+                 + "even when suite-core is linked.")
+        }
     }
 }
 
