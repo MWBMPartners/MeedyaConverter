@@ -89,7 +89,12 @@ public enum SubtitleHDRSourceProfile: String, Codable, Sendable, CaseIterable {
 // MARK: - SubtitleTonemapConfig
 
 /// Configuration for a subtitle_tonemap invocation.
-public struct SubtitleTonemapConfig: Codable, Sendable {
+///
+/// `Hashable` is included so this can be nested inside other Hashable
+/// types (e.g. `EncodingProfile`) without breaking their auto-synthesis.
+/// All stored properties are already Hashable (`String`-raw enum,
+/// `Double`, `Bool`), so the conformance is synthesised for free.
+public struct SubtitleTonemapConfig: Codable, Sendable, Hashable {
     /// HDR source profile.
     public var sourceProfile: SubtitleHDRSourceProfile
     /// Target SDR peak luminance in nits (typical: 100).
