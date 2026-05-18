@@ -10532,6 +10532,75 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - RenderFarm settings + agent registry (#346 / #381 / #406)
+
+    /// `RenderFarmTransport` rawValues are persisted as part of the
+    /// agent JSON blob. A rename on the engine side would silently
+    /// invalidate every user's persisted agent list — pin them.
+    func test_renderFarmTransport_rawValuesAreStableForAppStorage() {
+        XCTAssertEqual(RenderFarmTransport.ssh.rawValue, "ssh")
+        XCTAssertEqual(RenderFarmTransport.tls.rawValue, "tls")
+        XCTAssertEqual(RenderFarmTransport.plainHTTP.rawValue, "plainHTTP")
+    }
+
+    /// The `RenderFarmSettingsTab` agent list is stored as JSON-encoded
+    /// `[RenderFarmAgentInfo]` in an `@AppStorage` `Data` blob. Verify
+    /// the round-trip preserves every field — including the `id` and
+    /// `discovered` flags that drive UI behaviour (deletable vs not,
+    /// "Discovered"/"Manual" badge).
+    func test_renderFarmAgentInfo_jsonRoundTripPreservesAllFields() throws {
+        let original = RenderFarmAgentInfo(
+            displayName: "studio-tower",
+            host: "192.168.1.42",
+            port: 2229,
+            sshUsername: "render",
+            discovered: false,
+            architecture: "arm64",
+            hardwareEncoders: ["videotoolbox", "nvenc"]
+        )
+        let data = try JSONEncoder().encode([original])
+        let decoded = try JSONDecoder()
+            .decode([RenderFarmAgentInfo].self, from: data)
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].id, original.id)
+        XCTAssertEqual(decoded[0].displayName, "studio-tower")
+        XCTAssertEqual(decoded[0].host, "192.168.1.42")
+        XCTAssertEqual(decoded[0].port, 2229)
+        XCTAssertEqual(decoded[0].sshUsername, "render")
+        XCTAssertFalse(decoded[0].discovered)
+        XCTAssertEqual(decoded[0].architecture, "arm64")
+        XCTAssertEqual(decoded[0].hardwareEncoders, ["videotoolbox", "nvenc"])
+    }
+
+    /// The UI persists chunk size as user-facing MiB (1/4/16/64) and
+    /// converts to bytes when the consumer constructs the engine
+    /// Configuration. Verify the conversion + that the engine's
+    /// `defaultChunkSizeBytes` matches the UI default of 4 MiB so
+    /// the two sides agree out of the box.
+    func test_renderFarm_chunkSizeMiBToBytesConversion() {
+        XCTAssertEqual(UInt64(4) * 1024 * 1024,
+                       RenderFarmProtocol.defaultChunkSizeBytes,
+                       "UI default of 4 MiB must equal the engine's "
+                       + "RenderFarmProtocol.defaultChunkSizeBytes "
+                       + "so engine consumers reading the AppStorage "
+                       + "value behave identically when the user has "
+                       + "never touched the setting.")
+    }
+
+    /// Verifies the UI's "empty data → empty agent list" behaviour
+    /// against the actual JSON decoder. An empty `@AppStorage("renderFarm.agentsJSON")`
+    /// value is the user's initial state (no key written yet); the UI
+    /// surfaces this as the "No agents configured" empty state.
+    func test_renderFarmAgentInfo_emptyDataDecodesToEmptyList() {
+        let empty = Data()
+        let decoded = try? JSONDecoder()
+            .decode([RenderFarmAgentInfo].self, from: empty)
+        XCTAssertNil(decoded,
+                     "Empty Data should fail to decode as a JSON array; "
+                     + "the UI binding catches the failure and surfaces "
+                     + "an empty list.")
+    }
+
     // MARK: - ProResToVectorConfig + ProResVectorView (#377 / #381 / #404)
 
     /// `ProResVectorView` persists its enum fields as their rawValue

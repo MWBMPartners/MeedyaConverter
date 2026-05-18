@@ -98,6 +98,10 @@ struct SettingsView: View {
                     MediaServerSettingsView()
                 }
 
+                Tab("Render Farm", systemImage: "network") {
+                    RenderFarmSettingsTab()
+                }
+
                 Tab("Analytics", systemImage: "chart.bar") {
                     AnalyticsSettingsView()
                 }
