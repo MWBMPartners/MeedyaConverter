@@ -444,6 +444,78 @@ final class ConverterEngineTests: XCTestCase {
     }
 
     // -----------------------------------------------------------------
+    // MARK: - Issue #380: TempFileManager orphan cleanup on init
+    // -----------------------------------------------------------------
+    //
+    // Previously, orphan job directories were only removed when the host
+    // app remembered to invoke `cleanupOrphanedJobs()`. A crash on the
+    // very next run would silently accumulate gigabytes of demuxed-stream
+    // debris. The audit follow-up makes the cleanup happen automatically
+    // at construction (default `cleanupOrphansOnInit: true`); the tests
+    // below verify both the default behaviour and the opt-out.
+
+    /// Verifies that constructing a `TempFileManager` against a base
+    /// directory containing a `meedya-job-*` orphan removes it.
+    func test_tempManager_initRemovesOrphansByDefault() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory
+            .appendingPathComponent("tempmanager-init-cleanup-\(UUID().uuidString)")
+        try fm.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandbox) }
+
+        // Hand-plant an orphan directory as if a previous run had crashed
+        // mid-job, plus a non-MeedyaConverter directory that must NOT be
+        // touched.
+        let orphan = sandbox.appendingPathComponent(
+            "meedya-job-\(UUID().uuidString)"
+        )
+        try fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+
+        let unrelated = sandbox.appendingPathComponent("other-app-scratch")
+        try fm.createDirectory(at: unrelated, withIntermediateDirectories: true)
+
+        // Default construction should sweep the orphan but leave anything
+        // outside our prefix alone.
+        _ = TempFileManager(baseDirectory: sandbox)
+
+        XCTAssertFalse(
+            fm.fileExists(atPath: orphan.path),
+            "Default init must remove `meedya-job-*` orphans so a "
+            + "post-crash restart doesn't leak gigabytes of scratch data."
+        )
+        XCTAssertTrue(
+            fm.fileExists(atPath: unrelated.path),
+            "Init must not touch directories outside the "
+            + "`meedya-job-` prefix — other apps share the temp dir."
+        )
+    }
+
+    /// Verifies that `cleanupOrphansOnInit: false` preserves pre-existing
+    /// `meedya-job-*` directories. This is the escape hatch tests and
+    /// recovery tools use when they want to inspect or repair fixtures
+    /// before the manager touches them.
+    func test_tempManager_initOptOutPreservesOrphans() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory
+            .appendingPathComponent("tempmanager-init-optout-\(UUID().uuidString)")
+        try fm.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: sandbox) }
+
+        let orphan = sandbox.appendingPathComponent(
+            "meedya-job-\(UUID().uuidString)"
+        )
+        try fm.createDirectory(at: orphan, withIntermediateDirectories: true)
+
+        _ = TempFileManager(baseDirectory: sandbox, cleanupOrphansOnInit: false)
+
+        XCTAssertTrue(
+            fm.fileExists(atPath: orphan.path),
+            "When opt-out is requested, init must leave pre-existing "
+            + "orphan directories in place for later inspection."
+        )
+    }
+
+    // -----------------------------------------------------------------
     // MARK: - HDR Format Detection Tests
     // -----------------------------------------------------------------
 
@@ -3175,6 +3247,109 @@ final class ConverterEngineTests: XCTestCase {
         )
         XCTAssertFalse(args.isEmpty)
         XCTAssertTrue(args.contains(where: { $0.contains("ssh") }))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Issue #380: FTP credentials via curl config file
+    // -----------------------------------------------------------------
+    //
+    // The audit follow-up replaced `-u user:pass` (visible in `ps aux`)
+    // with `-K <path>` reading from a 0600-permissioned config file. The
+    // tests below verify the three security-relevant invariants:
+    //
+    //   1. The on-disk config file has POSIX mode 0600.
+    //   2. The credentials directive escapes embedded `"` and `\` so a
+    //      malicious password cannot break out of the quoted form.
+    //   3. The argument array no longer contains `-u` or any substring
+    //      that includes the plaintext password.
+
+    /// Verifies the FTP credentials file is written with `0600` perms and
+    /// contains a properly escaped `user` directive.
+    func test_sftpUploader_ftpCredentialsConfig_isOwnerReadableOnly() throws {
+        // Use a password containing the two characters that must be
+        // escaped for curl's quoted config syntax — `\` and `"`.
+        let config = FTPServerConfig(
+            host: "ftp.example.com",
+            port: 21,
+            username: "alice",
+            password: "p\"ass\\word",
+            useTLS: false,
+            remotePath: "/incoming",
+            label: "Test"
+        )
+
+        let url = try SFTPUploader.writeFTPCredentialsConfig(config: config)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // ---- Perms must be exactly 0600 (owner rw, no group/other) ----
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let perms = attrs[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600,
+                       "FTP credentials file must be 0600 to keep "
+                       + "credentials unreadable by other local users.")
+
+        // ---- The file lives in the system temp dir, not the cwd ----
+        let tempPath = FileManager.default.temporaryDirectory
+            .standardizedFileURL.path
+        XCTAssertTrue(url.standardizedFileURL.path.hasPrefix(tempPath),
+                      "Credentials file must live under the temp "
+                      + "directory, not in the project working tree.")
+
+        // ---- Contents: backslash and double quote are escaped ----
+        let body = try String(contentsOf: url, encoding: .utf8)
+        // Backslashes are doubled, then the embedded `"` is `\"`.
+        // The full expected line is:
+        //     user = "alice:p\"ass\\word"
+        XCTAssertEqual(body, "user = \"alice:p\\\"ass\\\\word\"\n",
+                       "Credentials directive must escape `\\` and `\"` "
+                       + "to prevent password breakout from the quoted "
+                       + "config value.")
+    }
+
+    /// Verifies the curl argument array references `-K <path>` and no
+    /// longer carries `-u user:pass` (the pre-#380 form that exposed
+    /// credentials to `ps aux`).
+    func test_sftpUploader_ftpUploadArguments_useConfigFileNotInlineCreds() {
+        let config = FTPServerConfig(
+            host: "ftp.example.com",
+            port: 21,
+            username: "alice",
+            password: "supersecret",
+            useTLS: true,
+            remotePath: "/incoming",
+            label: "Test"
+        )
+        let configPath = "/tmp/fake-credentials.curlrc"
+
+        let args = SFTPUploader.buildFTPUploadArguments(
+            localPath: "/tmp/video.mp4",
+            config: config,
+            credentialsConfigPath: configPath
+        )
+
+        // ---- `-K <path>` must be present and adjacent ----
+        guard let kIndex = args.firstIndex(of: "-K") else {
+            return XCTFail("Expected `-K` flag in curl arguments.")
+        }
+        XCTAssertLessThan(kIndex + 1, args.count,
+                          "`-K` must be followed by the config path.")
+        XCTAssertEqual(args[kIndex + 1], configPath)
+
+        // ---- `-u` (inline credentials) must NOT appear ----
+        XCTAssertFalse(args.contains("-u"),
+                       "Inline `-u user:pass` is forbidden — credentials "
+                       + "must come from the `-K` config file.")
+
+        // ---- Plaintext password must not appear anywhere in argv ----
+        XCTAssertFalse(args.contains(where: { $0.contains("supersecret") }),
+                       "Plaintext password leaked into argv; this would "
+                       + "be visible via `ps aux`.")
+
+        // ---- TLS settings still applied ----
+        XCTAssertTrue(args.contains("--ssl-reqd"),
+                      "FTPS uploads must still pass --ssl-reqd.")
+        XCTAssertTrue(args.contains(where: { $0.hasPrefix("ftps://") }),
+                      "FTPS uploads must use the ftps:// URL scheme.")
     }
 
     // -----------------------------------------------------------------
@@ -7003,12 +7178,13 @@ final class ConverterEngineTests: XCTestCase {
     func test_toolBundleManifest_defaultManifest() {
         let manifest = ToolBundleManifest.defaultManifest
         XCTAssertEqual(manifest.schemaVersion, 1)
-        XCTAssertEqual(manifest.tools.count, 5)
+        XCTAssertEqual(manifest.tools.count, 6)
         XCTAssertNotNil(manifest.tool(id: "dovi_tool"))
         XCTAssertNotNil(manifest.tool(id: "hlg_tools"))
         XCTAssertNotNil(manifest.tool(id: "hdr10plus_tool"))
         XCTAssertNotNil(manifest.tool(id: "mediainfo"))
         XCTAssertNotNil(manifest.tool(id: "fpcalc"))
+        XCTAssertNotNil(manifest.tool(id: "subtitle_tonemap"))
     }
 
     /// Verifies tool lookup by binary name.
@@ -10153,4 +10329,832 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertTrue(args.contains("-map_chapters"))
         XCTAssertTrue(args.contains("1"))
     }
+
+    // MARK: - SuiteCore (#373)
+
+    /// Verifies that the suite-core availability flag reflects the build flag.
+    /// In CI (without SUITE_CORE=1 set) this must be false so the fallback
+    /// codepaths are exercised.
+    func test_suiteCore_availabilityMatchesBuildFlag() {
+        #if SUITE_CORE
+        XCTAssertTrue(SuiteCoreAvailability.isAvailable)
+        XCTAssertNotNil(SuiteCoreAvailability.linkedVersion)
+        #else
+        XCTAssertFalse(SuiteCoreAvailability.isAvailable)
+        XCTAssertNil(SuiteCoreAvailability.linkedVersion)
+        #endif
+    }
+
+    /// The smoke test must throw `.notCompiledIn` when the suite-core
+    /// dependency is absent.
+    func test_suiteCore_smokeTestThrowsWhenNotCompiledIn() {
+        #if !SUITE_CORE
+        XCTAssertThrowsError(try SuiteCoreSmokeTest.ping()) { error in
+            guard let bridgeError = error as? SuiteCoreBridgeError else {
+                XCTFail("Expected SuiteCoreBridgeError, got \(error)")
+                return
+            }
+            if case .notCompiledIn = bridgeError {
+                // expected
+            } else {
+                XCTFail("Expected .notCompiledIn, got \(bridgeError)")
+            }
+        }
+        #endif
+    }
+
+    /// Verifies the SuiteCoreCodecDescriptor is Codable and preserves values
+    /// through an encode/decode round trip.
+    func test_suiteCore_codecDescriptorRoundTrip() throws {
+        let original = SuiteCoreCodecDescriptor(
+            identifier: "eac3_atmos",
+            displayName: "Dolby Digital Plus with Atmos",
+            isLossless: false,
+            isSpatial: true,
+            channelLayout: "7.1.4"
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SuiteCoreCodecDescriptor.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.channelLayout, "7.1.4")
+    }
+
+    /// Verifies fingerprint result round-trips through Codable.
+    func test_suiteCore_fingerprintResultRoundTrip() throws {
+        let original = SuiteCoreFingerprintResult(
+            fingerprint: "AQADtEmSRImSJImSRImSJEmUJEn",
+            durationSeconds: 184.52
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SuiteCoreFingerprintResult.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.durationSeconds, 184.52, accuracy: 0.0001)
+    }
+
+    // MARK: - SuiteCoreMetadataAdapter (#371)
+
+    /// Without SUITE_CORE, `.automatic` backend routes all inline sources
+    /// through the inline implementation.
+    func test_suiteCoreMetadataAdapter_automaticBackendOffByDefault() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .automatic)
+        #if !SUITE_CORE
+        XCTAssertFalse(adapter.routesThroughSuiteCore(source: .tmdb))
+        XCTAssertFalse(adapter.routesThroughSuiteCore(source: .tvdb))
+        #endif
+    }
+
+    /// `.inlineOnly` always bypasses suite-core.
+    func test_suiteCoreMetadataAdapter_inlineOnlyAlwaysFallsBack() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        for source in MetadataSource.allCases {
+            XCTAssertFalse(adapter.routesThroughSuiteCore(source: source))
+        }
+    }
+
+    /// `.suiteCore` forces the suite-core path regardless of availability.
+    func test_suiteCoreMetadataAdapter_forcedSuiteCoreRoutes() {
+        let adapter = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        for source in MetadataSource.allCases {
+            XCTAssertTrue(adapter.routesThroughSuiteCore(source: source))
+        }
+    }
+
+    /// Forced suite-core backend must throw `.notCompiledIn` when unlinked.
+    func test_suiteCoreMetadataAdapter_forcedSuiteCoreThrowsWhenAbsent() async {
+        #if !SUITE_CORE
+        let adapter = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        let query = MetadataSearchQuery(mediaType: .movie, title: "Dune")
+        do {
+            _ = try await adapter.search(source: .tmdb, query: query)
+            XCTFail("Expected SuiteCoreBridgeError.notCompiledIn")
+        } catch let error as SuiteCoreBridgeError {
+            if case .notCompiledIn = error { return }
+            XCTFail("Expected .notCompiledIn, got \(error)")
+        } catch {
+            XCTFail("Expected SuiteCoreBridgeError, got \(error)")
+        }
+        #endif
+    }
+
+    /// Request body encodes all fields and uses sorted JSON keys.
+    func test_suiteCoreMetadataAdapter_requestBodyEncodesAllFields() throws {
+        let query = MetadataSearchQuery(
+            mediaType: .tvEpisode,
+            title: "The Expanse",
+            year: 2015,
+            season: 3,
+            episode: 7,
+            artist: nil,
+            album: nil,
+            language: "en"
+        )
+        let data = try XCTUnwrap(
+            SuiteCoreMetadataAdapter.buildSuiteCoreRequestBody(source: .tvdb, query: query)
+        )
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertEqual(json["provider"] as? String, "tvdb")
+        XCTAssertEqual(json["mediaType"] as? String, "episode")
+        XCTAssertEqual(json["title"] as? String, "The Expanse")
+        XCTAssertEqual(json["year"] as? Int, 2015)
+        XCTAssertEqual(json["season"] as? Int, 3)
+        XCTAssertEqual(json["episode"] as? Int, 7)
+        XCTAssertEqual(json["language"] as? String, "en")
+    }
+
+    /// The advertised provider list differs depending on backend selection.
+    func test_suiteCoreMetadataAdapter_providerListDiffers() {
+        let inline = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        let forced = SuiteCoreMetadataAdapter(backend: .suiteCore)
+        XCTAssertLessThan(
+            inline.availableProviderIdentifiers().count,
+            forced.availableProviderIdentifiers().count
+        )
+    }
+
+    // MARK: - SuiteCoreCodecClassifier (#372)
+
+    /// FLAC classifies as lossless, non-spatial.
+    func test_codecClassifier_flacIsLossless() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "flac")
+        XCTAssertTrue(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+        XCTAssertEqual(d.displayName, "FLAC")
+    }
+
+    /// Opus classifies as lossy, non-spatial.
+    func test_codecClassifier_opusIsLossy() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "opus")
+        XCTAssertFalse(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+    }
+
+    /// E-AC-3 JOC (Atmos) classifies as spatial.
+    func test_codecClassifier_eac3AtmosIsSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "eac3_atmos")
+        XCTAssertTrue(d.isSpatial)
+        XCTAssertFalse(d.isLossless)
+    }
+
+    /// TrueHD Atmos is both lossless and spatial.
+    func test_codecClassifier_truehdAtmosIsLosslessAndSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "truehd_atmos")
+        XCTAssertTrue(d.isLossless)
+        XCTAssertTrue(d.isSpatial)
+    }
+
+    /// Channel layout alone can promote a codec to spatial (7.1.4 height channels).
+    func test_codecClassifier_spatialChannelLayoutPromotesSpatial() {
+        let d = SuiteCoreCodecClassifier.classify(
+            ffprobeCodecName: "eac3",
+            channelLayout: "7.1.4"
+        )
+        XCTAssertTrue(d.isSpatial)
+    }
+
+    /// Unknown codecs fall back to an uppercased identifier as display name.
+    func test_codecClassifier_unknownCodecFallback() {
+        let d = SuiteCoreCodecClassifier.classify(ffprobeCodecName: "xyz_custom")
+        XCTAssertEqual(d.identifier, "xyz_custom")
+        XCTAssertEqual(d.displayName, "XYZ_CUSTOM")
+        XCTAssertFalse(d.isLossless)
+        XCTAssertFalse(d.isSpatial)
+    }
+
+    /// PCM variants are all lossless.
+    func test_codecClassifier_pcmIsLossless() {
+        for codec in ["pcm_s16le", "pcm_s24le", "pcm_f32le"] {
+            XCTAssertTrue(
+                SuiteCoreCodecClassifier.isLossless(ffprobeCodecName: codec),
+                "Expected \(codec) to be classified lossless"
+            )
+        }
+    }
+
+    // MARK: - SubtitleTonemapWrapper (#369)
+
+    /// Verifies supported subtitle formats.
+    func test_subtitleTonemap_supportedFormats() {
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "sup"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: ".sup"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "SUP"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "sub"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "idx"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ass"))
+        XCTAssertTrue(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ssa"))
+    }
+
+    /// Plain-text formats without colour tags are rejected.
+    func test_subtitleTonemap_rejectsPlainTextFormats() {
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "srt"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "vtt"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "ttml"))
+        XCTAssertFalse(SubtitleTonemapWrapper.isFormatSupported(fileExtension: "txt"))
+    }
+
+    /// Argument builder produces the expected CLI invocation.
+    func test_subtitleTonemap_argumentsForHDR10() {
+        let config = SubtitleTonemapConfig(
+            sourceProfile: .hdr10,
+            targetLuminanceNits: 100,
+            preserveAlpha: true
+        )
+        let args = SubtitleTonemapWrapper.buildArguments(
+            inputPath: "/tmp/in.sup",
+            outputPath: "/tmp/out.sup",
+            config: config
+        )
+        XCTAssertEqual(args[0], "-i")
+        XCTAssertEqual(args[1], "/tmp/in.sup")
+        XCTAssertEqual(args[2], "-o")
+        XCTAssertEqual(args[3], "/tmp/out.sup")
+        XCTAssertTrue(args.contains("--hdr10"))
+        XCTAssertTrue(args.contains("--target-nits"))
+        XCTAssertTrue(args.contains("100"))
+        XCTAssertTrue(args.contains("--preserve-alpha"))
+    }
+
+    /// `--preserve-alpha` is omitted when disabled.
+    func test_subtitleTonemap_argumentsWithoutAlpha() {
+        let config = SubtitleTonemapConfig(
+            sourceProfile: .dolbyVision,
+            targetLuminanceNits: 203,
+            preserveAlpha: false
+        )
+        let args = SubtitleTonemapWrapper.buildArguments(
+            inputPath: "/tmp/in.sup",
+            outputPath: "/tmp/out.sup",
+            config: config
+        )
+        XCTAssertTrue(args.contains("--dolby-vision"))
+        XCTAssertTrue(args.contains("203"))
+        XCTAssertFalse(args.contains("--preserve-alpha"))
+    }
+
+    /// Each HDR profile maps to the correct CLI flag.
+    func test_subtitleTonemap_hdrProfileFlags() {
+        XCTAssertEqual(SubtitleHDRSourceProfile.hdr10.cliFlag, "--hdr10")
+        XCTAssertEqual(SubtitleHDRSourceProfile.hdr10Plus.cliFlag, "--hdr10plus")
+        XCTAssertEqual(SubtitleHDRSourceProfile.dolbyVision.cliFlag, "--dolby-vision")
+        XCTAssertEqual(SubtitleHDRSourceProfile.hlg.cliFlag, "--hlg")
+    }
+
+    /// Default config uses HDR10 with 100-nit SDR target.
+    func test_subtitleTonemap_defaultConfig() {
+        let config = SubtitleTonemapConfig()
+        XCTAssertEqual(config.sourceProfile, .hdr10)
+        XCTAssertEqual(config.targetLuminanceNits, 100.0)
+        XCTAssertTrue(config.preserveAlpha)
+    }
+
+    /// Config Codable round-trips.
+    func test_subtitleTonemap_configCodableRoundTrip() throws {
+        let original = SubtitleTonemapConfig(
+            sourceProfile: .hlg,
+            targetLuminanceNits: 203.5,
+            preserveAlpha: false
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SubtitleTonemapConfig.self, from: data)
+        XCTAssertEqual(decoded.sourceProfile, .hlg)
+        XCTAssertEqual(decoded.targetLuminanceNits, 203.5, accuracy: 0.01)
+        XCTAssertFalse(decoded.preserveAlpha)
+    }
+
+    // MARK: - RenderFarm (#346)
+
+    /// Default chunk size and port are the published constants.
+    func test_renderFarm_protocolDefaults() {
+        XCTAssertEqual(RenderFarmProtocol.defaultChunkSizeBytes, 4 * 1024 * 1024)
+        XCTAssertEqual(RenderFarmProtocol.defaultAgentPort, 2229)
+        XCTAssertEqual(RenderFarmProtocol.bonjourServiceType, "_meedyaconverter-agent._tcp")
+    }
+
+    /// Exact-multiple file sizes produce exact chunk counts.
+    func test_renderFarm_chunkCountExactMultiple() {
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 0, chunkSizeBytes: 1024),
+            0
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 4096, chunkSizeBytes: 1024),
+            4
+        )
+    }
+
+    /// Non-exact file sizes round up to include the remainder chunk.
+    func test_renderFarm_chunkCountRoundUp() {
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 4097, chunkSizeBytes: 1024),
+            5
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkCount(forSourceSizeBytes: 1, chunkSizeBytes: 1024),
+            1
+        )
+    }
+
+    /// Checksum validation accepts matching strings (case-insensitive).
+    func test_renderFarm_checksumValidateMatches() throws {
+        try RenderFarmProtocol.validateAssembledChecksum(
+            expected: "ABCDEF01",
+            observed: "abcdef01"
+        )
+    }
+
+    /// Checksum validation rejects mismatches.
+    func test_renderFarm_checksumValidateMismatches() {
+        XCTAssertThrowsError(
+            try RenderFarmProtocol.validateAssembledChecksum(
+                expected: "abcdef01",
+                observed: "ffffffff"
+            )
+        ) { error in
+            guard case RenderFarmError.transferIntegrityFailed = error else {
+                XCTFail("Expected transferIntegrityFailed, got \(error)")
+                return
+            }
+        }
+    }
+
+    /// REST paths are versioned and use the lowercased UUID.
+    func test_renderFarm_restPaths() {
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        XCTAssertEqual(
+            RenderFarmProtocol.submitPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.chunkPath(jobId: id, index: 7),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/chunks/7"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.statusPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/status"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.downloadPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/output"
+        )
+        XCTAssertEqual(
+            RenderFarmProtocol.cancelPath(jobId: id),
+            "/v1/jobs/12345678-1234-1234-1234-123456789abc/cancel"
+        )
+    }
+
+    /// Terminal states stop the progress stream.
+    func test_renderFarm_terminalStates() {
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .completed))
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .failed))
+        XCTAssertTrue(RenderFarmClient.isTerminal(state: .cancelled))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .queued))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .transferring))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .encoding))
+        XCTAssertFalse(RenderFarmClient.isTerminal(state: .finalising))
+    }
+
+    /// Agent info endpoint formatting.
+    func test_renderFarm_agentEndpointString() {
+        let agent = RenderFarmAgentInfo(
+            displayName: "studio-tower",
+            host: "192.168.1.42",
+            port: 2229
+        )
+        XCTAssertEqual(agent.endpoint, "192.168.1.42:2229")
+    }
+
+    /// Agent registry add/remove works as expected.
+    func test_renderFarm_clientRegistry() {
+        let client = RenderFarmClient(transport: FakeRenderFarmTransport())
+        let a = RenderFarmAgentInfo(displayName: "alpha", host: "10.0.0.1")
+        let b = RenderFarmAgentInfo(displayName: "bravo", host: "10.0.0.2")
+        client.register(agent: a)
+        client.register(agent: b)
+        let all = client.allAgents()
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual(all[0].displayName, "alpha")  // sorted
+        XCTAssertEqual(all[1].displayName, "bravo")
+        client.unregister(agentID: a.id)
+        XCTAssertEqual(client.allAgents().count, 1)
+        XCTAssertNil(client.agent(id: a.id))
+        XCTAssertNotNil(client.agent(id: b.id))
+    }
+
+    /// Insecure transports must be explicitly allowed by configuration.
+    func test_renderFarm_insecureTransportRejectedByDefault() {
+        let client = RenderFarmClient(transport: FakeRenderFarmTransport())
+        let submission = RenderFarmJobSubmission(
+            agentId: UUID(),
+            profileIdentifier: "test",
+            sourceFilename: "a.mov",
+            sourceSHA256: "deadbeef",
+            sourceSizeBytes: 10,
+            transport: .plainHTTP
+        )
+        XCTAssertThrowsError(try client.validate(submission: submission))
+    }
+
+    /// Insecure transports are accepted when an explicit
+    /// `InsecureTransportOverride` token is supplied.
+    func test_renderFarm_insecureTransportAllowedWhenConfigured() {
+        let client = RenderFarmClient(
+            transport: FakeRenderFarmTransport(),
+            configuration: RenderFarmClient.Configuration(
+                insecureTransportOverride: .developmentOnly(
+                    acknowledgement: "loopback test"
+                )
+            )
+        )
+        let submission = RenderFarmJobSubmission(
+            agentId: UUID(),
+            profileIdentifier: "test",
+            sourceFilename: "a.mov",
+            sourceSHA256: "deadbeef",
+            sourceSizeBytes: 10,
+            transport: .plainHTTP
+        )
+        XCTAssertNoThrow(try client.validate(submission: submission))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Issue #380: InsecureTransportOverride required for plainHTTP
+    // -----------------------------------------------------------------
+    //
+    // The audit asked for the .plainHTTP path to be gated by an explicit
+    // capability token rather than a bare boolean flag. The tests below
+    // pin two of the resulting invariants in place so a future refactor
+    // can't quietly bring the old "allowInsecureTransports: true" idiom
+    // back.
+
+    /// Verifies the default configuration provides no override token —
+    /// the only safe default the type system can encode for this enum.
+    func test_renderFarm_defaultConfiguration_hasNoInsecureOverride() {
+        let config = RenderFarmClient.Configuration()
+        XCTAssertNil(config.insecureTransportOverride)
+        XCTAssertFalse(config.allowsInsecureTransports)
+    }
+
+    /// Verifies an override token carries its acknowledgement string and
+    /// flips `allowsInsecureTransports` on. This is the convenience
+    /// surface the UI uses to render a warning banner without needing to
+    /// peek at the token directly.
+    func test_renderFarm_developmentOnlyOverride_recordsAcknowledgement() {
+        let token = InsecureTransportOverride.developmentOnly(
+            acknowledgement: "local loopback, no real credentials"
+        )
+        let config = RenderFarmClient.Configuration(
+            insecureTransportOverride: token
+        )
+        XCTAssertTrue(config.allowsInsecureTransports)
+        XCTAssertEqual(
+            config.insecureTransportOverride?.acknowledgement,
+            "local loopback, no real credentials"
+        )
+    }
+}
+
+// MARK: - Test fixtures
+
+// MARK: - RasterVectorConverter (#376)
+
+extension ConverterEngineTests {
+
+    func test_rasterFormat_recognisesAliases() {
+        XCTAssertEqual(RasterFormat.from(fileExtension: "jpg"), .jpeg)
+        XCTAssertEqual(RasterFormat.from(fileExtension: ".JPG"), .jpeg)
+        XCTAssertEqual(RasterFormat.from(fileExtension: "tif"), .tiff)
+        XCTAssertEqual(RasterFormat.from(fileExtension: "png"), .png)
+        XCTAssertNil(RasterFormat.from(fileExtension: "docx"))
+    }
+
+    func test_rasterFormat_animatedFlag() {
+        XCTAssertTrue(RasterFormat.gif.isAnimated)
+        XCTAssertTrue(RasterFormat.apng.isAnimated)
+        XCTAssertTrue(RasterFormat.webp.isAnimated)
+        XCTAssertFalse(RasterFormat.jpeg.isAnimated)
+        XCTAssertFalse(RasterFormat.png.isAnimated)
+    }
+
+    func test_rasterFormat_alphaSupport() {
+        XCTAssertTrue(RasterFormat.png.hasAlphaSupport)
+        XCTAssertTrue(RasterFormat.apng.hasAlphaSupport)
+        XCTAssertTrue(RasterFormat.tiff.hasAlphaSupport)
+        XCTAssertFalse(RasterFormat.jpeg.hasAlphaSupport)
+        XCTAssertFalse(RasterFormat.bmp.hasAlphaSupport)
+    }
+
+    func test_rasterFormat_hdrCapable() {
+        XCTAssertTrue(RasterFormat.exr.isHDRCapable)
+        XCTAssertTrue(RasterFormat.hdr.isHDRCapable)
+        XCTAssertTrue(RasterFormat.avif.isHDRCapable)
+        XCTAssertTrue(RasterFormat.jxl.isHDRCapable)
+        XCTAssertFalse(RasterFormat.gif.isHDRCapable)
+    }
+
+    func test_editabilityPreset_defaultsAreSensible() {
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultTracingMode, .outline)
+        XCTAssertEqual(EditabilityPreset.photorealistic.defaultTracingMode, .photorealistic)
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultColorCount, 8)
+        XCTAssertGreaterThan(
+            EditabilityPreset.photorealistic.defaultColorCount,
+            EditabilityPreset.logoIcon.defaultColorCount
+        )
+    }
+
+    func test_rasterToVectorConfig_defaultsFromPreset() {
+        let config = RasterToVectorConfig(
+            inputFormat: .png,
+            preset: .logoIcon
+        )
+        XCTAssertEqual(config.tracingMode, .outline)
+        XCTAssertEqual(config.colorCount, 8)
+        XCTAssertEqual(config.alpha, .clipPathWithOpacity)
+        XCTAssertTrue(config.preserveMetadata)
+    }
+
+    func test_rasterToVectorConfig_validationRejectsBadColorCount() {
+        let tooFew = RasterToVectorConfig(inputFormat: .png, colorCount: 1)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooFew))
+        let tooMany = RasterToVectorConfig(inputFormat: .png, colorCount: 512)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooMany))
+        let ok = RasterToVectorConfig(inputFormat: .png, colorCount: 64)
+        XCTAssertNil(RasterVectorConverter.validate(ok))
+    }
+
+    func test_rasterToVectorConfig_validationRejectsBadSimplification() {
+        let tooLow = RasterToVectorConfig(inputFormat: .png, curveSimplification: -1)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooLow))
+        let tooHigh = RasterToVectorConfig(inputFormat: .png, curveSimplification: 100)
+        XCTAssertNotNil(RasterVectorConverter.validate(tooHigh))
+    }
+
+    func test_preferredTracingTool() {
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .outline), "potrace")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .monochrome), "potrace")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .colorQuantization), "vtracer")
+        XCTAssertEqual(RasterVectorConverter.preferredTracingTool(for: .photorealistic), "vtracer")
+    }
+
+    func test_vtracerArguments_includeInputAndOutput() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .illustration)
+        let args = RasterVectorConverter.buildVTracerArguments(
+            inputPath: "/tmp/in.png",
+            outputPath: "/tmp/out.svg",
+            config: config
+        )
+        XCTAssertEqual(args[0], "-i")
+        XCTAssertEqual(args[1], "/tmp/in.png")
+        XCTAssertEqual(args[2], "-o")
+        XCTAssertEqual(args[3], "/tmp/out.svg")
+        XCTAssertTrue(args.contains("--colormode"))
+        XCTAssertTrue(args.contains("color"))
+    }
+
+    func test_vtracerArguments_monochromeBinary() {
+        let config = RasterToVectorConfig(inputFormat: .png, tracingMode: .monochrome, preset: .custom)
+        let args = RasterVectorConverter.buildVTracerArguments(
+            inputPath: "/tmp/in.png", outputPath: "/tmp/out.svg", config: config
+        )
+        guard let idx = args.firstIndex(of: "--colormode") else {
+            XCTFail("expected --colormode"); return
+        }
+        XCTAssertEqual(args[idx + 1], "binary")
+    }
+
+    func test_potraceArguments_svgOutput() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .logoIcon)
+        let args = RasterVectorConverter.buildPotraceArguments(
+            inputPath: "/tmp/in.bmp",
+            outputPath: "/tmp/out.svg",
+            config: config
+        )
+        XCTAssertTrue(args.contains("/tmp/in.bmp"))
+        XCTAssertTrue(args.contains("-s"))
+        XCTAssertTrue(args.contains("--svg"))
+        XCTAssertTrue(args.contains("/tmp/out.svg"))
+    }
+
+    func test_rsvgConvertArguments_dimensionsAndDPI() {
+        let config = VectorToRasterConfig(
+            outputFormat: .png,
+            targetWidthPixels: 1024,
+            targetHeightPixels: 768,
+            dpi: 192
+        )
+        let args = RasterVectorConverter.buildRsvgConvertArguments(
+            inputPath: "/tmp/logo.svg",
+            outputPath: "/tmp/logo.png",
+            config: config
+        )
+        XCTAssertEqual(args[0], "/tmp/logo.svg")
+        XCTAssertTrue(args.contains("1024"))
+        XCTAssertTrue(args.contains("768"))
+        XCTAssertTrue(args.contains("192"))
+        XCTAssertTrue(args.contains("png"))
+    }
+
+    // MARK: - ProResToVectorConverter (#377)
+
+    func test_proResVariant_bitsPerChannel() {
+        XCTAssertEqual(ProResVariant.proRes4444.bitsPerChannel, 8)
+        XCTAssertEqual(ProResVariant.proRes4444XQ.bitsPerChannel, 12)
+        XCTAssertEqual(ProResVariant.proRes4444HDR.bitsPerChannel, 12)
+    }
+
+    func test_proResVariant_hdrRequiresTonemapping() {
+        XCTAssertFalse(ProResVariant.proRes4444.requiresTonemapping)
+        XCTAssertFalse(ProResVariant.proRes4444XQ.requiresTonemapping)
+        XCTAssertTrue(ProResVariant.proRes4444HDR.requiresTonemapping)
+    }
+
+    func test_proResFrameRate_doubleValue() {
+        XCTAssertEqual(ProResFrameRate.fps24.doubleValue, 24.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps23_976.doubleValue, 24000.0 / 1001.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps29_97.doubleValue, 30000.0 / 1001.0, accuracy: 0.0001)
+        XCTAssertEqual(ProResFrameRate.fps60.doubleValue, 60.0, accuracy: 0.0001)
+    }
+
+    func test_proResConfig_defaults() {
+        let config = ProResToVectorConfig()
+        XCTAssertEqual(config.sourceVariant, .proRes4444)
+        XCTAssertEqual(config.frameRate, .fps24)
+        XCTAssertEqual(config.frameStride, 1)
+        XCTAssertEqual(config.alphaHandling, .preservePerFrame)
+        XCTAssertTrue(config.shapePersistence)
+        XCTAssertTrue(config.keyframeExtraction)
+    }
+
+    func test_proResConfig_estimatedFrameCount() {
+        // 5 seconds at 24 fps stride 1 = 120 frames
+        let c1 = ProResToVectorConfig(frameRate: .fps24, frameStride: 1)
+        XCTAssertEqual(c1.estimatedFrameCount(sourceDurationSeconds: 5.0), 120)
+        // Stride 2 halves the count
+        let c2 = ProResToVectorConfig(frameRate: .fps24, frameStride: 2)
+        XCTAssertEqual(c2.estimatedFrameCount(sourceDurationSeconds: 5.0), 60)
+        // Time range clamps
+        let c3 = ProResToVectorConfig(
+            frameRate: .fps24,
+            startTimeSeconds: 1.0,
+            endTimeSeconds: 3.0
+        )
+        XCTAssertEqual(c3.estimatedFrameCount(sourceDurationSeconds: 10.0), 48)
+    }
+
+    func test_proResFrameExtractionArguments_includesSSAndDuration() {
+        let config = ProResToVectorConfig(
+            frameRate: .fps24,
+            startTimeSeconds: 1.0,
+            endTimeSeconds: 3.0
+        )
+        let args = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/in.mov",
+            framePatternPath: "/tmp/frame_%06d.png",
+            config: config
+        )
+        XCTAssertTrue(args.contains("-ss"))
+        XCTAssertTrue(args.contains("1.000"))
+        XCTAssertTrue(args.contains("-t"))
+        XCTAssertTrue(args.contains("2.000"))
+        XCTAssertTrue(args.contains("-i"))
+        XCTAssertTrue(args.contains("/tmp/in.mov"))
+        XCTAssertTrue(args.contains("/tmp/frame_%06d.png"))
+        XCTAssertTrue(args.contains("png"))
+        XCTAssertTrue(args.contains("rgba"))
+    }
+
+    func test_proResFrameExtractionArguments_hdrTonemappingApplied() {
+        let config = ProResToVectorConfig(
+            sourceVariant: .proRes4444HDR,
+            frameRate: .fps24
+        )
+        let args = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/hdr.mov",
+            framePatternPath: "/tmp/f_%06d.png",
+            config: config
+        )
+        // Tone-mapping filter chain must be present for HDR.
+        let hasTonemap = args.contains { $0.contains("tonemap=hable") }
+        XCTAssertTrue(hasTonemap, "Expected HDR tonemap filter in args")
+    }
+
+    func test_svgAnimationRoot_smil() {
+        let root = ProResToVectorConverter.buildSVGAnimationRoot(
+            widthPixels: 1920,
+            heightPixels: 1080,
+            frameCount: 120,
+            frameRate: 24.0,
+            method: .smil
+        )
+        XCTAssertTrue(root.contains("data-frame-count=\"120\""))
+        XCTAssertTrue(root.contains("data-animation-method=\"smil\""))
+        XCTAssertTrue(root.contains("viewBox=\"0 0 1920 1080\""))
+    }
+
+    func test_smilFrameWrapper_hasCorrectTiming() {
+        let wrapper = ProResToVectorConverter.buildSMILFrameWrapper(
+            frameIndex: 12,
+            frameCount: 120,
+            frameRate: 24.0
+        )
+        XCTAssertTrue(wrapper.contains("id=\"frame-12\""))
+        XCTAssertTrue(wrapper.contains("begin=\"0.500000s\""))    // 12 / 24 = 0.5s
+        XCTAssertTrue(wrapper.contains("fill=\"freeze\""))
+    }
+
+    func test_shouldWarnAboutOutputSize_longClip() {
+        let config = ProResToVectorConfig(frameRate: .fps24)
+        XCTAssertFalse(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 5.0
+            )
+        )
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 15.0
+            )
+        )
+    }
+
+    func test_shouldWarnAboutOutputSize_photorealistic() {
+        let tracing = RasterToVectorConfig(
+            inputFormat: .png,
+            tracingMode: .photorealistic,
+            preset: .photorealistic
+        )
+        let config = ProResToVectorConfig(
+            frameRate: .fps24,
+            tracing: tracing
+        )
+        // Even a 3-second photorealistic clip should warn.
+        XCTAssertTrue(
+            ProResToVectorConverter.shouldWarnAboutOutputSize(
+                config: config,
+                sourceDurationSeconds: 3.0
+            )
+        )
+    }
+
+    // MARK: - FFmpegBundleManager FFplay support (#378)
+
+    /// `FFmpegBundleError.ffplayNotFound` surfaces a distinct, actionable
+    /// error message that mentions the preview feature.
+    func test_ffmpegBundle_ffplayErrorMessage() {
+        let error = FFmpegBundleError.ffplayNotFound
+        XCTAssertNotNil(error.errorDescription)
+        XCTAssertTrue(error.errorDescription!.contains("FFplay"))
+        XCTAssertTrue(error.errorDescription!.contains("preview") || error.errorDescription!.contains("ffplay"))
+    }
+
+    /// The manager accepts an ffplayPath override in the initialiser.
+    func test_ffmpegBundle_initAcceptsFFplayPath() {
+        let manager = FFmpegBundleManager(
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            ffprobePath: "/opt/homebrew/bin/ffprobe",
+            ffplayPath: "/opt/homebrew/bin/ffplay"
+        )
+        XCTAssertEqual(manager.userFFmpegPath, "/opt/homebrew/bin/ffmpeg")
+        XCTAssertEqual(manager.userFFprobePath, "/opt/homebrew/bin/ffprobe")
+        XCTAssertEqual(manager.userFFplayPath, "/opt/homebrew/bin/ffplay")
+    }
+
+    /// `isFFplayAvailable()` soft-fails rather than throwing when ffplay is
+    /// absent — UI surfaces check this before enabling preview playback.
+    /// The contract under test is "returns a Bool, never throws", not the
+    /// specific truthiness — the CI runner has Homebrew ffmpeg (and therefore
+    /// ffplay) pre-installed, so `findBinary` discovers it even when the
+    /// user-supplied path is bogus.
+    func test_ffmpegBundle_isFFplayAvailableSoftFails() {
+        let manager = FFmpegBundleManager(
+            ffplayPath: "/tmp/definitely-not-a-real-ffplay-binary-\(UUID().uuidString)"
+        )
+        // The important guarantee is "does not throw"; discovery may still
+        // succeed via the system search path.
+        _ = manager.isFFplayAvailable()
+    }
+}
+
+/// Trivial transport adapter used to exercise the client without a live agent.
+private struct FakeRenderFarmTransport: RenderFarmTransportAdapter, Sendable {
+    func submit(
+        agent: RenderFarmAgentInfo,
+        submission: RenderFarmJobSubmission
+    ) async throws -> RenderFarmJobStatus {
+        RenderFarmJobStatus(jobId: submission.jobId, state: .queued, progress: 0)
+    }
+    func uploadChunk(agent: RenderFarmAgentInfo, chunk: RenderFarmChunk) async throws { }
+    func status(
+        agent: RenderFarmAgentInfo,
+        jobId: UUID
+    ) async throws -> RenderFarmJobStatus {
+        RenderFarmJobStatus(jobId: jobId, state: .completed, progress: 1.0)
+    }
+    func download(
+        agent: RenderFarmAgentInfo,
+        jobId: UUID,
+        destination: URL
+    ) async throws -> URL { destination }
+    func cancel(agent: RenderFarmAgentInfo, jobId: UUID) async throws { }
 }

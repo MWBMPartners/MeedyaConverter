@@ -17,6 +17,11 @@ public enum FFmpegBundleError: LocalizedError, Sendable {
     /// FFprobe binary was not found in any searched location.
     case ffprobeNotFound
 
+    /// FFplay binary was not found in any searched location.
+    /// FFplay is optional — most pipelines do not require it — but the
+    /// preview-playback feature is disabled when missing (#378).
+    case ffplayNotFound
+
     /// The binary was found but is not executable (permissions issue).
     case notExecutable(path: String)
 
@@ -32,6 +37,8 @@ public enum FFmpegBundleError: LocalizedError, Sendable {
             return "FFmpeg binary not found. Install FFmpeg or specify its location in Settings."
         case .ffprobeNotFound:
             return "FFprobe binary not found. It is typically bundled with FFmpeg."
+        case .ffplayNotFound:
+            return "FFplay binary not found. Install FFmpeg with ffplay support or disable in-app preview."
         case .notExecutable(let path):
             return "Binary at '\(path)' is not executable. Check file permissions."
         case .versionDetectionFailed(let path):
@@ -108,11 +115,18 @@ public final class FFmpegBundleManager: @unchecked Sendable {
     /// Cached FFprobe binary info.
     private var cachedFFprobe: FFmpegBinaryInfo?
 
+    /// Cached FFplay binary info (optional component, used by the preview
+    /// playback feature).
+    private var cachedFFplay: FFmpegBinaryInfo?
+
     /// Optional user-specified path override from Settings.
     public var userFFmpegPath: String?
 
     /// Optional user-specified FFprobe path override.
     public var userFFprobePath: String?
+
+    /// Optional user-specified FFplay path override.
+    public var userFFplayPath: String?
 
     /// Serial queue for thread-safe access to cached values.
     private let lock = NSLock()
@@ -165,9 +179,15 @@ public final class FFmpegBundleManager: @unchecked Sendable {
     /// - Parameters:
     ///   - ffmpegPath: Optional user-specified path to the FFmpeg binary.
     ///   - ffprobePath: Optional user-specified path to the FFprobe binary.
-    public init(ffmpegPath: String? = nil, ffprobePath: String? = nil) {
+    ///   - ffplayPath: Optional user-specified path to the FFplay binary.
+    public init(
+        ffmpegPath: String? = nil,
+        ffprobePath: String? = nil,
+        ffplayPath: String? = nil
+    ) {
         self.userFFmpegPath = ffmpegPath
         self.userFFprobePath = ffprobePath
+        self.userFFplayPath = ffplayPath
     }
 
     // MARK: - Discovery
@@ -228,12 +248,52 @@ public final class FFmpegBundleManager: @unchecked Sendable {
         return info
     }
 
+    /// Locate the FFplay binary (optional component used for in-app
+    /// preview playback). Follows the same priority order as `locateFFmpeg`
+    /// and `locateFFprobe`. Unlike the other two, this throws
+    /// `FFmpegBundleError.ffplayNotFound` rather than the generic
+    /// `ffmpegNotFound` so callers can soft-fail and simply disable the
+    /// preview feature when missing (#378).
+    public func locateFFplay() throws -> FFmpegBinaryInfo {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let cached = cachedFFplay {
+            return cached
+        }
+
+        if let userPath = userFFplayPath {
+            if FileManager.default.isExecutableFile(atPath: userPath) {
+                let info = try detectBinaryInfo(at: userPath, isBundled: false)
+                cachedFFplay = info
+                return info
+            }
+        }
+
+        do {
+            let info = try findBinary(named: "ffplay")
+            cachedFFplay = info
+            return info
+        } catch FFmpegBundleError.ffmpegNotFound {
+            throw FFmpegBundleError.ffplayNotFound
+        } catch FFmpegBundleError.ffprobeNotFound {
+            throw FFmpegBundleError.ffplayNotFound
+        }
+    }
+
+    /// Whether FFplay is available. Returns false (rather than throwing)
+    /// so UI can conditionally enable the preview-playback feature.
+    public func isFFplayAvailable() -> Bool {
+        do { _ = try locateFFplay(); return true } catch { return false }
+    }
+
     /// Clear the cached binary information, forcing a fresh search on next access.
     public func clearCache() {
         lock.lock()
         defer { lock.unlock() }
         cachedFFmpeg = nil
         cachedFFprobe = nil
+        cachedFFplay = nil
     }
 
     // MARK: - Private Helpers
@@ -259,10 +319,15 @@ public final class FFmpegBundleManager: @unchecked Sendable {
         }
 
         // Binary not found anywhere
-        if binaryName == "ffmpeg" {
+        switch binaryName {
+        case "ffmpeg":
             throw FFmpegBundleError.ffmpegNotFound
-        } else {
+        case "ffprobe":
             throw FFmpegBundleError.ffprobeNotFound
+        case "ffplay":
+            throw FFmpegBundleError.ffplayNotFound
+        default:
+            throw FFmpegBundleError.ffmpegNotFound
         }
     }
 

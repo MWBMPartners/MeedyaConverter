@@ -146,6 +146,16 @@ public struct ToolBundleManifest: Codable, Sendable {
                 description: "HDR10+ dynamic metadata extraction, injection, and validation",
                 license: "MIT"
             ),
+            BundledTool(
+                id: "subtitle_tonemap",
+                name: "subtitle_tonemap",
+                version: "0.2.0",
+                sourceURL: "https://github.com/quietvoid/subtitle_tonemap",
+                lastUpdated: "2026-04-20",
+                binaryName: "subtitle_tonemap",
+                description: "Tone-map subtitle colours for HDR→SDR conversions, preserving readability",
+                license: "MIT"
+            ),
         ],
         schemaVersion: 1,
         generatedDate: "2026-04-01"

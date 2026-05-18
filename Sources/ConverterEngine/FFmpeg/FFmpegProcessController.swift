@@ -126,6 +126,36 @@ public final class FFmpegProcessController: @unchecked Sendable {
     /// Accumulated stdout output from FFmpeg.
     private var stdoutBuffer: String = ""
 
+    /// Soft cap on the in-memory capture buffers (10 MiB). Beyond this, the
+    /// oldest lines are discarded so a misbehaving encoder that floods the
+    /// pipes cannot starve the host app of memory.
+    private let maxBufferBytes = 10 * 1024 * 1024
+
+    /// Trims a buffer back to `maxBufferBytes` by dropping oldest lines.
+    /// Caller must hold `lock`.
+    fileprivate func trimBufferIfNeeded(_ buffer: inout String) {
+        guard buffer.utf8.count > maxBufferBytes else { return }
+        let lines = buffer.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.count > 1 else {
+            // Single enormous line — truncate from the front to the cap.
+            if let startIdx = buffer.index(
+                buffer.endIndex,
+                offsetBy: -maxBufferBytes,
+                limitedBy: buffer.startIndex
+            ) {
+                buffer = String(buffer[startIdx...])
+            }
+            return
+        }
+        var trimmed = lines.dropFirst().joined(separator: "\n")
+        while trimmed.utf8.count > maxBufferBytes {
+            let remaining = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
+            guard remaining.count > 1 else { break }
+            trimmed = remaining.dropFirst().joined(separator: "\n")
+        }
+        buffer = trimmed
+    }
+
     /// The total duration of the source file (used to calculate progress fraction).
     /// Set before starting encoding if known from probing.
     public var sourceDuration: TimeInterval?
@@ -201,24 +231,28 @@ public final class FFmpegProcessController: @unchecked Sendable {
                 continuation.finish()
             }
 
-            // Read stderr asynchronously for logging and error capture
+            // Read stderr asynchronously for logging and error capture.
+            // Bound the buffer at 10 MiB so a misbehaving encoder that
+            // floods stderr cannot OOM the host app.
             stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let self = self else { return }
                 if let text = String(data: data, encoding: .utf8) {
                     self.lock.lock()
                     self.stderrBuffer += text
+                    self.trimBufferIfNeeded(&self.stderrBuffer)
                     self.lock.unlock()
                 }
             }
 
-            // Read stdout asynchronously for progress parsing
+            // Read stdout asynchronously for progress parsing.
             stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let self = self else { return }
                 if let text = String(data: data, encoding: .utf8) {
                     self.lock.lock()
                     self.stdoutBuffer += text
+                    self.trimBufferIfNeeded(&self.stdoutBuffer)
                     self.lock.unlock()
 
                     // Parse progress lines from the -progress output

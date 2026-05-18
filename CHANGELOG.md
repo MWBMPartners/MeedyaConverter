@@ -13,6 +13,75 @@
 
 ## [Unreleased]
 
+### Added -- 2026-04-20 (integration batch #371–#378, #178)
+
+- **MeedyaSuite-core Swift Package integration scaffolding** -- `Package.swift`
+  adds `SUITE_CORE=1` env flag (with optional `SUITE_CORE_PATH` for local
+  development) that pulls in `MWBMPartners/MeedyaSuite-core` and wires the
+  `MeedyaCore` product into `ConverterEngine` (#373)
+- **SuiteCoreBridge** -- `Sources/ConverterEngine/SuiteCore/SuiteCoreBridge.swift`
+  exposes `SuiteCoreAvailability`, `SuiteCoreBridgeError`, and
+  `SuiteCoreSmokeTest.ping()` for end-to-end bridge verification (#373)
+- **SuiteCoreTypes** -- `SuiteCoreMetadataProvider`, `SuiteCoreCodecDescriptor`,
+  and `SuiteCoreFingerprintResult` mirror the Rust types from meedya-core (#373)
+- **SuiteCoreMetadataAdapter** -- routes metadata lookups through
+  MeedyaSuite-core when linked, falling back to the inline providers
+  otherwise; advertises 12 additional providers (imdb, acoustid,
+  rottentomatoes, metacritic, tvmaze, anidb, kitsu, animeplanet,
+  last_fm, deezer, spotify_metadata, apple_music) when suite-core is on (#371)
+- **SuiteCoreCodecClassifier** -- unified codec classification with a
+  table-driven fallback covering lossless codecs (FLAC, ALAC, TrueHD, MLP,
+  DTS-HD MA, PCM), always-spatial codecs (Atmos, MPEG-H 3D Audio, IAMF,
+  DTS:X, AC-4 IMS), and spatial channel layouts (#372)
+- **Metadata cleanup tracking** -- `docs/migration/suite-core-cleanup.md`
+  file-by-file checklist for removing the inline TheTVDB client once
+  MeedyaSuite-core is default-on (#374)
+- **Subtitle tone-mapping** -- `SubtitleTonemapWrapper` integrates
+  quietvoid/subtitle_tonemap following the DoviToolWrapper pattern, with
+  full HDR10/HDR10+/Dolby Vision/HLG support and accepted formats .sup,
+  .sub, .idx, .ass, .ssa (#369)
+- **Render-farm subsystem** -- `RenderFarmAgent` + `RenderFarmClient` pure
+  value types + agent registry + pluggable `RenderFarmTransportAdapter`;
+  Bonjour service type `_meedyaconverter-agent._tcp`, per-chunk SHA-256,
+  versioned REST paths, and `progressStream` AsyncThrowingStream with
+  terminal-state auto-stop (#346)
+- **Raster ↔ vector image conversion scaffolding** -- covers 30+ Phase 15
+  raster formats, SVG 1.1/2.0 output, 4 tracing modes, 6 editability
+  presets, 3 alpha strategies, 4 animation methods, plus
+  `buildVTracerArguments`/`buildPotraceArguments`/`buildRsvgConvertArguments`
+  pure argument builders (#376)
+- **ProRes alpha → animated SVG scaffolding** -- extends the raster/vector
+  pipeline with ProRes 4444 / 4444 XQ / 4444 HDR variant detection,
+  rational-accurate frame rates (23.976, 29.97, 59.94 etc), HDR tone-map
+  chain for 4444 HDR, SMIL/CSS/hybrid/frame-sequence SVG assembly, and
+  output-size warnings (#377)
+- **FFplay bundling** -- `FFmpegBundleManager.locateFFplay()` +
+  `isFFplayAvailable()` soft-fail helper; `scripts/bundle-ffmpeg.sh`
+  downloads and stages ffmpeg + ffprobe + **ffplay** from a static-build
+  distribution for arm64 or x86_64 and validates each with -version (#378)
+- **App Store Connect metadata** -- `metadata/en-US/` fastlane-ready
+  description, subtitle, promotional text, keywords, release notes,
+  support/marketing/privacy URLs plus `metadata/copyright.txt`,
+  category files, and `review_information.yml` with reviewer notes;
+  `docs/distribution/app-store-submission.md` 7-section runbook (#178)
+
+### Fixed -- 2026-04-20
+
+- **potrace alphamax clamp** -- was always 1.0 because of a typo in the
+  min/max expression; now maps the 0..10 simplification knob onto
+  potrace's 0.0..1.3 range (#379)
+- **Critical: Mega.nz JSON command injection** -- login and upload-complete
+  commands no longer string-interpolate user-supplied fields into JSON;
+  switched to `JSONSerialization` (#380)
+- **Critical: Mux direct-upload JSON injection** -- same fix pattern (#380)
+- **Critical: SFTP rsync SSH command injection** -- key-file path is now
+  single-quoted with `'\\''`-escaped embedded quotes (#380)
+- **Major: FFmpegProcessController unbounded stderr buffer** -- added 10 MiB
+  soft cap with line-drop trimming (#380)
+- **Major: RenderFarmClient progressStream task leak** -- task is now
+  assigned to a box the termination closure captures, preventing detached
+  tasks when the caller abandons the stream between init and first poll (#380)
+
 ### Added -- 2026-04-05
 
 - **Comprehensive documentation update** -- Rewrote and updated all 10 wiki pages, OpenAPI spec, CHANGELOG, and PROJECT_STATUS to reflect current application state (#186)

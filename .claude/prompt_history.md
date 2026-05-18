@@ -91,3 +91,65 @@ Implemented in parallel batches using multiple agents:
 - **Primary Language**: English (U.K.) for App Store Connect
 - **Node.js 20 warning**: GitHub-side deprecation, cannot eliminate — cosmetic only
 - **SwiftLint annotations**: Fixed by creating .swiftlint.yml limiting to Sources/ and Tests/
+
+## Session: 2026-04-20
+
+### Integration Batch: Issues #373, #371, #372, #374, #369, #346, #376, #377, #378, #178
+
+Implemented 9 major features plus security audit, UI audit, and documentation updates on branch `claude/integration-batch-371-378-178`:
+
+**MeedyaSuite-core Integration (#373, #371, #372, #374)**:
+- Feature-flagged Rust FFI bridge (SUITE_CORE env var, conditional SPM dependency)
+- SuiteCoreBridge: availability check, smoke test, error types
+- SuiteCoreMetadataAdapter: unified routing across inline + suite-core providers (12 additional)
+- SuiteCoreCodecClassifier: lossless/spatial codec classification with built-in tables
+- Migration guide (docs/migration/suite-core-cleanup.md) for removing redundant providers
+
+**Subtitle Tone-Mapping (#369)**:
+- SubtitleTonemapWrapper: HDR→SDR subtitle colour correction
+- Supports PGS, VobSub, ASS/SSA formats; 4 HDR source profiles
+- Configurable target luminance (50-203 nits), alpha preservation
+- Tool manifest updated (6 bundled tools)
+
+**Render Farm (#346)**:
+- RenderFarmAgent: Bonjour discovery, 3 transports (SSH/TLS/plain HTTP)
+- RenderFarmClient: chunked upload (4 MiB), SHA-256 per-chunk verification
+- 7-state job lifecycle with AsyncThrowingStream progress via task-box pattern
+- Help documentation (help/render-farm.md)
+
+**Image Conversion Extensions (#376, #377)**:
+- RasterVectorConverter: 30+ raster formats, vtracer/potrace/rsvg-convert arg builders
+- ProResToVectorConverter: ProRes 4444/4444XQ/4444HDR frame extraction + SMIL SVG animation
+- Output size warnings for photorealistic/long-duration content
+
+**FFplay Bundling (#378)**:
+- FFmpegBundleManager extended with locateFFplay(), isFFplayAvailable()
+- bundle-ffmpeg.sh script downloads ffplay alongside ffmpeg/ffprobe
+
+**App Store Submission (#178)**:
+- 11 metadata files (en-US localisation, categories, review info)
+- Submission runbook (docs/distribution/app-store-submission.md)
+- Screenshots README with Apple size matrix
+
+**Security Audit (#380)**:
+- 3 critical fixes: JSON injection in Mega.nz/Mux API builders (switched to JSONSerialization)
+- 1 major fix: SSH command injection via unquoted key path in rsync (single-quote escaping)
+- 1 major fix: unbounded stderr buffer OOM (10 MiB cap + trimBufferIfNeeded)
+- 1 major fix: AsyncStream task leak in RenderFarmClient (task-box pattern)
+- Deferred: FTP password on CLI (FIXME #380), Keychain plaintext (needs API change)
+
+**UI Audit**:
+- Identified 36+ missing controls across 6 feature areas
+- Created tracking issue #381 rather than expanding PR scope
+
+**Bug Fix**:
+- Potrace alphamax clamp always returned 1.0 (min(1.3, max(0.0, 1.0)) → mapped curveSimplification * 0.13)
+
+### Key Decisions
+
+- **SUITE_CORE feature flag**: Compile-time conditional — no runtime cost when unlinked
+- **Task-box pattern**: Assign task reference before setting onTermination to prevent race
+- **10 MiB buffer cap**: Drop oldest lines rather than crashing on pathological FFmpeg output
+- **JSONSerialization over string interpolation**: Eliminates all JSON injection vectors
+- **Single-quote SSH paths**: Shell-safe escaping with `'\''` for embedded quotes
+- **UI gaps deferred**: Created #381 rather than bloating the integration PR

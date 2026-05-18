@@ -1,0 +1,22 @@
+MeedyaConverter is the all-in-one, easy-to-use multimedia converter for macOS. Convert audio, video, subtitles, and optical discs between hundreds of formats with professional-grade quality and a clean, native interface.
+
+KEY FEATURES
+
+• Hybrid encoding engine — FFmpeg subprocess for direct builds, FFmpegKit for App Store builds
+• Video: H.264, H.265/HEVC, VP9, AV1, VVC, ProRes (422 & 4444), DNxHR, CFHD, NotchLC, and more
+• Audio: AAC, Opus, FLAC, ALAC, MP3, Vorbis, plus full spatial-audio support — Dolby Atmos, TrueHD, MPEG-H 3D, IAMF
+• HDR-to-SDR tone mapping (Hable, Reinhard, Mobius, BT.2390, Clip)
+• Full Dolby Vision pipeline (Profile 5, 7, 8.1, 8.4) with automatic fallback
+• Subtitle conversion, passthrough, and burning across 14+ formats
+• HLS and DASH adaptive streaming with variant-ladder builder
+• Audio CD ripping with AccurateRip verification and whole-disc fidelity
+• Watch folders, conditional rules, pre/post-encode actions, scheduled jobs
+• VMAF and SSIM quality metrics, bitrate/frame-rate heatmaps, A/B preview
+• Encoding profiles with import/export and 7+ built-in presets
+• Cloud delivery to S3, GCS, Backblaze B2, Azure, Dropbox, OneDrive, Google Drive and more
+• Metadata lookup across TMDB, TheTVDB, MusicBrainz, Discogs, FanArt.tv
+• CLI tool (meedya-convert) for CI pipelines and render farms
+• Full drag-and-drop, queue management, real-time progress, and pause/resume
+• Native dark & light mode, HiDPI, VoiceOver, and full keyboard accessibility
+
+Ideal for creators, editors, broadcasters, and studios who need reliable conversion without the complexity of command-line tools or the cost of professional suites.

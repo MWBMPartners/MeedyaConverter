@@ -30,8 +30,13 @@ jobs:
         with:
           # Fail on high/critical severity vulnerabilities
           fail-on-severity: high
-          # Flag licenses incompatible with proprietary software
-          deny-licenses: GPL-3.0-only, AGPL-3.0-only
-          # Allow known GPL-2.0 dependencies (FFmpeg subprocess, not linked)
+          # Positive license allow-list. Anything not on this list — including
+          # GPL-3.0-only and AGPL-3.0-only, which are incompatible with our
+          # proprietary licensing — causes the check to fail. The action
+          # rejects passing both `allow-licenses` and `deny-licenses`, so we
+          # rely on the allow-list as the single source of truth.
+          # GPL-2.0 is permitted because we shell out to FFmpeg as a separate
+          # process rather than linking against it (mere aggregation, not a
+          # derived work).
           allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, LGPL-2.1-only, LGPL-2.1-or-later, GPL-2.0-only, GPL-2.0-or-later
           comment-summary-in-pr: always

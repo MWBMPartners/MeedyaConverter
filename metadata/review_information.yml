@@ -1,0 +1,43 @@
+# =============================================================================
+# App Store Review Information — MeedyaConverter
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+#
+# Consumed by `fastlane deliver` / `xcrun altool` during the submission step.
+# All values are short strings; longer explanations live in
+# docs/distribution/app-store-submission.md.
+# =============================================================================
+
+contact:
+  first_name: "MWBM"
+  last_name: "Partners Support"
+  email: "appstore@mwbmpartners.com"
+  phone: "+44 20 0000 0000"
+
+# ---------------------------------------------------------------------------
+# Demo account (only needed if the app requires sign-in to exercise features)
+# ---------------------------------------------------------------------------
+# MeedyaConverter is fully functional without an account — demo credentials
+# are not required. Cloud provider upload features use the reviewer's own
+# accounts if they wish to exercise them.
+# ---------------------------------------------------------------------------
+demo_account:
+  required: false
+
+# ---------------------------------------------------------------------------
+# Notes for App Review
+# ---------------------------------------------------------------------------
+notes: |
+  MeedyaConverter is a media transcoder. To test:
+    1. Drag any video or audio file into the main window
+    2. Select an output profile (e.g. "HEVC 1080p")
+    3. Click "Start" — encoding begins immediately, no account required
+
+  The App Store build uses FFmpegKit (LGPL, Apache-compatible) linked as
+  a framework. No subprocess calls to external binaries. All file access
+  goes through NSOpenPanel + security-scoped bookmarks.
+
+  The app is not a downloader. It does not scrape, rip, or circumvent DRM
+  on content from streaming services. Optical disc ripping is limited to
+  unencrypted audio CDs for the App Store build — CSS/AACS-encrypted DVD
+  and Blu-ray support is only in the direct-distribution build.
