@@ -205,28 +205,160 @@ public struct SFTPUploader: Sendable {
 
     // MARK: - FTP Upload
 
+    // -------------------------------------------------------------------------
+    // Why credentials live in a config file rather than `-u user:pass`
+    // -------------------------------------------------------------------------
+    //
+    // Audit follow-up for issue #380 (security + memory audit).
+    //
+    // curl's `-u user:password` form places the credentials directly on the
+    // command line. Any local user on the host can read process arguments via
+    // `ps aux` (or /proc/<pid>/cmdline on Linux), so FTP credentials would be
+    // visible for the lifetime of the upload — including in logs that capture
+    // process listings. We therefore split credential handling into a separate
+    // file step:
+    //
+    //   1. `writeFTPCredentialsConfig(config:)` writes a *short-lived* config
+    //      file with mode `0600` containing a single `user = "..."` directive.
+    //      The 0600 perms restrict reads to the file owner, and the file lives
+    //      in `FileManager.default.temporaryDirectory` so it is process-scoped.
+    //   2. `buildFTPUploadArguments(..., credentialsConfigPath:)` consumes that
+    //      path via curl's `-K <path>`. curl reads the config in-process; the
+    //      credentials never appear in argv.
+    //
+    // The caller is responsible for removing the config file once the upload
+    // completes (or fails). A `defer { try? FileManager.default.removeItem(at:
+    // configURL) }` immediately after the `writeFTPCredentialsConfig` call site
+    // is the recommended pattern.
+
+    /// Writes a temporary, owner-readable curl config file containing the
+    /// FTP credentials for a single upload.
+    ///
+    /// The returned file:
+    /// * lives in `FileManager.default.temporaryDirectory`
+    /// * is created with POSIX mode `0600` (owner read/write only)
+    /// * contains exactly one directive, `user = "<username>:<password>"`,
+    ///   with embedded backslashes and double quotes escaped per curl's
+    ///   config-file syntax (see `man curl`, “CONFIG FILE”)
+    ///
+    /// The caller MUST remove this file once the upload completes; the
+    /// recommended pattern is a `defer` immediately after the call so that
+    /// the credentials are wiped even if the upload throws.
+    ///
+    /// - Parameter config: The FTP server configuration whose username and
+    ///   password should be written into the credentials file.
+    /// - Returns: The absolute URL of the freshly-written credentials file.
+    /// - Throws: Any filesystem error from creating the file, writing its
+    ///   contents, or applying the `0600` permission mode.
+    public static func writeFTPCredentialsConfig(
+        config: FTPServerConfig
+    ) throws -> URL {
+
+        // ------------------------------------------------------------------
+        // Choose a process-private path in the system temp directory.
+        // A UUID-based filename avoids collisions across concurrent uploads
+        // and ensures no information about the FTP host leaks into the
+        // filename itself.
+        // ------------------------------------------------------------------
+        let tempDir = FileManager.default.temporaryDirectory
+        let filename = "ftp-credentials-\(UUID().uuidString).curlrc"
+        let url = tempDir.appendingPathComponent(filename)
+
+        // ------------------------------------------------------------------
+        // Create the file with restrictive permissions BEFORE writing the
+        // credentials. Doing it in this order guarantees the credentials
+        // never exist on disk under world-readable perms — even briefly.
+        // ------------------------------------------------------------------
+        let created = FileManager.default.createFile(
+            atPath: url.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        )
+        guard created else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        // ------------------------------------------------------------------
+        // Escape the credential value for curl's config-file syntax.
+        // Per `man curl`, a quoted value is parsed with `\\` → `\` and
+        // `\"` → `"`. We therefore escape backslashes first (so we don't
+        // double-escape the ones we are about to add) and then escape any
+        // embedded double quotes.
+        // ------------------------------------------------------------------
+        let raw = "\(config.username):\(config.password)"
+        let escaped = raw
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let directive = "user = \"\(escaped)\"\n"
+
+        // ------------------------------------------------------------------
+        // Write the directive. We use `atomically: false` because the file
+        // was just created with the correct permissions; an atomic write
+        // would replace it via a rename and risk losing those perms on
+        // platforms where the temp file inherits the umask instead.
+        // ------------------------------------------------------------------
+        guard let payload = directive.data(using: .utf8) else {
+            // UTF-8 encoding of a String can only fail for invalid scalar
+            // sequences, which `String` itself does not permit. The guard
+            // exists to satisfy the compiler and document the invariant.
+            throw CocoaError(.fileWriteInapplicableStringEncoding)
+        }
+        try payload.write(to: url, options: [])
+
+        // ------------------------------------------------------------------
+        // Re-assert 0600 after writing. Some platforms (and some test
+        // harnesses) reset permissions during `Data.write`; being explicit
+        // here keeps the security guarantee uniform across environments.
+        // ------------------------------------------------------------------
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
+
+        return url
+    }
+
     /// Builds `curl` command-line arguments for uploading a file via FTP.
     ///
     /// Uses curl's `ftp://` or `ftps://` scheme depending on the
     /// TLS setting in the configuration.
     ///
+    /// Credentials are NOT placed on the command line. The caller must
+    /// first invoke `writeFTPCredentialsConfig(config:)` to obtain a
+    /// short-lived `0600` config file, pass its path here, and remove the
+    /// file once the upload finishes. See issue #380 for the audit
+    /// rationale behind this two-step API.
+    ///
     /// - Parameters:
     ///   - localPath: Absolute path to the local file to upload.
-    ///   - config: The FTP server configuration.
+    ///   - config: The FTP server configuration (host, port, TLS, remote
+    ///     path). The username and password fields of `config` are NOT
+    ///     read by this method — they live in the credentials file.
+    ///   - credentialsConfigPath: Absolute path to the curl config file
+    ///     produced by `writeFTPCredentialsConfig(config:)`.
     /// - Returns: An array of command-line arguments for `curl`.
     public static func buildFTPUploadArguments(
         localPath: String,
-        config: FTPServerConfig
+        config: FTPServerConfig,
+        credentialsConfigPath: String
     ) -> [String] {
         var args: [String] = []
 
-        // Upload flag
+        // ------------------------------------------------------------------
+        // Read credentials from the config file via `-K`. This keeps the
+        // username and password out of argv (and therefore out of `ps`,
+        // /proc/<pid>/cmdline, and any process-listing log).
+        // ------------------------------------------------------------------
+        args.append(contentsOf: ["-K", credentialsConfigPath])
+
+        // Upload flag — tells curl to PUT/STOR the named local file.
         args.append(contentsOf: ["-T", localPath])
 
-        // Credentials
-        args.append(contentsOf: ["-u", "\(config.username):\(config.password)"])
-
-        // Build the target URL
+        // ------------------------------------------------------------------
+        // Build the target URL. We always include the explicit port so
+        // that curl does not fall back to its default (21/990) when the
+        // user has configured a non-standard listener.
+        // ------------------------------------------------------------------
         let scheme = config.useTLS ? "ftps" : "ftp"
         let remotePath = config.remotePath.hasSuffix("/")
             ? config.remotePath
@@ -235,10 +367,11 @@ public struct SFTPUploader: Sendable {
         let url = "\(scheme)://\(config.host):\(config.port)\(remotePath)\(filename)"
         args.append(url)
 
-        // Create intermediate directories if needed
+        // Create intermediate directories if needed.
         args.append("--ftp-create-dirs")
 
-        // TLS-specific options
+        // TLS-specific options: require TLS for the control connection
+        // when the user has opted into FTPS.
         if config.useTLS {
             args.append("--ssl-reqd")
         }
