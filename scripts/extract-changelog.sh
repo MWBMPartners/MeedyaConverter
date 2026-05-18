@@ -75,7 +75,25 @@ SECTION=$(awk -v ver="$VERSION" '
 # ---------------------------------------------------------------------------
 # Strip leading/trailing blank lines from the extracted section
 # ---------------------------------------------------------------------------
-SECTION=$(echo "$SECTION" | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+#
+# The leading-blank-strip via `sed '/./,$!d'` is POSIX-portable and works
+# under both BSD sed (macOS default) and GNU sed.
+#
+# The trailing-blank-strip used to be the GNU-sed idiom
+# `sed -e :a -e '/^\n*$/{$d;N;ba}'`, which fails on BSD sed with
+# "unexpected EOF (pending }'s)" — BSD sed parses brace groups differently
+# and won't accept the `$d;N;ba` semicolon-separated commands inside `{...}`.
+# release.yml runs on `macos-15`, so BSD sed is what we get.
+#
+# Replace it with portable awk: buffer all input, track the last non-blank
+# line index, and emit only up to that point.
+SECTION=$(echo "$SECTION" | sed '/./,$!d' | awk '
+    { lines[NR] = $0 }
+    /[^[:space:]]/ { last_content = NR }
+    END {
+        for (i = 1; i <= last_content; i++) print lines[i]
+    }
+')
 
 if [ -n "$SECTION" ]; then
     echo "$SECTION"
