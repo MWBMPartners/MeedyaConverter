@@ -10532,6 +10532,74 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - RasterToVectorConfig + VectorConversionView (#376 / #381 / #402)
+
+    /// Pins the per-preset auto-drive table that `VectorConversionView`'s
+    /// `applyPreset(_:)` relies on. If the engine adds, removes, or
+    /// re-labels a preset, this test fails immediately rather than
+    /// leaving the UI silently broken.
+    func test_editabilityPreset_defaultTracingModeAndColorCount() {
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultTracingMode, .outline)
+        XCTAssertEqual(EditabilityPreset.logoIcon.defaultColorCount, 8)
+
+        XCTAssertEqual(EditabilityPreset.illustration.defaultTracingMode, .colorQuantization)
+        XCTAssertEqual(EditabilityPreset.illustration.defaultColorCount, 32)
+
+        XCTAssertEqual(EditabilityPreset.photorealistic.defaultTracingMode, .photorealistic)
+        XCTAssertEqual(EditabilityPreset.photorealistic.defaultColorCount, 256)
+
+        XCTAssertEqual(EditabilityPreset.technicalDiagram.defaultTracingMode, .outline)
+        XCTAssertEqual(EditabilityPreset.technicalDiagram.defaultColorCount, 4)
+
+        XCTAssertEqual(EditabilityPreset.handDrawnSketch.defaultTracingMode, .colorQuantization)
+        XCTAssertEqual(EditabilityPreset.handDrawnSketch.defaultColorCount, 16)
+    }
+
+    /// Verifies every enum the UI reads from has stable rawValues for
+    /// `@AppStorage` persistence. A rename in the engine would otherwise
+    /// silently invalidate every user's persisted preference.
+    func test_rasterToVectorEnums_rawValuesAreStableForAppStorage() {
+        // Pinned values match the UI AppStorage default strings in
+        // VectorConversionView.swift.
+        XCTAssertEqual(RasterFormat.png.rawValue, "png")
+        XCTAssertEqual(EditabilityPreset.illustration.rawValue, "illustration")
+        XCTAssertEqual(TracingMode.colorQuantization.rawValue, "color_quantization")
+        XCTAssertEqual(AlphaStrategy.clipPathWithOpacity.rawValue, "clip_path_with_opacity")
+        XCTAssertEqual(AnimationMethod.smil.rawValue, "smil")
+    }
+
+    /// Verifies the engine's `RasterToVectorConfig` default-init agrees
+    /// with the AppStorage defaults the UI installs on first launch.
+    /// Drift between the two would mean a user who never opens the view
+    /// gets a different config than an engine consumer using the
+    /// type's defaults.
+    func test_rasterToVectorConfig_defaultsMatchUIAppStorage() {
+        let defaults = RasterToVectorConfig(inputFormat: .png)
+        XCTAssertEqual(defaults.preset, .illustration)
+        XCTAssertEqual(defaults.tracingMode, .colorQuantization)
+        XCTAssertEqual(defaults.colorCount, 32,
+                       "illustration preset.defaultColorCount is 32")
+        XCTAssertEqual(defaults.alpha, .clipPathWithOpacity)
+        XCTAssertEqual(defaults.animation, .smil)
+        XCTAssertTrue(defaults.preserveMetadata)
+        XCTAssertFalse(defaults.ocrTextRegions)
+        XCTAssertEqual(defaults.curveSimplification, 2.0)
+    }
+
+    /// `RasterFormat.isAnimated` drives whether the UI shows the
+    /// Animation section. Pin the animated set so a future addition
+    /// of e.g. `.heicSequence` doesn't sneak past the static-only path.
+    func test_rasterFormat_isAnimatedMatchesUIExpectations() {
+        XCTAssertTrue(RasterFormat.gif.isAnimated)
+        XCTAssertTrue(RasterFormat.apng.isAnimated)
+        XCTAssertTrue(RasterFormat.webp.isAnimated)
+        // Common single-frame formats must NOT be flagged animated —
+        // otherwise the UI would show a meaningless animation picker.
+        XCTAssertFalse(RasterFormat.png.isAnimated)
+        XCTAssertFalse(RasterFormat.jpeg.isAnimated)
+        XCTAssertFalse(RasterFormat.tiff.isAnimated)
+    }
+
     // MARK: - AccurateRip SubmissionConfig (#381 / #400)
 
     /// Pins the `AccurateRipVerifier.SubmissionConfig` default-initialised
