@@ -57,6 +57,52 @@ public protocol RenderFarmTransportAdapter: Sendable {
     ) async throws
 }
 
+// MARK: - InsecureTransportOverride
+
+/// Capability token that authorises a `RenderFarmClient` to accept
+/// submissions over an insecure transport (plain HTTP).
+///
+/// Audit follow-up for issue #380. The previous shape exposed a bare
+/// `allowInsecureTransports: Bool` flag on `RenderFarmClient.Configuration`,
+/// which made it easy to write `allowInsecureTransports: true` in a
+/// single line and slip past code review. Requiring a token type at the
+/// construction site forces every caller to spell out a static factory
+/// call — `.developmentOnly(acknowledgement: ...)` — that is hard to
+/// miss in a diff and gets surfaced in audit logs.
+///
+/// The token is intentionally not `Codable` and never crosses the wire:
+/// the insecure-transport policy is enforced by the *client* before it
+/// hands a submission to the transport adapter. Agents make their own
+/// independent decision about whether they will accept plain HTTP.
+public struct InsecureTransportOverride: Sendable {
+
+    /// Human-readable rationale for granting the override. Surfaced in
+    /// the validation error path, log lines, and UI warnings so that
+    /// reviewers can see *why* the override was granted at every site.
+    public let acknowledgement: String
+
+    /// Private initialiser keeps `InsecureTransportOverride` un-constructable
+    /// outside of the documented factory below.
+    private init(acknowledgement: String) {
+        self.acknowledgement = acknowledgement
+    }
+
+    /// The only path to obtain an override. The factory is deliberately
+    /// named `developmentOnly` so the word "development" appears at every
+    /// call site that turns plain HTTP on — an obvious static review
+    /// signal that no innocuous-sounding alternative exists for production.
+    ///
+    /// - Parameter acknowledgement: A short rationale (e.g. "local dev
+    ///   loopback, no real credentials"). Stored on the override and
+    ///   echoed in the rejection error message when the override is
+    ///   missing.
+    public static func developmentOnly(
+        acknowledgement: String
+    ) -> InsecureTransportOverride {
+        InsecureTransportOverride(acknowledgement: acknowledgement)
+    }
+}
+
 // MARK: - RenderFarmClient
 
 /// Primary client type used by the CLI and the macOS UI to talk to the
@@ -67,21 +113,33 @@ public final class RenderFarmClient: @unchecked Sendable {
     // MARK: Configuration
 
     public struct Configuration: Sendable {
-        /// Allow plaintext HTTP (discouraged; for local development only).
-        public var allowInsecureTransports: Bool
+        /// Capability token authorising plain HTTP submissions. `nil`
+        /// (the default) means insecure transports are refused. Set this
+        /// to `.developmentOnly(acknowledgement: …)` if and only if you
+        /// genuinely intend to allow plain HTTP — see
+        /// `InsecureTransportOverride` for the rationale.
+        public var insecureTransportOverride: InsecureTransportOverride?
         /// Bonjour discovery auto-refresh interval in seconds.
         public var discoveryIntervalSeconds: TimeInterval
         /// Chunk size for source uploads, in bytes.
         public var chunkSizeBytes: UInt64
 
         public init(
-            allowInsecureTransports: Bool = false,
+            insecureTransportOverride: InsecureTransportOverride? = nil,
             discoveryIntervalSeconds: TimeInterval = 30,
             chunkSizeBytes: UInt64 = RenderFarmProtocol.defaultChunkSizeBytes
         ) {
-            self.allowInsecureTransports = allowInsecureTransports
+            self.insecureTransportOverride = insecureTransportOverride
             self.discoveryIntervalSeconds = discoveryIntervalSeconds
             self.chunkSizeBytes = chunkSizeBytes
+        }
+
+        /// Whether this configuration permits plain HTTP. Read-only
+        /// convenience for callers that just need a boolean (e.g. UI
+        /// warning banners). Equivalent to
+        /// `insecureTransportOverride != nil`.
+        public var allowsInsecureTransports: Bool {
+            insecureTransportOverride != nil
         }
     }
 
@@ -135,11 +193,20 @@ public final class RenderFarmClient: @unchecked Sendable {
 
     // MARK: Submission
 
-    /// Refuses insecure transports unless explicitly allowed.
+    /// Refuses insecure transports unless an `InsecureTransportOverride`
+    /// is present in the configuration. The override-and-reject path is
+    /// the only mechanism by which a `.plainHTTP` submission can reach
+    /// the transport adapter, so the policy is enforced exactly once,
+    /// here at the boundary.
     public func validate(submission: RenderFarmJobSubmission) throws {
-        if submission.transport == .plainHTTP && !configuration.allowInsecureTransports {
+        guard submission.transport == .plainHTTP else { return }
+        guard configuration.insecureTransportOverride != nil else {
             throw RenderFarmError.unsupportedTransport(
-                "plainHTTP requires Configuration.allowInsecureTransports = true"
+                "plainHTTP refused: RenderFarmClient.Configuration was "
+                + "constructed without an `InsecureTransportOverride`. "
+                + "Pass `.developmentOnly(acknowledgement: …)` if and "
+                + "only if this submission is on a trusted loopback or "
+                + "isolated development network."
             )
         }
     }

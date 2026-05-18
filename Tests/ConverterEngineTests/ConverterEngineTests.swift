@@ -10580,11 +10580,16 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertThrowsError(try client.validate(submission: submission))
     }
 
-    /// Insecure transports are accepted when configuration allows.
+    /// Insecure transports are accepted when an explicit
+    /// `InsecureTransportOverride` token is supplied.
     func test_renderFarm_insecureTransportAllowedWhenConfigured() {
         let client = RenderFarmClient(
             transport: FakeRenderFarmTransport(),
-            configuration: RenderFarmClient.Configuration(allowInsecureTransports: true)
+            configuration: RenderFarmClient.Configuration(
+                insecureTransportOverride: .developmentOnly(
+                    acknowledgement: "loopback test"
+                )
+            )
         )
         let submission = RenderFarmJobSubmission(
             agentId: UUID(),
@@ -10595,6 +10600,42 @@ final class ConverterEngineTests: XCTestCase {
             transport: .plainHTTP
         )
         XCTAssertNoThrow(try client.validate(submission: submission))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Issue #380: InsecureTransportOverride required for plainHTTP
+    // -----------------------------------------------------------------
+    //
+    // The audit asked for the .plainHTTP path to be gated by an explicit
+    // capability token rather than a bare boolean flag. The tests below
+    // pin two of the resulting invariants in place so a future refactor
+    // can't quietly bring the old "allowInsecureTransports: true" idiom
+    // back.
+
+    /// Verifies the default configuration provides no override token —
+    /// the only safe default the type system can encode for this enum.
+    func test_renderFarm_defaultConfiguration_hasNoInsecureOverride() {
+        let config = RenderFarmClient.Configuration()
+        XCTAssertNil(config.insecureTransportOverride)
+        XCTAssertFalse(config.allowsInsecureTransports)
+    }
+
+    /// Verifies an override token carries its acknowledgement string and
+    /// flips `allowsInsecureTransports` on. This is the convenience
+    /// surface the UI uses to render a warning banner without needing to
+    /// peek at the token directly.
+    func test_renderFarm_developmentOnlyOverride_recordsAcknowledgement() {
+        let token = InsecureTransportOverride.developmentOnly(
+            acknowledgement: "local loopback, no real credentials"
+        )
+        let config = RenderFarmClient.Configuration(
+            insecureTransportOverride: token
+        )
+        XCTAssertTrue(config.allowsInsecureTransports)
+        XCTAssertEqual(
+            config.insecureTransportOverride?.acknowledgement,
+            "local loopback, no real credentials"
+        )
     }
 }
 

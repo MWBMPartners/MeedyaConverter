@@ -116,8 +116,10 @@ public enum RenderFarmTransport: String, Codable, Sendable, CaseIterable {
     /// LAN use only — the agent binds a self-signed certificate that the
     /// client pins by SHA-256 fingerprint on first connect.
     case tls
-    /// Plain HTTP + shared secret. Insecure; only available when
-    /// `RenderFarmClient.allowInsecureTransports` is set for development.
+    /// Plain HTTP + shared secret. Insecure; only available when the
+    /// client's `RenderFarmClient.Configuration` carries an
+    /// `InsecureTransportOverride` token. See issue #380 for the audit
+    /// follow-up that introduced the token.
     case plainHTTP
 }
 
