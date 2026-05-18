@@ -71,6 +71,10 @@ struct SettingsView: View {
                     MetadataSettingsTab()
                 }
 
+                Tab("Audio CD", systemImage: "opticaldisc") {
+                    AccurateRipSettingsTab()
+                }
+
                 Tab("Watch Folder", systemImage: "eye") {
                     WatchFolderView()
                 }
@@ -333,6 +337,127 @@ struct MetadataSettingsTab: View {
             Text("Bypassing MeedyaSuite-core. Using the built-in providers "
                  + "even when suite-core is linked.")
         }
+    }
+}
+
+// MARK: - AccurateRipSettingsTab (#381 / #400)
+//
+// Exposes the user-facing settings for AccurateRip submission. AccurateRip
+// is a community database that lets CD rippers verify their rips against
+// thousands of other users' rips of the same disc — a near-certain way to
+// catch read errors, jitter, or offset issues that defeat checksum-only
+// verification. Submitting our own verified rips back to the database
+// keeps the community dataset growing.
+//
+// The submission API is in `AccurateRipVerifier.SubmissionConfig`:
+//
+//   enabled:     Bool   - master opt-in (default false; submission is opt-in
+//                         per AccurateRip's terms)
+//   driveModel:  String - exact drive model string (used by AccurateRip
+//                         to bucket results by drive)
+//   driveOffset: Int    - per-drive read offset in samples; without this
+//                         the rip can be bit-perfect but offset from the
+//                         reference, producing a non-match
+//   softwareId:  String - identifies the ripping software (default
+//                         "MeedyaConverter"; AccurateRip uses this in
+//                         user-agent strings and statistics)
+//
+// Persistence: four `@AppStorage` keys mirroring the struct fields.
+// Engine consumers (the rip pipeline) read the keys and assemble a
+// `SubmissionConfig` at submission time. Keeping persistence keyed
+// per-field rather than as a JSON-encoded blob means a future addition
+// to `SubmissionConfig` doesn't invalidate the user's existing settings.
+
+/// AccurateRip submission preferences.
+struct AccurateRipSettingsTab: View {
+
+    /// Master opt-in. AccurateRip submission is off by default; users
+    /// must consciously opt in (matching the engine's
+    /// `SubmissionConfig.init` default of `false`).
+    @AppStorage("accurateRip.enabled") private var enabled: Bool = false
+
+    /// Drive model string. Persisted as-typed; we don't try to validate
+    /// against a known-drives list because the AccurateRip table is
+    /// large and updated separately from the app.
+    @AppStorage("accurateRip.driveModel") private var driveModel: String = ""
+
+    /// Drive read offset in samples. The acceptance criteria pin the
+    /// range to ±500; in practice most drives are within ±200, but
+    /// some outliers do exist on the AccurateRip drive-offset table.
+    @AppStorage("accurateRip.driveOffset") private var driveOffset: Int = 0
+
+    /// Software identifier sent with submissions. Defaulted to
+    /// "MeedyaConverter" to match the engine's `SubmissionConfig` default
+    /// — pinned via a test in `ConverterEngineTests`.
+    @AppStorage("accurateRip.softwareId") private var softwareId: String = "MeedyaConverter"
+
+    var body: some View {
+        Form {
+            Section("AccurateRip") {
+                // Master toggle. Gates the rest of the form.
+                Toggle(
+                    "Submit verified rips to AccurateRip database",
+                    isOn: $enabled
+                )
+                .accessibilityLabel(
+                    "Enable submission of verified Audio CD rips to the "
+                    + "AccurateRip database"
+                )
+                .help(
+                    "When enabled, MeedyaConverter contributes successfully-"
+                    + "verified rips back to the AccurateRip community "
+                    + "database. Disabled by default; opt-in only."
+                )
+
+                // Subordinate fields. We render them at full visibility
+                // regardless of the master toggle but `.disabled` them
+                // when it's off — that way users can see what the
+                // controls look like before opting in, and don't accidentally
+                // type credentials into a non-functional field.
+                TextField(
+                    "Drive model",
+                    text: $driveModel,
+                    prompt: Text("e.g. PIONEER BD-RW BDR-XS07")
+                )
+                .accessibilityLabel("Optical drive model name")
+                .disabled(!enabled)
+
+                Stepper(
+                    value: $driveOffset,
+                    in: -500...500,
+                    step: 1
+                ) {
+                    HStack {
+                        Text("Read offset")
+                        Spacer()
+                        Text("\(driveOffset > 0 ? "+" : "")\(driveOffset) samples")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .accessibilityLabel("Drive read offset in samples")
+                .disabled(!enabled)
+
+                TextField(
+                    "Software identifier",
+                    text: $softwareId,
+                    prompt: Text("MeedyaConverter")
+                )
+                .accessibilityLabel("Software identifier sent with submissions")
+                .disabled(!enabled)
+
+                // Help line linking to the AccurateRip drive-offset table.
+                // Mandated by the #381 spec — users without their drive
+                // offset would otherwise submit non-matching rips.
+                Link(
+                    "Find your drive's read offset on accuraterip.com",
+                    destination: URL(string: "https://www.accuraterip.com/driveoffsets.htm")!
+                )
+                .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Audio CD")
     }
 }
 

@@ -10532,6 +10532,49 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - AccurateRip SubmissionConfig (#381 / #400)
+
+    /// Pins the `AccurateRipVerifier.SubmissionConfig` default-initialised
+    /// values against the AppStorage defaults baked into
+    /// `AccurateRipSettingsTab`. The UI assumes that constructing a
+    /// `SubmissionConfig()` with no arguments produces the same values
+    /// the AppStorage keys default to — drift between the two would mean
+    /// a user who has never opened the settings tab gets a config that
+    /// silently differs from what an engine consumer using the type's
+    /// default-init would produce.
+    func test_accurateRipSubmissionConfig_defaultsMatchUIAppStorage() {
+        let defaults = AccurateRipVerifier.SubmissionConfig()
+        XCTAssertFalse(defaults.enabled,
+                       "UI master toggle defaults to off — opt-in only")
+        XCTAssertEqual(defaults.driveModel, "",
+                       "UI driveModel TextField defaults to empty")
+        XCTAssertEqual(defaults.driveOffset, 0,
+                       "UI driveOffset Stepper defaults to 0")
+        XCTAssertEqual(defaults.softwareId, "MeedyaConverter",
+                       "UI softwareId TextField defaults to 'MeedyaConverter'")
+    }
+
+    /// Verifies the SubmissionConfig round-trips through JSON. The four
+    /// AppStorage keys persist the individual fields separately, but a
+    /// future migration that stores the assembled struct as a single
+    /// JSON blob (or pushes it to a remote profile sync) needs this to
+    /// keep working. Pin it now.
+    func test_accurateRipSubmissionConfig_codableRoundTrip() throws {
+        let original = AccurateRipVerifier.SubmissionConfig(
+            enabled: true,
+            driveModel: "PIONEER BD-RW BDR-XS07",
+            driveOffset: 102,
+            softwareId: "MeedyaConverter"
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder()
+            .decode(AccurateRipVerifier.SubmissionConfig.self, from: data)
+        XCTAssertEqual(decoded.enabled, true)
+        XCTAssertEqual(decoded.driveModel, "PIONEER BD-RW BDR-XS07")
+        XCTAssertEqual(decoded.driveOffset, 102)
+        XCTAssertEqual(decoded.softwareId, "MeedyaConverter")
+    }
+
     // MARK: - SuiteCoreMetadataBackend (#371 / #381 / #398)
 
     /// `SuiteCoreMetadataBackend` is persisted as its rawValue String via
