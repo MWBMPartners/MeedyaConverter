@@ -3178,6 +3178,109 @@ final class ConverterEngineTests: XCTestCase {
     }
 
     // -----------------------------------------------------------------
+    // MARK: - Issue #380: FTP credentials via curl config file
+    // -----------------------------------------------------------------
+    //
+    // The audit follow-up replaced `-u user:pass` (visible in `ps aux`)
+    // with `-K <path>` reading from a 0600-permissioned config file. The
+    // tests below verify the three security-relevant invariants:
+    //
+    //   1. The on-disk config file has POSIX mode 0600.
+    //   2. The credentials directive escapes embedded `"` and `\` so a
+    //      malicious password cannot break out of the quoted form.
+    //   3. The argument array no longer contains `-u` or any substring
+    //      that includes the plaintext password.
+
+    /// Verifies the FTP credentials file is written with `0600` perms and
+    /// contains a properly escaped `user` directive.
+    func test_sftpUploader_ftpCredentialsConfig_isOwnerReadableOnly() throws {
+        // Use a password containing the two characters that must be
+        // escaped for curl's quoted config syntax — `\` and `"`.
+        let config = FTPServerConfig(
+            host: "ftp.example.com",
+            port: 21,
+            username: "alice",
+            password: "p\"ass\\word",
+            useTLS: false,
+            remotePath: "/incoming",
+            label: "Test"
+        )
+
+        let url = try SFTPUploader.writeFTPCredentialsConfig(config: config)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // ---- Perms must be exactly 0600 (owner rw, no group/other) ----
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let perms = attrs[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600,
+                       "FTP credentials file must be 0600 to keep "
+                       + "credentials unreadable by other local users.")
+
+        // ---- The file lives in the system temp dir, not the cwd ----
+        let tempPath = FileManager.default.temporaryDirectory
+            .standardizedFileURL.path
+        XCTAssertTrue(url.standardizedFileURL.path.hasPrefix(tempPath),
+                      "Credentials file must live under the temp "
+                      + "directory, not in the project working tree.")
+
+        // ---- Contents: backslash and double quote are escaped ----
+        let body = try String(contentsOf: url, encoding: .utf8)
+        // Backslashes are doubled, then the embedded `"` is `\"`.
+        // The full expected line is:
+        //     user = "alice:p\"ass\\word"
+        XCTAssertEqual(body, "user = \"alice:p\\\"ass\\\\word\"\n",
+                       "Credentials directive must escape `\\` and `\"` "
+                       + "to prevent password breakout from the quoted "
+                       + "config value.")
+    }
+
+    /// Verifies the curl argument array references `-K <path>` and no
+    /// longer carries `-u user:pass` (the pre-#380 form that exposed
+    /// credentials to `ps aux`).
+    func test_sftpUploader_ftpUploadArguments_useConfigFileNotInlineCreds() {
+        let config = FTPServerConfig(
+            host: "ftp.example.com",
+            port: 21,
+            username: "alice",
+            password: "supersecret",
+            useTLS: true,
+            remotePath: "/incoming",
+            label: "Test"
+        )
+        let configPath = "/tmp/fake-credentials.curlrc"
+
+        let args = SFTPUploader.buildFTPUploadArguments(
+            localPath: "/tmp/video.mp4",
+            config: config,
+            credentialsConfigPath: configPath
+        )
+
+        // ---- `-K <path>` must be present and adjacent ----
+        guard let kIndex = args.firstIndex(of: "-K") else {
+            return XCTFail("Expected `-K` flag in curl arguments.")
+        }
+        XCTAssertLessThan(kIndex + 1, args.count,
+                          "`-K` must be followed by the config path.")
+        XCTAssertEqual(args[kIndex + 1], configPath)
+
+        // ---- `-u` (inline credentials) must NOT appear ----
+        XCTAssertFalse(args.contains("-u"),
+                       "Inline `-u user:pass` is forbidden — credentials "
+                       + "must come from the `-K` config file.")
+
+        // ---- Plaintext password must not appear anywhere in argv ----
+        XCTAssertFalse(args.contains(where: { $0.contains("supersecret") }),
+                       "Plaintext password leaked into argv; this would "
+                       + "be visible via `ps aux`.")
+
+        // ---- TLS settings still applied ----
+        XCTAssertTrue(args.contains("--ssl-reqd"),
+                      "FTPS uploads must still pass --ssl-reqd.")
+        XCTAssertTrue(args.contains(where: { $0.hasPrefix("ftps://") }),
+                      "FTPS uploads must use the ftps:// URL scheme.")
+    }
+
+    // -----------------------------------------------------------------
     // MARK: - Phase 15: Media Metadata Lookup
     // -----------------------------------------------------------------
 
