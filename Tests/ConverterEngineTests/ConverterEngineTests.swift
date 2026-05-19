@@ -10828,6 +10828,146 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertNil(SuiteCoreMetadataBackend(rawValue: ""))
     }
 
+    // MARK: - SubtitleTonemapPipeline (#369 follow-up)
+
+    /// Codec → extension mapping is the entry-point of the whole
+    /// pipeline; pin the supported codecs explicitly so a future
+    /// engine-side change can't silently break the call site.
+    func test_subtitleTonemapPipeline_codecToExtensionMapping() {
+        // Supported codecs.
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "hdmv_pgs_subtitle"),
+            "sup"
+        )
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "pgs"),
+            "sup"
+        )
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "ass"),
+            "ass"
+        )
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "ssa"),
+            "ass"
+        )
+        // Case-insensitive lookup.
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "HDMV_PGS_SUBTITLE"),
+            "sup"
+        )
+        // Deferred / unsupported codecs return nil so the pipeline
+        // skips them rather than producing garbage output.
+        XCTAssertNil(SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "dvd_subtitle"))
+        XCTAssertNil(SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "vobsub"))
+        XCTAssertNil(SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "dvb_subtitle"))
+        XCTAssertNil(SubtitleTonemapPipeline.subtitleFileExtension(forCodec: "srt"))
+    }
+
+    /// Candidate selection: each short-circuit must produce an empty
+    /// list. These are the four early-return cases that protect SDR
+    /// encodes from accidentally invoking a binary they don't need.
+    func test_subtitleTonemapPipeline_candidateStreams_shortCircuits() {
+        let url = URL(fileURLWithPath: "/tmp/test.mkv")
+        let pgsSub = MediaStream(
+            streamIndex: 2,
+            streamType: .subtitle,
+            codecName: "hdmv_pgs_subtitle"
+        )
+        let hdrVideo = MediaStream(
+            streamIndex: 0,
+            streamType: .video,
+            hdrFormats: [.hdr10]
+        )
+        let file = MediaFile(
+            fileURL: url,
+            streams: [hdrVideo, pgsSub]
+        )
+        let cfg = SubtitleTonemapConfig()
+
+        // 1. nil config → user has not opted in.
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.candidateStreams(
+                in: file, config: nil, wrapperAvailable: true
+            ).count,
+            0
+        )
+
+        // 2. SDR source → nothing to tone-map against.
+        let sdrVideo = MediaStream(streamIndex: 0, streamType: .video)
+        let sdrFile = MediaFile(fileURL: url, streams: [sdrVideo, pgsSub])
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.candidateStreams(
+                in: sdrFile, config: cfg, wrapperAvailable: true
+            ).count,
+            0
+        )
+
+        // 3. Wrapper binary unavailable → skip rather than fail.
+        XCTAssertEqual(
+            SubtitleTonemapPipeline.candidateStreams(
+                in: file, config: cfg, wrapperAvailable: false
+            ).count,
+            0
+        )
+
+        // 4. All preconditions met → returns the candidate.
+        let candidates = SubtitleTonemapPipeline.candidateStreams(
+            in: file, config: cfg, wrapperAvailable: true
+        )
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.streamIndex, 2)
+    }
+
+    /// Codec filtering: a file with a mix of supported and unsupported
+    /// subtitle codecs should yield only the supported ones, preserving
+    /// source order. Protects the assumption that the pipeline emits a
+    /// 1:1 correspondence with the actually-tonemappable streams.
+    func test_subtitleTonemapPipeline_candidateStreams_filtersByCodec() {
+        let url = URL(fileURLWithPath: "/tmp/test.mkv")
+        let hdrVideo = MediaStream(
+            streamIndex: 0,
+            streamType: .video,
+            hdrFormats: [.hdr10]
+        )
+        let streams: [MediaStream] = [
+            hdrVideo,
+            MediaStream(streamIndex: 1, streamType: .subtitle, codecName: "srt"),       // unsupported (text)
+            MediaStream(streamIndex: 2, streamType: .subtitle, codecName: "hdmv_pgs_subtitle"), // supported
+            MediaStream(streamIndex: 3, streamType: .subtitle, codecName: "dvd_subtitle"),       // deferred
+            MediaStream(streamIndex: 4, streamType: .subtitle, codecName: "ass"),                // supported
+        ]
+        let file = MediaFile(fileURL: url, streams: streams)
+        let cfg = SubtitleTonemapConfig()
+
+        let candidates = SubtitleTonemapPipeline.candidateStreams(
+            in: file, config: cfg, wrapperAvailable: true
+        )
+        XCTAssertEqual(candidates.map(\.streamIndex), [2, 4],
+                       "Only supported codecs should pass, in source order")
+    }
+
+    /// FFmpeg extraction args: the pipeline must emit the exact six-
+    /// argument form that pairs with `subtitle_tonemap`'s expected
+    /// input layout. A drift here would produce malformed extraction
+    /// commands that fail at runtime.
+    func test_subtitleTonemapPipeline_extractionArgumentsAreStable() {
+        let args = SubtitleTonemapPipeline.ffmpegExtractionArguments(
+            inputPath: "/tmp/source.mkv",
+            outputPath: "/tmp/extracted.sup",
+            streamIndex: 2,
+            outputFormat: "sup"
+        )
+        XCTAssertEqual(args, [
+            "-y",
+            "-i", "/tmp/source.mkv",
+            "-map", "0:2",
+            "-c:s", "copy",
+            "-f", "sup",
+            "/tmp/extracted.sup",
+        ])
+    }
+
     // MARK: - SubtitleTonemapWrapper (#369)
 
     /// Pins the SubtitleTonemapConfig default-initialised values against
