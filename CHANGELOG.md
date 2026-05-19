@@ -13,6 +13,103 @@
 
 ## [Unreleased]
 
+### Added -- 2026-05-18 (UI gap closure for #381 + audit follow-ups)
+
+- **Subtitle tone-mapping UI** -- `OutputSettingsView` gains a new
+  Subtitles section with a master toggle, HDR source profile picker,
+  target luminance stepper, and preserve-alpha toggle. Bound to a new
+  optional `EncodingProfile.subtitleTonemap: SubtitleTonemapConfig?`.
+  (PR #397, addresses #396 / part of #381)
+- **MeedyaSuite-core metadata backend UI** -- new "Metadata" tab in
+  Settings → Encoding with a picker over `SuiteCoreMetadataBackend`,
+  AppStorage persistence, and a live status line. The `.suiteCore`
+  option is rendered as disabled when `SuiteCoreAvailability.isAvailable`
+  is false. (PR #399, addresses #398 / part of #381)
+- **AccurateRip submission UI** -- new "Audio CD" tab in Settings →
+  Encoding with toggle + drive model + read offset stepper (±500
+  samples) + software identifier + Link to the AccurateRip drive-offset
+  table. Subordinate fields are `.disabled` when the master toggle is
+  off. (PR #401, addresses #400 / part of #381)
+- **Vector Conversion UI** -- new "Vector Conversion" view under the
+  Tools sidebar, bound to `RasterToVectorConfig` with Input/Preset/
+  Tracing/Alpha/Animation/Other sections. Preset auto-drives tracing
+  mode + colour count except for `.custom`. Animation section only
+  renders when input format is animated. (PR #403, addresses #402 /
+  part of #381)
+- **ProRes → Vector UI** -- new "ProRes to Vector" view under the
+  Tools sidebar, bound to `ProResToVectorConfig` with Source/Alpha/
+  embedded-tracing-editor/Animation/Assembly/Warning sections. Reuses
+  the new factored `RasterToVectorConfigEditor`. Output-size warning
+  fires when `shouldWarnAboutOutputSize(...)` returns true.
+  (PR #405, addresses #404 / part of #381)
+- **Render Farm settings UI** -- new "Render Farm" tab in Settings →
+  Services with insecure-transport toggle + acknowledgement, Bonjour
+  discovery interval stepper, chunk size segmented picker (1/4/16/64
+  MiB), agents list with discovered/manual badges, and an Add-agent
+  modal sheet. AppStorage-backed today; engine consumer reads the keys
+  when #346 transport lands. (PR #407, addresses #406 / part of #381)
+
+### Fixed -- 2026-05-18 (release.yml stabilisation)
+
+- **Keychain tests in release-mode CI** -- a fresh GitHub Actions
+  `macos-15` runner has no unlocked default user keychain, causing all
+  four `APIKeyManagerKeychainTests` cases to report empty secrets on
+  hydrate. The tests now probe Keychain round-trip in `setUpWithError`
+  and `XCTSkip` cleanly when persistence is unavailable, instead of
+  falsely failing. (PR #394)
+- **release.yml changelog extraction on BSD sed** -- the trailing-
+  blank-strip in `scripts/extract-changelog.sh` used the GNU-sed idiom
+  `-e :a -e '/^\n*$/{$d;N;ba}'`, which BSD sed (macOS default) rejects
+  with "unexpected EOF (pending }'s)". Replaced with portable awk that
+  buffers all lines, tracks the last non-blank, and emits up to that
+  point. (PR #395)
+- **AppIcon asset catalog** -- previously contained only `app-icon.svg`,
+  which SPM's asset-catalog compiler does not consume at multiple sizes,
+  producing a built bundle with a generic/missing icon. Rasterized PNGs
+  at the seven distinct macOS sizes (16/32/64/128/256/512/1024) added
+  to `AppIcon.appiconset/`. `scripts/export-icons.sh` extended to keep
+  the catalog in sync on regeneration. (PR #385)
+
+### Security -- 2026-05-18 (#380 audit closure)
+
+All four deferred items from the #380 security + memory audit closed:
+
+- **FTP credentials no longer on curl argv** -- `SFTPUploader` now writes
+  a `0600`-permissioned temp config file consumed via `curl -K <path>`;
+  credentials no longer appear in `ps aux` for the duration of an upload.
+  (PR #382 commit 53ba286)
+- **API key secrets moved to Keychain** -- `APIKeyManager` persistence
+  now splits metadata (v2 envelope on disk) from secrets (kSecClassGeneric-
+  Password, one item per `(provider, label)`). Legacy `[StoredAPIKey]`
+  JSON files are auto-migrated on first load. (PR #382 commit 34d7987)
+- **TempFileManager orphan cleanup on init** -- new
+  `cleanupOrphansOnInit: Bool = true` parameter so production gets
+  defensive cleanup for free; tests can opt out. (PR #382 commit ccdc46d)
+- **RenderFarmClient `.plainHTTP` gated by InsecureTransportOverride
+  token** -- replaces the bare `allowInsecureTransports: Bool` flag
+  with a capability-token type whose factory forces every override
+  site to write `.developmentOnly(acknowledgement: …)` — a static
+  review signal. (PR #382 commit 750aaf5)
+
+### Operations -- 2026-05-18
+
+- **TestFlight workflow guardrails** -- `testflight.yml`'s `push.tags`
+  trigger fired unexpectedly on `v0.1.0-rc.1` and uploaded build 244
+  to App Store Connect, where Apple's validators flagged seven ITMS
+  findings. The workflow is now `disabled_manually` at the registry
+  AND the `push.tags` trigger is commented out — both must be reversed
+  to resume automated submissions. Re-enable preconditions tracked in
+  #392. The seven ITMS items are tracked individually in #386-#391.
+  (PR #393)
+- **CodeQL workflow timeout** -- bumped `timeout-minutes` from 45 to
+  75 after the post-#382 codebase growth started producing intermittent
+  cancel-on-timeout results. CodeQL is not a required branch-protection
+  check, so this is informational hygiene.
+- **Dependency Review workflow fix** -- removed the redundant
+  `deny-licenses` from `dependency-review.yml`; `actions/dependency-
+  review-action@v4` rejects passing both `allow-licenses` and
+  `deny-licenses`. (PR #382 commit d468ece)
+
 ### Added -- 2026-04-20 (integration batch #371–#378, #178)
 
 - **MeedyaSuite-core Swift Package integration scaffolding** -- `Package.swift`
