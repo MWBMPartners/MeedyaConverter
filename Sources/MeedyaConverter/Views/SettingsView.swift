@@ -98,7 +98,12 @@ struct SettingsView: View {
                     MediaServerSettingsView()
                 }
 
-                Tab("Render Farm", systemImage: "network") {
+                // `point.3.connected.trianglepath.dotted` rather than
+                // `network`: the latter is already used by the SFTP
+                // sidebar entry in the AppViewModel, and a distributed
+                // render farm is conceptually closer to a constellation
+                // of nodes than to a generic network link.
+                Tab("Render Farm", systemImage: "point.3.connected.trianglepath.dotted") {
                     RenderFarmSettingsTab()
                 }
 
