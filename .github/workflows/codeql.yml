@@ -38,7 +38,14 @@ jobs:
     name: Analyze Swift
     # macOS 15 runner already has Swift 6.3 preinstalled — no setup-swift needed
     runs-on: macos-15
-    timeout-minutes: 45
+    # Bumped from 45 → 75 after the post-#382 codebase growth started
+    # producing intermittent timeouts. The build-for-analysis step takes
+    # ~25 min on a cold runner; the analysis step adds another ~15 min
+    # on its own. 45 min was leaving roughly 5 min of margin before SPM
+    # cache restores, which fell off the cliff once the integration
+    # batch added ~3700 lines. See #382, #403, #405, #407 for the run
+    # IDs that hit the previous cap.
+    timeout-minutes: 75
 
     strategy:
       fail-fast: false

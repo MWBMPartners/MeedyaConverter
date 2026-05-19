@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-04-20
+> **Last Updated:** 2026-05-19
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -12,11 +12,35 @@
 
 | Metric | Value |
 | ------ | ----- |
-| **Current Version** | 0.1.0-alpha |
+| **Current Version** | 0.1.0-rc.3 (signed + notarized DMG published) |
+| **Last Release** | `v0.1.0-rc.3` (2026-05-18) -- direct distribution DMG + CLI tarball |
 | **Current Phase** | Phase 16 -- Polish and Distribution (ongoing) |
-| **Next Target** | Alpha 0.2 release |
-| **Overall Completion** | ~55% (core features implemented, advanced phases planned) |
-| **Active Work** | Documentation update, CLI API spec, integration testing |
+| **Next Target** | `v0.1.0` GA tag once rc.3 DMG passes Gatekeeper smoke-test |
+| **Overall Completion** | ~70% (#381 UI gap fully closed; engine + UI parity restored across the 2026-04-20 integration batch) |
+| **Active Work** | Awaiting rc.3 smoke-test sign-off; App Store compliance work (#386-#391) deferred until explicit re-enable per #392 |
+
+---
+
+## Recent milestones (2026-05-18 / -19)
+
+- **#382 integration batch merged** — Suite-core scaffolding (#371-#374),
+  subtitle tone-mapping (#369), render farm scaffolding (#346),
+  raster/vector engine (#376/#377), FFplay bundling (#378), App Store
+  metadata + runbook (#178). ~3700 lines, 21 commits.
+- **#380 security audit fully closed** — all four deferred items landed
+  (FTP creds → 0600 config file, API keys → Keychain, TempFileManager
+  orphan auto-cleanup, RenderFarmClient `.plainHTTP` → InsecureTransport-
+  Override token).
+- **#381 UI gap fully closed** — six new SwiftUI surfaces shipped:
+  Subtitles section in OutputSettingsView, Metadata + Audio CD +
+  Render Farm tabs in Settings, Vector Conversion + ProRes to Vector
+  views in the Tools sidebar.
+- **TestFlight workflow guardrails in place (#392/#393)** — automated
+  App Store submissions cannot fire on tag pushes until explicit
+  re-enable AND completion of #386-#391 ITMS findings.
+- **`v0.1.0-rc.3` published** — signed (Developer ID) and notarized
+  DMG + CLI tarball available at the GitHub Releases page. Smoke-test
+  pending on a clean Mac.
 
 ---
 
