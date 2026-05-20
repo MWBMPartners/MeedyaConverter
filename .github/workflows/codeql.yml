@@ -93,7 +93,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-spm-codeql-
             ${{ runner.os }}-spm-
