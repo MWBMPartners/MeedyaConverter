@@ -309,8 +309,8 @@ final class ConverterEngineTests: XCTestCase {
         builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
         builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
         builder.subtitleStreamActions = [
-            (streamIndex: 2, action: .passthrough),
-            (streamIndex: 3, action: .passthrough),
+            .init(streamIndex: 2, action: .passthrough),
+            .init(streamIndex: 3, action: .passthrough),
         ]
 
         let args = builder.build()
@@ -332,7 +332,7 @@ final class ConverterEngineTests: XCTestCase {
         builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
         let tonemapped = URL(fileURLWithPath: "/tmp/sub2.sup")
         builder.subtitleStreamActions = [
-            (streamIndex: 2, action: .replaceWith(tonemapped)),
+            .init(streamIndex: 2, action: .replaceWith(tonemapped)),
         ]
 
         let args = builder.build()
@@ -357,10 +357,10 @@ final class ConverterEngineTests: XCTestCase {
         let englishTonemapped = URL(fileURLWithPath: "/tmp/sub2.sup")
         let frenchTonemapped = URL(fileURLWithPath: "/tmp/sub4.sup")
         builder.subtitleStreamActions = [
-            (streamIndex: 2, action: .replaceWith(englishTonemapped)),
-            (streamIndex: 3, action: .drop),
-            (streamIndex: 4, action: .replaceWith(frenchTonemapped)),
-            (streamIndex: 5, action: .passthrough),
+            .init(streamIndex: 2, action: .replaceWith(englishTonemapped)),
+            .init(streamIndex: 3, action: .drop),
+            .init(streamIndex: 4, action: .replaceWith(frenchTonemapped)),
+            .init(streamIndex: 5, action: .passthrough),
         ]
 
         let args = builder.build()
@@ -395,7 +395,7 @@ final class ConverterEngineTests: XCTestCase {
             URL(fileURLWithPath: "/tmp/extra-b.mkv"),
         ]
         builder.subtitleStreamActions = [
-            (streamIndex: 2, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub.sup"))),
+            .init(streamIndex: 2, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub.sup"))),
         ]
 
         let args = builder.build()

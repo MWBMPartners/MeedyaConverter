@@ -194,7 +194,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// `SubtitleTonemapPipeline.run`) has produced a transformed
     /// version of that stream and the encoder should pull it from a
     /// separate file. `.drop` removes the stream from the output.
-    public enum SubtitleStreamAction: Sendable, Equatable {
+    public enum SubtitleStreamAction: Sendable, Equatable, Codable {
         /// Copy this stream straight through from input 0 (the source).
         case passthrough
         /// Substitute this stream with the contents of `URL`, which is
@@ -204,7 +204,23 @@ public struct FFmpegArgumentBuilder: Sendable {
         case drop
     }
 
-    /// Ordered list of `(sourceStreamIndex, action)` pairs that drives
+    /// One entry in `subtitleStreamActions`. A small struct rather than
+    /// a tuple so the surrounding `EncodingJobConfig` (which is
+    /// `Codable`) can synthesise its own Codable conformance — tuples
+    /// have no Codable support.
+    public struct SubtitleStreamActionEntry: Sendable, Equatable, Codable {
+        /// The source subtitle stream index this action applies to.
+        public var streamIndex: Int
+        /// What the encoder should do with that stream.
+        public var action: SubtitleStreamAction
+
+        public init(streamIndex: Int, action: SubtitleStreamAction) {
+            self.streamIndex = streamIndex
+            self.action = action
+        }
+    }
+
+    /// Ordered list of `(sourceStreamIndex, action)` entries that drives
     /// subtitle mapping when non-empty. When this is set, the existing
     /// `subtitlePassthrough` / `subtitleStreamIndex` fields are
     /// IGNORED in favour of this explicit per-stream layout.
@@ -221,7 +237,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// `EncodingEngine.encode(...)` populates this from the result of
     /// `SubtitleTonemapPipeline.run(...)` so HDR subtitle tone-mapping
     /// (#369) actually reaches the output.
-    public var subtitleStreamActions: [(streamIndex: Int, action: SubtitleStreamAction)] = []
+    public var subtitleStreamActions: [SubtitleStreamActionEntry] = []
 
     // MARK: - Per-Stream Audio Settings (Phase 3.2 / Issue #38)
 
