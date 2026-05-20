@@ -406,6 +406,52 @@ final class ConverterEngineTests: XCTestCase {
         XCTAssertFalse(s.contains("-map 2:s:0"))
     }
 
+    /// Integration test for the EncodingJobConfig → builder
+    /// `subtitleStreamActions` thread-through (#409 commit 3). Builds
+    /// arguments from a job that carries a populated action list and
+    /// asserts the resulting FFmpeg command line carries the right
+    /// `-i` and `-map` shape — protecting the pipeline → engine →
+    /// builder data flow that EncodingEngine.encode populates.
+    func test_encodingJobConfig_threadsSubtitleStreamActionsToBuilder() {
+        let profile = EncodingProfile(
+            name: "tonemap-integration",
+            videoCodec: .h265,
+            videoCRF: 22,
+            audioCodec: .aacLC,
+            audioBitrate: 160_000,
+            subtitlePassthrough: true,
+            containerFormat: .mkv
+        )
+        var config = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/source.mkv"),
+            outputURL: URL(fileURLWithPath: "/tmp/output.mkv"),
+            profile: profile
+        )
+        let tonemapped = URL(fileURLWithPath: "/tmp/subtitle-2-tonemapped.sup")
+        config.subtitleStreamActions = [
+            .init(streamIndex: 2, action: .replaceWith(tonemapped)),
+            .init(streamIndex: 3, action: .passthrough),
+        ]
+
+        let args = config.buildArguments()
+        let s = args.joined(separator: " ")
+
+        // The tonemapped subtitle file must be added as an `-i` input.
+        XCTAssertTrue(s.contains("-i /tmp/subtitle-2-tonemapped.sup"),
+                      "Replacement subtitle file must be added as an "
+                      + "additional FFmpeg input via -i")
+        // Stream 2 maps from input 1 (the replacement file), NOT from
+        // the source. Stream 3 still passes through from the source.
+        XCTAssertTrue(s.contains("-map 1:s:0"),
+                      "Replaced stream 2 maps from input 1")
+        XCTAssertTrue(s.contains("-map 0:s:3"),
+                      "Stream 3 still passes through from source")
+        // The legacy `-map 0:s?` glob must NOT appear when explicit
+        // actions are set.
+        XCTAssertFalse(s.contains("-map 0:s?"),
+                       "Explicit actions override the legacy glob")
+    }
+
     /// Verifies basic argument building with H.265/AAC.
     func test_argumentBuilder_basicH265() {
         var builder = FFmpegArgumentBuilder()
