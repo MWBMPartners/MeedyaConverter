@@ -278,6 +278,134 @@ final class ConverterEngineTests: XCTestCase {
     // MARK: - FFmpeg Argument Builder Tests
     // -----------------------------------------------------------------
 
+    // -- Subtitle stream actions (#409) -------------------------------
+    //
+    // The subtitleStreamActions field drives explicit per-source-stream
+    // subtitle mapping. These tests pin the resulting `-i` ordering
+    // and `-map` arguments so a future refactor cannot silently break
+    // the wiring between SubtitleTonemapPipeline and the encoder.
+
+    /// Empty subtitleStreamActions must leave existing passthrough
+    /// behaviour untouched — this is the backward-compat invariant for
+    /// every existing call site.
+    func test_argumentBuilder_subtitleActions_emptyKeepsLegacyBehaviour() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        builder.subtitlePassthrough = true
+
+        let args = builder.build()
+        // Should fall through to the legacy `-map 0:s?` glob.
+        let s = args.joined(separator: " ")
+        XCTAssertTrue(s.contains("-map 0:s?"),
+                      "Empty subtitleStreamActions must keep legacy "
+                      + "passthrough behaviour (-map 0:s?)")
+    }
+
+    /// A single .passthrough action emits a specific -map per stream
+    /// index — replacing the loose `-map 0:s?` glob.
+    func test_argumentBuilder_subtitleActions_passthroughSpecificIndex() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        builder.subtitleStreamActions = [
+            (streamIndex: 2, action: .passthrough),
+            (streamIndex: 3, action: .passthrough),
+        ]
+
+        let args = builder.build()
+        let s = args.joined(separator: " ")
+        XCTAssertTrue(s.contains("-map 0:s:2"))
+        XCTAssertTrue(s.contains("-map 0:s:3"))
+        // The legacy glob must NOT appear when explicit actions are set.
+        XCTAssertFalse(s.contains("-map 0:s?"))
+    }
+
+    /// A .replaceWith action adds the file as an `-i` input and maps
+    /// from the replacement input rather than the source. The
+    /// replacement file's FFmpeg input index is `1 + additionalInputs
+    /// .count + replacementOrdinal` — pinned here because the encoder
+    /// pipeline relies on this ordering.
+    func test_argumentBuilder_subtitleActions_replaceWithAddsInputAndMaps() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        let tonemapped = URL(fileURLWithPath: "/tmp/sub2.sup")
+        builder.subtitleStreamActions = [
+            (streamIndex: 2, action: .replaceWith(tonemapped)),
+        ]
+
+        let args = builder.build()
+        let s = args.joined(separator: " ")
+        // Replacement file is added as -i AFTER inputURL.
+        XCTAssertTrue(s.contains("-i /tmp/in.mkv"))
+        XCTAssertTrue(s.contains("-i /tmp/sub2.sup"))
+        // Source's subtitle stream at index 2 is suppressed (no -map 0:s:2)
+        // and the replacement is mapped from input 1 instead.
+        XCTAssertFalse(s.contains("-map 0:s:2"))
+        XCTAssertTrue(s.contains("-map 1:s:0"))
+    }
+
+    /// Mixed actions across multiple streams must produce the right
+    /// input list AND `-map` directives in source-stream order. This
+    /// is the realistic case: one passthrough, one replacement, one
+    /// drop on a multi-language source.
+    func test_argumentBuilder_subtitleActions_mixedActionsCorrectMapping() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        let englishTonemapped = URL(fileURLWithPath: "/tmp/sub2.sup")
+        let frenchTonemapped = URL(fileURLWithPath: "/tmp/sub4.sup")
+        builder.subtitleStreamActions = [
+            (streamIndex: 2, action: .replaceWith(englishTonemapped)),
+            (streamIndex: 3, action: .drop),
+            (streamIndex: 4, action: .replaceWith(frenchTonemapped)),
+            (streamIndex: 5, action: .passthrough),
+        ]
+
+        let args = builder.build()
+        // Both replacement files appear as -i inputs (after source).
+        XCTAssertEqual(
+            args.filter { $0 == "-i" }.count,
+            3,
+            "Expected 3 -i flags: source + 2 replacement files"
+        )
+        // FFmpeg input indices: source=0, english=1, french=2.
+        // (drop has no input.) Pin the -map list shape.
+        let s = args.joined(separator: " ")
+        XCTAssertTrue(s.contains("-map 1:s:0"),
+                      "English tonemapped subtitle from input 1")
+        XCTAssertTrue(s.contains("-map 2:s:0"),
+                      "French tonemapped subtitle from input 2")
+        XCTAssertTrue(s.contains("-map 0:s:5"),
+                      "Stream 5 passes through from source")
+        // Dropped stream 3 has no -map.
+        XCTAssertFalse(s.contains("-map 0:s:3"))
+    }
+
+    /// When the caller already has unrelated `additionalInputs`, the
+    /// replacement input indices must be offset past them. Protects
+    /// the ordering contract documented on `subtitleStreamActions`.
+    func test_argumentBuilder_subtitleActions_replacementsOffsetByAdditionalInputs() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        builder.additionalInputs = [
+            URL(fileURLWithPath: "/tmp/extra-a.mkv"),
+            URL(fileURLWithPath: "/tmp/extra-b.mkv"),
+        ]
+        builder.subtitleStreamActions = [
+            (streamIndex: 2, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub.sup"))),
+        ]
+
+        let args = builder.build()
+        let s = args.joined(separator: " ")
+        // additionalInputs occupy 1 and 2 → replacement is input 3.
+        XCTAssertTrue(s.contains("-map 3:s:0"))
+        XCTAssertFalse(s.contains("-map 1:s:0"))
+        XCTAssertFalse(s.contains("-map 2:s:0"))
+    }
+
     /// Verifies basic argument building with H.265/AAC.
     func test_argumentBuilder_basicH265() {
         var builder = FFmpegArgumentBuilder()
