@@ -61,7 +61,29 @@ jobs:
       - name: Verify Swift version
         run: swift --version
 
-      # Step 3: Initialize CodeQL for the specified language
+      # Step 3: Cache SPM dependencies
+      #
+      # Without this, every CodeQL run rebuilds all SPM dependencies from
+      # scratch — the project is large enough that an unlucky cold runner
+      # can spend the entire 75-minute job budget on `swift build` alone
+      # and never reach the analysis step. Matching the cache key shape
+      # used by build.yml and release.yml so the three workflows share
+      # cache entries when Package.resolved is unchanged.
+      #
+      # Restore-keys is a prefix fallback: if no exact match for the
+      # current Package.resolved exists, take whatever recent macOS SPM
+      # cache is available. Partial reuse beats no reuse by a wide
+      # margin; SPM will rebuild only the affected dependencies.
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-codeql-
+            ${{ runner.os }}-spm-
+
+      # Step 4: Initialize CodeQL for the specified language
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -69,11 +91,11 @@ jobs:
           # Use extended security queries for comprehensive analysis
           queries: security-extended
 
-      # Step 4: Build the project (CodeQL needs to observe the build)
+      # Step 5: Build the project (CodeQL needs to observe the build)
       - name: Build for CodeQL analysis
         run: swift build
 
-      # Step 5: Run CodeQL analysis
+      # Step 6: Run CodeQL analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
