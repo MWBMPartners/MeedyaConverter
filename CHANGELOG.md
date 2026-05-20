@@ -13,6 +13,60 @@
 
 ## [Unreleased]
 
+### Added -- 2026-05-20 (subtitle tone-mapping end-to-end + workflow polish)
+
+- **Subtitle tone-mapping reaches the output bytes** -- the
+  OutputSettingsView toggle that landed in PR #397 was previously
+  cosmetic: the per-profile `subtitleTonemap` config was stored but
+  no encoding-pipeline code consumed it. PR #413 closes the loop in
+  five steps:
+    1. `FFmpegArgumentBuilder.SubtitleStreamAction` (passthrough /
+       replaceWith(URL) / drop) + `subtitleStreamActions` field
+       drives per-source-stream subtitle mapping when non-empty
+    2. Five unit tests for the builder
+    3. `EncodingJobConfig` threads `subtitleStreamActions` to the
+       builder (introduced `SubtitleStreamActionEntry` Codable struct)
+    4. `EncodingEngine.encode()` calls `SubtitleTonemapPipeline.run(...)`
+       as a pre-processing stage and populates
+       `enrichedJob.subtitleStreamActions` from the result
+    5. Integration test pinning the full data flow
+  (PR #413, closes #409 / completes the chain that started with #369
+  engine and #397 UI binding)
+
+### Fixed -- 2026-05-20 (workflow infrastructure)
+
+- **CodeQL workflow cancellations**: the 75-minute timeout cap was
+  insufficient on slow `macos-15` runners — same code completing in
+  24 minutes on one runner but cancelling at 77 minutes on another.
+  Diagnosis revealed CodeQL's Swift extractor re-instruments every
+  compile invocation, so SPM caching cannot short-circuit the
+  dominant cost. Timeout raised to 120 minutes for hardware-variance
+  headroom. (PR #412)
+- **SPM cache step in codeql.yml**: previously cold every run, now
+  matches the pattern in build.yml/release.yml. The cache itself
+  saves only ~30 s of SPM-download time but provides a baseline for
+  future tuning. (PR #411)
+- **SPM cache key was hashing a gitignored file**: all six workflows
+  used `hashFiles('Package.resolved')`, but Package.resolved is in
+  .gitignore and absent at runner checkout time — the hash was
+  always empty and every cache went to a single per-prefix bucket.
+  Fixed to `hashFiles('Package.swift', 'Package.resolved')` so the
+  always-tracked Package.swift drives discrimination today, and a
+  future policy change to commit Package.resolved adds exact-version
+  precision for free. Affects build.yml, beta-alpha.yml, codeql.yml,
+  dev-build.yml, release.yml, testflight.yml. (this batch)
+
+### Operations -- 2026-05-20
+
+- **Branch protection cleanup**: removed the PR-review requirement
+  on main, updated the required-status-check context name to match
+  what CI actually reports (`Build & Test (macOS)`), and rewrote the
+  "Protect main branch" repository ruleset to require the actual
+  check name rather than the template defaults (`Frontend
+  (ubuntu-latest)` / `Backend (ubuntu-latest)`) it had been carrying
+  since project creation. PRs now merge without `--admin` once
+  Build & Test passes.
+
 ### Added -- 2026-05-18 (UI gap closure for #381 + audit follow-ups)
 
 - **Subtitle tone-mapping UI** -- `OutputSettingsView` gains a new
