@@ -38,25 +38,27 @@ jobs:
     name: Analyze Swift
     # macOS 15 runner already has Swift 6.3 preinstalled — no setup-swift needed
     runs-on: macos-15
-    # Retained at 60 min as a safety net only. With build-mode: none the
-    # extractor no longer observes a full `swift build`, so the dominant
-    # cost is gone and 60 min should be ample. Previous escalations
-    # (75 → 120) were chasing a moving target; see the timeline below.
+    # Retained at 120 min as a safety net. With build-mode: autobuild
+    # CodeQL runs `xcodebuild`/`swift build` for us instead of our own
+    # explicit step, but the underlying instrumented-compile cost is
+    # the same — so the cap stays high to cover slow-runner cases.
     #
     # Timeline of CodeQL runs while diagnosing the variance:
     #   2026-05-19  id 26129098306  manual + 75 min cap  ✅ 26 min total
     #   2026-05-20  id 26124433339  manual + 75 min cap  ❌ cancelled at 75
     #   2026-05-20  id 26147778531  manual + 75 min cap  ❌ cancelled at 77
     #   2026-05-20  id 26176989617  manual + 120 min cap ❌ cancelled at 120
+    #   2026-05-20  id 26184254801  build-mode: none     ❌ Swift unsupports
     #
-    # Three escalating "fix" PRs (cache step #411, timeout bump #412,
-    # cache-key correction #414) all landed correctly but none moved
-    # the needle, because the bottleneck was CodeQL's Swift extractor
-    # re-instrumenting every compile invocation under macOS-runner
-    # hardware variance. Switching to build-mode: none removes the
-    # explicit build step and lets the extractor analyse source code
-    # directly — eliminating the runaway-build failure mode entirely.
-    timeout-minutes: 60
+    # PR #415 first tried `build-mode: none`; the CodeQL action
+    # rejected it for Swift at init time:
+    #   "Swift does not support the none build mode. Please try using
+    #    one of the following build modes instead: autobuild, manual."
+    # Falling back to `autobuild` lets CodeQL run its own build rather
+    # than our explicit step — semantically similar to manual but
+    # routes the build through CodeQL's wrapper, which is arguably
+    # better-instrumented and may reduce variance.
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
@@ -74,11 +76,12 @@ jobs:
 
       # Step 3: Cache SPM dependencies
       #
-      # Kept after the build-mode: none switch as a low-cost
-      # optimisation. The extractor's source-level analysis doesn't
-      # need a built .build/ tree, but the cache step is harmless
-      # (~4 s on miss, similar on hit) and lets us share keys with the
-      # other workflows that DO need a built tree.
+      # `build-mode: autobuild` (chosen in PR #415 after Swift rejected
+      # `build-mode: none`) DOES build the project — CodeQL routes
+      # `swift build` through its own wrapper rather than letting us
+      # run it directly. The cache therefore still helps cut SPM
+      # dependency download time on warm runners, same as in
+      # build.yml and release.yml.
       - name: Cache SPM dependencies
         uses: actions/cache@v4
         with:
@@ -88,32 +91,33 @@ jobs:
             ${{ runner.os }}-spm-codeql-
             ${{ runner.os }}-spm-
 
-      # Step 4: Initialize CodeQL with build-mode: none
+      # Step 4: Initialize CodeQL with build-mode: autobuild
       #
-      # build-mode: none tells CodeQL not to observe an explicit build
-      # and to analyse source files directly. For Swift this trades
-      # some analysis depth (the extractor cannot resolve compiler-
-      # synthesised symbols it would have seen during a real build)
-      # against complete elimination of the build-under-extractor
-      # variance that was cancelling our runs.
+      # `autobuild` lets CodeQL run the build for us (via its
+      # internal `xcodebuild`/`swift build` wrapper) rather than us
+      # running it explicitly via a "Build for CodeQL analysis" step.
+      # For SPM projects this is functionally similar to running
+      # `swift build` manually but routes through a CodeQL-managed
+      # wrapper that integrates more cleanly with the extractor.
       #
-      # If a future CodeQL action version rejects build-mode: none for
-      # Swift, switch to `build-mode: autobuild` (which lets CodeQL
-      # autobuild rather than running our explicit step) and restore
-      # the timeout to 120 min. That's a near-equivalent fallback.
+      # `build-mode: none` was tried first (it's the GitHub-blog-post-
+      # recommended path for compiled languages) but the CodeQL Swift
+      # extractor refused: "Swift does not support the none build mode.
+      # Please try using one of the following build modes instead:
+      # autobuild, manual." See PR #415 commit history.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: autobuild
           # Use extended security queries for comprehensive analysis
           queries: security-extended
 
       # Step 5: Run CodeQL analysis
       #
       # No explicit "Build for CodeQL analysis" step is needed under
-      # build-mode: none — the extractor handles its own source-level
-      # walk during the analyze step.
+      # `build-mode: autobuild` — the CodeQL action runs its own
+      # build during the analyze step.
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
