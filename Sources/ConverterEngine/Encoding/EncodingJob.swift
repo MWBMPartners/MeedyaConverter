@@ -111,6 +111,16 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// When `.pq`, PQ/HDR10 colour metadata is applied.
     public var hdrTransferFunction: HDRTransferFunction?
 
+    /// Per-source-stream subtitle handling (Issue #409). Populated by
+    /// `EncodingEngine.encode(...)` from the result of
+    /// `SubtitleTonemapPipeline.run(...)` so HDR subtitle tone-mapping
+    /// (#369) actually reaches the output.
+    ///
+    /// Empty by default — when empty, the FFmpegArgumentBuilder uses
+    /// its legacy `subtitlePassthrough`/`subtitleStreamIndex` behaviour
+    /// and no existing call site is affected.
+    public var subtitleStreamActions: [FFmpegArgumentBuilder.SubtitleStreamActionEntry] = []
+
     /// Timestamp when this job was created.
     public var createdAt: Date
 
@@ -159,6 +169,14 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.audioStreamIndex = audioStreamIndex
         builder.subtitleStreamIndex = subtitleStreamIndex
         builder.mapAllStreams = mapAllStreams
+
+        // Per-source-stream subtitle actions (Issue #409). When
+        // non-empty, takes precedence over the legacy
+        // subtitlePassthrough/subtitleStreamIndex pair (see
+        // FFmpegArgumentBuilder.buildStreamMapping for the override
+        // logic). Populated by EncodingEngine.encode(...) from the
+        // SubtitleTonemapPipeline result.
+        builder.subtitleStreamActions = subtitleStreamActions
 
         // Apply metadata
         builder.metadata = outputMetadata

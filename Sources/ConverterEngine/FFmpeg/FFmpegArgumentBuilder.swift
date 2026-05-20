@@ -184,6 +184,61 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Whether to disable all subtitle streams in output.
     public var disableSubtitles: Bool = false
 
+    // MARK: - Per-stream subtitle actions (Issue #409)
+
+    /// Per-source-stream subtitle handling action.
+    ///
+    /// Defaults to `.passthrough` when the source's subtitle stream
+    /// should be copied as-is from input 0. `.replaceWith(URL)` is set
+    /// when an upstream pre-processing step (currently
+    /// `SubtitleTonemapPipeline.run`) has produced a transformed
+    /// version of that stream and the encoder should pull it from a
+    /// separate file. `.drop` removes the stream from the output.
+    public enum SubtitleStreamAction: Sendable, Equatable, Codable {
+        /// Copy this stream straight through from input 0 (the source).
+        case passthrough
+        /// Substitute this stream with the contents of `URL`, which is
+        /// added to the FFmpeg invocation as an additional input.
+        case replaceWith(URL)
+        /// Suppress this stream entirely.
+        case drop
+    }
+
+    /// One entry in `subtitleStreamActions`. A small struct rather than
+    /// a tuple so the surrounding `EncodingJobConfig` (which is
+    /// `Codable`) can synthesise its own Codable conformance — tuples
+    /// have no Codable support.
+    public struct SubtitleStreamActionEntry: Sendable, Equatable, Codable {
+        /// The source subtitle stream index this action applies to.
+        public var streamIndex: Int
+        /// What the encoder should do with that stream.
+        public var action: SubtitleStreamAction
+
+        public init(streamIndex: Int, action: SubtitleStreamAction) {
+            self.streamIndex = streamIndex
+            self.action = action
+        }
+    }
+
+    /// Ordered list of `(sourceStreamIndex, action)` entries that drives
+    /// subtitle mapping when non-empty. When this is set, the existing
+    /// `subtitlePassthrough` / `subtitleStreamIndex` fields are
+    /// IGNORED in favour of this explicit per-stream layout.
+    ///
+    /// The order of entries is preserved in the resulting `-map`
+    /// arguments. Replacement URLs are appended to the FFmpeg input
+    /// list in encounter order, AFTER `inputURL` and
+    /// `additionalInputs` already configured by the caller — so a
+    /// replacement's FFmpeg input index is `1 + additionalInputs.count
+    /// + replacementOrdinal`.
+    ///
+    /// Empty by default; the existing builder behaviour is unchanged
+    /// for callers that do not opt in. The encoding pipeline at
+    /// `EncodingEngine.encode(...)` populates this from the result of
+    /// `SubtitleTonemapPipeline.run(...)` so HDR subtitle tone-mapping
+    /// (#369) actually reaches the output.
+    public var subtitleStreamActions: [SubtitleStreamActionEntry] = []
+
     // MARK: - Per-Stream Audio Settings (Phase 3.2 / Issue #38)
 
     /// Per-stream audio codec overrides, keyed by output audio stream index.
@@ -309,6 +364,15 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         for additionalInput in additionalInputs {
             args.append(contentsOf: ["-i", additionalInput.path])
+        }
+
+        // --- Subtitle replacement inputs (Issue #409) ---
+        // Each .replaceWith(url) action contributes one additional `-i`
+        // input here, in encounter order. The mapping code in
+        // `buildStreamMapping()` references these by their resulting
+        // input index (1 + additionalInputs.count + replacementOrdinal).
+        for replacement in subtitleReplacementInputs {
+            args.append(contentsOf: ["-i", replacement.path])
         }
 
         // --- Stream mapping ---
@@ -481,7 +545,14 @@ public struct FFmpegArgumentBuilder: Sendable {
                 args.append(contentsOf: ["-map", "0:a?"])
             }
 
-            if subtitlePassthrough {
+            // --- Subtitle mapping ---
+            // When `subtitleStreamActions` is non-empty it takes
+            // precedence over `subtitlePassthrough` / `subtitleStreamIndex`
+            // and drives subtitle mapping explicitly (Issue #409).
+            // Otherwise fall back to the legacy passthrough behaviour.
+            if !subtitleStreamActions.isEmpty {
+                args.append(contentsOf: buildSubtitleStreamActionMapping())
+            } else if subtitlePassthrough {
                 if let si = subtitleStreamIndex {
                     args.append(contentsOf: ["-map", "0:s:\(si)"])
                 } else {
@@ -491,6 +562,44 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         return args
+    }
+
+    /// Map subtitle streams according to the explicit per-stream action
+    /// layout in `subtitleStreamActions`. Replacement inputs are
+    /// referenced by the input index they were declared at in `build()`.
+    private func buildSubtitleStreamActionMapping() -> [String] {
+        // The first replacement input's FFmpeg `-i` index is one past
+        // `inputURL` (index 0) plus the caller-provided
+        // `additionalInputs`. Subsequent replacements consume the next
+        // index in source-stream-action order.
+        let firstReplacementInputIndex = 1 + additionalInputs.count
+        var nextReplacementInput = firstReplacementInputIndex
+        var args: [String] = []
+        for action in subtitleStreamActions {
+            switch action.action {
+            case .passthrough:
+                args.append(contentsOf: ["-map", "0:s:\(action.streamIndex)"])
+            case .replaceWith:
+                // Each replacement file is itself a standalone subtitle
+                // file (one stream, index 0 within that input).
+                args.append(contentsOf: ["-map", "\(nextReplacementInput):s:0"])
+                nextReplacementInput += 1
+            case .drop:
+                continue
+            }
+        }
+        return args
+    }
+
+    /// The ordered URLs of subtitle replacements declared in
+    /// `subtitleStreamActions`. Used by `build()` to emit the matching
+    /// `-i` arguments and by `buildSubtitleStreamActionMapping()` to
+    /// reason about input indices.
+    private var subtitleReplacementInputs: [URL] {
+        subtitleStreamActions.compactMap { entry in
+            if case .replaceWith(let url) = entry.action { return url }
+            return nil
+        }
     }
 
     /// Build video codec and quality arguments.
