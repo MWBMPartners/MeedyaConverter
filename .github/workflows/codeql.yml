@@ -38,14 +38,29 @@ jobs:
     name: Analyze Swift
     # macOS 15 runner already has Swift 6.3 preinstalled — no setup-swift needed
     runs-on: macos-15
-    # Bumped from 45 → 75 after the post-#382 codebase growth started
-    # producing intermittent timeouts. The build-for-analysis step takes
-    # ~25 min on a cold runner; the analysis step adds another ~15 min
-    # on its own. 45 min was leaving roughly 5 min of margin before SPM
-    # cache restores, which fell off the cliff once the integration
-    # batch added ~3700 lines. See #382, #403, #405, #407 for the run
-    # IDs that hit the previous cap.
-    timeout-minutes: 75
+    # Bumped to 120 min after diagnosing the real source of CodeQL
+    # variance. Empirical timings on the post-PR-#411 baseline:
+    #
+    #   Successful run (run id 26129098306, 2026-05-19): build-for-
+    #     CodeQL = 1450 s (24 min); total job = 26 min.
+    #   Cancelled run  (run id 26147778531, 2026-05-20): build-for-
+    #     CodeQL = 4621 s (77 min) and still running when the prior
+    #     75-min cap fired; cache had hit on the macOS-spm- restore
+    #     fallback (167 MB restored in 7 s) but it made no measurable
+    #     difference.
+    #
+    # Same code, same macos-15 runner image, same git ref — a 3× spread
+    # in build duration. The dominant cost is CodeQL's Swift extractor
+    # re-instrumenting every compile invocation, which SPM caching
+    # cannot short-circuit because the cached .build doesn't carry the
+    # extractor's facts. Runner-hardware variance does the rest.
+    #
+    # 120 min gives slow runners ~50% headroom over the worst observed
+    # cold run, which should keep CodeQL from cancelling while still
+    # imposing a meaningful upper bound on runaway / deadlocked jobs.
+    # The PR #411 SPM cache step stays in place — it doesn't fix this
+    # but does save ~30 s of dependency download on warm runners.
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
