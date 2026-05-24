@@ -2,7 +2,7 @@
 
 > These tasks MUST be performed automatically after EVERY development prompt/action.
 > Saved for Claude AI context continuity.
-> Last updated: 2026-04-20
+> Last updated: 2026-05-20
 
 ## Mandatory Post-Action Tasks
 
@@ -91,6 +91,20 @@
 - Keep in sync with actual CLI implementation
 - Store in `docs/api/` as OpenAPI YAML spec
 - This ensures the CLI API documentation is always current and machine-readable
+
+### 12. Dev Cache Cleanup (after each PR + at session end)
+
+- After **each merged PR**, run `./scripts/clean-dev-caches.sh` (default `--quick`):
+  - Clears the project's `.build/`, `.swiftpm/xcode/`, `.swiftpm/configuration/`
+  - Clears the project-specific Xcode `DerivedData/MeedyaConverter-*`
+  - Frees ~1-3 GiB on this codebase; fast, no impact on other Rust / Swift work on the machine
+- At **session end** (or when disk pressure is felt), run `./scripts/clean-dev-caches.sh --deep`:
+  - Adds the global SwiftPM download cache + cargo registry cache (+ source)
+  - Adds any sibling `MeedyaSuite-core/target/` if checked out
+  - Slower first build for any project on the machine afterwards, but recovers the most space
+- Use `--dry-run` to preview what would be removed without deleting
+- Why: everything cleaned regenerates automatically (build outputs from source, download caches from network). Aggressive cleanup prevents the disk-full failures we hit on 2026-05-20 mid-session when `/tmp` ran out and Claude tools blocked
+- Safe to skip: never. The script is non-destructive in the data-loss sense; the only cost is regeneration time
 
 ### 13. Claude Context Updates
 
