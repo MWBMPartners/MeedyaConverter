@@ -130,7 +130,14 @@ clean_target() {
 # Cleanup pass
 # -----------------------------------------------------------------------------
 
-echo "MeedyaConverter dev-cache cleaner — mode: $MODE${DRY_RUN:+ (dry run)}"
+# Header label. `${DRY_RUN:+...}` would expand for the integer 0 too
+# (DRY_RUN is non-empty when set to the default 0), so use an explicit
+# `if` instead — keeps the label honest when --dry-run is NOT passed.
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "MeedyaConverter dev-cache cleaner — mode: $MODE (dry run)"
+else
+  echo "MeedyaConverter dev-cache cleaner — mode: $MODE"
+fi
 echo "Project root: $PROJECT_ROOT"
 echo ""
 
