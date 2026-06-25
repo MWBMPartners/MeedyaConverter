@@ -14,7 +14,7 @@ MeedyaConverter is a professional media conversion tool that lets you convert au
 
 ### macOS
 
-1. Download the latest `.dmg` from [GitHub Releases](https://github.com/MWBM-Partners-Ltd/MeedyaConverter/releases)
+1. Download the latest `.dmg` from [GitHub Releases](https://github.com/MWBMPartners/MeedyaConverter/releases)
 2. Open the `.dmg` and drag MeedyaConverter to your Applications folder
 3. Launch MeedyaConverter from Applications
 4. On first launch, macOS may ask you to confirm — click "Open"
@@ -27,7 +27,7 @@ The CLI tool can be used alongside or independently of the GUI application:
 
 ```bash
 # After installing the macOS app, the CLI is available at:
-/Applications/MeedyaConverter.app/Contents/MacOS/meedya-cli
+/Applications/MeedyaConverter.app/Contents/MacOS/meedya-convert
 
 # Or add to your PATH:
 export PATH="$PATH:/Applications/MeedyaConverter.app/Contents/MacOS"
