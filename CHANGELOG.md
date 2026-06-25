@@ -11,7 +11,35 @@
 
 ---
 
-## [Unreleased]
+## [0.1.0-rc.4] -- 2026-MM-DD (TBD)
+
+### Highlights
+
+User-facing summary of the changes since rc.3 (engineering detail follows
+below):
+
+- **HDR subtitles now actually render in the output.** The Subtitles
+  section in Output Settings (added in rc.3 as a UI-only switch) is now
+  wired all the way through the encoding engine via `SubtitleTonemapPipeline`,
+  so toggling HDR-aware subtitle tone-mapping changes the bytes that get
+  written to disk.
+- **New Settings tabs.** Encoding → Metadata lets you pick a metadata
+  backend (with a live availability indicator for MeedyaSuite-core);
+  Encoding → Audio CD exposes the AccurateRip submission controls; and
+  Services → Render Farm exposes the insecure-transport gate, Bonjour
+  discovery, chunk-size and agent-list controls behind the new render
+  farm subsystem.
+- **New Tools views for vector workflows.** "Vector Conversion" (raster →
+  SVG) and "ProRes to Vector" (ProRes 4444 → animated SVG) are now first-
+  class sidebar entries instead of being CLI-only.
+- **Distinct Render Farm icon.** The Render Farm sidebar entry no longer
+  shares an icon with SFTP, so the two are visually distinguishable at a
+  glance.
+- **More reliable CI / release pipeline.** SPM dependency caching now
+  actually keys off something that exists at checkout time, CodeQL no
+  longer falsely cancels on slow runners, and branch protection accepts
+  the same status-check name CI actually reports — so PRs merge on green
+  without needing the admin override.
 
 ### Added -- 2026-05-20 (subtitle tone-mapping end-to-end + workflow polish)
 
@@ -56,7 +84,7 @@
   precision for free. Affects build.yml, beta-alpha.yml, codeql.yml,
   dev-build.yml, release.yml, testflight.yml. (this batch)
 
-### Operations -- 2026-05-20
+### Changed -- 2026-05-20
 
 - **Branch protection cleanup**: removed the PR-review requirement
   on main, updated the required-status-check context name to match
@@ -145,7 +173,7 @@ All four deferred items from the #380 security + memory audit closed:
   site to write `.developmentOnly(acknowledgement: …)` — a static
   review signal. (PR #382 commit 750aaf5)
 
-### Operations -- 2026-05-18
+### Changed -- 2026-05-18
 
 - **TestFlight workflow guardrails** -- `testflight.yml`'s `push.tags`
   trigger fired unexpectedly on `v0.1.0-rc.1` and uploaded build 244
@@ -312,50 +340,6 @@ All four deferred items from the #380 security + memory audit closed:
 
 ---
 
-## [0.1.0-alpha] -- Unreleased
-
-> Alpha milestone targeting Phases 0-4 completion.
-
-### Added
-
-- SPM package with three targets: ConverterEngine (library), meedya-convert (CLI), MeedyaConverter (SwiftUI app)
-- FFmpeg bundle manager with binary discovery, version detection, and validation
-- FFmpeg process controller with start/pause/resume/stop and progress monitoring
-- Media file probing via FFprobe -- streams, HDR detection, chapters, metadata
-- Complete data models -- MediaFile, MediaStream, 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
-- FFmpeg argument builder translating encoding settings to CLI arguments
-- Encoding profile system with 7+ built-in presets and JSON persistence
-- Encoding job queue with priority ordering, state tracking, batch management
-- Temp file management with per-job directories and disk space monitoring
-- Encoding engine orchestrating full video/audio conversion pipeline
-- 30 unit tests covering all Phase 1 components
-- Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: sidebar navigation, source import, stream inspector, output settings, queue, log
-- Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
-- HDR-to-SDR tone mapping (hable/reinhard/mobius/bt2390/clip), auto-trigger for incompatible settings
-- PQ-to-HLG conversion via hlg-tools (preferred) or FFmpeg zscale fallback
-- PQ-to-DV Profile 8.4 + HLG combined conversion: three-tier DV-to-HLG-to-SDR fallback
-- Dolby Vision preservation pipeline: RPU extract, encode, inject via dovi_tool
-- HLG-to-DV auto-conversion via dovi_tool generate (Profile 8.4)
-- Container-codec compatibility matrix with validation and UI warnings
-- Automatic black bar crop detection via FFmpeg cropdetect
-- Hardware encoder detection (VideoToolbox/NVENC/QSV/AMF/VA-API)
-- In-app help system, settings view, profile management
-- AccurateRip verification engine for audio disc ripping
-- Audio disc fidelity module (CDTOC, cuesheet, chapters, whole-disc ripping)
-- CLI tool with 6 subcommands: encode, probe, profiles, batch, manifest, validate
-- Licensing module: EntitlementGating, ProductCatalog, StoreManager, RevenueCat, LicenseKeyValidator
-- Encoding pipelines, conditional rules, post-encode actions, encoding checkpoints
-- Watch folder monitoring, scene detection, content analysis
-- Audio normalization presets, surround upmixer, audio fingerprinting
-- Metadata lookup and auto-tagging (MusicBrainz, TMDB, TVDB, Discogs)
-- Cloud upload providers (12+), media server notifications, API key management
-- Quality metrics (VMAF/SSIM), encoding reports, frame comparison
-- AI upscaler, forensic watermark, DCP generator
-- 35+ SwiftUI views including pipeline editor, schedule, conditional rules, bitrate heatmap, audio waveform, quality preview, paywall, analytics settings
-
----
-
 ## Version History
 
 > **Version format:** `MAJOR.MINOR.PATCH`
@@ -366,7 +350,12 @@ All four deferred items from the #380 security + memory audit closed:
 
 | Version | Date | Highlights |
 | ------- | ---- | ---------- |
-| 0.1.0-alpha | TBD | Core engine, SwiftUI app, CLI tool, HDR workflows, encoding profiles, licensing, pipelines |
+| 0.1.0-rc.4 | 2026-MM-DD (TBD) | Subtitle tone-mapping wired end-to-end, new Metadata / Audio CD / Render Farm settings tabs, Vector Conversion and ProRes-to-Vector tools surfaced in sidebar, distinct Render Farm icon, CI/release hardening (SPM cache key, CodeQL timeout, branch-protection check name) |
+| 0.1.0-rc.3 | 2026-05-18 | Release-pipeline stabilisation: portable `awk`-based changelog extraction in `scripts/extract-changelog.sh` (replaces a GNU-sed idiom BSD sed rejected) so `release.yml` runs to completion on macOS runners |
+| 0.1.0-rc.2 | 2026-05-18 | `APIKeyManagerKeychainTests` skip cleanly via `XCTSkip` when the CI runner has no unlocked default keychain, unblocking `release.yml` |
+| 0.1.0-rc.1 | 2026-05-18 | Rasterised AppIcon PNGs (16 → 1024 px) added to `AppIcon.appiconset/` so the built bundle ships with the correct icon; first release candidate carrying the integration batch and #380 audit closure |
+| 0.1.0-beta.1 | 2026-04-08 | Beta channel cut: DV + HDR10+ dual-dynamic HDR pipeline, dual bundle IDs (Direct vs App Store Lite), TestFlight + dev-build workflows, full UI surfacing of 33 views, REST API server, watch folders, watermark/voice-isolation/background-removal, full metadata-tag editor, cloud upload providers, quality scoring (VMAF/SSIM/PSNR), and the first comprehensive code review pass |
+| 0.1.0-alpha | 2026-04-08 | Alpha cut from the same commit as beta.1: core engine, SwiftUI app, CLI tool, HDR workflows (PQ→HLG, DV preservation, HDR→SDR tone mapping), 7+ encoding profiles, licensing module, encoding pipelines, AccurateRip, metadata lookup |
 
 ---
 
