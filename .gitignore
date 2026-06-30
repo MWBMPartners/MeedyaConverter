@@ -253,3 +253,6 @@ coverage/
 lcov.info
 .nyc_output/
 .DS_Store
+
+# Claude Code workflow worktree dirs (created by Workflow tool's isolation:'worktree' agents)
+.claude/worktrees/
