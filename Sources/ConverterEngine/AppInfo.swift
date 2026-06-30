@@ -98,13 +98,40 @@ public enum AppInfo {
         ///
         /// Read from `CFBundleShortVersionString` in `Bundle.main.infoDictionary`
         /// at runtime. Falls back to `fallbackNumber` when no bundle Info.plist
-        /// is loaded (CLI / library / test contexts).
+        /// is loaded **or** when the loaded value does not look like a SemVer
+        /// triple (CLI / library / test contexts).
+        ///
+        /// **Why the SemVer shape check** (Cycle 24): under `swift test`,
+        /// `Bundle.main.infoDictionary["CFBundleShortVersionString"]` is
+        /// non-empty — it returns a default like `"16.0"` (the macOS / Xcode
+        /// SDK marker), not the app's own version. An `isEmpty`-only fallback
+        /// therefore lets that leak into `ConverterEngine.version` and breaks
+        /// the SemVer-shape regression test. The triple-dot heuristic
+        /// rejects two-segment SDK markers without rejecting legitimate
+        /// pre-release / build-metadata suffixes (those follow the
+        /// `MAJOR.MINOR.PATCH[-pre][+build]` core).
         public static var number: String {
             if let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-               !bundleVersion.isEmpty {
+               !bundleVersion.isEmpty,
+               looksLikeSemVerTriple(bundleVersion) {
                 return bundleVersion
             }
             return fallbackNumber
+        }
+
+        /// Returns `true` when `version` starts with a `MAJOR.MINOR.PATCH`
+        /// triple of integers. Anything after the patch component
+        /// (`-alpha`, `+build.123`, etc.) is ignored — what matters is
+        /// that the *core* is well-formed.
+        private static func looksLikeSemVerTriple(_ version: String) -> Bool {
+            let withoutBuild = version.split(separator: "+", maxSplits: 1).first.map(String.init) ?? ""
+            let core         = withoutBuild.split(separator: "-", maxSplits: 1).first.map(String.init) ?? ""
+            let components   = core.split(separator: ".")
+            guard components.count >= 3 else { return false }
+            for component in components.prefix(3) {
+                if Int(component) == nil { return false }
+            }
+            return true
         }
 
         /// Optional version codename.

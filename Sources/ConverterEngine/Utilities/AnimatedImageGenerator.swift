@@ -164,18 +164,17 @@ public struct AnimatedImageGenerator: Sendable {
         let filterBase = filters.joined(separator: ",")
 
         // --- Pass 1: palettegen ---
-        var pass1: [String] = [
+        let pass1: [String] = [
             "-ss", String(format: "%.3f", config.startTime),
             "-t", String(format: "%.3f", config.duration),
             "-i", inputPath,
             "-vf", "\(filterBase),palettegen=max_colors=\(config.maxColors)",
             "-y", palettePath,
         ]
-        _ = pass1.count // Suppress mutation warning
 
         // --- Pass 2: paletteuse ---
         let ditherMode = config.dithering ? "sierra2_4a" : "none"
-        var pass2: [String] = [
+        let pass2: [String] = [
             "-ss", String(format: "%.3f", config.startTime),
             "-t", String(format: "%.3f", config.duration),
             "-i", inputPath,
@@ -184,7 +183,6 @@ public struct AnimatedImageGenerator: Sendable {
             "-loop", String(config.loopCount),
             "-y", outputPath,
         ]
-        _ = pass2.count // Suppress mutation warning
 
         return [pass1, pass2]
     }
