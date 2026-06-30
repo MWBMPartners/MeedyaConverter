@@ -55,9 +55,114 @@ permissions:
   contents: write
 
 jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Apple-secrets precheck (fail-fast)
+  # ---------------------------------------------------------------------------
+  # Cheap ubuntu-latest job that runs BEFORE the macos-15 release job. Its
+  # only purpose is to assert that the six secrets the release pipeline
+  # depends on are populated, AND that APPLE_SIGNING_IDENTITY contains the
+  # literal substring "Developer ID Application" — i.e. the right cert
+  # family for Direct distribution (not Apple Distribution / Mac App Store).
+  #
+  # Without this gate, a misconfigured secret means a v* tag silently
+  # produces an unsigned / wrong-cert DMG, which Apple notarisation later
+  # rejects deep into the build — wasting ~30 minutes and burning the
+  # tag's release number.
+  #
+  # Failing this job stops the release before any keychain / build /
+  # signing step runs, costing roughly one ubuntu-minute. Re-running the
+  # workflow against the same tag is then a `gh workflow run` away once
+  # the secret is fixed.
+  #
+  # This job NEVER prints the secret values themselves — only their
+  # presence (and, for APPLE_SIGNING_IDENTITY, whether the substring
+  # check passes). The check uses `-n` on a masked variable; GitHub
+  # Actions auto-redacts any accidental echo of a secret in workflow
+  # logs as a defence-in-depth fallback.
+  # ---------------------------------------------------------------------------
+  precheck-secrets:
+    name: Pre-flight — Apple-secrets fail-fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Assert all 6 Apple secrets are populated and the cert family is Direct
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          # Non-empty asserts. The check tests whether the expanded value is
+          # the empty string (-z); GitHub Actions auto-masks secrets, so a
+          # populated secret expands to "***" or its literal value depending
+          # on the runner config, but never expands to "" if it is set.
+          assert_set() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "::error::Required secret '$name' is empty or missing."
+              fail=1
+            else
+              echo "  ✓ $name is populated"
+            fi
+          }
+
+          echo "Checking Apple Developer secrets are present (values not printed):"
+          assert_set APPLE_CERTIFICATE          "$APPLE_CERTIFICATE"
+          assert_set APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+          assert_set APPLE_SIGNING_IDENTITY     "$APPLE_SIGNING_IDENTITY"
+          assert_set APPLE_ID                   "$APPLE_ID"
+          assert_set APPLE_PASSWORD             "$APPLE_PASSWORD"
+          assert_set APPLE_TEAM_ID              "$APPLE_TEAM_ID"
+
+          # Cert-family assert. APPLE_SIGNING_IDENTITY must contain the
+          # literal substring "Developer ID Application" — the cert family
+          # Apple requires for Direct-distribution code signing. Mistakenly
+          # configuring "Apple Distribution" (App Store) or "Mac Installer"
+          # (the .pkg signer, not the .app signer) here would let the
+          # workflow keep going and produce a binary Gatekeeper rejects.
+          #
+          # We test the substring rather than the exact value so the team
+          # can rotate certs (the name suffix changes with the team-id /
+          # serial) without having to remember to update this assertion.
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            case "$APPLE_SIGNING_IDENTITY" in
+              *"Developer ID Application"*)
+                echo "  ✓ APPLE_SIGNING_IDENTITY contains 'Developer ID Application'"
+                ;;
+              *)
+                echo "::error::APPLE_SIGNING_IDENTITY must contain the literal substring 'Developer ID Application' — found a different cert family. This indicates the secret was populated with the wrong cert (likely 'Apple Distribution' or 'Mac Installer'). For Direct distribution use 'Developer ID Application: <Team Name> (<TEAM_ID>)'."
+                fail=1
+                ;;
+            esac
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Apple-secrets precheck failed. Open Repository → Settings → Secrets and variables → Actions and verify all six APPLE_* secrets are set with the correct values (APPLE_SIGNING_IDENTITY must use the Developer ID Application cert). The release workflow has been stopped before any signing or notarisation step ran."
+            exit 1
+          fi
+
+          echo ""
+          echo "All Apple-secrets prechecks passed. Release job will proceed."
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build & publish the Direct release
+  # ---------------------------------------------------------------------------
+  # Runs on macos-15 only after precheck-secrets has confirmed all six
+  # Apple Developer secrets are populated with the correct cert family.
+  # ---------------------------------------------------------------------------
   release:
     name: Build & Publish Production Release
     runs-on: macos-15
+    needs: precheck-secrets
 
     # -----------------------------------------------------------------------
     # Timeout: release builds and packaging should complete well within this
