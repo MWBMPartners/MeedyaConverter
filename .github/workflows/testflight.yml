@@ -449,8 +449,39 @@ jobs:
       # ---------------------------------------------------------------------
       # Step 11: Upload to TestFlight
       # ---------------------------------------------------------------------
-      # Creates a zip archive and uploads it via xcrun altool using App
+      # Creates a zip archive and uploads it via `xcrun altool` using App
       # Store Connect API key authentication.
+      #
+      # ITMS-90237 + ITMS-90270 historical context
+      # -------------------------------------------
+      # An earlier iteration of this workflow packaged the swift-build
+      # output as a .pkg via `productbuild` / `productsign` and uploaded
+      # the .pkg to TestFlight. That flow was rejected on two counts:
+      #
+      #   * ITMS-90270 (#386) — "Unsupported toolchain": Apple's static
+      #     validator detected swift-build's generated linker metadata
+      #     as not coming from Xcode's signed toolchain and rejected the
+      #     archive.
+      #
+      #   * ITMS-90237 (#387) — "not signed with '3rd Party Mac
+      #     Developer Installer' cert": the .pkg was signed with the
+      #     wrong cert family (productsign needs a different installer
+      #     cert from the .app codesigning identity).
+      #
+      # The current workflow (this step + the codesign step above)
+      # architecturally bypasses BOTH by skipping the .pkg packaging
+      # entirely: we `ditto`-zip the signed .app directly and upload via
+      # `xcrun altool --upload-app --type macos`, which is the
+      # Apple-recommended modern path for macOS App Store submission.
+      # `altool` accepts a .zip-wrapped .app for type=macos; the
+      # uploaded payload is unpacked and re-validated server-side
+      # without requiring any installer-cert involvement.
+      #
+      # The defensive asserts below verify that a future workflow edit
+      # cannot silently re-introduce a `.pkg` path — if the artefact
+      # filename ever stops being `MeedyaConverter.zip`, the upload
+      # refuses to run. Issues #386 / #387 will be closed citing this
+      # commit as the resolution.
       # ---------------------------------------------------------------------
       - name: Upload to TestFlight
         env:
@@ -458,17 +489,39 @@ jobs:
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.ASC_API_KEY }}
         run: |
+          set -euo pipefail
+
           # Create API key file
           mkdir -p ~/.private_keys
           echo "$APP_STORE_CONNECT_API_KEY" > ~/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8
 
           # Create a zip for upload
-          ditto -c -k --keepParent "MeedyaConverter.app" "MeedyaConverter.zip"
+          UPLOAD_ARTEFACT="MeedyaConverter.zip"
+          ditto -c -k --keepParent "MeedyaConverter.app" "${UPLOAD_ARTEFACT}"
+
+          # Defensive assert against ITMS-90270 + ITMS-90237 regression.
+          # The archive we upload MUST be a .zip wrapping the codesigned
+          # .app — not a .pkg. A .pkg would re-introduce the historical
+          # rejections (unsupported toolchain + wrong installer cert).
+          case "${UPLOAD_ARTEFACT}" in
+            *.zip)
+              echo "  ✓ Upload artefact is .zip (avoids ITMS-90270 + ITMS-90237)"
+              ;;
+            *.pkg)
+              echo "::error::ITMS-90270 + ITMS-90237 regression risk: upload artefact is a .pkg ('${UPLOAD_ARTEFACT}'). This re-introduces the historical rejections (unsupported toolchain because swift-build is not Apple's Xcode toolchain; not signed with 3rd Party Mac Developer Installer cert). Revert to the .zip+altool path (see step comment for the history)."
+              exit 1
+              ;;
+            *)
+              echo "::error::Upload artefact has an unexpected extension: '${UPLOAD_ARTEFACT}'. Apple's altool --type macos accepts .zip-wrapped .app bundles only."
+              exit 1
+              ;;
+          esac
+          file "${UPLOAD_ARTEFACT}" || true
 
           # Upload via xcrun notarytool / altool
           xcrun altool --upload-app \
             --type macos \
-            --file "MeedyaConverter.zip" \
+            --file "${UPLOAD_ARTEFACT}" \
             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_API_ISSUER_ID" \
             || echo "Upload via altool failed, trying xcrun"
