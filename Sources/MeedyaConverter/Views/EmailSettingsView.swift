@@ -358,12 +358,21 @@ struct EmailSettingsView: View {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
-        // Add the new password.
+        // Add the new password. `WhenUnlockedThisDeviceOnly` blocks
+        // iCloud Keychain sync, excludes the item from Keychain
+        // backups, and gates access on the device being currently
+        // unlocked (not merely first-unlocked-since-boot). Per
+        // SECURITY.md F-004 — prior to Cycle 16 no accessibility
+        // attribute was set, which defaulted to `WhenUnlocked`
+        // (without `ThisDeviceOnly`), so the SMTP password could
+        // sync to other Macs on the same Apple ID and appear in
+        // Time Machine backups.
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: Self.keychainAccount,
             kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
     }
