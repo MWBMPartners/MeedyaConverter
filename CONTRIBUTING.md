@@ -1,8 +1,47 @@
 <!-- Copyright © 2026 MWBM Partners Ltd. All rights reserved. -->
 
-# Contributing
+# Contributing to MeedyaConverter
 
-Thank you for your interest in contributing to MeedyaConverter. This document describes the code standards, branch strategy, and PR process for the project.
+Thank you for your interest in contributing to MeedyaConverter — part of the
+MeedyaSuite product family from [MWBM Partners Ltd](https://github.com/MWBMPartners).
+This document describes the code standards, branch strategy, and PR process for
+the project.
+
+> **Please also read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)** — the
+> Contributor Covenant v2.1 applies to this project (and across the wider
+> MeedyaSuite family).
+
+## Licensing posture
+
+MeedyaConverter is a **proprietary commercial product** owned by MWBM Partners
+Ltd, released under the licence in [`LICENSE`](LICENSE). External
+contributions are welcomed under the following terms:
+
+- **You retain copyright** in the code you contribute.
+- **You grant MWBM Partners Ltd a perpetual, worldwide, royalty-free,
+  sublicensable, irrevocable licence** to use your contribution in any way,
+  including incorporating it into the proprietary product, sublicensing it
+  to downstream distributors, and combining it with other MWBM Partners
+  software. By opening a pull request you accept these terms.
+- **You warrant** that you have the right to make the contribution — i.e. it
+  is your own original work, or you have explicit permission from the
+  rights-holder to contribute it, and it doesn't infringe any third-party
+  copyright, patent, trademark, or trade secret.
+- **No CLA signing process is in place yet.** For now, the contribution
+  itself (the PR commit and the merge accepting it) constitutes the
+  agreement. A formal CLA may be introduced if/when contribution volume
+  warrants it; that change would be announced and not retroactive.
+
+If you can't accept these terms, please **don't open the PR**. We'd rather
+have the conversation up front than have to back something out later.
+
+For non-trivial contributions you may want to open a discussion issue
+**before** writing the code, so we can confirm fit + approach.
+
+## Security disclosures
+
+Security issues — **please don't** open a public GitHub issue. Follow the
+disclosure process in [`.github/SECURITY.md`](.github/SECURITY.md).
 
 ---
 
@@ -178,11 +217,43 @@ Closes #92
 
 ## Development Setup
 
-1. Clone the repository (see [Building from Source](Building-from-Source)).
-2. Install FFmpeg via Homebrew for runtime testing.
-3. Install SwiftLint via Homebrew for linting: `brew install swiftlint`.
-4. Open `Package.swift` in Xcode or use VS Code with the Swift extension (`swiftlang.swift-lang`).
-5. Run `swift build` and `swift test` to verify your setup.
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/MWBMPartners/MeedyaConverter.git
+   cd MeedyaConverter
+   ```
+
+2. Toolchain prerequisites:
+   - **macOS 14+** (Sonoma) for development; **macOS 15+** (Sequoia) for
+     full release-build feature parity (the build targets `.macOS(.v15)`
+     in `Package.swift`).
+   - **Swift 6.3+** — bundled with **Xcode 26.5+**.
+
+3. Install FFmpeg via Homebrew for runtime testing:
+
+   ```bash
+   brew install ffmpeg
+   ```
+
+4. (Optional but recommended) Install SwiftLint via Homebrew for linting:
+
+   ```bash
+   brew install swiftlint
+   ```
+
+5. Open `Package.swift` in Xcode, or use VS Code with the official Swift
+   extension (`swiftlang.swift-lang`).
+
+6. Verify your setup builds and tests cleanly:
+
+   ```bash
+   swift build --configuration release
+   swift test --parallel
+   ```
+
+For a deeper guide see [`docs/Getting-Started.md`](docs/Getting-Started.md).
+For the in-app help index see [`Resources/Help/`](Resources/Help/).
 
 ---
 

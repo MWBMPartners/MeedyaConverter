@@ -383,14 +383,19 @@ reports within 48 hours and aim to ship fixes within 30 days.
 
 ## 🤝 Contributing
 
-MeedyaConverter is a proprietary project maintained by MWBM Partners Ltd.
-External contribution is not currently open, but bug reports, feature
-requests, and reproducible test cases via
-[GitHub Issues](https://github.com/MWBMPartners/MeedyaConverter/issues)
-are very welcome. A formal `CONTRIBUTING.md` will be added if and when
-the project opens to external contributors; in the meantime, see
-[docs/Contributing.md](docs/Contributing.md) for the current internal
-contributor workflow.
+MeedyaConverter is a proprietary project maintained by MWBM Partners Ltd, but
+external contributions are welcomed under the terms documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — covering licensing posture (you retain
+copyright; MWBM gets a perpetual sublicensable licence), code style, branch
+strategy, PR process, and the dev environment. Please also read
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) (Contributor Covenant v2.1, applied
+across the MeedyaSuite family).
+
+For bug reports, feature requests, and reproducible test cases:
+[GitHub Issues](https://github.com/MWBMPartners/MeedyaConverter/issues).
+
+For security issues, please don't open a public issue — follow the disclosure
+process in [`.github/SECURITY.md`](.github/SECURITY.md).
 
 ---
 
