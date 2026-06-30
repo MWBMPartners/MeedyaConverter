@@ -220,6 +220,15 @@ jobs:
           # Copy privacy manifest
           cp Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/"
 
+          # Generate the .icns from the AppIcon.appiconset PNG sources
+          # and stage it at Contents/Resources/MeedyaConverter.icns —
+          # the filename matches the CFBundleIconFile key in Info.plist.
+          # Required for App Store Connect to accept the upload
+          # (ITMS-90236 / #390); the static validator inspects the
+          # bundle and rejects builds without a Retina-pair-complete
+          # .icns including the 512@2x slot.
+          ./scripts/generate-app-icns.sh "${APP}/Contents/Resources/MeedyaConverter.icns"
+
       # ---------------------------------------------------------------------
       # Step 9b: Validate metadata (ITMS-90264 + ITMS-90230 fail-fast)
       # ---------------------------------------------------------------------
@@ -289,6 +298,28 @@ jobs:
           else
             echo "::error::ITMS-90230 risk: CFBundleShortVersionString '${SHORT_VER}' does not parse as a valid X.Y.Z SemVer core. The VERSION file must be a strict semver value."
             fail=1
+          fi
+
+          # ITMS-90236 (#390): CFBundleIconFile must be present in the
+          # Info.plist AND the named .icns file must exist in the
+          # bundle's Contents/Resources/ directory. The static App
+          # Store Connect validator rejects builds without a complete
+          # Retina-pair set including the 512@2x (1024 px) slot — the
+          # generate-app-icns.sh script the prior step invoked produces
+          # exactly that.
+          ICON_KEY=$(read_key CFBundleIconFile)
+          if [ "${ICON_KEY}" = "MISSING" ] || [ -z "${ICON_KEY}" ]; then
+            echo "::error::ITMS-90236 risk: CFBundleIconFile key is missing from Info.plist. App Store Connect rejects bundles without an icon reference."
+            fail=1
+          else
+            ICNS_PATH="MeedyaConverter.app/Contents/Resources/${ICON_KEY}.icns"
+            if [ ! -f "${ICNS_PATH}" ]; then
+              echo "::error::ITMS-90236 risk: CFBundleIconFile = '${ICON_KEY}' but Contents/Resources/${ICON_KEY}.icns is missing. The generate-app-icns.sh step in the prior bundle-assembly step should have produced it."
+              fail=1
+            else
+              ICNS_SIZE=$(stat -f '%z' "${ICNS_PATH}")
+              echo "  ✓ Contents/Resources/${ICON_KEY}.icns present (${ICNS_SIZE} bytes)"
+            fi
           fi
 
           if [ "${fail}" -ne 0 ]; then

@@ -334,12 +334,20 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${APP_BUNDLE}/Contents/Info.plist"
 
+          # Generate the .icns from the AppIcon.appiconset PNG sources
+          # and stage it as Contents/Resources/MeedyaConverter.icns —
+          # the filename matches the CFBundleIconFile key in Info.plist.
+          # The script is deterministic given the PNG inputs; we don't
+          # commit the binary blob to the repo.
+          ./scripts/generate-app-icns.sh "${APP_BUNDLE}/Contents/Resources/MeedyaConverter.icns"
+
           # Set the executable bit
           chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
           echo "App bundle created successfully."
           ls -la "${APP_BUNDLE}/Contents/"
           ls -la "${APP_BUNDLE}/Contents/MacOS/"
+          ls -la "${APP_BUNDLE}/Contents/Resources/"
 
       # ---------------------------------------------------------------------
       # Step 9b: Bundle FFmpeg + HDR tools into the .app
