@@ -182,11 +182,25 @@ public final class FFmpegProbe: Sendable {
             overallBitrate = nil
         }
 
-        // Parse format-level metadata tags
+        // Parse format-level metadata tags.
+        //
+        // Both the tag *key* and *value* are sanitised through
+        // `MetadataSanitizer` per SECURITY.md F-006 (T5):
+        // ffprobe surfaces arbitrary bytes from the source
+        // container, so titles / artist / comment fields can
+        // legitimately carry NUL bytes, VT100 escape sequences,
+        // and bidirectional-override codepoints when the source
+        // is a crafted media file. Sanitising at this single
+        // chokepoint defends every downstream renderer (the
+        // SwiftUI metadata panel, the AppleScript bridge
+        // results, the conversion logs, the CLI JSON output)
+        // without each having to know the rule.
         let formatTags = formatDict?["tags"] as? [String: Any] ?? [:]
         var metadata: [String: String] = [:]
         for (key, value) in formatTags {
-            metadata[key] = "\(value)"
+            let sanitisedKey = MetadataSanitizer.sanitize(key)
+            let sanitisedValue = MetadataSanitizer.sanitize("\(value)")
+            metadata[sanitisedKey] = sanitisedValue
         }
 
         // Get file size
@@ -260,10 +274,15 @@ public final class FFmpegProbe: Sendable {
             duration = nil
         }
 
-        // Parse tags
+        // Parse tags. Title and language flow into UI labels,
+        // CLI output, and the AppleScript bridge — sanitise per
+        // SECURITY.md F-006 (T5). Language codes are short ASCII
+        // tokens in practice (`eng`, `jpn`, etc.) but a crafted
+        // file could embed control codes; the sanitiser is
+        // idempotent so the legitimate case is unchanged.
         let tags = dict["tags"] as? [String: Any] ?? [:]
-        let language = tags["language"] as? String
-        let title = tags["title"] as? String
+        let language = (tags["language"] as? String).map(MetadataSanitizer.sanitize)
+        let title = (tags["title"] as? String).map(MetadataSanitizer.sanitize)
 
         // Parse disposition (default, forced, etc.)
         let disposition = dict["disposition"] as? [String: Any] ?? [:]
@@ -382,12 +401,17 @@ public final class FFmpegProbe: Sendable {
             return nil
         }
 
+        // Chapter title + per-chapter metadata flow into the same
+        // UI / log / AppleScript-bridge surfaces as format-level
+        // metadata — apply the same sanitiser per SECURITY.md F-006.
         let tags = dict["tags"] as? [String: Any] ?? [:]
-        let title = tags["title"] as? String
+        let title = (tags["title"] as? String).map(MetadataSanitizer.sanitize)
 
         var chapterMeta: [String: String] = [:]
         for (key, value) in tags {
-            chapterMeta[key] = "\(value)"
+            let sanitisedKey = MetadataSanitizer.sanitize(key)
+            let sanitisedValue = MetadataSanitizer.sanitize("\(value)")
+            chapterMeta[sanitisedKey] = sanitisedValue
         }
 
         return Chapter(
