@@ -174,12 +174,34 @@ jobs:
       # ---------------------------------------------------------------------
       # Assembles a .app bundle with the App Store bundle ID (.Lite suffix),
       # the privacy manifest, and the correct version/build numbers.
+      #
+      # Mutations applied to the bundled Info.plist (in order):
+      #
+      #   * CFBundleIdentifier — rewritten to ".Lite" suffix via PlistBuddy.
+      #     Authoritative rewrite that addresses ITMS-90230 (#388, invalid
+      #     metadata in product-identifier). Replaces a previous brittle
+      #     sed pattern that depended on the source CFBundleIdentifier
+      #     value never gaining a substring match elsewhere in the
+      #     plist.
+      #
+      #   * CFBundleShortVersionString — set from $VERSION (the VERSION
+      #     file). Also via PlistBuddy. Replaces a previous brittle
+      #     sed pattern `<string>0.1.0</string>` that silently no-op'd
+      #     the moment the version bumped past 0.1.0 — the same fix
+      #     pattern was applied to release.yml in commit 45ee9f6.
+      #     ITMS-90230 (#388) treats a non-strict-semver product-version
+      #     as invalid; sourcing from VERSION keeps these in lock-step.
+      #
+      #   * CFBundleVersion — set from $BUILD (git rev-list --count HEAD).
+      #     Unchanged from before; PlistBuddy was already used for this.
       # ---------------------------------------------------------------------
       - name: Create App Store app bundle
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.buildnum.outputs.build_number }}"
           APP="MeedyaConverter.app"
+          PLIST="${APP}/Contents/Info.plist"
 
           mkdir -p "${APP}/Contents/MacOS"
           mkdir -p "${APP}/Contents/Resources"
@@ -187,17 +209,95 @@ jobs:
           cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
           chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
 
-          # Info.plist with App Store bundle ID and build number
-          sed -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
-              -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
-              Sources/MeedyaConverter/Resources/Info.plist \
-              > "${APP}/Contents/Info.plist"
-
-          # Add build number
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${APP}/Contents/Info.plist"
+          # Start from the source Info.plist, then rewrite the three
+          # identity fields via PlistBuddy (no fragile string-matching
+          # sed).
+          cp Sources/MeedyaConverter/Resources/Info.plist "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier Ltd.MWBMpartners.MeedyaConverter.Lite" "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}"               "${PLIST}"
 
           # Copy privacy manifest
           cp Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/"
+
+      # ---------------------------------------------------------------------
+      # Step 9b: Validate metadata (ITMS-90264 + ITMS-90230 fail-fast)
+      # ---------------------------------------------------------------------
+      # Fails the workflow BEFORE any signing step if the bundle's
+      # Info.plist would be rejected by App Store Connect's ITMS checks:
+      #
+      #   * ITMS-90264 (#389): LSMinimumSystemVersion mismatch — must
+      #     match the build target's macOS minimum exactly. We assert
+      #     it matches Package.swift's `.macOS(.v15)` setting (which is
+      #     also the macos-15 runner this job runs on).
+      #
+      #   * ITMS-90230 (#388): product-identifier and product-version
+      #     must conform to strict App Store Connect formats. We assert
+      #     CFBundleIdentifier carries the `.Lite` suffix (so a future
+      #     edit to the previous step cannot ship the Direct bundle-id
+      #     into TestFlight) AND that CFBundleShortVersionString
+      #     parses as a strict X.Y.Z[-pre] SemVer triple.
+      #
+      # Failing here costs ~1 ubuntu-equivalent minute (actually
+      # macos-15 since the runner is already up) instead of failing in
+      # App Store Connect after upload — which would burn the build
+      # number and require a re-tag.
+      # ---------------------------------------------------------------------
+      - name: Validate Info.plist metadata
+        run: |
+          set -euo pipefail
+          PLIST="MeedyaConverter.app/Contents/Info.plist"
+          fail=0
+
+          read_key() {
+            /usr/libexec/PlistBuddy -c "Print :$1" "${PLIST}" 2>/dev/null || echo "MISSING"
+          }
+
+          MIN_OS=$(read_key LSMinimumSystemVersion)
+          BUNDLE_ID=$(read_key CFBundleIdentifier)
+          SHORT_VER=$(read_key CFBundleShortVersionString)
+
+          # ITMS-90264: LSMinimumSystemVersion exactly matches Package.swift
+          # platforms minimum. Update this when the platforms minimum
+          # changes.
+          EXPECTED_MIN_OS="15.0"
+          if [ "${MIN_OS}" != "${EXPECTED_MIN_OS}" ]; then
+            echo "::error::ITMS-90264 risk: LSMinimumSystemVersion is '${MIN_OS}' but Package.swift's platforms minimum requires '${EXPECTED_MIN_OS}'. Update the Info.plist or the EXPECTED_MIN_OS guard."
+            fail=1
+          else
+            echo "  ✓ LSMinimumSystemVersion = ${MIN_OS} matches Package.swift"
+          fi
+
+          # ITMS-90230: CFBundleIdentifier must carry the .Lite suffix.
+          case "${BUNDLE_ID}" in
+            *".Lite")
+              echo "  ✓ CFBundleIdentifier ends with .Lite (${BUNDLE_ID})"
+              ;;
+            *)
+              echo "::error::ITMS-90230 risk: CFBundleIdentifier is '${BUNDLE_ID}' but must end with '.Lite' for the App Store variant. The earlier 'Create App Store app bundle' step should have applied the suffix."
+              fail=1
+              ;;
+          esac
+
+          # ITMS-90230: CFBundleShortVersionString must parse as X.Y.Z
+          # core (allowing optional -pre.release and +build metadata).
+          # We strip suffixes and validate the core triple is all-numeric.
+          core="${SHORT_VER%%+*}"
+          core="${core%%-*}"
+          if echo "${core}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "  ✓ CFBundleShortVersionString core '${core}' parses as SemVer X.Y.Z (full: ${SHORT_VER})"
+          else
+            echo "::error::ITMS-90230 risk: CFBundleShortVersionString '${SHORT_VER}' does not parse as a valid X.Y.Z SemVer core. The VERSION file must be a strict semver value."
+            fail=1
+          fi
+
+          if [ "${fail}" -ne 0 ]; then
+            echo "::error::Metadata validation failed. Workflow stopped before any signing or upload step ran."
+            exit 1
+          fi
+
+          echo ""
+          echo "All Info.plist metadata checks passed. Signing will proceed."
 
       # ---------------------------------------------------------------------
       # Step 10: Sign for App Store
