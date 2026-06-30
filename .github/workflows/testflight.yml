@@ -331,6 +331,99 @@ jobs:
           echo "All Info.plist metadata checks passed. Signing will proceed."
 
       # ---------------------------------------------------------------------
+      # Step 9c: Embed App Store provisioning profile (ITMS-90889 fix)
+      # ---------------------------------------------------------------------
+      # App Store Connect rejects any .app bundle that doesn't ship with
+      # Contents/embedded.provisionprofile (ITMS-90889 / #391). The
+      # profile binds together:
+      #
+      #   * the .Lite App ID record in the Apple Developer portal,
+      #   * the "Mac Developer Distribution: MWBM Partners Ltd" cert
+      #     family (a different cert from the Direct path's
+      #     "Developer ID Application" cert — that is enforced by the
+      #     codesign step's own identity argument; here we just need
+      #     the profile),
+      #   * an expiry date (Apple-issued profiles are valid one year),
+      #
+      # so a profile mismatch means either the bundle id is wrong, the
+      # cert is wrong, or the profile expired.
+      #
+      # The base64-encoded profile lives in the secret
+      # APP_STORE_PROVISIONING_PROFILE. Generation is user-side (Apple
+      # Developer portal → Profiles → + → Mac App Store → pick the .Lite
+      # App ID → pick the distribution cert → download → `base64 -i
+      # <file>` → paste into the GitHub web UI per the standing flow
+      # in docs/distribution/apple-secrets-setup.md).
+      #
+      # We fail fast with a clear error message if the secret is
+      # missing so the maintainer doesn't waste a macos-runner-minute
+      # on the doomed signing step. We also `security cms -D` the
+      # decoded profile to confirm it's a parseable signed CMS payload
+      # before the bundle progresses any further.
+      # ---------------------------------------------------------------------
+      - name: Embed App Store provisioning profile
+        env:
+          APP_STORE_PROVISIONING_PROFILE: ${{ secrets.APP_STORE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          APP="MeedyaConverter.app"
+          PROFILE_PATH="${APP}/Contents/embedded.provisionprofile"
+
+          if [ -z "${APP_STORE_PROVISIONING_PROFILE:-}" ]; then
+            echo "::error::APP_STORE_PROVISIONING_PROFILE secret is empty or missing — required to address ITMS-90889 (#391). Generate the profile in the Apple Developer portal (Profiles → + → Mac App Store → pick the .Lite App ID → pick the Mac Developer Distribution cert → download), then base64-encode it locally with 'base64 -i meedyaconverter.provisionprofile | pbcopy' and paste it into Repository → Settings → Secrets and variables → Actions → New repository secret. See docs/distribution/apple-secrets-setup.md for the full recipe."
+            exit 1
+          fi
+
+          # Decode the base64 secret into the bundle.
+          mkdir -p "${APP}/Contents"
+          echo "${APP_STORE_PROVISIONING_PROFILE}" | base64 --decode > "${PROFILE_PATH}"
+
+          if [ ! -s "${PROFILE_PATH}" ]; then
+            echo "::error::Decoded provisioning profile is empty. The APP_STORE_PROVISIONING_PROFILE secret may not be valid base64."
+            exit 1
+          fi
+
+          # Validate the profile is a parseable signed CMS payload. A
+          # malformed profile fails signing later with a far less
+          # informative error.
+          DECODED_TMP="$(mktemp -t embedded-profile-decoded)"
+          if ! security cms -D -i "${PROFILE_PATH}" > "${DECODED_TMP}" 2>/dev/null; then
+            rm -f "${DECODED_TMP}"
+            echo "::error::Could not decode embedded.provisionprofile as a CMS payload. The secret value may have been corrupted during the base64 round-trip; re-encode and re-paste."
+            exit 1
+          fi
+
+          # Surface the profile's bound App ID + Team ID + expiry so
+          # the maintainer can sanity-check at-a-glance. These are
+          # NOT secrets — the App ID and Team ID appear in every
+          # signed app bundle and the expiry is public info on the
+          # Developer portal.
+          APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0"           "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+          EXPIRES=$(/usr/libexec/PlistBuddy -c "Print :ExpirationDate"             "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+
+          rm -f "${DECODED_TMP}"
+
+          echo "  ✓ embedded.provisionprofile is a valid CMS payload"
+          echo "    application-identifier : ${APP_ID}"
+          echo "    team-identifier        : ${TEAM_ID}"
+          echo "    expires                : ${EXPIRES}"
+
+          # If the application-identifier doesn't end with the
+          # .Lite suffix, the profile was generated for the wrong
+          # App ID and codesigning will fail later with a confusing
+          # entitlements-mismatch error. Surface that here instead.
+          case "${APP_ID}" in
+            *".Lite")
+              echo "  ✓ application-identifier ends with .Lite as expected"
+              ;;
+            *)
+              echo "::error::ITMS-90889 risk: provisioning profile's application-identifier is '${APP_ID}' but it must end with '.Lite' to match the App Store Lite bundle. The profile was generated for the wrong App ID; regenerate it in the Apple Developer portal."
+              exit 1
+              ;;
+          esac
+
+      # ---------------------------------------------------------------------
       # Step 10: Sign for App Store
       # ---------------------------------------------------------------------
       # Signs with App Store entitlements (sandboxed) rather than the direct

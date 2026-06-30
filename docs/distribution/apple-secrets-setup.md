@@ -183,6 +183,86 @@ testflight.yml workflow which already wires the equivalent
 pipeline can be migrated to the same auth model in a follow-up PR
 — see the should-do list under issue #428.
 
+## Additional secret for the App Store Lite path
+
+The TestFlight (App Store Lite) workflow needs **one more secret**
+beyond the six above. The Direct release pipeline does not need it.
+
+### 7. `APP_STORE_PROVISIONING_PROFILE`
+
+App Store Connect rejects any `.app` bundle that doesn't ship with
+`Contents/embedded.provisionprofile` — that's ITMS-90889 (#391).
+The profile binds together: the `.Lite` App ID record, the
+**Mac Developer Distribution** cert family (NOT the
+Developer ID Application cert used for Direct), and an expiry date
+(Apple-issued profiles are valid for one year).
+
+Generation is user-side. Step-by-step:
+
+1. Sign in at <https://developer.apple.com/account/>.
+2. **Certificates, Identifiers & Profiles** → **Identifiers** → confirm
+   there is a Mac App ID record for
+   `Ltd.MWBMpartners.MeedyaConverter.Lite`. If not, create it with
+   **+** → **App IDs** → **App** → enter the Lite bundle identifier,
+   then save.
+3. **Certificates, Identifiers & Profiles** → **Certificates** → if
+   you don't already have a **Mac Distribution** cert (note: NOT the
+   "Mac Developer" or "Developer ID Application" — this is a third
+   distinct cert family), create one with **+** → **Mac Distribution**.
+   Generate a CSR from Keychain Access the same way you did for
+   `APPLE_CERTIFICATE`, then import the resulting `.cer`.
+4. **Profiles** → **+** → under **Distribution** pick
+   **Mac App Store Connect** (this is the profile type for TestFlight
+   and App Store distribution, as opposed to Direct Mac App
+   distribution which is for outside-store proprietary distribution).
+   Click **Continue**.
+5. Pick the `Ltd.MWBMpartners.MeedyaConverter.Lite` App ID.
+   **Continue**.
+6. Pick the **Mac Distribution** certificate from step 3.
+   **Continue**.
+7. Name the profile something like `MeedyaConverter Lite App Store
+   Distribution`. **Generate** and **Download** the resulting
+   `.provisionprofile` file.
+8. Base64-encode it on your Mac:
+
+   ```bash
+   base64 -i ~/Downloads/MeedyaConverter_Lite_App_Store_Distribution.provisionprofile | pbcopy
+   ```
+
+   That copies the base64 to the clipboard.
+9. In the GitHub web UI:
+   - Repository → Settings → Secrets and variables → Actions → New repository secret
+   - **Name**: `APP_STORE_PROVISIONING_PROFILE`
+   - **Value**: paste from clipboard
+   - Click **Add secret**.
+10. Securely delete the local `.provisionprofile` once the secret is
+    stored. The base64 in GitHub is the authoritative copy. The `.cer`
+    can stay imported in your Keychain for local signing.
+
+### Verifying the provisioning profile secret
+
+The TestFlight workflow's "Embed App Store provisioning profile" step
+(in `testflight.yml`) decodes the secret, asserts the decoded payload
+is a valid CMS-signed plist via `security cms -D`, and prints the
+profile's bound `application-identifier`, `team-identifier`, and
+`ExpirationDate`. If the secret is empty, malformed, or generated for
+the wrong App ID (missing the `.Lite` suffix), the workflow fails
+fast with a clear error message before any signing or upload step
+runs.
+
+### Rotation
+
+The profile expires after one year. The workflow does NOT warn in
+advance; a `.provisionprofile` that worked yesterday will simply fail
+the `security cms -D` parse on day 365 + 1. Regenerate from the Apple
+Developer portal (it remembers the bound App ID + cert) and re-upload
+the new base64. There's no special procedure — the new profile
+fully replaces the old.
+
+If the **Mac Distribution** cert itself is rotated (separate from the
+profile expiry), generate a new profile bound to the new cert; an old
+profile still bound to a revoked cert won't sign.
+
 ## Why no `gh secret set`?
 
 The maintainer's standing preference is to use the GitHub web UI for
