@@ -70,7 +70,9 @@ Never pushed without explicit user instruction.
 
 | Cycle | Phase | Work | Commit | Status |
 |-------|-------|------|--------|--------|
-| 1 | Bootstrap + STABILIZE adoption | Cherry-picked 6 prior committed ship-blocker branches + committed 2 in-progress ones from killed workflow `wf_7bae08f4-b10`. Builds clean. | `5dcd791` | ✅ |
+| 1 | Bootstrap + STABILIZE adoption | Cherry-picked 6 prior committed ship-blocker branches + committed 2 in-progress ones from killed workflow `wf_7bae08f4-b10`. Builds clean. State files committed at `aaecfed`. | `5dcd791` → `aaecfed` | ✅ |
+| 2 | STABILIZE | Package.swift consolidation: `.sdef` resource declaration (AppleScript now bundled — build log confirms `Copying MeedyaConverter.sdef`); Sparkle SPM dep conditional on `DIRECT=1`; FFmpegKit SPM dep conditional on `APP_STORE=1`. Build verifies clean default-config. | `ec28625` | ✅ |
+| 3 | STABILIZE | Sparkle Option A — `GitHubReleaseChecker` (new) polls `releases/latest` with 1-hour cache; `AppUpdateChecker` rewrites dispatch into three mechanisms (sparkle / githubReleases / appStore) selected by bundle ID + framework presence; `SettingsView`'s `UpdateSettingsTab` shows three distinct UI variants; `Resources/Help/updates.md` documents the v0.1.0 manual-DMG flow + DMG signature verification + the v0.2.0 Sparkle roadmap. Build clean. | `41f4994` | ✅ |
 
 ## Adopted prior work (from killed workflow wf_7bae08f4-b10)
 
