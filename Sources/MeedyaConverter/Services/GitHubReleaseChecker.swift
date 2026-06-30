@@ -231,11 +231,42 @@ struct GitHubRelease: Codable, Equatable, Sendable {
     }
 
     /// The .dmg asset for this release, picked as the first asset whose
-    /// filename ends in `.dmg`. `nil` if the release doesn't carry one
-    /// (e.g. legacy releases that only attached a .tar.gz).
+    /// filename ends in `.dmg` AND whose `browser_download_url` host is
+    /// in the GitHub-served allowlist. `nil` if the release doesn't
+    /// carry one (e.g. legacy releases that only attached a .tar.gz)
+    /// or if every candidate's host fails the allowlist.
+    ///
+    /// **Why the host check** (SECURITY.md threat T3 / finding F-003):
+    /// the GitHub Releases API is the trusted source of truth for asset
+    /// URLs, but `browser_download_url` is a JSON-encoded URL string —
+    /// a future API change (or a maliciously edited release asset that
+    /// gets past GitHub's own validation, or a community fork pointing
+    /// at a mirror) could produce a URL on an unexpected host. Since
+    /// the SettingsView "Download DMG" button opens this URL via
+    /// `NSWorkspace.shared.open(_:)` — handing it to the user's
+    /// browser without further validation — a non-github host would
+    /// be a redirect-to-attacker vector. The allowlist is the
+    /// **minimum** trustworthy set for GitHub-served release assets;
+    /// the lowercase comparison is deliberate (URL hosts are
+    /// case-insensitive per RFC 3986).
     var dmgAsset: Asset? {
-        assets.first { $0.name.lowercased().hasSuffix(".dmg") }
+        assets.first { asset in
+            guard asset.name.lowercased().hasSuffix(".dmg") else { return false }
+            guard let host = asset.browserDownloadUrl.host?.lowercased() else { return false }
+            return Self.dmgAssetHostAllowlist.contains(host)
+        }
     }
+
+    /// Hosts permitted to serve release `.dmg` assets. GitHub Releases
+    /// returns one of these two hosts as of 2026 — `github.com` for
+    /// direct release downloads and `objects.githubusercontent.com`
+    /// for redirected CDN downloads. Any other host fails the
+    /// `dmgAsset` validation and the SettingsView falls back to
+    /// pointing the user at the release page instead.
+    fileprivate static let dmgAssetHostAllowlist: Set<String> = [
+        "github.com",
+        "objects.githubusercontent.com",
+    ]
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
