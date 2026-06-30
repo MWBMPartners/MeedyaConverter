@@ -300,8 +300,17 @@ struct SFTPSettingsView: View {
         testResult = nil
     }
 
-    /// Deletes profiles at the specified offsets.
+    /// Deletes profiles at the specified offsets, including their
+    /// Keychain-stored credentials.
+    ///
+    /// Without the credential cleanup, deleting a profile would
+    /// leave its password sitting in the Keychain indefinitely
+    /// (orphaned but still resident). `SFTPCredentialStore.delete`
+    /// is idempotent so a missing entry is a no-op.
     private func deleteProfile(at offsets: IndexSet) {
+        for index in offsets where savedProfiles.indices.contains(index) {
+            try? SFTPCredentialStore.delete(forProfileID: savedProfiles[index].id)
+        }
         savedProfiles.remove(atOffsets: offsets)
         selectedProfileIndex = nil
         persistProfiles()
@@ -322,21 +331,112 @@ struct SFTPSettingsView: View {
 
     // MARK: - Persistence
 
-    /// Loads saved profiles from UserDefaults.
+    /// UserDefaults key under which the redacted profile array lives.
+    /// String literal kept in a `Self.` constant so the load / persist
+    /// pair cannot drift.
+    private static let userDefaultsKey = "sftpProfiles"
+
+    /// Loads saved profiles from UserDefaults and restores their
+    /// passwords from the Keychain.
+    ///
+    /// **F-005 migration path** (Cycle 17): legacy `sftpProfiles`
+    /// blobs predate the Keychain split — they carried the plaintext
+    /// password inside `AuthMethod.password(String)`. When we detect
+    /// such a profile (a non-empty password in the JSON), we lift the
+    /// plaintext into the Keychain keyed by the profile's id (a fresh
+    /// UUID assigned by `SFTPServerConfig`'s backward-compatible
+    /// decoder), then immediately call `persistProfiles()` to scrub
+    /// the plaintext from the plist.
     private func loadProfiles() {
-        guard let data = UserDefaults.standard.data(forKey: "sftpProfiles"),
+        guard let data = UserDefaults.standard.data(forKey: Self.userDefaultsKey),
               let profiles = try? JSONDecoder().decode(
                   [SFTPServerConfig].self, from: data
               ) else {
             return
         }
-        savedProfiles = profiles
+
+        var restored: [SFTPServerConfig] = []
+        var migratedLegacyPlaintext = false
+
+        for profile in profiles {
+            switch profile.authMethod {
+            case .password(let pw) where pw.isEmpty:
+                // Already-redacted profile: restore the password from
+                // the Keychain. If lookup fails (deleted out of band,
+                // first launch on a different machine, etc.) we keep
+                // the empty password — the user will be re-prompted
+                // by the form when they next select this profile.
+                if let realPw = try? SFTPCredentialStore.read(forProfileID: profile.id),
+                   !realPw.isEmpty {
+                    var copy = profile
+                    copy.authMethod = .password(realPw)
+                    restored.append(copy)
+                } else {
+                    restored.append(profile)
+                }
+
+            case .password(let pw):
+                // Non-empty password in the JSON ⇒ legacy plaintext
+                // blob written before Cycle 17. Migrate: write the
+                // password to the Keychain under the profile's id
+                // (the decoder assigned a fresh UUID since the legacy
+                // JSON lacked the field). Keep the in-memory copy
+                // populated so the user can use it immediately.
+                try? SFTPCredentialStore.save(password: pw, forProfileID: profile.id)
+                migratedLegacyPlaintext = true
+                restored.append(profile)
+
+            case .keyFile, .agent:
+                // Non-password auth methods carry no secret material
+                // inside the config — no Keychain interaction needed.
+                restored.append(profile)
+            }
+        }
+
+        savedProfiles = restored
+
+        // Re-persist now so the migrated plaintext is overwritten in
+        // UserDefaults this launch — we don't want to leave it sitting
+        // there until the next save action.
+        if migratedLegacyPlaintext {
+            persistProfiles()
+        }
     }
 
-    /// Persists saved profiles to UserDefaults.
+    /// Persists saved profiles to UserDefaults with passwords
+    /// redacted out to the Keychain.
+    ///
+    /// **F-005 invariant**: the data this method writes to
+    /// `UserDefaults` must NEVER contain a non-empty
+    /// `AuthMethod.password(String)` field. The `redacted` copy
+    /// below is what gets serialised; the real password is sent to
+    /// `SFTPCredentialStore` first and replaced with an empty
+    /// string in the about-to-be-encoded profile. The redaction
+    /// happens at this single chokepoint so no caller has to know
+    /// the rule.
     private func persistProfiles() {
-        if let data = try? JSONEncoder().encode(savedProfiles) {
-            UserDefaults.standard.set(data, forKey: "sftpProfiles")
+        var redacted: [SFTPServerConfig] = []
+
+        for profile in savedProfiles {
+            if case .password(let pw) = profile.authMethod, !pw.isEmpty {
+                // Write the credential to the Keychain. Failures here
+                // are non-fatal for the persist call — the user can
+                // re-enter — but they would leave a redacted profile
+                // with no recoverable password. In practice the only
+                // failure mode is `errSecUserCancelled` from a
+                // Keychain ACL prompt, which the user will see.
+                try? SFTPCredentialStore.save(password: pw, forProfileID: profile.id)
+
+                var copy = profile
+                copy.authMethod = .password("")
+                redacted.append(copy)
+            } else {
+                redacted.append(profile)
+            }
+        }
+
+        if let data = try? JSONEncoder().encode(redacted) {
+            UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
         }
     }
 }
