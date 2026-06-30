@@ -16,9 +16,19 @@
 
 ## In-scope gaps the autopilot may build autonomously (Bucket 1)
 
-None currently identified. The codebase is feature-complete per
-`PROJECT_STATUS.md` and `.claude/project_brief.md`. Net-new features at this
-stage would need explicit user steer.
+**None currently identified** (re-confirmed Cycle 22 / 2026-06-30).
+
+The codebase is feature-complete per `PROJECT_STATUS.md` and
+`.claude/project_brief.md`. The SECURE phase (Cycles 12-21) added
+defensive infrastructure (`PathSanitizer`, `MetadataSanitizer`,
+`SFTPCredentialStore`, FFmpegProbe watchdog, ScriptingBridge
+sanitised replies) — none of these surfaced new in-scope feature
+gaps. The remaining v0.1.0 must-do items in `PROJECT.md#Remaining`
+are all user-driven (Apple secrets verification, gh auth refresh)
+or tag-strategy decisions, not autonomously-buildable features.
+
+Net-new features at this stage need explicit user steer; the
+COMPLETE phase exits cleanly without building.
 
 ## In-scope gaps awaiting user approval (Bucket 2 — gate-ledger)
 
