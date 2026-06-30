@@ -1,0 +1,57 @@
+# ============================================================================
+# MeedyaConverter — Dependabot configuration
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Per SECURITY.md F-010 (T7 — supply-chain). Closes one half of the
+# residual recommendation: a CI-mediated upgrade flow that surfaces
+# every action / SPM version bump as a reviewable PR rather than
+# letting major-tag re-pointers (the `@v4` re-tag risk) slide
+# silently into a build.
+#
+# Two ecosystems active:
+#
+# * github-actions — weekly scan of `.github/workflows/*.yml` for
+#   newer releases of each `uses:` reference. Dependabot opens a
+#   PR per bump; the existing `dependency-review-action` workflow
+#   already gates new transitive dependencies.
+#
+# * swift — weekly scan of Package.swift's SPM dependencies. Lifts
+#   the three active deps (Sparkle, ffmpeg-kit, swift-argument-parser)
+#   AND the gated MeedyaSuite-core branch pin (which will become
+#   a tag pin per F-009/G-014 once the sibling repo cuts a tagged
+#   release).
+#
+# The `target-branch` is `autopilot/2026-06-30` so updates land on
+# the run branch for review with the rest of the autopilot work.
+# Once v0.1.0 ships and the run branch merges back to `main`, this
+# can flip to `target-branch: main` (or omitted, which defaults to
+# main).
+# ============================================================================
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    target-branch: "autopilot/2026-06-30"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    target-branch: "autopilot/2026-06-30"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "swift"
