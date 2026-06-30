@@ -123,8 +123,21 @@ final class ScriptingBridge: NSObject {
             return "ERROR: Profile '\(profile)' not found. Available: \(available)"
         }
 
-        // Build the job configuration
+        // Build the job configuration.
+        //
+        // T2 path-traversal defence (SECURITY.md finding F-002): the
+        // `output` string arrives directly from the AppleScript caller
+        // and could be a relative path containing `..` segments. Reject
+        // any output URL that doesn't standardise to a path within the
+        // user's home directory after symlink resolution. This is the
+        // narrow allowlist — the AppleScript bridge is intended for
+        // automation of conversion *within* the user's own files, not
+        // as a tool for writing to arbitrary system locations.
         let outputURL = URL(fileURLWithPath: output)
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser
+        guard outputURL.isContained(within: homeURL) else {
+            return "ERROR: Output path is not within the user's home directory. Path traversal segments (e.g. '..') are not permitted via the AppleScript bridge: \(output)"
+        }
         let jobConfig = EncodingJobConfig(
             id: UUID(),
             inputURL: inputURL,
