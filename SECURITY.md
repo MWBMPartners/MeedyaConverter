@@ -205,11 +205,9 @@ in Cycle 13+:
 
 ## Findings register
 
-(empty at Phase 0 completion — purple-team Cycle 13+ populates)
-
 | ID | Severity | Surface | Status | Cycle | Notes |
 |----|----------|---------|--------|-------|-------|
-| _none yet_ | — | — | — | — | — |
+| F-001 | N/A (no finding) | T1 — FFmpeg argument construction (15 files, ~30 sites) | swept clean | 13 | Audited every `Process` invocation under `Sources/` that builds an argument list for ffmpeg / ffprobe / cdrecord / growisofs / dovi_tool / hdr10plus_tool / hlg-tools / subtitle_tonemap. **Zero string-interpolation patterns into argument elements** (`grep -rE 'process\.arguments\s*=.*\\\(' Sources/` returns no hits). **Zero `/bin/sh -c` or `/bin/bash -c` invocations.** All call sites use array-form `[String]` arguments throughout. Executable lookups go via `URL(fileURLWithPath: "/usr/bin/env")` with the tool name as the first array element (e.g. `["cdrecord"] + args`); `env` does not interpret shell metacharacters either — it just PATH-resolves the literal name and `execve`s with the remaining args as `argv[]`. The `executable` variable in `BurnSettingsView.swift:516`/`:558` is one of two compile-time literals (`"cdrecord"` / `"growisofs"`) chosen by the user's disc-format selection — not attacker-controllable. **The 2026-06 vidstabdetect filter fix (Cycle 1, commit ae01d3f) is the only historical regression of this class** and is closed. No further work proposed for this threat in v0.1.0. A regression-grep script (`scripts/security-check-ffmpeg-args.sh`) is queued as a should-do for a later POLISH cycle so a future refactor cannot silently re-introduce a string-interpolation pattern. |
 
 ## Active compromise log
 
