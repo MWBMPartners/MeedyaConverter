@@ -64,6 +64,43 @@ import ConverterEngine
 @MainActor
 final class ScriptingBridge: NSObject {
 
+    // MARK: - F-008 helpers (T6 — AppleScript surface hardening)
+
+    /// Soft cap on the length of any incoming AppleScript string
+    /// argument. AppleScript can pass extremely long literals — a
+    /// crafted attacker script could push a multi-megabyte profile
+    /// name through `encode` and force the error-path to render it
+    /// back. The 4 KB cap is generous for legitimate use (longest
+    /// profile name we ship is ~30 characters; longest filename a
+    /// macOS user can save is 255 bytes per component, ~4 KB for
+    /// the full path) and tight enough to stop blob-pasting.
+    /// Per SECURITY.md F-008.
+    nonisolated fileprivate static let maxArgumentLength = 4096
+
+    /// Format an `ERROR:` reply that interpolates user-supplied
+    /// strings safely. The interpolated values pass through
+    /// `MetadataSanitizer` (the same helper used by `FFmpegProbe`
+    /// since F-006) so an AppleScript caller can't inject NUL
+    /// bytes, ANSI/VT100 escape sequences, or bidirectional-
+    /// override codepoints into our reply and forge fake output
+    /// in the caller's log or terminal. Per SECURITY.md F-008.
+    nonisolated fileprivate static func formatError(_ message: String) -> String {
+        return "ERROR: " + MetadataSanitizer.sanitize(message)
+    }
+
+    /// Reject an over-length argument with a clear ERROR reply.
+    /// Returns nil when the argument is within bounds (caller may
+    /// proceed). Per SECURITY.md F-008.
+    nonisolated fileprivate static func enforceLengthCap(
+        _ value: String,
+        label: String
+    ) -> String? {
+        guard value.count > maxArgumentLength else { return nil }
+        return formatError(
+            "AppleScript argument '\(label)' exceeds the \(maxArgumentLength)-character cap."
+        )
+    }
+
     // MARK: - Properties
 
     /// Shared singleton instance for scripting dispatch.
@@ -103,24 +140,31 @@ final class ScriptingBridge: NSObject {
     /// - Returns: A UUID string identifying the queued job, or an error
     ///   message prefixed with "ERROR:" if the request cannot be fulfilled.
     @objc func encode(file: String, profile: String, output: String) -> String {
+        // F-008 length caps — fail fast before any work happens.
+        if let err = Self.enforceLengthCap(file, label: "file") { return err }
+        if let err = Self.enforceLengthCap(profile, label: "profile") { return err }
+        if let err = Self.enforceLengthCap(output, label: "output") { return err }
+
         guard let engine = engine else {
-            return "ERROR: Encoding engine is not configured."
+            return Self.formatError("Encoding engine is not configured.")
         }
 
         guard let profileStore = profileStore else {
-            return "ERROR: Profile store is not available."
+            return Self.formatError("Profile store is not available.")
         }
 
         // Validate input file exists
         let inputURL = URL(fileURLWithPath: file)
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
-            return "ERROR: Input file not found: \(file)"
+            return Self.formatError("Input file not found: \(file)")
         }
 
         // Look up the encoding profile by name
         guard let encodingProfile = profileStore.profile(named: profile) else {
             let available = profileStore.profiles.map(\.name).joined(separator: ", ")
-            return "ERROR: Profile '\(profile)' not found. Available: \(available)"
+            return Self.formatError(
+                "Profile '\(profile)' not found. Available: \(available)"
+            )
         }
 
         // Build the job configuration.
@@ -136,7 +180,9 @@ final class ScriptingBridge: NSObject {
         let outputURL = URL(fileURLWithPath: output)
         let homeURL = FileManager.default.homeDirectoryForCurrentUser
         guard outputURL.isContained(within: homeURL) else {
-            return "ERROR: Output path is not within the user's home directory. Path traversal segments (e.g. '..') are not permitted via the AppleScript bridge: \(output)"
+            return Self.formatError(
+                "Output path is not within the user's home directory. Path traversal segments (e.g. '..') are not permitted via the AppleScript bridge: \(output)"
+            )
         }
         let jobConfig = EncodingJobConfig(
             id: UUID(),
@@ -165,13 +211,16 @@ final class ScriptingBridge: NSObject {
     /// - Returns: A JSON string containing the file's media information,
     ///   or an error message prefixed with "ERROR:" if probing fails.
     @objc func probe(file: String) -> String {
+        // F-008 length cap.
+        if let err = Self.enforceLengthCap(file, label: "file") { return err }
+
         guard let engine = engine else {
-            return "ERROR: Encoding engine is not configured."
+            return Self.formatError("Encoding engine is not configured.")
         }
 
         let fileURL = URL(fileURLWithPath: file)
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return "ERROR: File not found: \(file)"
+            return Self.formatError("File not found: \(file)")
         }
 
         // Probing is async but AppleScript expects a synchronous return.
@@ -179,13 +228,13 @@ final class ScriptingBridge: NSObject {
         // on a background queue, bridging back with a semaphore. The
         // FFmpegProbe type is Sendable, so it can safely cross isolation.
         guard let ffprobePath = engine.ffprobeInfo?.path else {
-            return "ERROR: FFprobe not configured. Call configure() first."
+            return Self.formatError("FFprobe not configured. Call configure() first.")
         }
 
         // Run the probe synchronously using Process (FFmpegProbe.analyzeSync).
         // Since FFmpegProbe's analyze(url:) is async, we invoke it from a
         // detached context and collect the result via a thread-safe box.
-        nonisolated(unsafe) var probeResult = "ERROR: Probe did not complete."
+        nonisolated(unsafe) var probeResult = Self.formatError("Probe did not complete.")
         let prober = FFmpegProbe(ffprobePath: ffprobePath)
         let semaphore = DispatchSemaphore(value: 0)
 
@@ -196,9 +245,17 @@ final class ScriptingBridge: NSObject {
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 let data = try encoder.encode(mediaFile)
                 probeResult = String(data: data, encoding: .utf8)
-                    ?? "ERROR: Failed to encode JSON."
+                    ?? Self.formatError("Failed to encode JSON.")
             } catch {
-                probeResult = "ERROR: Probe failed — \(error.localizedDescription)"
+                // F-008: sanitise the localizedDescription before
+                // returning. Foundation can include filesystem paths
+                // (the resolved ffprobe binary location, the input
+                // file path with its on-disk encoding) in error
+                // messages; passing them through the sanitiser
+                // strips any embedded control codes that would
+                // otherwise allow log forgery from the AppleScript
+                // caller's perspective.
+                probeResult = Self.formatError("Probe failed — \(error.localizedDescription)")
             }
             semaphore.signal()
         }
@@ -208,7 +265,7 @@ final class ScriptingBridge: NSObject {
         // which is acceptable for AppleScript's synchronous calling convention.
         let timeout = semaphore.wait(timeout: .now() + 60)
         if timeout == .timedOut {
-            return "ERROR: Probe timed out after 60 seconds."
+            return Self.formatError("Probe timed out after 60 seconds.")
         }
 
         return probeResult
@@ -253,7 +310,14 @@ final class ScriptingBridge: NSObject {
         if let current = queue.currentJob {
             var currentDict: [String: Any] = [:]
             currentDict["id"] = current.config.id.uuidString
-            currentDict["fileName"] = current.config.inputURL.lastPathComponent
+            // F-008: sanitise the filename before publishing — a
+            // malicious media filename containing VT100 escape
+            // sequences would otherwise reach the AppleScript
+            // caller's queue-monitor and forge fake terminal
+            // output if the caller logs the response.
+            currentDict["fileName"] = MetadataSanitizer.sanitize(
+                current.config.inputURL.lastPathComponent
+            )
             currentDict["progress"] = current.progress
             if let speed = current.speed {
                 currentDict["speed"] = speed
