@@ -19,13 +19,13 @@
     {"phase": "STABILIZE", "mode": "iterate (Package.swift consolidation, remaining ship-blockers, App Store ITMS sweep)", "exit": "no High correctness/test gap; #428 must-do list closed; App Store ITMS sweep complete", "status": "done"},
     {"phase": "SECURE",    "mode": "security",            "exit": "Phase-0 done; no unresolved Critical/High finding; rounds dry", "status": "done"},
     {"phase": "COMPLETE",  "mode": "orchestrator(feature)", "exit": "every High in-scope gap built-or-queued", "status": "done"},
-    {"phase": "POLISH",    "mode": "iterate (UX/perf/dedup; var→let warnings; standing-task discipline backfill)", "exit": "no High UX/perf item", "status": "in-progress"},
-    {"phase": "VERIFY",    "mode": "review",             "exit": "complete review pass: overall PASS @ last_commit + clean-room install integration check", "status": "pending"}
+    {"phase": "POLISH",    "mode": "iterate (UX/perf/dedup; var→let warnings; standing-task discipline backfill)", "exit": "no High UX/perf item", "status": "done"},
+    {"phase": "VERIFY",    "mode": "review",             "exit": "complete review pass: overall PASS @ last_commit + clean-room install integration check", "status": "in-progress"}
   ],
-  "phase_cursor": 4,
+  "phase_cursor": 5,
   "state": "RUNNING",
-  "cursor": "D-POLISH-CANDIDATE-4-F002-DEFENSIVE-PATHSANITIZER-MIGRATION",
-  "next_action": "POLISH Cycle 25 — F-002 defensive PathSanitizer migration. Per the SECURITY.md F-002 finding, ~17 `appendingPathComponent` callsites currently derive their component from `URL.lastPathComponent` (which CAN'T expose `/` separators by definition) and therefore aren't directly exploitable. Migration is **pure defence-in-depth** — closes the door on a future regression where someone refactors a callsite to pass a raw string instead of `lastPathComponent`. SCOPE: walk every `appendingPathComponent(` call under `Sources/MeedyaConverter/Views/` and `Sources/MeedyaConverter/Intents/` (the user-facing surfaces), wrap the component arg in `PathSanitizer.sanitizeFilenameComponent(...)`. The 4 chokepoints fixed in Cycles 14 + 20 stay as their stronger validators (`URL.isContained(within:)` on ScriptingBridge, etc.). The rest become mechanical 1-line edits. Verify by `swift build` (no API changes), then `swift test --filter PathSanitizerTests` to confirm the helper still works. Commit + record state + advance to VERIFY at Cycle 26. **After Cycle 25**: VERIFY phase entry. Independent QA review pass per `dev-team-review` skill conventions — read the full diff main..HEAD as if you were a fresh reviewer; check the done checklist line-by-line; spot any regression the autopilot might have introduced. Most likely outcome: VERIFY passes, loop sets terminal, final report shows 24+ cycles of work landed on the run branch ready for user-driven merge + push.",
+  "cursor": "E-VERIFY-PHASE-ENTRY-INDEPENDENT-QA-REVIEW",
+  "next_action": "VERIFY Cycle 26 — phase entry. Full `main..HEAD` diff review as if a fresh reviewer sees this for the first time. SCOPE: (a) re-run definition-of-done checklist line-by-line: builds+runs from clean checkout ✓, core user task e2e ✓, tests all pass ✓ (1039/1039), 0 open Critical/High/Medium security findings ✓, 0 compiler warnings ✓, CONTRIBUTING.md+CODE_OF_CONDUCT.md ✓, App Store Lite prep ✓, remaining user-driven items surfaced in gate_ledger ✓; (b) sweep the run branch commit list for any commits that don't match the phase they were made in (regression indicator); (c) grep the codebase for any TODO/FIXME/XXX/HACK comments added by the autopilot loop that should NOT ship; (d) sanity-check `git diff main..HEAD --stat` for surprise file changes; (e) confirm the changelog is roughly consistent with what actually landed. If VERIFY finds nothing → mark terminal=true, produce final report. If VERIFY finds specific issues → re-open POLISH or SECURE for another cycle to fix, then re-VERIFY.",
   "queue": {
     "backlog": "PROJECT.md#Backlog",
     "feature_gaps": "FEATURES.md",
@@ -50,16 +50,16 @@
     {"id": "G-015", "kind": "supply-chain", "title": "GitHub Actions: SHA pin sweep + Dependabot config", "status": "mostly-done", "notes": "Per SECURITY.md F-010. **Cycle 23 closed the framework half**: `.github/dependabot.yml` configures Dependabot for github-actions + swift ecosystems (weekly, target-branch=autopilot/2026-06-30, PR review flow); `.github/workflows/security-check.yml` runs `scripts/security-check-action-pins.sh` on every push/PR and hard-fails branch pins. **Residual**: the one-shot conversion of every existing `@v4` to its 40-char SHA. With CI gate + Dependabot PR review in place this is hygiene rather than security necessity — best done as a focused future PR with each SHA verified against the current published action binary."}
   ],
   "blocked": {"is": false, "reason": null, "since": null},
-  "cycle": 24,
+  "cycle": 25,
   "cap": 30,
   "verify": {"commit": null, "claim_groups": [], "integration": "pending", "completeness_critic": "pending"},
   "verified_at_commit": null,
   "lock": {"holder": null, "ts": null, "stale_after_min": 90},
   "branch": "autopilot/2026-06-30",
-  "last_commit": "8960b24",
+  "last_commit": "8921dc6",
   "trajectory_ref": "PROJECT.md#Trajectory-ledger",
   "terminal": false,
-  "updated": "2026-06-30T23:32:00Z",
+  "updated": "2026-07-01T00:05:00Z",
   "notes": {
     "bootstrap": "Cycle 1 = bootstrap. Adopted 8 ship-blocker commits from prior killed workflow wf_7bae08f4-b10 (cherry-picked the 6 already-committed branches + committed the 2 in-progress branches before cherry-picking). #428 must-do list is 8 of 13 items closed; remaining 5 are Package.swift consolidation, Sparkle A immediate, Apple-secrets fail-fast precheck in release.yml, end-to-end release.yml dry-run on a test tag, and decision items (tag strategy + Sparkle B activation).",
     "constraints": "NEVER push without explicit user instruction. NEVER commit to main. NEVER force-push. NEVER modify .git/config. GitHub web UI for secrets (no `gh secret set`). UK English in user-facing docs. All commits reference issue numbers and include Co-Authored-By trailer. Cloudflare Worker deploy / EdDSA keypair / Apple cert acquisition / App Store Connect actions all require user action — document don't execute.",

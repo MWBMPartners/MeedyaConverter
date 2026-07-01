@@ -108,7 +108,13 @@ struct ConvertMediaIntent: AppIntent {
 
         let outputDir = tempInputURL.deletingLastPathComponent()
         let baseName = tempInputURL.deletingPathExtension().lastPathComponent
-        let outputURL = outputDir.appendingPathComponent("\(baseName)-converted.\(outputExtension)")
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+        // Complements the Cycle 20 F-008 sanitisation of
+        // `inputFile.filename` above.
+        let outputComponent = PathSanitizer.sanitizeFilenameComponent(
+            "\(baseName)-converted.\(outputExtension)"
+        )
+        let outputURL = outputDir.appendingPathComponent(outputComponent)
 
         // Build FFmpeg arguments from the profile.
         let builder = profile.toArgumentBuilder(inputURL: tempInputURL, outputURL: outputURL)

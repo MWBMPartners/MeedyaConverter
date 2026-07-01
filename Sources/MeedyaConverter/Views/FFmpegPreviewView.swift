@@ -139,8 +139,10 @@ struct FFmpegPreviewView: View {
         let outputDir = viewModel.outputDirectory ?? FileManager.default.temporaryDirectory
         let outputExtension = viewModel.selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
         let baseName = file.fileURL.deletingPathExtension().lastPathComponent
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+        let component = PathSanitizer.sanitizeFilenameComponent("\(baseName)_converted")
         let outputURL = outputDir
-            .appendingPathComponent("\(baseName)_converted")
+            .appendingPathComponent(component)
             .appendingPathExtension(outputExtension)
 
         let config = EncodingJobConfig(

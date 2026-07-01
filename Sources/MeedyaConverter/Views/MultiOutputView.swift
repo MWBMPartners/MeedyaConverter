@@ -263,8 +263,17 @@ struct MultiOutputView: View {
         let ext = profile.containerFormat.rawValue
         let baseName = source.deletingPathExtension().lastPathComponent
         let outputDir = source.deletingLastPathComponent()
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25):
+        // both `baseName` (from URL.lastPathComponent) and
+        // `profile.name` (user form input) flow into the path
+        // component here. Wrap the composed result so a future
+        // refactor or profile-name with control codes cannot
+        // escape `outputDir`.
+        let component = PathSanitizer.sanitizeFilenameComponent(
+            "\(baseName)_\(profile.name.replacingOccurrences(of: " ", with: "_"))"
+        )
         let outputURL = outputDir
-            .appendingPathComponent("\(baseName)_\(profile.name.replacingOccurrences(of: " ", with: "_"))")
+            .appendingPathComponent(component)
             .appendingPathExtension(ext)
 
         let spec = OutputSpec(

@@ -425,7 +425,13 @@ struct SlateGeneratorView: View {
         isGenerating = true
         statusMessage = nil
 
-        let outputName = "leader_\(videoURL.lastPathComponent)"
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25):
+        // `videoURL.lastPathComponent` cannot expose path separators
+        // today, but wrapping closes the door on a future refactor
+        // that passes a raw user-supplied string here.
+        let outputName = PathSanitizer.sanitizeFilenameComponent(
+            "leader_\(videoURL.lastPathComponent)"
+        )
         let outputPath = videoURL
             .deletingLastPathComponent()
             .appendingPathComponent(outputName)

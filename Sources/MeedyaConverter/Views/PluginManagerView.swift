@@ -251,8 +251,11 @@ struct PluginManagerView: View {
             guard let sourceURL = urls.first else { return }
 
             let pluginDir = PluginManager.defaultPluginDirectory
+            // F-002 defensive sanitisation per SECURITY.md (Cycle 25):
+            // plugin bundle names come from a user-picked path; wrap
+            // so a maliciously-named plugin cannot escape pluginDir.
             let destinationURL = pluginDir.appendingPathComponent(
-                sourceURL.lastPathComponent,
+                PathSanitizer.sanitizeFilenameComponent(sourceURL.lastPathComponent),
                 isDirectory: true
             )
 
