@@ -21,11 +21,15 @@
 #   a tag pin per F-009/G-014 once the sibling repo cuts a tagged
 #   release).
 #
-# The `target-branch` is `autopilot/2026-06-30` so updates land on
-# the run branch for review with the rest of the autopilot work.
-# Once v0.1.0 ships and the run branch merges back to `main`, this
-# can flip to `target-branch: main` (or omitted, which defaults to
-# main).
+# No `target-branch` is set, so Dependabot targets the repository's
+# DEFAULT branch (`main`). Dependabot reads this config only from the
+# default branch and opens its PRs against `target-branch` if set, or
+# the default branch otherwise — and that branch MUST exist on the
+# remote. An earlier revision pinned `target-branch: autopilot/2026-06-30`
+# (the transient run branch), which does not exist on origin; on merge
+# to main Dependabot would have found no such base branch and opened
+# ZERO update PRs, silently defeating this file's whole purpose. Omit
+# the key so it always tracks whatever the live default branch is.
 # ============================================================================
 
 version: 2
@@ -35,7 +39,6 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    target-branch: "autopilot/2026-06-30"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci(deps)"
@@ -48,7 +51,6 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    target-branch: "autopilot/2026-06-30"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"

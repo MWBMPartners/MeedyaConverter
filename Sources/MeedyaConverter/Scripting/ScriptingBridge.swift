@@ -79,13 +79,21 @@ final class ScriptingBridge: NSObject {
 
     /// Format an `ERROR:` reply that interpolates user-supplied
     /// strings safely. The interpolated values pass through
-    /// `MetadataSanitizer` (the same helper used by `FFmpegProbe`
-    /// since F-006) so an AppleScript caller can't inject NUL
-    /// bytes, ANSI/VT100 escape sequences, or bidirectional-
-    /// override codepoints into our reply and forge fake output
-    /// in the caller's log or terminal. Per SECURITY.md F-008.
+    /// `MetadataSanitizer.sanitizeSingleLine` so an AppleScript
+    /// caller can't inject NUL bytes, ANSI/VT100 escape sequences,
+    /// bidirectional-override codepoints, C1 controls, Unicode
+    /// line/paragraph separators, **or raw TAB/LF/CR** into our
+    /// reply and forge fake output in the caller's log or terminal.
+    ///
+    /// The single-line variant is deliberate: an `ERROR:` reply is
+    /// one logical line, and the plain `sanitize` helper RETAINS
+    /// LF/CR (they're legitimate in multi-line media comment tags).
+    /// Reusing `sanitize` here would leave a newline-injection
+    /// vector — a profile name like `"bogus\nERROR: overwrote X"`
+    /// would produce a forged second `ERROR:` line for a caller
+    /// that logs the reply line-by-line. Per SECURITY.md F-008.
     nonisolated fileprivate static func formatError(_ message: String) -> String {
-        return "ERROR: " + MetadataSanitizer.sanitize(message)
+        return "ERROR: " + MetadataSanitizer.sanitizeSingleLine(message)
     }
 
     /// Reject an over-length argument with a clear ERROR reply.
@@ -173,10 +181,15 @@ final class ScriptingBridge: NSObject {
         // `output` string arrives directly from the AppleScript caller
         // and could be a relative path containing `..` segments. Reject
         // any output URL that doesn't standardise to a path within the
-        // user's home directory after symlink resolution. This is the
-        // narrow allowlist — the AppleScript bridge is intended for
-        // automation of conversion *within* the user's own files, not
-        // as a tool for writing to arbitrary system locations.
+        // user's home directory after **lexical** `..`-collapsing
+        // (`URL.isContained(within:)` uses `.standardized`; it does
+        // NOT resolve symbolic links — that's a documented, accepted
+        // trade-off, since a symlink escape would require the attacker
+        // to already have write access inside the user's home to plant
+        // the link). This is the narrow allowlist — the AppleScript
+        // bridge is intended for automation of conversion *within* the
+        // user's own files, not as a tool for writing to arbitrary
+        // system locations.
         let outputURL = URL(fileURLWithPath: output)
         let homeURL = FileManager.default.homeDirectoryForCurrentUser
         guard outputURL.isContained(within: homeURL) else {

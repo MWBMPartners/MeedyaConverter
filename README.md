@@ -336,11 +336,16 @@ swift test
 # Build release configuration
 swift build -c release
 
-# Build for Direct distribution (Sparkle auto-update enabled)
-DIRECT=1 swift build -c release
-
 # Build for App Store (FFmpegKit instead of subprocess FFmpeg)
 APP_STORE=1 swift build -c release
+
+# (advanced) Link the Sparkle framework for v0.2.0 auto-update work.
+# NOTE: this is NOT how the shipped v0.1.0 Direct DMG is built — the
+# release pipeline uses the plain `swift build -c release` above and
+# ships the GitHub-Releases update poller (Option A). DIRECT=1 links
+# Sparkle and selects the Sparkle update UI, which is non-functional
+# until the appcast + EdDSA key land in v0.2.0 (see SECURITY.md F-003).
+DIRECT=1 swift build -c release
 ```
 
 More detail — including how to bundle FFmpeg, sign, notarise, and produce

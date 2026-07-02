@@ -199,4 +199,83 @@ final class MetadataSanitizerTests: XCTestCase {
         // Visible text is preserved (minus the now-stripped controls).
         XCTAssertEqual(sanitised, "Invoice[31m URGENT[0m fdp.exe")
     }
+
+    // MARK: - C1 controls + Unicode line/paragraph separators (review fix)
+
+    func test_sanitize_nel_removed() {
+        // U+0085 NEL — treated as a line break by many renderers.
+        XCTAssertEqual(MetadataSanitizer.sanitize("a\u{0085}b"), "ab")
+    }
+
+    func test_sanitize_csi_removed() {
+        // U+009B CSI — the 8-bit ANSI control-sequence introducer.
+        XCTAssertEqual(MetadataSanitizer.sanitize("a\u{009B}31mb"), "a31mb")
+    }
+
+    func test_sanitize_allC1Controls_removed() {
+        var input = "x"
+        for cp in 0x80...0x9F {
+            input.unicodeScalars.append(UnicodeScalar(cp)!)
+            input.append("x")
+        }
+        let sanitised = MetadataSanitizer.sanitize(input)
+        XCTAssertFalse(sanitised.unicodeScalars.contains { (0x80...0x9F).contains(Int($0.value)) })
+        // 32 C1 codepoints stripped, 33 'x' preserved.
+        XCTAssertEqual(sanitised, String(repeating: "x", count: 33))
+    }
+
+    func test_sanitize_lineSeparator_removed() {
+        // U+2028 LS / U+2029 PS — hard line breaks in many renderers.
+        XCTAssertEqual(MetadataSanitizer.sanitize("a\u{2028}b\u{2029}c"), "abc")
+    }
+
+    func test_sanitize_lineParagraphSeparator_forgeryNeutralised() {
+        // The exact F-006 scenario the review flagged: a title that
+        // uses U+2028 to forge a fake error line.
+        let attacker = "Real Title\u{2028}ERROR: encode failed"
+        let sanitised = MetadataSanitizer.sanitize(attacker)
+        XCTAssertFalse(sanitised.unicodeScalars.contains { $0.value == 0x2028 })
+        XCTAssertEqual(sanitised, "Real TitleERROR: encode failed")
+    }
+
+    func test_sanitize_stillKeepsLegitimateLineBreaks() {
+        // LF/CR/TAB remain (multi-line comment tags are legitimate).
+        XCTAssertEqual(MetadataSanitizer.sanitize("line1\nline2\r\tcol"), "line1\nline2\r\tcol")
+    }
+
+    // MARK: - sanitizeSingleLine (review fix — F-008 newline injection)
+
+    func test_sanitizeSingleLine_collapsesNewlinesToSpace() {
+        XCTAssertEqual(
+            MetadataSanitizer.sanitizeSingleLine("bogus\nERROR: overwrote X"),
+            "bogus ERROR: overwrote X"
+        )
+    }
+
+    func test_sanitizeSingleLine_collapsesCRAndTab() {
+        XCTAssertEqual(
+            MetadataSanitizer.sanitizeSingleLine("a\r\nb\tc"),
+            "a b c"
+        )
+    }
+
+    func test_sanitizeSingleLine_coalescesRunsOfWhitespace() {
+        XCTAssertEqual(
+            MetadataSanitizer.sanitizeSingleLine("a\n\n\n   b"),
+            "a b"
+        )
+    }
+
+    func test_sanitizeSingleLine_stripsControlsLikeSanitize() {
+        // Still strips everything sanitize() does.
+        let out = MetadataSanitizer.sanitizeSingleLine("a\u{0000}\u{001B}\u{202E}\u{2028}b")
+        XCTAssertEqual(out, "ab")
+    }
+
+    func test_sanitizeSingleLine_hasNoLineBreakScalars() {
+        let out = MetadataSanitizer.sanitizeSingleLine("x\ny\rz\u{2028}w\u{0085}v")
+        XCTAssertFalse(out.unicodeScalars.contains {
+            [0x0A, 0x0D, 0x2028, 0x2029, 0x0085].contains(Int($0.value))
+        })
+    }
 }

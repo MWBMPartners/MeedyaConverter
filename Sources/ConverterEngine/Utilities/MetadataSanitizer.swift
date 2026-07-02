@@ -59,13 +59,32 @@ public enum MetadataSanitizer {
     ///    metadata fields (long-form `comment`, song-lyrics
     ///    embedded as a tag) use them for line breaks.
     /// 3. DEL (`U+007F`).
-    /// 4. Bidirectional-override Unicode codepoints (`U+202A`–
+    /// 4. C1 control codes (`U+0080`–`U+009F`) — this range
+    ///    includes NEL (`U+0085`, treated as a line break by
+    ///    many renderers) and CSI (`U+009B`, the 8-bit ANSI
+    ///    control-sequence introducer). None of these are ever
+    ///    legitimately present in media metadata text, and
+    ///    leaving them would undermine the ANSI/VT100
+    ///    log-forgery defence this helper's own contract claims.
+    /// 5. Unicode line/paragraph separators LS (`U+2028`) and
+    ///    PS (`U+2029`) — rendered as hard line breaks by many
+    ///    terminals, log viewers, and JS/Electron consoles, so
+    ///    they enable the same fake-log-line forgery as a raw
+    ///    newline. (Unlike LF/CR, they carry no legitimate
+    ///    "the author typed a newline in a comment" meaning.)
+    /// 6. Bidirectional-override Unicode codepoints (`U+202A`–
     ///    `U+202E`, `U+2066`–`U+2069`).
     ///
     /// Idempotent — re-sanitising a sanitised string returns
     /// the same string. Empty input returns empty output (no
     /// `"unnamed"` placeholder substitution; that's
     /// `PathSanitizer`'s job for a different reason).
+    ///
+    /// - Note: LF/CR are deliberately RETAINED here (multi-line
+    ///   comment tags are legitimate). A single-line context that
+    ///   must not contain ANY line break — e.g. the AppleScript
+    ///   bridge's one-line `ERROR:` replies — should call
+    ///   `sanitizeSingleLine(_:)` instead.
     public static func sanitize(_ raw: String) -> String {
         var result = String()
         result.reserveCapacity(raw.count)
@@ -79,6 +98,10 @@ public enum MetadataSanitizer {
                 continue
             case 0x7F:
                 continue
+            case 0x80...0x9F:
+                continue
+            case 0x2028, 0x2029:
+                continue
             case 0x202A...0x202E:
                 continue
             case 0x2066...0x2069:
@@ -88,6 +111,39 @@ public enum MetadataSanitizer {
             }
         }
 
+        return result
+    }
+
+    /// Like `sanitize(_:)` but ALSO strips the newline-class
+    /// characters that `sanitize` keeps (TAB, LF, CR), collapsing
+    /// them to a single space. Use for any context that renders as
+    /// a single logical line and must not be splittable by
+    /// caller-controlled input — e.g. the AppleScript scripting
+    /// bridge's `ERROR:` replies, where a retained LF would let a
+    /// caller forge a second line in the consumer's log
+    /// (SECURITY.md F-008 newline-injection follow-up).
+    ///
+    /// Runs `sanitize` first (so all control / bidi / line-separator
+    /// stripping applies), then replaces any surviving TAB/LF/CR
+    /// with a single space and coalesces runs of spaces so the
+    /// result stays readable.
+    public static func sanitizeSingleLine(_ raw: String) -> String {
+        let base = sanitize(raw)
+        var result = String()
+        result.reserveCapacity(base.count)
+        var lastWasSpace = false
+        for scalar in base.unicodeScalars {
+            let isBreak = scalar.value == 0x09 || scalar.value == 0x0A || scalar.value == 0x0D
+            if isBreak || scalar == " " {
+                if !lastWasSpace {
+                    result.unicodeScalars.append(" ")
+                    lastWasSpace = true
+                }
+            } else {
+                result.unicodeScalars.append(scalar)
+                lastWasSpace = false
+            }
+        }
         return result
     }
 }
