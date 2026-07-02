@@ -130,13 +130,21 @@ public final class ProcessFFmpegBackend: FFmpegBackend, @unchecked Sendable {
                 self.clearCurrentController()
             }
 
-            // When the consumer cancels (e.g. their owning `Task` is
-            // cancelled), tear down the controller. The controller's
-            // own cancellation logic sends SIGTERM and cleans up any
-            // partial output.
-            continuation.onTermination = { @Sendable [weak self] _ in
+            // Tear down ONLY on real consumer cancellation.
+            //
+            // `onTermination` fires for BOTH `.finished` and `.cancelled`.
+            // On `.finished` the encode already completed and the task
+            // above has run (or is running) `clearCurrentController()` —
+            // calling `cancelCurrent()` here would re-read
+            // `currentController` at some later moment and could SIGTERM a
+            // *different* encode that a reused backend instance has since
+            // started (the classic use-after-handoff race). So we act
+            // only on `.cancelled`, and we stop THIS encode's specific
+            // `controller` directly rather than whatever is "current" now.
+            continuation.onTermination = { @Sendable reason in
+                guard case .cancelled = reason else { return }
                 task.cancel()
-                Task { await self?.cancelCurrent() }
+                controller.stopEncoding()
             }
         }
     }
@@ -169,7 +177,7 @@ public final class ProcessFFmpegBackend: FFmpegBackend, @unchecked Sendable {
         arguments: [String],
         timeout: TimeInterval?
     ) async throws -> FFmpegOneShotResult {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<FFmpegOneShotResult, Error>) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: binaryPath)
             process.arguments = arguments
@@ -179,43 +187,56 @@ public final class ProcessFFmpegBackend: FFmpegBackend, @unchecked Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
-            // Capture buffers — read on each pipe's readability handler
-            // so a large stdout doesn't block writes on the underlying
-            // pipe buffer.
             let stdoutBox = OutputBox()
             let stderrBox = OutputBox()
-            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty { return }
-                stdoutBox.append(data)
+            let resumeGuard = ResumeOnce()
+
+            // Full, race-free capture (F-011 review, finding #1). Read
+            // each pipe to EOF on its OWN background queue via
+            // `readDataToEndOfFile()`, which returns every byte up to the
+            // write-end close. This fixes the previous
+            // readabilityHandler-then-nil approach, which cancelled the
+            // pipe's dispatch source in `terminationHandler` and could
+            // drop a final data burst that the handler had not yet
+            // dequeued (intermittent truncated stdout / JSON on larger
+            // outputs). Two separate queues avoid the classic
+            // Process pipe-buffer deadlock (a full stderr blocking
+            // stdout writes, or vice-versa).
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let fh = stdoutPipe.fileHandleForReading
+                stdoutBox.append(fh.readDataToEndOfFile())
+                group.leave()
             }
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty { return }
-                stderrBox.append(data)
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let fh = stderrPipe.fileHandleForReading
+                stderrBox.append(fh.readDataToEndOfFile())
+                group.leave()
             }
 
             process.terminationHandler = { proc in
-                // Drain any final buffered output once the readability
-                // handlers won't fire again.
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-
                 let exitCode = proc.terminationStatus
-                let stdout = stdoutBox.string()
-                let stderr = stderrBox.string()
-
-                if exitCode == 0 {
-                    continuation.resume(returning: FFmpegOneShotResult(
-                        exitCode: exitCode,
-                        stdout: stdout,
-                        stderr: stderr
-                    ))
-                } else {
-                    continuation.resume(throwing: FFmpegBackendError.nonZeroExit(
-                        exitCode: exitCode,
-                        stderr: stderr
-                    ))
+                // Resume only AFTER both drainers have reached EOF, so we
+                // never read a partially-filled buffer.
+                group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
+                    let stdout = stdoutBox.string()
+                    let stderr = stderrBox.string()
+                    resumeGuard.run {
+                        if exitCode == 0 {
+                            continuation.resume(returning: FFmpegOneShotResult(
+                                exitCode: exitCode,
+                                stdout: stdout,
+                                stderr: stderr
+                            ))
+                        } else {
+                            continuation.resume(throwing: FFmpegBackendError.nonZeroExit(
+                                exitCode: exitCode,
+                                stderr: stderr
+                            ))
+                        }
+                    }
                 }
             }
 
@@ -232,7 +253,10 @@ public final class ProcessFFmpegBackend: FFmpegBackend, @unchecked Sendable {
             do {
                 try process.run()
             } catch {
-                continuation.resume(throwing: error)
+                // Spawn failed: the terminationHandler will never fire, so
+                // resume here. The idle drainer tasks unblock (EOF) when
+                // the local Pipes deallocate after this closure returns.
+                resumeGuard.run { continuation.resume(throwing: error) }
             }
         }
     }
@@ -298,5 +322,29 @@ private final class OutputBox: @unchecked Sendable {
     func string() -> String {
         lock.lock(); defer { lock.unlock() }
         return String(data: buffer, encoding: .utf8) ?? ""
+    }
+}
+
+// MARK: - ResumeOnce
+
+/// Guarantees a `CheckedContinuation` is resumed exactly once, even
+/// though the resume can be reached from two mutually-exclusive-in-
+/// principle paths (the drain-then-notify completion, and the
+/// `process.run()` failure catch). Resuming a continuation twice is a
+/// hard crash, so the guard is cheap insurance around a concurrency
+/// boundary.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        if done {
+            lock.unlock()
+            return
+        }
+        done = true
+        lock.unlock()
+        body()
     }
 }

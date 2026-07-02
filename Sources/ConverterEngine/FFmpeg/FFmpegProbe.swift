@@ -213,9 +213,10 @@ public final class FFmpegProbe: Sendable {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now() + timeoutSeconds, leeway: .milliseconds(50))
         timer.setEventHandler { [weak process] in
-            guard let p = process, p.isRunning else { return }
-            state.markTimedOut()
-            p.terminate()  // SIGTERM — can be ignored
+            guard let p = process else { return }
+            // SIGTERM — can be ignored. Gated on !finished under the
+            // state lock so it can't fire after the run completed.
+            state.terminateIfActive(p)
         }
         timer.activate()
 
@@ -237,10 +238,12 @@ public final class FFmpegProbe: Sendable {
         let killTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         killTimer.schedule(deadline: .now() + timeoutSeconds + 3.0, leeway: .milliseconds(50))
         killTimer.setEventHandler { [weak process] in
-            guard let p = process, p.isRunning else { return }
-            #if canImport(Darwin)
-            _ = kill(p.processIdentifier, SIGKILL)
-            #endif
+            guard let p = process else { return }
+            // SIGKILL escalation, gated on !finished + isRunning under
+            // the state lock (F-012 — closes the pid-reuse late-fire
+            // window; residual sub-µs kernel race documented on
+            // ProbeRunState.killIfActive).
+            state.killIfActive(p)
         }
         killTimer.activate()
 
@@ -290,6 +293,12 @@ public final class FFmpegProbe: Sendable {
         // `timeoutSeconds + ~3s`.
         // -------------------------------------------------------
         process.waitUntilExit()
+        // Mark finished BEFORE cancelling the timers: a handler that has
+        // already begun executing (cancel() does not interrupt an
+        // in-flight handler) will observe `_finished` under the state
+        // lock and take no action, so it cannot SIGKILL a reused PID
+        // after the child was reaped. (F-012)
+        state.markFinished()
         timer.cancel()
         killTimer.cancel()
 
@@ -343,14 +352,50 @@ public final class FFmpegProbe: Sendable {
         private var _stderrData = Data()
         private var _timedOut = false
         private var _capExceededStream: String?
+        private var _finished = false
 
         var stdoutData: Data { lock.withLock { _stdoutData } }
         var stderrData: Data { lock.withLock { _stderrData } }
         var timedOut: Bool { lock.withLock { _timedOut } }
         var capExceededStream: String? { lock.withLock { _capExceededStream } }
 
-        func markTimedOut() {
-            lock.withLock { _timedOut = true }
+        /// Marks the probe as finished. Called immediately after
+        /// `waitUntilExit()` returns (i.e. the child has been reaped),
+        /// BEFORE the watchdog timers are cancelled, so that any timer
+        /// handler that starts after this point takes no action.
+        func markFinished() {
+            lock.withLock { _finished = true }
+        }
+
+        /// SIGTERM the process IFF the run is neither finished nor
+        /// already reaped. Folds the finished-check, the `isRunning`
+        /// re-check, the `_timedOut` flag, and the signal into ONE lock
+        /// acquisition (NSLock is not reentrant, so the handler must not
+        /// call other locking methods). Per SECURITY.md F-012.
+        func terminateIfActive(_ process: Process) {
+            lock.withLock {
+                guard !_finished, process.isRunning else { return }
+                _timedOut = true
+                process.terminate()
+            }
+        }
+
+        /// SIGKILL escalation, gated identically to `terminateIfActive`.
+        ///
+        /// - Note: a sub-microsecond kernel-level window remains inherent
+        ///   to signalling a `Foundation.Process` by PID — the child
+        ///   could exit and be reaped (freeing its PID for reuse) between
+        ///   the `isRunning` check and the `kill(2)` call. The
+        ///   `_finished` gate + single-lock serialisation removes the
+        ///   realistic case (a timer firing after the run completed
+        ///   normally); the residual race is accepted (F-012, nit).
+        func killIfActive(_ process: Process) {
+            lock.withLock {
+                guard !_finished, process.isRunning else { return }
+                #if canImport(Darwin)
+                _ = kill(process.processIdentifier, SIGKILL)
+                #endif
+            }
         }
 
         /// First caller to mark a cap-exceeded stream wins —

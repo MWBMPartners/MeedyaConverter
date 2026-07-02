@@ -1,0 +1,29 @@
+# ============================================================================
+# MeedyaConverter — pinned SHA-256 checksums for bundled FFmpeg binaries
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Per SECURITY.md F-011 (T7 — supply-chain). `bundle-ffmpeg.sh` verifies
+# each downloaded .zip against the pinned hash here and FAILS CLOSED if a
+# (version, arch, tool) entry is missing or mismatched.
+#
+# Format (one entry per line, space-separated):
+#     <version> <arch> <tool> <sha256-of-the-downloaded-.zip>
+# e.g.
+#     7.1.2 arm64 ffmpeg  3f1c...<64 hex>
+#     7.1.2 arm64 ffprobe ...
+#
+# HOW TO POPULATE / UPDATE (deliberate, trust-on-first-use):
+#     scripts/bundle-ffmpeg.sh --refresh-checksums 7.1.2 arm64
+#     scripts/bundle-ffmpeg.sh --refresh-checksums 7.1.2 x86_64
+#   then review the appended hashes (ideally cross-checked against an
+#   independent build once) and commit this file with the version bump.
+#
+# ⚠️  This file currently has NO entries — it MUST be populated by a
+#     maintainer from a trusted network before the release pipeline can
+#     bundle FFmpeg (the build fails closed until then, by design). The
+#     population step is intentionally left to a human: it establishes
+#     the supply-chain trust baseline, and the download host / URL scheme
+#     should be confirmed at that time (the osxexperts.net filenames the
+#     script constructs did not resolve from the CI sandbox during the
+#     F-011 review — verify them when you populate).
+# ============================================================================
