@@ -1,7 +1,8 @@
 # MeedyaConverter — Autopilot Project Brief
 
-> Machine-authoritative state: `.dev-team/autopilot.json`. This file is the
-> human-readable narrative. Read both together.
+> Machine-authoritative state: `autopilot.json` (in this same archive
+> directory). This file is the human-readable narrative. Read both
+> together.
 
 ## Mission
 
