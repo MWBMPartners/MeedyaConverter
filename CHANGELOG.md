@@ -113,6 +113,38 @@
   JSON's closing `}` was the last captured character, crashing with an
   out-of-bounds fatal error; switched to a half-open range, which is both
   correct and crash-safe.
+- **`QualityMetricsView` wired to real VMAF/SSIM/PSNR analysis (#434)** --
+  `runAnalysis()` built the FFmpeg argument list for the selected
+  metric(s), populated the command preview, and immediately set
+  `isAnalysing = false` without ever executing FFmpeg, so the Phase 7
+  quality-scoring feature (#291) -- gauges, quality grade, per-frame
+  chart -- could never show real data despite `QualityMetrics` being
+  fully implemented. It now mirrors `LoudnessReportView`'s proven
+  pattern (#433): locates FFmpeg via `FFmpegBundleManager`, and for
+  each selected metric ("All" runs VMAF, SSIM, and PSNR as three
+  sequential passes) builds arguments with `QualityMetrics.build*
+  Arguments` and executes them through `FFmpegProcessController.
+  startEncoding`. SSIM/PSNR scores are parsed from stderr via
+  `QualityMetrics.parseSSIMOutput`/`parsePSNROutput`; VMAF writes a
+  JSON log to a unique temp file which is parsed with `QualityMetrics.
+  parseVMAFLog` for both the aggregate score and the per-frame series
+  that feeds the chart (falling back to stderr parsing if the log
+  can't be read), and the temp log is always deleted afterwards. A
+  new pre-flight check probes `ffmpeg -hide_banner -filters` for
+  `libvmaf` support before attempting VMAF -- if absent, VMAF is
+  skipped with a clear message while SSIM/PSNR still run in "All"
+  mode, rather than failing the whole pass with an obscure
+  filter-not-found error. A missing FFmpeg binary surfaces a clear
+  error message instead of silently doing nothing; a new Cancel
+  button, `.onDisappear`, and `deinit` all stop the running process
+  and analysis task cleanly, with no leaked process, task, or temp
+  file. Verified end-to-end against real FFmpeg on the dev machine
+  (Homebrew `ffmpeg-full` 8.1.2 with libvmaf): PSNR 36.79 dB, SSIM
+  0.9749, VMAF mean 86.12 (20 frames) on a `crf 10` vs `crf 40`
+  synthetic test clip. Added pure unit tests for the previously
+  untested `QualityMetrics` (Utility) builders/parsers using
+  real-captured FFmpeg stderr and a real-shaped VMAF JSON log (re
+  #291, re #428).
 - **`release.yml` header/precheck/FFmpeg comments corrected** -- three
   stale or incorrect comments fixed with no logic change: the header no
   longer implies GitHub can branch-filter a tag push to `main` (it

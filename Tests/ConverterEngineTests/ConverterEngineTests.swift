@@ -2265,6 +2265,139 @@ final class ConverterEngineTests: XCTestCase {
     }
 
     // -----------------------------------------------------------------
+    // MARK: - Issue #434: QualityMetrics (Utility) — real analysis wiring
+    // -----------------------------------------------------------------
+    // `QualityMetrics` (Sources/ConverterEngine/Utilities/QualityMetricsUtility.swift)
+    // is the builder/parser actually invoked by QualityMetricsView's real
+    // FFmpeg execution (distinct from `QualityMetricsBuilder` above, which
+    // predates it and is already covered). These are pure argument-string
+    // and text-parsing tests — no FFmpeg process is spawned.
+
+    /// Verifies VMAF argument construction places distorted before
+    /// reference (libvmaf convention) and threads the log path through.
+    func test_qualityMetricsUtility_vmafArguments() {
+        let args = QualityMetrics.buildVMAFArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4",
+            logPath: "/tmp/vmaf_log.json"
+        )
+        XCTAssertEqual(args.first, "-i")
+        XCTAssertEqual(args[1], "/tmp/encoded.mp4")
+        XCTAssertEqual(args[3], "/tmp/source.mp4")
+        let filter = args.first { $0.contains("libvmaf") }
+        XCTAssertNotNil(filter)
+        XCTAssertTrue(filter?.contains("log_path=/tmp/vmaf_log.json") ?? false)
+        XCTAssertTrue(filter?.contains("log_fmt=json") ?? false)
+        XCTAssertTrue(args.contains("-f"))
+        XCTAssertTrue(args.contains("null"))
+    }
+
+    /// Verifies SSIM argument construction (no log-path parameter on this builder).
+    func test_qualityMetricsUtility_ssimArguments() {
+        let args = QualityMetrics.buildSSIMArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4"
+        )
+        XCTAssertEqual(args[1], "/tmp/encoded.mp4")
+        XCTAssertEqual(args[3], "/tmp/source.mp4")
+        let filter = args.first { $0.contains("ssim") }
+        XCTAssertNotNil(filter)
+    }
+
+    /// Verifies PSNR argument construction (no log-path parameter on this builder).
+    func test_qualityMetricsUtility_psnrArguments() {
+        let args = QualityMetrics.buildPSNRArguments(
+            referencePath: "/tmp/source.mp4",
+            distortedPath: "/tmp/encoded.mp4"
+        )
+        XCTAssertEqual(args[1], "/tmp/encoded.mp4")
+        XCTAssertEqual(args[3], "/tmp/source.mp4")
+        let filter = args.first { $0.contains("psnr") }
+        XCTAssertNotNil(filter)
+    }
+
+    /// Verifies SSIM stderr parsing against a real captured FFmpeg 8.1.2 line
+    /// (Homebrew ffmpeg-full, libvmaf-enabled, `crf 10` vs `crf 40` testsrc clips).
+    func test_qualityMetricsUtility_parseSSIMOutput_realCapture() {
+        let output = """
+        [Parsed_ssim_0 @ 0x78ac57300] SSIM Y:0.962410 (14.249277) U:0.978104 (16.596446) V:0.984309 (18.043619) All:0.974941 (16.010416)
+        [out#0/null @ 0x78ac54540] video:8KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+        """
+        let score = QualityMetrics.parseSSIMOutput(output)
+        XCTAssertNotNil(score)
+        XCTAssertEqual(score!, 0.974941, accuracy: 0.0001)
+    }
+
+    /// Verifies SSIM parsing returns nil when the expected line is absent.
+    func test_qualityMetricsUtility_parseSSIMOutput_missing() {
+        XCTAssertNil(QualityMetrics.parseSSIMOutput("no ssim data here"))
+    }
+
+    /// Verifies PSNR stderr parsing against a real captured FFmpeg 8.1.2 line.
+    func test_qualityMetricsUtility_parsePSNROutput_realCapture() {
+        let output = """
+        [Parsed_psnr_0 @ 0xb4cc4b300] PSNR y:34.625483 u:38.473346 v:38.500011 average:36.791028 min:36.352569 max:37.126845
+        """
+        let score = QualityMetrics.parsePSNROutput(output)
+        XCTAssertNotNil(score)
+        XCTAssertEqual(score!, 36.791028, accuracy: 0.001)
+    }
+
+    /// Verifies PSNR parsing returns nil when the expected line is absent.
+    func test_qualityMetricsUtility_parsePSNROutput_missing() {
+        XCTAssertNil(QualityMetrics.parsePSNROutput("no psnr data here"))
+    }
+
+    /// Verifies `parseVMAFLog` against a real FFmpeg libvmaf JSON log
+    /// structure (captured from FFmpeg 8.1.2 / libvmaf 3.2.0 on a `crf 10`
+    /// vs `crf 40` testsrc comparison), including the per-frame series used
+    /// to populate the per-frame chart.
+    func test_qualityMetricsUtility_parseVMAFLog_realShapedJSON() throws {
+        let json = """
+        {
+          "version": "3.2.0",
+          "fps": 404.15,
+          "frames": [
+            { "frameNum": 0, "metrics": { "integer_adm2": 0.981790, "vmaf": 85.117645 } },
+            { "frameNum": 1, "metrics": { "integer_adm2": 0.980102, "vmaf": 86.191820 } },
+            { "frameNum": 2, "metrics": { "integer_adm2": 0.978485, "vmaf": 86.500000 } }
+          ],
+          "pooled_metrics": {
+            "vmaf": { "min": 85.063801, "max": 87.378263, "mean": 86.122041, "harmonic_mean": 86.118494 }
+          },
+          "aggregate_metrics": {}
+        }
+        """
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vmaf_log_test_\(UUID().uuidString).json")
+        try json.write(to: tempURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let result = QualityMetrics.parseVMAFLog(tempURL.path)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.vmaf ?? 0, 86.122041, accuracy: 0.0001)
+        XCTAssertEqual(result?.perFrameScores?.count, 3)
+        XCTAssertEqual(result?.perFrameScores?[0] ?? 0, 85.117645, accuracy: 0.0001)
+        XCTAssertEqual(result?.perFrameScores?[2] ?? 0, 86.5, accuracy: 0.0001)
+    }
+
+    /// Verifies `parseVMAFLog` returns nil for a non-existent log path
+    /// (e.g. the process failed before FFmpeg could write the log).
+    func test_qualityMetricsUtility_parseVMAFLog_missingFile() {
+        let result = QualityMetrics.parseVMAFLog("/tmp/does-not-exist-\(UUID().uuidString).json")
+        XCTAssertNil(result)
+    }
+
+    /// Verifies `QualityScoreResult.qualityGrade` prioritises VMAF over
+    /// SSIM/PSNR when multiple metrics are present, matching the "All"
+    /// metric-selection path in QualityMetricsView.
+    func test_qualityScoreResult_qualityGrade_prioritisesVMAF() {
+        let result = QualityScoreResult(vmaf: 95, ssim: 0.80, psnr: 20)
+        XCTAssertEqual(result.qualityGrade, "Excellent")
+        XCTAssertFalse(result.meetsRecommendedThresholds) // ssim/psnr below threshold
+    }
+
+    // -----------------------------------------------------------------
     // MARK: - Phase 7.13: Scene Detection & Chaptering
     // -----------------------------------------------------------------
 
