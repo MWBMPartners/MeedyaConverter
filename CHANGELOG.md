@@ -37,8 +37,51 @@
   sub-microsecond kernel-level PID-reuse race remains inherent to signalling
   any `Foundation.Process` by PID and is accepted, documented inline (re #428).
 
+### Added
+
+- **SHA-256 checksums attached to Direct release assets** -- `release.yml`
+  now generates `<asset>.sha256` for both the DMG and the CLI tarball
+  after they're built/signed/notarised, and attaches both `.sha256`
+  files to the GitHub Release alongside the DMG and tarball. Closes a
+  #428 Direct-distribution must-do; README already documented a
+  `shasum -a 256 -c` verification step that had no file to check
+  against until now (re #428).
+
+### Fixed
+
+- **`release.yml` header/precheck/FFmpeg comments corrected** -- three
+  stale or incorrect comments fixed with no logic change: the header no
+  longer implies GitHub can branch-filter a tag push to `main` (it
+  can't -- tagging the right commit is a maintainer responsibility);
+  the precheck job's recovery note now points at `gh run rerun
+  <run-id>` instead of the non-existent `gh workflow run` (this
+  workflow has no `workflow_dispatch` trigger); and the FFmpeg-bundling
+  step comment no longer claims arm64-only output now that the script
+  produces genuinely universal binaries (F-011) (re #428).
+- **README install/verify instructions matched to the real asset
+  names** -- README referenced `MeedyaConverter-<version>.dmg` and a
+  bare `.dmg.sha256`; the actual asset (and the one `release.yml`
+  now produces a checksum for) is `MeedyaConverter-<version>-macOS.dmg`.
+  The CLI tarball name and the `shasum -a 256 -c` example are corrected
+  to match (re #428).
+
 ### Documentation
 
+- **New Direct-distribution release runbook**
+  (`docs/distribution/direct-release.md`) documenting the actual
+  `release.yml` flow end-to-end: pre-flight checklist, cutting an rc/GA
+  tag, a step-by-step walkthrough of what CI does, a local smoke-test
+  procedure for the published artefacts, failure/re-run guidance, a
+  soak-window policy placeholder, and known gaps (the CHANGELOG-date
+  step not being committed by CI; the CLI tarball being signed but not
+  notarised; the FFmpeg pin being a single deliberate edit) (re #428).
+- **`apple-secrets-setup.md` verification section rewritten** -- it
+  told the reader to dry-run via Actions -> "Run workflow", but
+  `release.yml` has no `workflow_dispatch` trigger; that button doesn't
+  exist. Rewritten to state the precheck can only be observed on a real
+  `v*` tag push, with a pointer to the new release runbook and a noted
+  (but not implemented) option to add a `workflow_dispatch`
+  precheck-only path later (re #428).
 - **`help/cli-reference.md` rewritten** against the real `meedya-convert`
   command surface -- it previously called the binary `meedya-cli` and
   claimed "the CLI tool will be implemented in Phase 6"; both were stale,
