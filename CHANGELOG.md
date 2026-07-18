@@ -52,6 +52,24 @@
 
 ### Added
 
+- **`RenderFarmConfigurationLoader` consumes `RenderFarmSettingsTab`'s
+  AppStorage settings (#346)** -- a new pure, Foundation-only
+  `ConverterEngine.RenderFarmConfigurationLoader` reads the
+  `renderFarm.*` `UserDefaults` keys the settings tab already persists
+  and builds a `RenderFarmClient.Configuration` plus the initial
+  `[RenderFarmAgentInfo]` registry from them. It enforces the same
+  insecure-transport contract as `RenderFarmClient` itself: plain HTTP
+  is only permitted when the user has both enabled the toggle **and**
+  supplied a non-blank acknowledgement string, otherwise no
+  `InsecureTransportOverride` is produced. Malformed or empty
+  `agentsJSON` decodes to an empty registry rather than throwing/
+  crashing, and the discovery-interval/chunk-size settings are clamped
+  to sane bounds before conversion. `RenderFarmSettingsTab` now shares
+  its exact `UserDefaults` key strings with the loader via
+  `RenderFarmConfigurationLoader.Keys` so the two sides cannot drift.
+  This lands the settings-to-engine bridge the tab's header comment
+  described as deferred; the transport implementations (SSH/TLS),
+  Bonjour discovery, and the agent binary remain and #346 stays open.
 - **Lossless/spatial audio badges in the Stream Inspector (#372)** --
   `FFmpegProbe` now tags each audio stream with a
   `SuiteCoreCodecDescriptor` via `SuiteCoreCodecClassifier` (codec name +
