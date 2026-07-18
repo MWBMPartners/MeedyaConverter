@@ -78,19 +78,21 @@ notarisation ticket, so Gatekeeper will accept it without a network call.
 1. Open the
    [Releases page](https://github.com/MWBMPartners/MeedyaConverter/releases/latest).
 2. Under **Assets**, download the asset named
-   `MeedyaConverter-<version>.dmg` (e.g. `MeedyaConverter-0.1.0-rc.3.dmg`).
+   `MeedyaConverter-<version>-macOS.dmg`
+   (e.g. `MeedyaConverter-0.1.0-rc.3-macOS.dmg`). A `meedya-convert-<version>-macOS.tar.gz`
+   CLI tarball is published alongside it for command-line use.
 3. *Optional but recommended:* also download the matching
-   `.dmg.sha256` checksum file alongside it.
+   `.sha256` checksum file alongside whichever asset you downloaded.
 
 ### 2. Verify the download *(optional)*
 
 ```bash
 # From your Downloads folder
 cd ~/Downloads
-shasum -a 256 -c MeedyaConverter-0.1.0-rc.3.dmg.sha256
+shasum -a 256 -c MeedyaConverter-0.1.0-rc.3-macOS.dmg.sha256
 ```
 
-You should see `MeedyaConverter-0.1.0-rc.3.dmg: OK`.
+You should see `MeedyaConverter-0.1.0-rc.3-macOS.dmg: OK`.
 
 ### 3. Mount and install
 
