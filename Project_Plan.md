@@ -22,7 +22,7 @@ MeedyaConverter is a professional-grade, cross-platform media conversion applica
 | **macOS** (Apple Silicon only) | Swift 6.3 / SwiftUI | 🔴 Primary | Phase 2 |
 | **Windows** (x86, x64, ARM) | Swift + WinUI 3 / WinAppSDK | 🟡 Secondary | Phase 8 |
 | **Linux** (x86, x64, ARM, ARMv7, ARM64, RPi OS) | Swift + GTK4 | 🟢 Tertiary | Phase 9 |
-| **CLI** (all platforms) | Swift ArgumentParser | 🔴 Primary | Phase 6 |
+| **CLI** (all platforms) | Swift ArgumentParser | 🔴 Primary | Phase 4 |
 
 ### Core Technology Stack
 
@@ -466,9 +466,9 @@ MeedyaConverter/
 | 4.1 | CLI executable | SwiftArgumentParser-based CLI tool |
 | 4.2 | `encode` command | Encode media files with profile/custom settings |
 | 4.3 | `probe` command | Inspect media file streams and metadata |
-| 4.4 | `profile` command | List, create, export, import encoding profiles |
-| 4.5 | `manifest` command | Generate HLS/DASH manifests |
-| 4.6 | `validate` command | Validate manifest files |
+| 4.4 | `profiles` command | List, show, export, import, validate encoding profiles (flag-driven: `--list`/`--show`/`--export`/`--import`/`--validate`) |
+| 4.5 | `manifest` command | Generate HLS/DASH/CMAF manifests |
+| 4.6 | `validate` command | Validate encoding profiles and manifest files |
 | 4.7 | JSON job files | Accept JSON-based job definitions for complex workflows |
 | 4.8 | Progress output | Machine-readable progress (JSON) and human-readable output |
 | 4.9 | Exit codes & error handling | Proper exit codes for scripting integration |

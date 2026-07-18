@@ -11,6 +11,58 @@
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **FFmpeg supply chain hardened -- universal, first-party, verified
+  (F-011)** -- `scripts/bundle-ffmpeg.sh` now sources `ffmpeg` / `ffprobe` /
+  `ffplay` solely from the first-party mirror `MeedyaSuite/MeedyaDL-Tools`,
+  pinned to an immutable dated release tag, instead of an unverified
+  third-party static-build host. Each per-arch archive is SHA-256-verified
+  against the release's own `SHA256SUMS` **before** unpack, fail-closed
+  (missing pin/checksums -> exit 6, mismatch -> exit 7). The two per-arch
+  archives are `lipo`-combined into a genuinely **universal (arm64 +
+  x86_64)** binary per tool, and the app itself is now built universal too
+  (`swift build -c release --arch arm64 --arch x86_64` in `release.yml`).
+  The former URL-keyed `scripts/ffmpeg-checksums.txt` bridge (and its
+  `--refresh-checksums` mode) has been removed -- the trust root is the
+  first-party tagged release's own checksums, so there is no local hash
+  list to keep in sync. Found by the post-VERIFY adversarial review; fixed
+  across two commits (re #428).
+- **Probe-watchdog PID-reuse TOCTOU mitigated (F-012)** -- `FFmpegProbe`'s
+  finished-check, `isRunning` re-check, and the actual terminate/kill now
+  happen under a single `ProbeRunState` lock, closing the realistic window
+  where a timer could fire just after the process had already exited. A
+  sub-microsecond kernel-level PID-reuse race remains inherent to signalling
+  any `Foundation.Process` by PID and is accepted, documented inline (re #428).
+
+### Documentation
+
+- **`help/cli-reference.md` rewritten** against the real `meedya-convert`
+  command surface -- it previously called the binary `meedya-cli` and
+  claimed "the CLI tool will be implemented in Phase 6"; both were stale,
+  since the CLI shipped in Phase 4. All six subcommands (`encode`, `probe`,
+  `profiles`, `batch`, `manifest`, `validate`), their real options, and the
+  actual POSIX exit codes (0/1/2/3/4/5/6/130) are now documented from
+  source and cross-checked against `docs/api/meedya-convert-api.yaml` (#429).
+- **New help topic `help/vector-conversion.md`** documenting the Tools
+  sidebar's Vector Conversion (raster -> SVG) and ProRes to Vector
+  (ProRes 4444 -> animated SVG) views: input formats, editability presets,
+  tracing modes, alpha strategies, animation methods, and the ProRes
+  output-size warning, sourced from `RasterVectorConverter.swift`,
+  `ProResToVectorConverter.swift`, and the corresponding SwiftUI views (#429).
+- **`PROJECT_STATUS.md`, `Project_Plan.md`, and `DEV_NOTES.md` refreshed**
+  to post-autopilot reality: verified test count (1053, all green, 0
+  compiler warnings), the F-001..F-012 security findings register status,
+  the universal/first-party FFmpeg supply chain, and the `v0.1.0-rc.4`
+  (soak) -> `v0.1.0` GA release posture. Removed a stale "CLI: Phase 6"
+  platform-strategy row in `Project_Plan.md` (the CLI shipped in Phase 4)
+  and corrected the `profiles`/`validate` CLI command descriptions there
+  to match the shipped flag surface (#429).
+
+---
+
 ## [0.1.0-rc.4] -- 2026-MM-DD (TBD)
 
 ### Highlights

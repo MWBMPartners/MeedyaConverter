@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-05-19
+> **Last Updated:** 2026-07-18
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -12,12 +12,64 @@
 
 | Metric | Value |
 | ------ | ----- |
-| **Current Version** | 0.1.0-rc.3 (signed + notarized DMG published) |
+| **Current Version** | `v0.1.0-rc.3` published (2026-05-18); `v0.1.0-rc.4` (short soak release) pending |
 | **Last Release** | `v0.1.0-rc.3` (2026-05-18) -- direct distribution DMG + CLI tarball |
-| **Current Phase** | Phase 16 -- Polish and Distribution (ongoing) |
-| **Next Target** | `v0.1.0` GA tag once rc.3 DMG passes Gatekeeper smoke-test |
-| **Overall Completion** | ~70% (#381 UI gap fully closed; engine + UI parity restored across the 2026-04-20 integration batch) |
-| **Active Work** | Awaiting rc.3 smoke-test sign-off; App Store compliance work (#386-#391) deferred until explicit re-enable per #392 |
+| **v0.1.0 GA scope** | **Complete.** The autopilot security + release-engineering mission reached TERMINAL: 1053 automated tests green, 0 compiler warnings, security findings F-001..F-012 closed/mitigated/risk-accepted, FFmpeg now sourced as a universal (arm64 + x86_64) binary from a first-party, SHA-256-verified mirror |
+| **Current Phase** | Phase 16 -- Polish and Distribution (ongoing); GA release engineering |
+| **Next Target** | Cut `v0.1.0-rc.4` for a short soak, then tag `v0.1.0` GA -- Direct distribution only (signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised CLI tarball, via GitHub Releases). App Store Lite is explicitly deferred (#392) |
+| **Active Work** | rc.4 soak validation and GA tag prep. Full 19-phase roadmap (Phases 10-18: optical disc, Windows/Linux, image conversion, etc.) continues post-GA per [Project_Plan.md](Project_Plan.md) -- v0.1.0 GA is a release milestone, not "everything in the plan is done" |
+
+---
+
+## Recent milestones (2026-06-30 to 2026-07-18 -- autopilot security & release-engineering mission)
+
+- **Autopilot mission reached TERMINAL** at commit `b58d676` -- 1039/1039 tests
+  green and 0 compiler warnings at that checkpoint (re-verified independently
+  in this pass at **1053** tests green; see [CHANGELOG.md](CHANGELOG.md) for
+  the running total as new tests land).
+- **Security findings F-001..F-010 closed or risk-accepted** across a
+  red-team/blue-team/purple-team review rotation documented in
+  [SECURITY.md](SECURITY.md): FFmpeg argument-construction audit (F-001),
+  AppleScript path-traversal fix (F-002), GitHub-release download host
+  allow-listing (F-003), Keychain accessibility hardening (F-004), SFTP
+  password migration out of `UserDefaults` into Keychain (F-005), probe
+  metadata sanitisation against terminal/log forgery (F-006), FFprobe
+  watchdog + buffer caps (F-007), ScriptingBridge/Shortcuts input hardening
+  (F-008), and the `MeedyaSuite-core` branch-pin risk acceptance (F-009).
+  GitHub Actions tag-pin linting + Dependabot wiring (F-010) is
+  mostly-fixed, with the one-shot SHA-pin conversion kept as optional
+  hygiene, not a GA blocker.
+- **A post-VERIFY adversarial review surfaced two further findings**, both
+  now closed: **F-011** (FFmpeg supply chain -- `scripts/bundle-ffmpeg.sh`
+  previously downloaded from a third-party static-build host with no
+  integrity check) and **F-012** (a PID-reuse TOCTOU nit in the FFprobe
+  watchdog's terminate/kill path).
+- **F-011 fixed -- FFmpeg is now a universal, first-party, verified
+  supply chain.** `scripts/bundle-ffmpeg.sh` sources `ffmpeg` / `ffprobe` /
+  `ffplay` solely from the first-party mirror **MeedyaSuite/MeedyaDL-Tools**,
+  pinned to an immutable dated release tag, and `lipo`-combines the
+  mirror's per-arch archives (arm64 + x86_64) into a single universal
+  binary per tool. Every archive is SHA-256-verified against the release's
+  own `SHA256SUMS` **before** unpack, fail-closed (missing pin/checksums ->
+  exit 6, mismatch -> exit 7). The old URL-keyed
+  `scripts/ffmpeg-checksums.txt` bridge has been removed -- the trust root
+  is now the tagged release itself, no local hash list to maintain.
+  `.github/workflows/release.yml` builds the app itself universal too
+  (`swift build -c release --arch arm64 --arch x86_64`).
+- **F-012 mitigated** -- the FFprobe watchdog's finished-check,
+  `isRunning` re-check, and the actual terminate/kill now happen under a
+  single lock, closing the realistic "timer fires after normal completion"
+  race window. A sub-microsecond kernel-level race remains inherent to
+  signalling any `Foundation.Process` by PID and is accepted (documented
+  inline).
+- **Documentation refresh (this pass)** -- `help/cli-reference.md`
+  rewritten against the real `meedya-convert` command surface (it
+  previously called the binary `meedya-cli` and claimed the CLI was
+  unimplemented -- both were stale; the CLI shipped in Phase 4), a new
+  `help/vector-conversion.md` help topic added for the Vector Conversion
+  and ProRes-to-Vector Tools views, and this file, `Project_Plan.md`,
+  `DEV_NOTES.md`, and `CHANGELOG.md` brought back in line with the current
+  state of the repository.
 
 ---
 
@@ -39,8 +91,7 @@
   App Store submissions cannot fire on tag pushes until explicit
   re-enable AND completion of #386-#391 ITMS findings.
 - **`v0.1.0-rc.3` published** — signed (Developer ID) and notarized
-  DMG + CLI tarball available at the GitHub Releases page. Smoke-test
-  pending on a clean Mac.
+  DMG + CLI tarball available at the GitHub Releases page.
 
 ---
 
@@ -59,6 +110,12 @@
 | **v1.5+** | 15 | Media metadata lookup | In Progress |
 | **v2.0** | 13, 14 | Windows and Linux | Planned |
 | **v3.0+** | 17 | Image conversion | Planned |
+
+> 📌 The `v0.1.0` GA milestone tracked in this document is a **Direct
+> distribution release milestone** layered on top of the release-gate
+> roadmap above (Alpha 0.1 through RC 0.9 phases feeding it), not a
+> stand-in for "every phase in the plan is finished." Phases 10-18 continue
+> after GA per [Project_Plan.md](Project_Plan.md).
 
 ---
 
@@ -82,7 +139,7 @@
 | **13** | Platform Expansion -- Windows | Planned | 0% | v2.0 |
 | **14** | Platform Expansion -- Linux | Planned | 0% | v2.0 |
 | **15** | Media Metadata Lookup | In Progress | 40% | v1.5+ |
-| **16** | Polish and Distribution | Ongoing | 30% | Ongoing |
+| **16** | Polish and Distribution | Ongoing | 35% | Ongoing |
 | **17** | Image Conversion (future) | In Progress | 10% | v3.0+ |
 | **18** | AI-Powered Features (wishlist) | In Progress | 10% | TBD |
 
@@ -95,7 +152,7 @@
 | 0.1 | Project scaffolding (SPM, directories) | Complete | Package.swift, 3 targets, builds and tests pass |
 | 0.2 | Documentation | Complete | README, Plan, Status, Changelog, help/, docs/ wiki |
 | 0.3 | .gitignore | Complete | All platforms covered |
-| 0.4 | GitHub Actions CI | Complete | build.yml, release.yml, beta-alpha.yml |
+| 0.4 | GitHub Actions CI | Complete | build.yml, release.yml, beta-alpha.yml, codeql.yml, dependency-review.yml, security-check.yml, dev-build.yml, testflight.yml |
 | 0.5 | GitHub Project Board | Complete | Project #13, 246 issues, 19 milestones |
 | 0.6 | License file | Complete | Proprietary + third-party acknowledgments |
 | 0.7 | Claude context | Complete | Project brief, standing tasks, prompt history |
@@ -117,7 +174,7 @@
 | 1.7 | Encoding job and queue | Complete | Job config, state tracking, priority queue management |
 | 1.7a | Temp file management | Complete | Per-job directories, cleanup, disk space monitoring |
 | 1.8/1.9 | Encoding engine | Complete | Video and audio encoding orchestration, multipass support |
-| 1.10 | Unit tests | Complete | 30 tests covering all Phase 1 components |
+| 1.10 | Unit tests | Complete | Grew from 30 (Phase 1 baseline) to 1053 across the full suite |
 | 1.11 | Feature gating system | Complete | ProductTier, Feature, FeatureGateProtocol |
 
 ---
@@ -161,41 +218,45 @@
 
 | # | Task | Status | Notes |
 | - | ---- | ------ | ----- |
-| 4.1 | CLI entry point and subcommand routing | Complete | MeedyaConvert.swift with ArgumentParser |
+| 4.1 | CLI entry point and subcommand routing | Complete | `MeedyaConvert.swift` with ArgumentParser; binary name is `meedya-convert` |
 | 4.2 | encode subcommand | Complete | Full options: codec, CRF, bitrate, preset, resolution, HDR, passthrough, stream selection |
 | 4.3 | probe subcommand | Complete | Text and JSON output, streams-only, HDR details |
-| 4.4 | profiles subcommand | Complete | List, show, export, import, validate with platform check |
+| 4.4 | profiles subcommand | Complete | Flag-driven: `--list`, `--show`, `--export`, `--import`, `--validate`, `--platform` |
 | 4.5 | batch subcommand | Complete | Directory scan and job file modes, recursive, extension filter |
 | 4.6 | manifest subcommand | Complete | HLS, DASH, CMAF with variant ladders, dry-run |
 | 4.7 | validate subcommand | Complete | Profile, profile-file, manifest validation with strict mode |
-| 4.8 | Exit codes | Complete | POSIX-compliant exit codes (0-6, 130) |
+| 4.8 | Exit codes | Complete | POSIX-compliant: 0, 1, 2, 3, 4, 5, 6, 130 -- see `help/cli-reference.md` |
 | 4.9 | JSON progress output | Complete | Machine-readable progress and result output |
-| 4.10 | OpenAPI CLI specification | Complete | Full spec in docs/api/meedya-convert-api.yaml |
+| 4.10 | OpenAPI CLI specification | Complete | Full spec in docs/api/meedya-convert-api.yaml, cross-checked against source this pass |
 
 ---
 
 ## What's Complete
 
 - Project plan with 19 phases (0-18), release gates, feature gating, and 215+ tasks
-- Full documentation suite: README, Project Plan, Project Status, Changelog, 8 help docs, 10 wiki pages, OpenAPI spec
+- Full documentation suite: README, Project Plan, Project Status, Changelog, 9 help docs, 10 wiki pages, OpenAPI spec
 - Architecture: ConverterEngine (library) + meedya-convert (CLI) + MeedyaConverter (SwiftUI app)
-- SPM package with 3 targets -- builds and tests pass (30/30)
+- SPM package with 3 targets -- builds and tests pass (1053 tests green, 0 compiler warnings)
 - Hybrid encoding engine (FFmpeg subprocess + AVFoundation/FFmpegKit)
 - Dual update strategy (Sparkle 2 direct + Apple-managed App Store)
 - Three-tier file access for App Store sandbox
 - GitHub: 19 milestones, 26+ labels, 246 issues, project board
-- CI/CD: 3 GitHub Actions workflows (build, release, beta/alpha)
+- CI/CD: 8 GitHub Actions workflows (build, release, beta/alpha, codeql, dependency-review, security-check, dev-build, testflight)
 - Issue templates, security policy, CODEOWNERS, PR template, LICENSE
 - FFmpeg bundle manager, process controller, argument builder
+- **Universal (arm64 + x86_64) FFmpeg supply chain** -- `ffmpeg`/`ffprobe`/`ffplay`
+  sourced solely from the first-party `MeedyaSuite/MeedyaDL-Tools` mirror,
+  pinned to an immutable release tag, SHA-256-verified against the release's
+  own `SHA256SUMS` before unpack, fail-closed (F-011). The app itself also
+  builds universal via `swift build -c release --arch arm64 --arch x86_64`.
 - Media probing via FFprobe -- streams, HDR detection, chapters, metadata
 - Complete data models -- 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
 - Encoding profile system with 7+ built-in presets and JSON persistence
 - Job queue with priority ordering, state tracking, batch management
 - Temp file management with per-job directories and disk monitoring
 - Encoding engine orchestrating full video/audio conversion pipeline
-- 30 unit tests covering all Phase 1 components
 - Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings
+- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings, Vector Conversion, ProRes to Vector
 - Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
 - HDR-to-SDR tone mapping with auto-trigger for incompatible settings
 - PQ-to-HLG conversion, PQ-to-DV Profile 8.4, Dolby Vision RPU pipeline
@@ -219,34 +280,47 @@
   (feature-flagged via `SUITE_CORE=1`), bridge + adapters for metadata
   and codec classification, and 12+ additional providers available
   through the unified system (#371, #372, #373, #374)
-- Subtitle tone-mapping via quietvoid/subtitle_tonemap integration (#369)
+- Subtitle tone-mapping via quietvoid/subtitle_tonemap, wired end-to-end
+  through the encoding pipeline via `SubtitleTonemapPipeline` (#369, #413)
 - Render-farm submission subsystem: agent registry, chunked upload with
-  per-chunk SHA-256, progress AsyncStream, pluggable transport (#346)
-- Raster ↔ vector image conversion scaffolding with 30+ raster formats,
-  SVG 1.1/2.0 output, 4 tracing modes, 6 editability presets (#376)
-- ProRes alpha → animated SVG scaffolding with 4444 / 4444 XQ / 4444 HDR
-  variants, rational-accurate frame rates, SMIL/CSS/hybrid assembly (#377)
-- Full FFmpeg component bundling (ffmpeg + ffprobe + **ffplay**) via
-  `scripts/bundle-ffmpeg.sh` for arm64 and x86_64 (#378)
+  per-chunk SHA-256, progress AsyncStream, pluggable transport, Settings UI (#346)
+- Raster ↔ vector image conversion with 30+ raster formats,
+  SVG 1.1/2.0 output, 4 tracing modes, 6 editability presets, and a
+  Vector Conversion Tools-sidebar view (#376, #402)
+- ProRes alpha → animated SVG conversion with 4444 / 4444 XQ / 4444 HDR
+  variants, rational-accurate frame rates, SMIL/CSS/hybrid assembly, and
+  a ProRes to Vector Tools-sidebar view (#377, #404) -- see
+  `help/vector-conversion.md`
 - App Store Connect metadata suite under `metadata/` and submission
-  runbook at `docs/distribution/app-store-submission.md` (#178)
+  runbook at `docs/distribution/app-store-submission.md` (#178) -- App
+  Store Lite ship itself remains explicitly deferred per #392
 
 ---
 
 ## What's Next
 
-1. **UI surfacing** (#381) -- Expose new Configuration types in SwiftUI for
-   subtitle tone-mapping, render farm, metadata backend, AccurateRip
-   submission, and vector conversion
+1. **`v0.1.0-rc.4` soak, then `v0.1.0` GA tag** -- Direct distribution only:
+   signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised
+   CLI tarball, both via GitHub Releases. App Store Lite stays deferred.
 2. **MeedyaSuite-core binding stabilisation** -- Once MeedyaSuite-core
-   publishes a Swift Package tag, flip `SUITE_CORE` to default-on and
-   execute the #374 cleanup checklist
+   publishes a Swift Package tag, migrate `Package.swift`'s branch pin to
+   `from: "X.Y.Z"` (closes gate-ledger item G-014 / finding F-009), flip
+   `SUITE_CORE` to default-on, and execute the #374 cleanup checklist
 3. **Render-farm agent binary** -- Standalone agent app that runs on
    remote Macs and services the REST protocol defined in #346
-4. **App Store submission** -- Produce screenshot captures, verify the
-   FFmpegKit LGPL variant, tag a `v1.0.0-beta.1`, soak in TestFlight
-5. **Phase 5/6 completion** -- Finish subtitle conversion and streaming
-   features; still at 70% and 80% respectively
+4. **Optional POLISH-tier follow-ups** (not GA blockers): one-shot SHA-pin
+   conversion for GitHub Actions `uses:` references (gate-ledger G-015,
+   F-010), gitleaks CLI wiring for historical-secret scanning, and the
+   ~17 remaining `appendingPathComponent` call sites that could be
+   defensively migrated to `PathSanitizer` (F-002 follow-up)
+5. **Phase 5/6/7/8/9 feature completion** -- Subtitles/streaming/extended-
+   format/advanced-audio/professional-features work continues per
+   [Project_Plan.md](Project_Plan.md); these are post-GA roadmap items,
+   not blockers for the v0.1.0 Direct release
+6. **App Store submission** -- Deferred until #392's re-enable
+   preconditions are met and the #386-#391 ITMS findings are resolved;
+   produce screenshot captures and verify the FFmpegKit LGPL variant
+   when that work resumes
 
 ---
 
@@ -256,6 +330,10 @@
 | ----- | -------- | ------ | ----- |
 | FFmpeg App Store strategy | Resolved | Resolved | Hybrid engine: AVFoundation/FFmpegKit for App Store |
 | App Store sandbox file access | Resolved | Resolved | Three-tier: user-selected, bookmarks, Full Disk Access |
+| FFmpeg supply-chain integrity (F-011) | Resolved | Fixed | Universal, first-party (MeedyaDL-Tools), SHA-256 fail-closed verification |
+| Probe-watchdog PID-reuse (F-012) | Low (nit) | Mitigated | Single-lock terminate/kill; sub-microsecond kernel race accepted as inherent |
+| `MeedyaSuite-core` branch pin (F-009) | Low | Risk-accepted | Gated behind `SUITE_CORE=1`, not on the v0.1.0 ship path; migrate once a tagged release exists |
+| GitHub Actions tag pins vs SHA pins (F-010) | Low | Mostly-fixed | Tag-pin linter + Dependabot wired into CI; one-shot SHA conversion is optional hygiene |
 | Optical disc DRM legality | Medium | Noted | CSS/AACS legality varies by jurisdiction |
 | Swift 6.3 Windows maturity | Low | Noted | Windows UI framework TBD |
 
@@ -267,6 +345,7 @@
 | ------ | ----- |
 | Total tasks across all phases | 215+ |
 | GitHub Issues | 257+ |
+| Automated tests | 1053 (all green, 0 compiler warnings) |
 | Supported video codecs | 16 |
 | Supported audio codecs | 30+ (including spatial) |
 | Supported subtitle formats | 14+ |
@@ -276,11 +355,11 @@
 | Cloud upload providers | 12+ |
 | Target platforms | 3 (macOS, Windows, Linux) |
 | Wiki documentation pages | 10 |
-| Help documentation files | 8 |
+| Help documentation files | 9 |
 | SwiftUI views | 35+ |
 | ConverterEngine modules | 15 |
 | CLI subcommands | 6 |
 
 ---
 
-*Updated automatically during development. See [Project_Plan.md](Project_Plan.md) for full task breakdown.*
+*Updated automatically during development. See [Project_Plan.md](Project_Plan.md) for full task breakdown and [SECURITY.md](SECURITY.md) for the security findings register.*
