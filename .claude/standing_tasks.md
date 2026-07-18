@@ -2,7 +2,7 @@
 
 > These tasks MUST be performed automatically after EVERY development prompt/action.
 > Saved for Claude AI context continuity.
-> Last updated: 2026-05-20
+> Last updated: 2026-07-18
 
 ## Mandatory Post-Action Tasks
 
@@ -16,12 +16,23 @@
 
 ### 1a. Acceptance Criteria Tracking
 
-- **At every step/stage of work**, review the relevant GitHub Issue's acceptance criteria checklist
-- **Tick each criteria item** (`- [x]`) as soon as it is verified complete
-- Do this incrementally — not just at the end. Each commit/action should update the checkboxes
-- If a criteria item is partially done, add a comment noting progress
-- This applies to ALL issues, ALL phases, consistently — no exceptions
-- Use `gh issue edit {number} --body` to update checkboxes, or `gh issue comment` for progress notes
+**Policy (clarified 2026-07-18 per #429):** incremental ticking is the ideal,
+but the *enforceable gate* is close-time, so the document's authority does not
+erode when incremental ticking is impractical.
+
+- **Tick incrementally where practical** — as each acceptance-criterion item is
+  verified complete, flip it to `- [x]` (`gh issue edit {number} --body-file` or a
+  `gh issue comment` progress note). Do this as you go, not only at the end.
+- **Hard gate (must hold at close):** before an issue is closed, EVERY acceptance-
+  criterion box is either ticked, or explicitly annotated as deferred with a
+  tracking issue reference (e.g. "engine consumption tracked in #346"). Closing an
+  issue with silently-unchecked criteria and no annotation is not permitted.
+- **Evidence:** each close (or each incremental tick batch) carries a short comment
+  citing the PR/commit/test that satisfies the criteria — the audit trail a
+  third-party reviewer can follow.
+- **Enforcement:** the merge-gate checklist in `.github/PULL_REQUEST_TEMPLATE.md`
+  prompts the merger to confirm AC boxes are ticked before merge.
+- Applies to ALL issues, ALL phases, consistently — no exceptions.
 
 ### 2. Code Quality — Lint, Syntax & Structure
 
