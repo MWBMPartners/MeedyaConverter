@@ -62,11 +62,11 @@
   race window. A sub-microsecond kernel-level race remains inherent to
   signalling any `Foundation.Process` by PID and is accepted (documented
   inline).
-- **Documentation refresh (this pass)** -- `help/cli-reference.md`
+- **Documentation refresh (this pass)** -- `Sources/MeedyaConverter/Resources/Help/cli-reference.md`
   rewritten against the real `meedya-convert` command surface (it
   previously called the binary `meedya-cli` and claimed the CLI was
   unimplemented -- both were stale; the CLI shipped in Phase 4), a new
-  `help/vector-conversion.md` help topic added for the Vector Conversion
+  `Sources/MeedyaConverter/Resources/Help/vector-conversion.md` help topic added for the Vector Conversion
   and ProRes-to-Vector Tools views, and this file, `Project_Plan.md`,
   `DEV_NOTES.md`, and `CHANGELOG.md` brought back in line with the current
   state of the repository.
@@ -150,7 +150,7 @@
 | # | Task | Status | Notes |
 | - | ---- | ------ | ----- |
 | 0.1 | Project scaffolding (SPM, directories) | Complete | Package.swift, 3 targets, builds and tests pass |
-| 0.2 | Documentation | Complete | README, Plan, Status, Changelog, help/, docs/ wiki |
+| 0.2 | Documentation | Complete | README, Plan, Status, Changelog, Sources/MeedyaConverter/Resources/Help/, docs/ wiki |
 | 0.3 | .gitignore | Complete | All platforms covered |
 | 0.4 | GitHub Actions CI | Complete | build.yml, release.yml, beta-alpha.yml, codeql.yml, dependency-review.yml, security-check.yml, dev-build.yml, testflight.yml |
 | 0.5 | GitHub Project Board | Complete | Project #13, 246 issues, 19 milestones |
@@ -190,7 +190,7 @@
 | 2.5 | Encoding queue | Complete | Queue management, progress, pause/resume/cancel |
 | 2.6 | Log viewer | Complete | Real-time FFmpeg output |
 | 2.7 | Settings/preferences | Complete | General, encoding, paths, updates |
-| 2.8 | Help system | Complete | In-app help, help/ documentation |
+| 2.8 | Help system | Complete | In-app help, Sources/MeedyaConverter/Resources/Help/ documentation |
 | 2.9 | Profile management | Complete | Create, edit, delete, import, export profiles |
 
 ---
@@ -225,7 +225,7 @@
 | 4.5 | batch subcommand | Complete | Directory scan and job file modes, recursive, extension filter |
 | 4.6 | manifest subcommand | Complete | HLS, DASH, CMAF with variant ladders, dry-run |
 | 4.7 | validate subcommand | Complete | Profile, profile-file, manifest validation with strict mode |
-| 4.8 | Exit codes | Complete | POSIX-compliant: 0, 1, 2, 3, 4, 5, 6, 130 -- see `help/cli-reference.md` |
+| 4.8 | Exit codes | Complete | POSIX-compliant: 0, 1, 2, 3, 4, 5, 6, 130 -- see `Sources/MeedyaConverter/Resources/Help/cli-reference.md` |
 | 4.9 | JSON progress output | Complete | Machine-readable progress and result output |
 | 4.10 | OpenAPI CLI specification | Complete | Full spec in docs/api/meedya-convert-api.yaml, cross-checked against source this pass |
 
@@ -290,7 +290,7 @@
 - ProRes alpha → animated SVG conversion with 4444 / 4444 XQ / 4444 HDR
   variants, rational-accurate frame rates, SMIL/CSS/hybrid assembly, and
   a ProRes to Vector Tools-sidebar view (#377, #404) -- see
-  `help/vector-conversion.md`
+  `Sources/MeedyaConverter/Resources/Help/vector-conversion.md`
 - App Store Connect metadata suite under `metadata/` and submission
   runbook at `docs/distribution/app-store-submission.md` (#178) -- App
   Store Lite ship itself remains explicitly deferred per #392

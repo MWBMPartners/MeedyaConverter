@@ -33,7 +33,7 @@ MeedyaConverter is a cross-platform professional media conversion application by
 - App Store submission prep (#178) — metadata, runbook, review_information.yml
 - Security audit (#380) — fixed 3 critical (JSON injection) + 2 major (SSH injection, OOM buffer)
 - UI audit → created tracking issue #381 for 36+ missing controls
-- Documentation fully updated (CHANGELOG, PROJECT_STATUS, help/, docs/)
+- Documentation fully updated (CHANGELOG, PROJECT_STATUS, Sources/MeedyaConverter/Resources/Help/, docs/)
 
 ## Architecture
 

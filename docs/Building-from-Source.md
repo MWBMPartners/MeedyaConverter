@@ -189,12 +189,11 @@ MeedyaConverter/
 │       ├── Components/        # Reusable UI components
 │       ├── Services/          # StoreManager, AppUpdateChecker, ThumbnailCache
 │       ├── Intents/           # App Intents for Shortcuts
-│       └── Resources/         # Assets, Info.plist
+│       └── Resources/         # Assets, Info.plist, Help/ (in-app help Markdown)
 ├── Tests/
 │   ├── ConverterEngineTests/  # Engine unit tests
 │   └── MeedyaConvertTests/    # CLI unit tests
 ├── docs/                      # Wiki documentation
-├── help/                      # In-app help files
 ├── scripts/                   # Build and CI scripts
 └── Tools/                     # Development tools
 ```

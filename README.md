@@ -261,11 +261,10 @@ MeedyaConverter/
 ├── Sources/
 │   ├── ConverterEngine/     # Cross-platform core engine
 │   ├── meedya-convert/      # Command-line interface
-│   └── MeedyaConverter/     # macOS SwiftUI application
+│   └── MeedyaConverter/     # macOS SwiftUI app (bundles in-app help under Resources/Help/)
 ├── Tests/                   # Unit & integration tests
-├── Resources/               # Built-in profiles & help content
+├── Resources/               # Built-in encoding profiles
 ├── Tools/                   # Bundled third-party executables
-├── help/                    # User documentation (Markdown)
 ├── branding/                # Brand assets (logos, icons)
 ├── docs/                    # Extended documentation
 ├── .github/                 # CI/CD workflows & issue templates
@@ -369,9 +368,9 @@ and [docs/LOCAL_BUILD.md](docs/LOCAL_BUILD.md).
 | 📋 [Project Plan](Project_Plan.md) | Milestones, architecture, and tech stack |
 | 📊 [Project Status](PROJECT_STATUS.md) | Current development progress |
 | 📝 [Changelog](CHANGELOG.md) | Version history and changes |
-| 📚 [Help Documentation](help/) | User guides, FAQ, troubleshooting |
-| 🔧 [CLI Reference](help/cli-reference.md) | Command-line usage |
-| 🔊 [Audio Format Compatibility](help/audio-format-compatibility.md) | Conversion matrix — what converts to what |
+| 📚 [Help Documentation](Sources/MeedyaConverter/Resources/Help/) | User guides, FAQ, troubleshooting |
+| 🔧 [CLI Reference](Sources/MeedyaConverter/Resources/Help/cli-reference.md) | Command-line usage |
+| 🔊 [Audio Format Compatibility](Sources/MeedyaConverter/Resources/Help/audio-format-compatibility.md) | Conversion matrix — what converts to what |
 | 📖 [GitHub Wiki](https://github.com/MWBMPartners/MeedyaConverter/wiki) | Architecture, API docs, dev guide |
 | 🔒 [Security Policy](.github/SECURITY.md) | Vulnerability reporting |
 

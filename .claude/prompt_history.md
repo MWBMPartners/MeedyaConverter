@@ -115,7 +115,7 @@ Implemented 9 major features plus security audit, UI audit, and documentation up
 - RenderFarmAgent: Bonjour discovery, 3 transports (SSH/TLS/plain HTTP)
 - RenderFarmClient: chunked upload (4 MiB), SHA-256 per-chunk verification
 - 7-state job lifecycle with AsyncThrowingStream progress via task-box pattern
-- Help documentation (help/render-farm.md)
+- Help documentation (Sources/MeedyaConverter/Resources/Help/render-farm.md)
 
 **Image Conversion Extensions (#376, #377)**:
 - RasterVectorConverter: 30+ raster formats, vtracer/potrace/rsvg-convert arg builders

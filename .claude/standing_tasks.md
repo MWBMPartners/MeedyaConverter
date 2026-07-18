@@ -51,7 +51,7 @@
   - PROJECT_STATUS.md
   - Project_Plan.md
   - DEV_NOTES.md (if exists)
-  - help/*.md (all help documentation)
+  - Sources/MeedyaConverter/Resources/Help/*.md (all help documentation)
 
 ### 6. GitHub Updates
 
@@ -63,7 +63,7 @@
 
 ### 7. In-App Documentation
 
-- Update all in-app help content in Resources/Help/
+- Update all in-app help content in Sources/MeedyaConverter/Resources/Help/
 - Ensure help text matches current feature state
 
 ### 8. Gitignore Maintenance

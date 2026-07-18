@@ -298,6 +298,7 @@ MeedyaConverter/
 │       │   └── ProgressIndicator.swift
 │       └── Resources/
 │           ├── Assets.xcassets
+│           ├── Help/                   # In-app help content (Markdown, bundled)
 │           └── Localizable.strings
 │
 ├── Tests/
@@ -305,19 +306,10 @@ MeedyaConverter/
 │   └── MeedyaConvertTests/
 │
 ├── Resources/
-│   ├── Profiles/                    # Built-in encoding presets (JSON)
-│   └── Help/                        # In-app help content (Markdown)
+│   └── Profiles/                    # Built-in encoding presets (JSON)
 │
 ├── Tools/                           # Bundled third-party executables (direct dist.)
 │   └── .gitkeep
-│
-├── help/                            # User documentation
-│   ├── getting-started.md
-│   ├── encoding-guide.md
-│   ├── adaptive-streaming.md
-│   ├── cli-reference.md
-│   ├── troubleshooting.md
-│   └── faq.md
 │
 ├── .github/
 │   ├── workflows/
