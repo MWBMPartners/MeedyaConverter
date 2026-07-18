@@ -259,3 +259,7 @@ lcov.info
 
 # Claude Code personal/local settings (machine-specific permission grants — never shared)
 .claude/settings.local.json
+
+# Generated app icon — assembled deterministically from AppIcon.appiconset by
+# scripts/generate-app-icns.sh at build/release time; never committed as a source artefact.
+*.icns
