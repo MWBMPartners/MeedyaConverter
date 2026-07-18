@@ -32,8 +32,14 @@ final class ResourceMonitor {
     /// Current memory usage as a percentage (0.0 to 100.0).
     var memoryUsage: Double = 0.0
 
-    /// Current disk write speed in MB/s (estimated from output file growth).
-    var diskWriteSpeed: Double = 0.0
+    /// Current disk write speed in MB/s, or `nil` if unavailable.
+    ///
+    /// macOS exposes no public API that attributes disk-write throughput to a
+    /// specific process, and the heavy writes during a conversion happen in the
+    /// bundled `ffmpeg` *child* process rather than this app — so an honest
+    /// per-encode figure cannot be derived here. Reported as unavailable
+    /// (`nil`) rather than fabricated. See `gpuUsage` for the same treatment.
+    var diskWriteSpeed: Double?
 
     /// Current GPU usage as a percentage, or `nil` if unavailable.
     var gpuUsage: Double?
@@ -51,9 +57,6 @@ final class ResourceMonitor {
 
     /// Memory usage history for the last 60 seconds.
     var memoryHistory: [Double] = []
-
-    /// Disk write speed history for the last 60 seconds.
-    var diskHistory: [Double] = []
 
     // MARK: - Private
 
@@ -79,7 +82,6 @@ final class ResourceMonitor {
         isMonitoring = true
         cpuHistory.removeAll()
         memoryHistory.removeAll()
-        diskHistory.removeAll()
 
         timer = Timer.scheduledTimer(
             withTimeInterval: 1.0,
@@ -159,10 +161,10 @@ final class ResourceMonitor {
             memoryUsage = (usedMemory / totalMemory) * 100.0
         }
 
-        // Disk: Estimated write speed (placeholder — real implementation
-        // would track output file growth between polls).
-        let baseDiskSpeed = isMonitoring ? Double.random(in: 50...200) : 0
-        diskWriteSpeed = baseDiskSpeed
+        // Disk: no public API attributes write throughput to a process, and the
+        // encode's heavy writes happen in the ffmpeg child process, not here —
+        // so report as unavailable rather than fabricate a figure.
+        diskWriteSpeed = nil
 
         // GPU: Not available via public API without IOKit private headers.
         // Set to nil to indicate unavailability.
@@ -175,16 +177,12 @@ final class ResourceMonitor {
         // Append to history, trimming to max count.
         cpuHistory.append(cpuUsage)
         memoryHistory.append(memoryUsage)
-        diskHistory.append(diskWriteSpeed)
 
         if cpuHistory.count > maxHistoryCount {
             cpuHistory.removeFirst()
         }
         if memoryHistory.count > maxHistoryCount {
             memoryHistory.removeFirst()
-        }
-        if diskHistory.count > maxHistoryCount {
-            diskHistory.removeFirst()
         }
     }
 
@@ -307,13 +305,6 @@ struct ResourceMonitorView: View {
                             color: .green,
                             unit: "%"
                         )
-
-                        sparklineSection(
-                            title: "Disk Write Speed",
-                            data: monitor.diskHistory,
-                            color: .orange,
-                            unit: "MB/s"
-                        )
                     }
                 }
                 .padding(.vertical, 20)
@@ -425,17 +416,23 @@ struct ResourceMonitorView: View {
 
     // MARK: - Disk Speed
 
-    /// Disk write speed indicator.
+    /// Disk write speed indicator (shows N/A when unavailable).
     private var diskSpeedIndicator: some View {
         VStack(spacing: 8) {
             Image(systemName: "internaldrive")
                 .font(.title2)
-                .foregroundStyle(monitor.diskWriteSpeed > 0 ? .blue : .secondary)
+                .foregroundStyle(monitor.diskWriteSpeed != nil ? .blue : .secondary)
 
-            Text(String(format: "%.0f MB/s", monitor.diskWriteSpeed))
-                .font(.title3)
-                .monospacedDigit()
-                .fontWeight(.semibold)
+            if let disk = monitor.diskWriteSpeed {
+                Text(String(format: "%.0f MB/s", disk))
+                    .font(.title3)
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+            } else {
+                Text("N/A")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
 
             Text("Disk Write")
                 .font(.caption)
