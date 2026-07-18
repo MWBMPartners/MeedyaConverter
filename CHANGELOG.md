@@ -145,6 +145,37 @@
   untested `QualityMetrics` (Utility) builders/parsers using
   real-captured FFmpeg stderr and a real-shaped VMAF JSON log (re
   #291, re #428).
+- **`BenchmarkView` wired to real FFmpeg benchmark execution (#435)** --
+  `runStandardBenchmarks()` built real FFmpeg arguments for each
+  codec/preset/resolution combination via `EncodingBenchmark.
+  buildBenchmarkArguments` but then fabricated a "simulated" fps figure
+  from hard-coded per-codec/preset multipliers instead of ever running
+  them, so the Phase 13 encoding-speed benchmark feature (#325) showed
+  entirely made-up numbers. It now mirrors `QualityMetricsView`'s
+  proven pattern (#434), the closest reference since benchmarks also
+  loop multiple sequential FFmpeg passes: locates FFmpeg via
+  `FFmpegBundleManager`, then for each `standardBenchmarks` entry runs
+  the real arguments through `FFmpegProcessController.startEncoding`
+  (output discarded via `-f null -`; `BenchmarkResult` has no size
+  field, so no temp output file is needed), measures real wall-clock
+  encode time with `Date()`, and reads the real frame count from the
+  last `-progress` update. A new pure helper, `EncodingBenchmark.
+  makeResult(codec:preset:resolution:frames:encodeTime:
+  hardwareAccelerated:)`, computes `fps = frames / encodeTime` so the
+  figure reflects genuine throughput rather than FFmpeg's `speed=`
+  multiplier. Runs on a `Task.detached` (mirroring `QualityMetricsView`)
+  so the blocking FFmpeg-locate probe and the passes themselves can't
+  block the UI thread; a missing FFmpeg binary surfaces a clear error
+  instead of showing fabricated data; a new Cancel button and
+  `.onDisappear` stop the running process and benchmark task cleanly,
+  with results already collected up to that point retained. Verified
+  end-to-end against real FFmpeg 8.1.2 on the dev machine: `h264/
+  ultrafast@1920x1080` measured 300 frames / 0.463s = 648.55 fps,
+  `h264/medium@1920x1080` measured 300 frames / 1.938s = 154.76 fps --
+  sane, clearly differentiated real numbers. Added 14 pure unit tests
+  for the previously-untested `EncodingBenchmark` (argument building,
+  stderr-output parsing, and the new `makeResult` helper) (re #325,
+  re #428).
 - **`release.yml` header/precheck/FFmpeg comments corrected** -- three
   stale or incorrect comments fixed with no logic change: the header no
   longer implies GitHub can branch-filter a tag push to `main` (it
