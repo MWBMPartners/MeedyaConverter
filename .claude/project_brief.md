@@ -1,39 +1,36 @@
 # MeedyaConverter — Project Brief
 
 > Saved for Claude AI context continuity across sessions.
-> Last updated: 2026-04-20
+> Last updated: 2026-07-18
 
 ## Project Summary
 
 MeedyaConverter is a cross-platform professional media conversion application by MWBM Partners Ltd. A modern HandBrake alternative with 100+ features including passthrough, adaptive streaming (HLS/MPEG-DASH), HDR preservation/tone-mapping, spatial audio, optical disc ripping/authoring, cloud upload, image conversion, video editing tools, and monetization infrastructure.
 
-## Current Status (2026-04-20)
+## Current Status (2026-07-18)
 
-**macOS app is feature-complete** with 33 sidebar navigation items, 100+ SwiftUI views, and comprehensive engine.
+**v0.1.0 GA scope is COMPLETE**; the app is feature-complete and in release engineering. Next milestone: cut **`v0.1.0-rc.4`** (short soak) → **`v0.1.0` GA**, Direct distribution only (signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised CLI tarball, via GitHub Releases). App Store Lite deferred (#392).
 
-- **Phases Complete**: 0-12, 15, 17 (15 of 19 phases)
-- **Issues**: 381+ created, 370+ closed, ~11 open
-- **Tests**: 950+ unit tests passing, 0 warnings, 0 security issues
-- **CI/CD**: 7 GitHub Actions workflows (build, codeql, dependency-review, beta-alpha, release, testflight, dev-build)
-- **Distribution**: Developer ID signing verified, notarization pipeline ready, TestFlight workflow configured
-- **Apple Developer**: Both App IDs registered, App Group created, App Store Connect app record created
-- **App Store**: Metadata, screenshots placeholder, review info, and submission runbook complete
+- **Autopilot mission TERMINAL** at commit `b58d676` — a security + release-engineering mission ran DISCOVER → STABILIZE → SECURE → COMPLETE → POLISH → VERIFY (26 cycles).
+- **Tests**: ~**1068** unit tests passing (1039 at the TERMINAL checkpoint; grew with new coverage), 0 compiler warnings.
+- **Security**: findings **F-001..F-012** all closed / mitigated / risk-accepted. **F-011** (FFmpeg supply chain) finalised — universal arm64+x86_64, sourced solely from first-party mirror `MeedyaSuite/MeedyaDL-Tools` (pinned `MDLT_TAG`), SHA256SUMS-verified fail-closed. **F-012** (probe-watchdog PID-reuse) mitigated.
+- **Release engineering**: `release.yml` builds the app universal AND generates + attaches SHA-256 checksums. Direct-release runbook at `docs/distribution/direct-release.md`.
+- **Issues**: **42 open**. #429 (standing-tasks audit) and #371 (Suite-core metadata) closed this session.
+- **Branch**: all work lives on **`autopilot/2026-06-30-clean`** — NOT merged to `main`; **no PRs** per current workflow (avoids merge-race stacking).
 
-### Key Milestones Achieved (2026-04-20 Session)
+### Key work — Session 2026-07-18 (this handoff)
 
-- MeedyaSuite-core integration scaffolding (#373) — feature-flagged Rust FFI bridge
-- SuiteCoreMetadataAdapter (#371) — unified metadata provider routing with 12 additional providers
-- SuiteCoreCodecClassifier (#372) — lossless/spatial codec classification tables
-- Redundant metadata provider prep for removal (#374) — migration guide created
-- SubtitleTonemapWrapper (#369) — HDR→SDR subtitle colour correction (PGS/VobSub/ASS)
-- Render Farm subsystem (#346) — chunked upload, Bonjour discovery, 7-state job lifecycle
-- Raster↔Vector conversion (#376) — 30+ raster formats, vtracer/potrace/rsvg-convert arg builders
-- ProRes→animated SVG (#377) — SMIL animation wrapper, frame extraction pipeline
-- FFplay bundling (#378) — A/B preview player support
-- App Store submission prep (#178) — metadata, runbook, review_information.yml
-- Security audit (#380) — fixed 3 critical (JSON injection) + 2 major (SSH injection, OOM buffer)
-- UI audit → created tracking issue #381 for 36+ missing controls
-- Documentation fully updated (CHANGELOG, PROJECT_STATUS, Sources/MeedyaConverter/Resources/Help/, docs/)
+- **F-011 finalised & pushed** — universal, first-party, SHA256SUMS-verified FFmpeg supply chain; removed the `scripts/ffmpeg-checksums.txt` local-pin bridge. (Also: reverted 408 accidental `chmod +x` flips before committing; gitignored `.claude/settings.local.json`.)
+- **#429 standing-tasks audit fully remediated & CLOSED** — 12 milestones back-filled; AC checkboxes synced on 8 closed issues with evidence comments; docs refreshed (PROJECT_STATUS / Project_Plan / DEV_NOTES / cli-reference + new `help/vector-conversion.md`); **in-app Help wired** to bundled markdown (single source of truth under `Sources/MeedyaConverter/Resources/Help/`, unit-tested `HelpTopicParser`); **latent defect fixed** — `release.yml`/`dev-build.yml` now copy the SwiftPM resource bundle (Help + `.sdef` + Assets) into the `.app`; `.gitignore` `*.icns`; PR merge-gate checklist; standing-task #1a policy clarified; CI housekeeping-reminder workflow; dev-cache cleaned (2 GiB).
+- **#428 release-readiness advanced** — Fable-5 signing audit confirmed `release`/`dev-build`/`beta-alpha` consistency; added SHA-256 checksums to `release.yml`; wrote the Direct-release runbook; fixed README/secrets-doc drift; tracked a latent `testflight.yml` cert-family bug on **#392**.
+- **11 commits** pushed to `autopilot/2026-06-30-clean`.
+
+### Next steps — GATED ON USER (release cannot be cut autonomously)
+
+- **G-010** — verify the 6 Apple org secrets exist (org-admin; Claude can't read them): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (must contain "Developer ID Application"), `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+- **G-013** — tag-strategy decision (trunk-based vs keep alpha/beta).
+- **Soak-window duration** — runbook has a `TODO` placeholder pending the policy call.
+- **The cut**: bump version string → `git tag v0.1.0-rc.4 <sha-on-main>` → `release.yml` (tag-triggered `v*`; no `workflow_dispatch`; 0.x always `--prerelease`) → notarytool → staple → Gatekeeper smoke test → publish. GUI Help visual smoke-test + `SuiteCoreAvailability.isAvailable` shipped-build check are best done during the rc.4 soak.
 
 ## Architecture
 
@@ -60,11 +57,13 @@ MeedyaConverter is a cross-platform professional media conversion application by
 | Direct/Windows/Linux | Ltd.MWBMpartners.MeedyaConverter           |
 | App Group            | group.Ltd.MWBMpartners.MeedyaConverter     |
 
-### Remaining Open Issues (~11)
+### Remaining Open Issues (42 open)
 
-- #364 AI cost estimation
-- #368 hdr10plus_tool binary integration
-- #235-#237 AI features (subscription tier)
-- #380 FTP password exposure (deferred — needs API change)
-- #381 UI controls gap (36+ missing toggles/fields)
-- #147-#153 Windows (7 issues), #154-#160 Linux (7 issues)
+- **Release**: #428 (v0.1.0-rc.4 → GA umbrella — the active track)
+- **App Store / TestFlight compliance**: #392 (tracking) + ITMS children #386–#391, #178
+- **Feature-gap gate-ledger** (all awaiting explicit user greenlight, multi-month each): #419 OFX host, #420 OpenColorIO, #421 audio offset, #422 audio drift, #423 audio-sync corpus, #424 premium tier + Expert Mode, #425 waveform viz, #426 subtitle muxing, #427 subtitle sync via audio
+- **MeedyaSuite-core**: #372, #373, #374 (redundant-provider cleanup), #383 LyricsFile interconversion
+- **AI (Phase 18, subscription tier)**: #235–#237, #364 cost estimation
+- **In-app updater**: #416 route via update.mwbm.io
+- **Render farm**: #346 engine-side consumption (UI shipped; engine deferred)
+- **Platform expansion**: #147–#153 Windows (7), #154–#160 Linux (7)
