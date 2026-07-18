@@ -231,13 +231,22 @@ jobs:
         run: swift package resolve
 
       # ---------------------------------------------------------------------
-      # Step 6: Build in release configuration
+      # Step 6: Build a UNIVERSAL (arm64 + x86_64) release binary
       # ---------------------------------------------------------------------
-      # Release builds enable full optimisations (-O) producing smaller and
-      # faster binaries suitable for distribution.
+      # Release builds enable full optimisations (-O). Building for both arches
+      # produces a single universal Mach-O that runs natively on Apple Silicon
+      # AND Intel (no Rosetta). SwiftPM writes universal output to
+      # `.build/apple/Products/Release`, not `.build/release`, so we resolve the
+      # exact bin path via --show-bin-path and export it for later steps.
       # ---------------------------------------------------------------------
-      - name: Build (release)
-        run: swift build -c release
+      - name: Build (release, universal arm64 + x86_64)
+        run: |
+          set -euo pipefail
+          swift build -c release --arch arm64 --arch x86_64
+          SWIFT_BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+          echo "SWIFT_BIN=${SWIFT_BIN}" >> "$GITHUB_ENV"
+          echo "→ universal build output: ${SWIFT_BIN}"
+          lipo -archs "${SWIFT_BIN}/MeedyaConverter" || true
 
       # ---------------------------------------------------------------------
       # Step 7: Run tests against the release build
@@ -317,11 +326,12 @@ jobs:
           mkdir -p "${APP_BUNDLE}/Contents/MacOS"
           mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-          # Copy the release binary into the bundle
-          if [ -f ".build/release/${APP_NAME}" ]; then
-            cp ".build/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+          # Copy the universal release binary into the bundle
+          # (SWIFT_BIN was exported by the universal build step).
+          if [ -f "${SWIFT_BIN}/${APP_NAME}" ]; then
+            cp "${SWIFT_BIN}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
           else
-            echo "::error::GUI binary not found at .build/release/${APP_NAME}"
+            echo "::error::GUI binary not found at ${SWIFT_BIN}/${APP_NAME}"
             exit 1
           fi
 
@@ -397,9 +407,9 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             chmod +x scripts/codesign.sh
-            ./scripts/codesign.sh .build/release/meedya-convert
+            ./scripts/codesign.sh "${SWIFT_BIN}/meedya-convert"
           else
             echo "::warning::CLI binary not found, skipping CLI signing."
           fi
@@ -457,9 +467,9 @@ jobs:
       - name: Package CLI binary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             mkdir -p cli-staging
-            cp .build/release/meedya-convert cli-staging/
+            cp "${SWIFT_BIN}/meedya-convert" cli-staging/
             tar -czf "meedya-convert-${VERSION}-macOS.tar.gz" -C cli-staging .
             rm -rf cli-staging
             echo "CLI package created: meedya-convert-${VERSION}-macOS.tar.gz"
