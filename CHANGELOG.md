@@ -15,6 +15,19 @@
 
 ### Security
 
+- **F-002 defence-in-depth complete -- remaining user-derived path
+  components sanitised** -- the last ~13 `appendingPathComponent` call
+  sites that build a filename from user-supplied data (rename-rule
+  find/replace output, user-typed profile/template names, media-file
+  basenames) now route through `PathSanitizer.sanitizeFilenameComponent`,
+  matching the migration already completed for the GUI views in an
+  earlier cycle. The highest-value fix is `BatchRenamer.apply` --
+  unlike a plain `lastPathComponent`, a rename rule's `replaceWith`
+  text is fully attacker-controllable and previously flowed unsanitised
+  into the destination path. Multi-segment relative directory paths
+  (which intentionally contain `/`) were left untouched to avoid
+  flattening legitimate subdirectory structure. See `SECURITY.md`
+  finding F-002 for the full site-by-site breakdown (re #428).
 - **FFmpeg supply chain hardened -- universal, first-party, verified
   (F-011)** -- `scripts/bundle-ffmpeg.sh` now sources `ffmpeg` / `ffprobe` /
   `ffplay` solely from the first-party mirror `MeedyaSuite/MeedyaDL-Tools`,

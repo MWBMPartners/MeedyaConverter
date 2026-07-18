@@ -102,7 +102,10 @@ struct BatchCommand: AsyncParsableCommand {
         for (index, file) in files.enumerated() {
             let stem = file.deletingPathExtension().lastPathComponent
             let ext = profile.preferredExtension
-            let outputURL = outputDir.appendingPathComponent("\(stem).\(ext)")
+            // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
+            let outputURL = outputDir.appendingPathComponent(
+                PathSanitizer.sanitizeFilenameComponent("\(stem).\(ext)")
+            )
 
             if FileManager.default.fileExists(atPath: outputURL.path) && !overwrite {
                 if !quiet { printStderr("Skipping \(file.lastPathComponent) (output exists)") }
