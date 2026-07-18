@@ -39,6 +39,18 @@
 
 ### Added
 
+- **Lossless/spatial audio badges in the Stream Inspector (#372)** --
+  `FFmpegProbe` now tags each audio stream with a
+  `SuiteCoreCodecDescriptor` via `SuiteCoreCodecClassifier` (codec name +
+  channel layout + sample format), using its built-in fallback
+  classification table by default -- no `SUITE_CORE` build flag required.
+  `MediaStream` gains an optional `suiteCoreCodecDescriptor` field (and
+  `isLosslessAudio`/`isSpatialAudio` convenience accessors), defaulted to
+  `nil` so existing call sites and previously-persisted `Codable` data
+  are unaffected. The Stream Inspector shows "Lossless"/"Spatial" badges
+  on audio streams accordingly. This is the default-build fallback
+  slice; the live MeedyaSuite-core Rust classification path remains
+  gated on its tagged release (#372 stays open).
 - **SHA-256 checksums attached to Direct release assets** -- `release.yml`
   now generates `<asset>.sha256` for both the DMG and the CLI tarball
   after they're built/signed/notarised, and attaches both `.sha256`

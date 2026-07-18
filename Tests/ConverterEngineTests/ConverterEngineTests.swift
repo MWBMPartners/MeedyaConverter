@@ -10712,6 +10712,106 @@ final class ConverterEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - MediaStream + SuiteCoreCodecClassifier adoption (#372)
+    //
+    // `SuiteCoreCodecClassifier` shipped in #372 with a built-in fallback
+    // table but zero production call sites. These tests cover its
+    // adoption: `MediaStream.suiteCoreCodecDescriptor` (populated by
+    // `FFmpegProbe.parseStream` from `codec_name` / `channel_layout` /
+    // `sample_fmt`) and the `isLosslessAudio` / `isSpatialAudio`
+    // convenience properties the Stream Inspector badges read from.
+
+    /// New field defaults to nil so every pre-existing `MediaStream(...)`
+    /// call site (which never mentions it) keeps compiling and behaving
+    /// exactly as before.
+    func test_mediaStream_suiteCoreCodecDescriptor_defaultsToNilWhenOmitted() {
+        let stream = MediaStream(streamIndex: 0, streamType: .audio, codecName: "aac")
+        XCTAssertNil(stream.suiteCoreCodecDescriptor)
+        XCTAssertNil(stream.isLosslessAudio)
+        XCTAssertNil(stream.isSpatialAudio)
+    }
+
+    /// A TrueHD stream in a 7.1.4 (Atmos bed) layout classifies as both
+    /// lossless and spatial — mirrors what `FFmpegProbe` would attach
+    /// after calling `SuiteCoreCodecClassifier.classify`.
+    func test_mediaStream_suiteCoreCodecDescriptor_losslessSpatialTrueHDAtmos() {
+        let descriptor = SuiteCoreCodecClassifier.classify(
+            ffprobeCodecName: "truehd",
+            channelLayout: "7.1.4"
+        )
+        let stream = MediaStream(
+            streamIndex: 1,
+            streamType: .audio,
+            codecName: "truehd",
+            channelLayout: ChannelLayout(channelCount: 12, layoutName: "7.1.4"),
+            suiteCoreCodecDescriptor: descriptor
+        )
+        XCTAssertEqual(stream.isLosslessAudio, true)
+        XCTAssertEqual(stream.isSpatialAudio, true)
+    }
+
+    /// A plain AAC stereo stream is neither lossless nor spatial.
+    func test_mediaStream_suiteCoreCodecDescriptor_lossyStereoIsNeitherLosslessNorSpatial() {
+        let descriptor = SuiteCoreCodecClassifier.classify(
+            ffprobeCodecName: "aac",
+            channelLayout: "stereo"
+        )
+        let stream = MediaStream(
+            streamIndex: 2,
+            streamType: .audio,
+            codecName: "aac",
+            channelLayout: ChannelLayout(channelCount: 2, layoutName: "stereo"),
+            suiteCoreCodecDescriptor: descriptor
+        )
+        XCTAssertEqual(stream.isLosslessAudio, false)
+        XCTAssertEqual(stream.isSpatialAudio, false)
+    }
+
+    /// The field round-trips through `Codable` when populated.
+    func test_mediaStream_suiteCoreCodecDescriptor_codableRoundTrip() throws {
+        let descriptor = SuiteCoreCodecClassifier.classify(
+            ffprobeCodecName: "eac3_atmos",
+            channelLayout: "5.1.4"
+        )
+        let original = MediaStream(
+            streamIndex: 3,
+            streamType: .audio,
+            codecName: "eac3_atmos",
+            suiteCoreCodecDescriptor: descriptor
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(MediaStream.self, from: data)
+        XCTAssertEqual(decoded.suiteCoreCodecDescriptor, original.suiteCoreCodecDescriptor)
+        XCTAssertEqual(decoded.isLosslessAudio, false)
+        XCTAssertEqual(decoded.isSpatialAudio, true)
+    }
+
+    /// A `MediaStream` JSON payload persisted *before* #372 (no
+    /// `suiteCoreCodecDescriptor` key at all — e.g. a saved encoding job
+    /// from an older app version) must still decode successfully, with
+    /// the new field resolving to nil rather than throwing.
+    func test_mediaStream_decodesLegacyJSONWithoutSuiteCoreCodecDescriptorKey() throws {
+        let legacyJSON = """
+        {
+            "id": "\(UUID().uuidString)",
+            "streamIndex": 0,
+            "streamType": "audio",
+            "codecName": "aac",
+            "isDefault": true,
+            "isForced": false,
+            "isEnabled": true,
+            "hdrFormats": [],
+            "isStereo3D": false
+        }
+        """
+        let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let decoded = try JSONDecoder().decode(MediaStream.self, from: data)
+        XCTAssertEqual(decoded.codecName, "aac")
+        XCTAssertNil(decoded.suiteCoreCodecDescriptor)
+        XCTAssertNil(decoded.isLosslessAudio)
+        XCTAssertNil(decoded.isSpatialAudio)
+    }
+
     // MARK: - RenderFarm settings + agent registry (#346 / #381 / #406)
 
     /// `RenderFarmTransport` rawValues are persisted as part of the

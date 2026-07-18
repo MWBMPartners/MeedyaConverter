@@ -340,6 +340,18 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// The audio codec enum value, if recognised.
     public var audioCodec: AudioCodec?
 
+    /// Lossless/spatial classification for audio streams, sourced from
+    /// `SuiteCoreCodecClassifier` (#372) — the built-in fallback table by
+    /// default, or the authoritative `meedya-codecs` Rust classification
+    /// when `SUITE_CORE` is linked. `nil` for non-audio streams, or when
+    /// the codec name could not be determined during probing.
+    ///
+    /// Additive and optional so existing initialiser call sites and
+    /// previously-persisted `Codable` payloads (e.g. saved encoding jobs)
+    /// continue to decode unchanged. Does not replace or duplicate
+    /// `audioCodec` above, which remains the #374-owned enum.
+    public var suiteCoreCodecDescriptor: SuiteCoreCodecDescriptor?
+
     // MARK: - Subtitle-Specific Properties
 
     /// The subtitle format enum value, if recognised.
@@ -375,6 +387,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         audioBitDepth: Int? = nil,
         matrixEncoding: MatrixEncoding? = nil,
         audioCodec: AudioCodec? = nil,
+        suiteCoreCodecDescriptor: SuiteCoreCodecDescriptor? = nil,
         subtitleFormat: SubtitleFormat? = nil
     ) {
         self.id = id
@@ -404,6 +417,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.audioBitDepth = audioBitDepth
         self.matrixEncoding = matrixEncoding
         self.audioCodec = audioCodec
+        self.suiteCoreCodecDescriptor = suiteCoreCodecDescriptor
         self.subtitleFormat = subtitleFormat
     }
 
@@ -413,6 +427,21 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     public var resolutionString: String? {
         guard let w = width, let h = height else { return nil }
         return "\(w)×\(h)"
+    }
+
+    /// Whether this audio stream is lossless, per `SuiteCoreCodecClassifier`
+    /// (#372). `nil` when the stream isn't audio, or no classification was
+    /// made during probing.
+    public var isLosslessAudio: Bool? {
+        suiteCoreCodecDescriptor?.isLossless
+    }
+
+    /// Whether this audio stream carries spatial audio metadata (Dolby
+    /// Atmos, DTS:X, MPEG-H 3D Audio, Ambisonics, etc.), per
+    /// `SuiteCoreCodecClassifier` (#372). `nil` when the stream isn't
+    /// audio, or no classification was made during probing.
+    public var isSpatialAudio: Bool? {
+        suiteCoreCodecDescriptor?.isSpatial
     }
 
     /// A formatted display string combining key properties for UI display.
