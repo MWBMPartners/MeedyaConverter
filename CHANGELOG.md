@@ -92,6 +92,27 @@
 
 ### Fixed
 
+- **`LoudnessReportView` wired to real EBU R128 / ITU-R BS.1770 loudness
+  analysis (#433)** -- `runAnalysis()` was a stub that set `isAnalysing =
+  false` immediately and never ran anything, so the Phase 12 loudness
+  compliance feature (#340) showed no results despite `LoudnessReporter`
+  being fully implemented. It now locates FFmpeg via
+  `FFmpegBundleManager`, runs `LoudnessReporter.buildAnalysisArguments`
+  through `FFmpegProcessController` for each queued source file
+  (mirroring `QualityPreviewView`'s proven execution pattern), parses the
+  `loudnorm` JSON block from the captured stderr with
+  `LoudnessReporter.parseAnalysisOutput`, and evaluates compliance with
+  `LoudnessReporter.checkCompliance` against the selected standard. A
+  missing FFmpeg binary now surfaces a clear error message instead of
+  silently doing nothing, and cancelling (or navigating away) stops the
+  running FFmpeg process and analysis task cleanly -- no leaked process
+  or task. Also fixes a latent crash in `LoudnessReporter.
+  parseAnalysisOutput` found while adding test coverage: it subscripted a
+  `ClosedRange` up to `jsonEnd.upperBound`, which equals `String.
+  endIndex` (an invalid, one-past-the-end index) whenever the loudnorm
+  JSON's closing `}` was the last captured character, crashing with an
+  out-of-bounds fatal error; switched to a half-open range, which is both
+  correct and crash-safe.
 - **`release.yml` header/precheck/FFmpeg comments corrected** -- three
   stale or incorrect comments fixed with no logic change: the header no
   longer implies GitHub can branch-filter a tag push to `main` (it
