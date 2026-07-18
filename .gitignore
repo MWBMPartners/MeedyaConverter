@@ -256,3 +256,6 @@ lcov.info
 
 # Claude Code workflow worktree dirs (created by Workflow tool's isolation:'worktree' agents)
 .claude/worktrees/
+
+# Claude Code personal/local settings (machine-specific permission grants — never shared)
+.claude/settings.local.json
