@@ -219,3 +219,46 @@ autonomous-eligible for rc.4 readiness is done.
 - **No PRs** — direct commits to the run branch to avoid merge-race stacking.
 - **testflight.yml cert-family bug NOT fixed** (App Store Lite is scope-out and the
   workflow is disabled) — tracked on #392 for when the path is re-enabled.
+
+## Session: 2026-07-18 (cont.) — feature-functionality batch
+
+Instruction: continue autonomously — work outstanding issues OR identify and
+implement enhancements/tweaks; commit each individually, keep issues updated; same
+model routing (sequential Fable 5 planning → Sonnet/Haiku impl → Opus for complex).
+
+Fable-5 planning round triaged all 42 open issues (respecting the off-limits
+set: #419–#427 gate-ledger, App Store #178/#386–#392, Windows/Linux #147–#160,
+AI #235–#237, the #428 release cut) and scanned the codebase for loose ends.
+**Critical catch:** #374 (remove redundant metadata providers) is UNSAFE — under the
+default (no-`SUITE_CORE`) build `TheTVDBClient` is the only live implementation, so
+removal breaks the build; deferred (blocked on the suite-core tag + flag flip).
+
+Delivered 7 items (one commit each, all pushed; suite 1068 → **1128**):
+- **#431** ResourceMonitorView fabricated `Double.random` disk speed → honest N/A.
+- **#372 slice** — `SuiteCoreCodecClassifier` fallback adopted in `FFmpegProbe`
+  (additive `suiteCoreCodecDescriptor?`) + Stream Inspector lossless/spatial badges.
+- **#432** F-002 follow-up — 13 more user-derived path components routed through
+  `PathSanitizer` (SECURITY.md list was stale; real gap found in `BatchRenamer`).
+- **#346 slice** — `RenderFarmConfigurationLoader` (AppStorage → Configuration +
+  agent registry; insecure-transport contract; malformed-JSON tolerant).
+- **#433** LoudnessReportView stub → real ebur128/loudnorm; **fixed a crash bug**
+  (`parseAnalysisOutput` ClosedRange→endIndex OOB).
+- **#434** QualityMetricsView stub → real VMAF/SSIM/PSNR (libvmaf pre-flight);
+  **fixed an "All"-mode bug** (combined args applied only the last filter). (re #291)
+- **#435** BenchmarkView simulated results → real per-benchmark ffmpeg execution.
+
+All three view wirings (#433/#434/#435) proven end-to-end with real ffmpeg 8.1.2 and
+engine-level tests; **in-GUI visual confirmation deferred to the rc.4 soak** (views
+have no CI coverage). #431–#435 created and closed; #372/#346 progress-commented and
+left open (larger remainders gated on the sibling repo / transport work).
+
+### Key Decisions (2026-07-18 cont.)
+
+- **Did NOT touch #374** — removing `TheTVDBClient` breaks the default build.
+- **Deferred the G-015 SHA-pin sweep** — it rewrites all 8 workflows incl.
+  `release.yml`; poor risk/reward right before the rc.4 cut, and the CI pin-gate +
+  Dependabot already prevent NEW loose pins.
+- **`DuplicateDetector.perceptual` left as-is** (returns `[]`) — needs a real
+  perceptual-hash algorithm or a UX decision; flagged for the user, not guessed.
+- Kept every new test **pure** (no ffmpeg execution in CI); proved the real paths
+  out-of-band with a throwaway harness + real ffmpeg.
