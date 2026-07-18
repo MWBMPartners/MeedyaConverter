@@ -335,6 +335,24 @@ jobs:
             exit 1
           fi
 
+          # Ship the SwiftPM resource bundle inside the .app.
+          # SwiftPM emits the MeedyaConverter target's declared resources
+          # (Assets.xcassets, the MeedyaConverter.sdef AppleScript definition,
+          # and the bundled Help Markdown) into a SEPARATE
+          # MeedyaConverter_MeedyaConverter.bundle alongside the binary — NOT
+          # into the executable. Because this step hand-builds the .app, that
+          # bundle must be copied into Contents/Resources or the shipped app
+          # has no resources: AppleScript/Automator integration and the in-app
+          # Help would be dead-on-arrival in Direct DMGs. Fail closed if the
+          # bundle is missing (e.g. a Package.swift resources regression).
+          RESOURCE_BUNDLE="${SWIFT_BIN}/${APP_NAME}_${APP_NAME}.bundle"
+          if [ -d "${RESOURCE_BUNDLE}" ]; then
+            cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${RESOURCE_BUNDLE}"
+            exit 1
+          fi
+
           # Copy Info.plist verbatim, then drive the version keys with
           # PlistBuddy. The old sed-based substitution silently no-op'd
           # the first time the template's placeholder didn't match
