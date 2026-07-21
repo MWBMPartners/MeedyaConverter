@@ -259,6 +259,17 @@ struct TeamProfileView: View {
     }
 
     /// Push local profiles to the configured repository.
+    ///
+    /// `TeamProfileView` is a `struct: View`, so — mirroring
+    /// `VideoTrimmerView.applyTrim()` (Issue #444/#451) — its methods are
+    /// implicitly main-actor isolated. A plain `Task { }` here therefore
+    /// inherits that isolation, so `@State` mutations below are direct
+    /// property writes rather than `MainActor.run` hops, and `self` never
+    /// crosses an isolation boundary. Only the genuinely blocking call —
+    /// `TeamProfileManager.pushProfiles(_:to:)`, which performs synchronous
+    /// file/network I/O — is pulled into a `Task.detached` that captures
+    /// and returns only `Sendable` values (`profiles`, `repository`) and
+    /// never touches `self`.
     private func pushProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -267,27 +278,30 @@ struct TeamProfileView: View {
         let repository = buildRepository()
         let profiles = viewModel.engine.profileStore.profiles
 
-        Task.detached {
+        Task {
             do {
-                let mgr = TeamProfileManager(repository: repository)
-                try mgr.pushProfiles(profiles, to: repository)
-                await MainActor.run {
-                    lastSyncDate = Date()
-                    statusMessage = "Pushed \(profiles.count) profiles successfully."
-                    isError = false
-                    isSyncing = false
-                }
+                try await Task.detached {
+                    let mgr = TeamProfileManager(repository: repository)
+                    try mgr.pushProfiles(profiles, to: repository)
+                }.value
+                lastSyncDate = Date()
+                statusMessage = "Pushed \(profiles.count) profiles successfully."
+                isError = false
+                isSyncing = false
             } catch {
-                await MainActor.run {
-                    statusMessage = error.localizedDescription
-                    isError = true
-                    isSyncing = false
-                }
+                statusMessage = error.localizedDescription
+                isError = true
+                isSyncing = false
             }
         }
     }
 
     /// Pull profiles from the configured repository.
+    ///
+    /// Mirrors `pushProfiles()` above: a plain `Task { }` inherits this
+    /// view's main-actor isolation, and only the blocking
+    /// `TeamProfileManager.pullProfiles(from:)` I/O call is isolated in a
+    /// `Task.detached` returning a `Sendable` `[EncodingProfile]`.
     private func pullProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -295,23 +309,21 @@ struct TeamProfileView: View {
 
         let repository = buildRepository()
 
-        Task.detached {
+        Task {
             do {
-                let mgr = TeamProfileManager(repository: repository)
-                let pulled = try mgr.pullProfiles(from: repository)
-                await MainActor.run {
-                    remoteProfiles = pulled
-                    lastSyncDate = Date()
-                    statusMessage = "Pulled \(pulled.count) profiles."
-                    isError = false
-                    isSyncing = false
-                }
+                let pulled = try await Task.detached {
+                    let mgr = TeamProfileManager(repository: repository)
+                    return try mgr.pullProfiles(from: repository)
+                }.value
+                remoteProfiles = pulled
+                lastSyncDate = Date()
+                statusMessage = "Pulled \(pulled.count) profiles."
+                isError = false
+                isSyncing = false
             } catch {
-                await MainActor.run {
-                    statusMessage = error.localizedDescription
-                    isError = true
-                    isSyncing = false
-                }
+                statusMessage = error.localizedDescription
+                isError = true
+                isSyncing = false
             }
         }
     }
