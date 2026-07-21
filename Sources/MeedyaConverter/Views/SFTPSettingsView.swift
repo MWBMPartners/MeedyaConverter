@@ -57,6 +57,11 @@ struct SFTPSettingsView: View {
     /// The result message from the last connection test.
     @State private var testResult: String?
 
+    /// The in-flight connection-test task, retained so a stale result
+    /// can't be written back after the user navigates away mid-probe
+    /// (Issue #447).
+    @State private var testTask: Task<Void, Never>?
+
     // MARK: - Auth Type Enum
 
     /// Simplified auth type picker for the UI, mapping to `AuthMethod`.
@@ -82,6 +87,7 @@ struct SFTPSettingsView: View {
                 .frame(minWidth: 400)
         }
         .onAppear(perform: loadProfiles)
+        .onDisappear { testTask?.cancel() }
     }
 
     // MARK: - Profile List
@@ -239,17 +245,174 @@ struct SFTPSettingsView: View {
         )
     }
 
-    /// Initiates a connection test using the current form values.
+    /// Initiates a real connection test using the current form values.
+    ///
+    /// **Issue #447**: this used to just call
+    /// `SFTPUploader.testConnection(config:)` to build the `ssh` argument
+    /// array and immediately report "Success: SSH arguments built" —
+    /// without ever launching a process. A typo'd host, an unreachable
+    /// server, or a rejected credential all reported the same fake
+    /// success. This now actually runs `ssh` against the configured
+    /// server and reports what really happened.
+    ///
+    /// Mirrors the execution pattern proven in
+    /// `VideoTrimmerView.applyTrim()` / `QualityMetricsView.runAnalysis()`
+    /// (Issue #434/#444): `SFTPSettingsView` is a `struct: View`, so its
+    /// methods are implicitly main-actor isolated via `View` conformance.
+    /// A plain `Task { }` here therefore inherits that isolation, so
+    /// `@State` writes (`testResult`, `isTesting`) are direct property
+    /// writes rather than `MainActor.run` hops. The one genuinely
+    /// blocking call — launching `ssh` and waiting for it to exit — is
+    /// kept off the main thread inside a `Task.detached` that captures
+    /// and returns only `Sendable` values (`SFTPServerConfig` in,
+    /// `ConnectionProbeResult` out), never `self`.
     private func testConnection() {
+        guard !isTesting else { return }
+
         isTesting = true
         testResult = nil
         let config = buildConfig()
-        let args = SFTPUploader.testConnection(config: config)
 
-        // Show the command that would be run (actual execution would
-        // use Process; here we just validate the arguments build).
-        testResult = args.isEmpty ? "Error: empty arguments" : "Success: SSH arguments built"
-        isTesting = false
+        testTask = Task {
+            let result = await Task.detached {
+                Self.probeConnection(config: config)
+            }.value
+
+            // The view may have disappeared (or a new test started) while
+            // the detached probe was running; don't clobber a newer state.
+            guard !Task.isCancelled else { return }
+
+            testResult = result.succeeded ? "Success: \(result.message)" : "Error: \(result.message)"
+            isTesting = false
+        }
+    }
+
+    /// The outcome of a real `ssh`-based connection probe.
+    private struct ConnectionProbeResult: Sendable {
+        /// Whether the server accepted the TCP connection, the host key,
+        /// and the configured credential.
+        let succeeded: Bool
+        /// A human-readable description of the result — a success
+        /// confirmation, or the real error `ssh` reported.
+        let message: String
+    }
+
+    /// Runs a real, non-interactive `ssh` probe against `config` and
+    /// reports the true outcome.
+    ///
+    /// Reuses `SFTPUploader.testConnection(config:)` — the argument
+    /// builder already written for this feature (Issue #312) that knows
+    /// how to wire up `-i <keyFile>` / SSH-agent defaults / `-o
+    /// BatchMode=no` per `AuthMethod`, plus `-o ConnectTimeout=10` for the
+    /// TCP phase — rather than inventing a new auth path. The one thing
+    /// added here is a single leading `-o BatchMode=yes`: per
+    /// `ssh_config(5)`, "for each parameter, the first obtained value
+    /// will be used," so this prepended flag wins over the `-o
+    /// BatchMode=no` the builder appends for `.password` profiles,
+    /// guaranteeing `ssh` can never block this app on a password/
+    /// passphrase prompt with no controlling terminal to read it from.
+    ///
+    /// Credentials never touch argv: `.agent` passes nothing, `.keyFile`
+    /// passes a filesystem path (not a secret), and `.password` profiles
+    /// are verified only for reachability, host-key acceptance, and any
+    /// already-loaded agent/key identity — SSH has no non-interactive way
+    /// to submit a plaintext password, so a password-only profile that
+    /// fails this probe is a true, disclosed limitation of the protocol,
+    /// not a fabricated failure.
+    ///
+    /// `nonisolated` and invoked from a `Task.detached` (see
+    /// `testConnection()`) so the blocking `waitUntilExit()` call never
+    /// runs on the main thread. A watchdog timer bounds the whole attempt
+    /// at 15s: `-o ConnectTimeout=10` only bounds the TCP connect phase,
+    /// not the handshake/auth phase that follows it, which `ssh` itself
+    /// does not bound.
+    private nonisolated static func probeConnection(
+        config: SFTPServerConfig
+    ) -> ConnectionProbeResult {
+        var args = ["-o", "BatchMode=yes"]
+        args.append(contentsOf: SFTPUploader.testConnection(config: config))
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = args
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        process.standardInput = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return ConnectionProbeResult(
+                succeeded: false,
+                message: "Could not launch ssh: \(error.localizedDescription)"
+            )
+        }
+
+        // Watchdog: SIGTERM at the deadline so a stalled handshake (a host
+        // that accepts the TCP connection but never completes SSH
+        // negotiation, which ConnectTimeout does not cover) can't hang the
+        // probe forever. `ssh` honours SIGTERM by default, so a single
+        // timer — no SIGKILL escalation — is sufficient for this
+        // lightweight, trusted-target probe (unlike the untrusted-input
+        // hardening in `FFmpegProbe.runFFprobe`).
+        let timeoutSeconds = 15.0
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        watchdog.schedule(deadline: .now() + timeoutSeconds)
+        watchdog.setEventHandler { [weak process] in
+            process?.terminate()
+        }
+        watchdog.activate()
+
+        // Drain both pipes concurrently so a chatty remote (e.g. a login
+        // banner/MOTD written to stdout) can't fill the pipe buffer and
+        // deadlock `waitUntilExit()` — the classic Process pipe-drain
+        // pitfall documented at `FFmpegProbe.runFFprobe`.
+        let ioState = ProbeIOState()
+        let stdoutDone = DispatchSemaphore(value: 0)
+        let stderrDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global(qos: .utility).async {
+            ioState.stdout = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            stdoutDone.signal()
+        }
+        DispatchQueue.global(qos: .utility).async {
+            ioState.stderr = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            stderrDone.signal()
+        }
+
+        process.waitUntilExit()
+        watchdog.cancel()
+        stdoutDone.wait()
+        stderrDone.wait()
+
+        // `terminate()` sends SIGTERM; a process that dies from an
+        // uncaught signal (rather than exiting normally) reports
+        // `.uncaughtSignal` here. `ssh` doesn't trap SIGTERM, so seeing
+        // this reliably means our watchdog — not the server — ended the
+        // attempt.
+        if process.terminationReason == .uncaughtSignal {
+            return ConnectionProbeResult(
+                succeeded: false,
+                message: "Connection attempt timed out after \(Int(timeoutSeconds))s."
+            )
+        }
+
+        guard process.terminationStatus == 0 else {
+            let stderrText = String(data: ioState.stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = stderrText.isEmpty
+                ? "ssh exited with status \(process.terminationStatus)."
+                : stderrText
+            return ConnectionProbeResult(succeeded: false, message: detail)
+        }
+
+        return ConnectionProbeResult(
+            succeeded: true,
+            message: "Connected and authenticated to \(config.username)@\(config.host)."
+        )
     }
 
     /// Saves the current form values as a profile.
@@ -439,4 +602,21 @@ struct SFTPSettingsView: View {
             UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
         }
     }
+}
+
+// MARK: - ProbeIOState
+
+/// Holds the drained stdout/stderr bytes from `probeConnection(config:)`'s
+/// `ssh` invocation.
+///
+/// `@unchecked Sendable`: the two background readers each own a disjoint
+/// property (`stdout`/`stderr`) and `probeConnection` only reads them
+/// after waiting on the `DispatchSemaphore` each reader signals on
+/// completion, so the semaphore hand-off — not the compiler — establishes
+/// the happens-before relationship. Mirrors the rationale documented on
+/// `FFmpegProbe.ProbeRunState`, which does the equivalent job with an
+/// `NSLock` instead of a semaphore.
+private final class ProbeIOState: @unchecked Sendable {
+    var stdout = Data()
+    var stderr = Data()
 }
