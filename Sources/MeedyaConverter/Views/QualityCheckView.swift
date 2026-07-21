@@ -43,6 +43,18 @@ struct QualityCheckView: View {
     /// Controls visibility of the export save panel.
     @State private var showExportPanel = false
 
+    // MARK: - Run Execution State (Issue #445)
+
+    /// The in-flight QC run task, retained so it can be cancelled when the
+    /// user navigates away from this view while checks are executing.
+    /// Mirrors `LoudnessReportView.analysisTask` / `BenchmarkView.benchmarkTask`.
+    @State private var runTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the black-frame/silence pass
+    /// currently running, retained so `cancelRun()` can stop the running
+    /// process rather than merely abandoning it.
+    @State private var currentController: FFmpegProcessController?
+
     /// Available built-in profile names for the picker.
     private let profileNames = ["Broadcast", "Streaming", "Archive"]
 
@@ -58,14 +70,19 @@ struct QualityCheckView: View {
         }
     }
 
-    /// Number of checks that passed in the current results.
+    /// Number of checks that actually ran and passed in the current results.
     private var passCount: Int {
-        results.filter(\.passed).count
+        results.filter { $0.status == .passed }.count
     }
 
-    /// Number of checks that failed in the current results.
+    /// Number of checks that actually ran and failed in the current results.
     private var failCount: Int {
-        results.filter { !$0.passed }.count
+        results.filter { $0.status == .failed }.count
+    }
+
+    /// Number of checks that were enabled but have no real detector yet.
+    private var notImplementedCount: Int {
+        results.filter { $0.status == .notImplemented }.count
     }
 
     // MARK: - Body
@@ -87,6 +104,7 @@ struct QualityCheckView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 400)
+        .onDisappear { cancelRun() }
     }
 
     // MARK: - Toolbar
@@ -173,7 +191,7 @@ struct QualityCheckView: View {
         }
     }
 
-    /// Summary bar showing pass/fail counts.
+    /// Summary bar showing pass/fail/not-implemented counts.
     private var summaryBar: some View {
         HStack(spacing: 16) {
             Label("\(passCount) Passed", systemImage: "checkmark.circle.fill")
@@ -181,6 +199,9 @@ struct QualityCheckView: View {
 
             Label("\(failCount) Failed", systemImage: "xmark.circle.fill")
                 .foregroundStyle(failCount > 0 ? .red : .secondary)
+
+            Label("\(notImplementedCount) Not Implemented", systemImage: "minus.circle.fill")
+                .foregroundStyle(.secondary)
 
             Spacer()
 
@@ -193,15 +214,31 @@ struct QualityCheckView: View {
         .background(.bar)
     }
 
-    /// A single result row with pass/fail badge, severity, and details.
+    /// Icon for a check's status badge.
+    private func statusIcon(_ status: QCStatus) -> String {
+        switch status {
+        case .passed: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .notImplemented: return "minus.circle.fill"
+        }
+    }
+
+    /// Colour for a check's status badge.
+    private func statusColor(_ status: QCStatus) -> Color {
+        switch status {
+        case .passed: return .green
+        case .failed: return .red
+        case .notImplemented: return .secondary
+        }
+    }
+
+    /// A single result row with a status badge, severity, and details.
     private func resultRow(_ result: QCResult) -> some View {
         HStack(spacing: 12) {
-            // Pass/fail badge
-            Image(systemName: result.passed
-                  ? "checkmark.circle.fill"
-                  : "xmark.circle.fill")
-            .foregroundStyle(result.passed ? .green : .red)
-            .font(.title3)
+            // Status badge (pass / fail / not implemented — Issue #445)
+            Image(systemName: statusIcon(result.status))
+                .foregroundStyle(statusColor(result.status))
+                .font(.title3)
 
             VStack(alignment: .leading, spacing: 2) {
                 // Check type
@@ -288,6 +325,28 @@ struct QualityCheckView: View {
     // MARK: - Actions
 
     /// Executes quality checks using the selected profile.
+    ///
+    /// Mirrors the execution pattern proven in
+    /// `QualityMetricsView.runAnalysis()` (Issue #434): locate FFmpeg via
+    /// `FFmpegBundleManager`, build arguments with the existing
+    /// `QualityChecker.buildBlackFrameDetectionArgs`/
+    /// `buildSilenceDetectionArgs` builders, run them through
+    /// `FFmpegProcessController.startEncoding(arguments:)`, then parse the
+    /// real stderr output with `QualityChecker.parseBlackFrameOutput`/
+    /// `parseSilenceOutput` (Issue #445). `QualityChecker` itself stays a
+    /// pure, process-free utility (per its own documentation), so this view
+    /// is where the actual FFmpeg execution for the two checks that have
+    /// real detectors happens; `QualityChecker.runAllChecks` supplies the
+    /// honest `.notImplemented` results for every other enabled check.
+    ///
+    /// `QualityCheckView` is a `struct: View`, not a `@MainActor` class, so
+    /// (like the sibling views in this file's neighbourhood) its methods
+    /// are implicitly main-actor isolated via `View` conformance. A plain
+    /// `Task { }` here inherits that isolation, so `@State` mutations are
+    /// direct property writes. The one genuinely blocking call —
+    /// `FFmpegBundleManager.locateFFmpeg()` — is pulled into a
+    /// `Task.detached` that returns only a `Sendable` `String` and never
+    /// touches `self`/`@State`, so it never blocks the main thread.
     private func runQualityChecks() {
         guard let file = viewModel.selectedFile else {
             errorMessage = "No file selected."
@@ -297,21 +356,108 @@ struct QualityCheckView: View {
         isRunning = true
         errorMessage = nil
 
-        // Run checks asynchronously to avoid blocking the main thread.
-        Task {
-            let checkResults = QualityChecker.runAllChecks(
-                inputPath: file.fileURL.path,
-                profile: selectedProfile
+        let inputPath = file.fileURL.path
+        let profile = selectedProfile
+
+        runTask = Task {
+            // Checks with no FFmpeg execution requirement resolve
+            // synchronously and honestly: real results, or `.notImplemented`
+            // for stubs — never a fabricated pass.
+            var collectedResults = QualityChecker.runAllChecks(
+                inputPath: inputPath,
+                profile: profile
             )
 
-            await MainActor.run {
-                results = checkResults
-                isRunning = false
+            let needsFFmpeg = profile.enabledChecks.contains(.blackFrames)
+                || profile.enabledChecks.contains(.silenceDetection)
+
+            var ffmpegPath = ""
+            if needsFFmpeg {
+                do {
+                    ffmpegPath = try await Task.detached {
+                        try FFmpegBundleManager().locateFFmpeg().path
+                    }.value
+                } catch {
+                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before running black-frame/silence checks."
+                    results = collectedResults.sorted { $0.check.rawValue < $1.check.rawValue }
+                    currentController = nil
+                    isRunning = false
+                    return
+                }
             }
+
+            if !Task.isCancelled, profile.enabledChecks.contains(.blackFrames) {
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                currentController = controller
+                let args = QualityChecker.buildBlackFrameDetectionArgs(inputPath: inputPath)
+                do {
+                    let progressStream = try controller.startEncoding(arguments: args)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                    if !Task.isCancelled {
+                        collectedResults.append(contentsOf: QualityChecker.parseBlackFrameOutput(controller.errorOutput))
+                    }
+                } catch {
+                    errorMessage = "Black-frame detection failed: \(error.localizedDescription)"
+                }
+            }
+
+            if !Task.isCancelled, profile.enabledChecks.contains(.silenceDetection) {
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                currentController = controller
+                let args = QualityChecker.buildSilenceDetectionArgs(
+                    inputPath: inputPath,
+                    threshold: profile.silenceThreshold
+                )
+                do {
+                    let progressStream = try controller.startEncoding(arguments: args)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                    if !Task.isCancelled {
+                        collectedResults.append(contentsOf: QualityChecker.parseSilenceOutput(controller.errorOutput))
+                    }
+                } catch {
+                    let prefix = errorMessage.map { "\($0) " } ?? ""
+                    errorMessage = "\(prefix)Silence detection failed: \(error.localizedDescription)"
+                }
+            }
+
+            currentController = nil
+            results = collectedResults.sorted { $0.check.rawValue < $1.check.rawValue }
+            isRunning = false
         }
     }
 
+    /// Cancel an in-progress QC run.
+    ///
+    /// Stops the currently-running FFmpeg process (if any) and cancels the
+    /// run `Task` so no process or task is left running in the background
+    /// after the user navigates away from this view mid-scan.
+    private func cancelRun() {
+        currentController?.stopEncoding()
+        currentController = nil
+        runTask?.cancel()
+        runTask = nil
+        isRunning = false
+    }
+
     /// Generates a plain-text QC report from the current results.
+    ///
+    /// Every enabled check is included — real pass/fail results for checks
+    /// that actually executed, and checks with no detector implemented are
+    /// clearly labelled `SKIPPED` rather than folded into the pass count
+    /// (Issue #445): the summary line below only tallies genuinely-executed
+    /// checks into "passed"/"failed", with skipped checks broken out
+    /// separately so the report can never be misread as more checks having
+    /// passed than actually ran.
     private func generateReport() -> String {
         var lines: [String] = []
         lines.append("Quality Control Report")
@@ -324,7 +470,12 @@ struct QualityCheckView: View {
         lines.append("")
 
         for result in results {
-            let status = result.passed ? "PASS" : "FAIL"
+            let status: String
+            switch result.status {
+            case .passed: status = "PASS"
+            case .failed: status = "FAIL"
+            case .notImplemented: status = "SKIPPED (not implemented)"
+            }
             let ts = result.timestamp.map { String(format: " @ %.2fs", $0) } ?? ""
             lines.append("[\(status)] \(result.check.rawValue)\(ts)")
             lines.append("  Severity: \(result.severity)")
@@ -333,7 +484,7 @@ struct QualityCheckView: View {
         }
 
         lines.append(String(repeating: "-", count: 60))
-        lines.append("Summary: \(passCount) passed, \(failCount) failed")
+        lines.append("Summary: \(passCount) passed, \(failCount) failed, \(notImplementedCount) skipped (not implemented)")
 
         return lines.joined(separator: "\n")
     }
