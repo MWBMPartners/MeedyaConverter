@@ -70,6 +70,11 @@ struct CloudSyncView: View {
     /// Number of profiles downloaded in the last sync.
     @State private var lastDownloadCount: Int = 0
 
+    /// The in-flight upload/download task, retained so it can be
+    /// cancelled if the user dismisses this view mid-sync. Mirrors
+    /// `LoudnessReportView.analysisTask` / `BenchmarkView.benchmarkTask`.
+    @State private var syncTask: Task<Void, Never>?
+
     // MARK: - Body
 
     var body: some View {
@@ -89,6 +94,10 @@ struct CloudSyncView: View {
         }
         .onAppear {
             refreshState()
+        }
+        .onDisappear {
+            syncTask?.cancel()
+            syncTask = nil
         }
         .alert("Sync Error", isPresented: $showError) {
             Button("OK") {}
@@ -175,7 +184,7 @@ struct CloudSyncView: View {
         Section("Manual Sync") {
             HStack {
                 Button {
-                    performUpload()
+                    syncTask = Task { await performUpload() }
                 } label: {
                     Label("Upload Profiles", systemImage: "arrow.up.circle")
                 }
@@ -184,7 +193,7 @@ struct CloudSyncView: View {
                 Spacer()
 
                 Button {
-                    performDownload()
+                    syncTask = Task { await performDownload() }
                 } label: {
                     Label("Download Profiles", systemImage: "arrow.down.circle")
                 }
@@ -312,33 +321,104 @@ struct CloudSyncView: View {
     }
 
     /// Uploads local profiles to iCloud.
-    private func performUpload() {
+    ///
+    /// Mirrors `TeamProfileView.pushProfiles()` (see
+    /// `TeamProfileView.swift` around line 268): pulls the live profile
+    /// list from the shared `EncodingProfileStore`
+    /// (`viewModel.engine.profileStore.profiles`) instead of the
+    /// previous hardcoded empty array, so `lastUploadCount` reflects the
+    /// number of profiles genuinely written to iCloud.
+    ///
+    /// `CloudSyncView` is a `struct: View`, so this `async` method (and
+    /// the plain `Task { }` that calls it from the button) is implicitly
+    /// main-actor isolated via `View` conformance — `@State` writes below
+    /// are direct property mutations, matching
+    /// `QualityMetricsView.runAnalysis()`'s shape.
+    /// `CloudProfileSync.uploadProfiles(_:)` performs genuinely blocking
+    /// file I/O against the iCloud ubiquity container, so it runs inside
+    /// `Task.detached`, capturing/returning only `Sendable` values
+    /// (`syncManager` is `@unchecked Sendable`; `[EncodingProfile]` is
+    /// `Sendable`) and never touching `self`/`@State` directly — mirroring
+    /// how `QualityMetricsView.runAnalysis()` detaches
+    /// `FFmpegBundleManager.locateFFmpeg()`.
+    private func performUpload() async {
         isSyncing = true
-        // In a full implementation, fetch profiles from the profile manager.
-        // For now, demonstrate the API.
+        errorMessage = nil
+        lastUploadCount = 0
+
+        let profiles = viewModel.engine.profileStore.profiles
+        let manager = syncManager
+
         do {
-            let profiles: [EncodingProfile] = []  // Would be fetched from profile store.
-            try syncManager.uploadProfiles(profiles)
+            try await Task.detached {
+                try manager.uploadProfiles(profiles)
+            }.value
+
+            guard !Task.isCancelled else {
+                isSyncing = false
+                return
+            }
             lastUploadCount = profiles.count
         } catch {
-            errorMessage = error.localizedDescription
-            showError = true
+            if !Task.isCancelled {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
         }
+
         isSyncing = false
         refreshState()
     }
 
-    /// Downloads profiles from iCloud.
-    private func performDownload() {
+    /// Downloads profiles from iCloud and merges them into the local
+    /// profile store.
+    ///
+    /// Profiles already known locally (matched by ID) are updated in
+    /// place via `EncodingProfileStore.updateProfile(_:)`; profiles not
+    /// yet seen locally are added via `addProfile(_:)`. This reuses the
+    /// store's existing CRUD surface (the same one `ProfileManagementView`
+    /// and `TeamProfileView` exercise) rather than inventing new merge
+    /// logic, and makes `lastDownloadCount` reflect real merged profiles
+    /// instead of a discarded result.
+    ///
+    /// Concurrency shape mirrors `performUpload()` above:
+    /// `CloudProfileSync.downloadProfiles()` blocks on file I/O, so it
+    /// runs inside `Task.detached`; the merge into `profileStore` happens
+    /// back on the main actor once the detached call returns, alongside
+    /// the other `@State` writes.
+    private func performDownload() async {
         isSyncing = true
+        errorMessage = nil
+        lastDownloadCount = 0
+
+        let manager = syncManager
+
         do {
-            let profiles = try syncManager.downloadProfiles()
-            lastDownloadCount = profiles.count
-            // In a full implementation, merge into local profile store.
+            let downloaded = try await Task.detached {
+                try manager.downloadProfiles()
+            }.value
+
+            guard !Task.isCancelled else {
+                isSyncing = false
+                return
+            }
+
+            let store = viewModel.engine.profileStore
+            for profile in downloaded {
+                if store.profile(id: profile.id) != nil {
+                    store.updateProfile(profile)
+                } else {
+                    store.addProfile(profile)
+                }
+            }
+            lastDownloadCount = downloaded.count
         } catch {
-            errorMessage = error.localizedDescription
-            showError = true
+            if !Task.isCancelled {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
         }
+
         isSyncing = false
         refreshState()
     }
