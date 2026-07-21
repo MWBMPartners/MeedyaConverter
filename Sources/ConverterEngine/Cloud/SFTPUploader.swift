@@ -503,3 +503,209 @@ public struct SFTPUploader: Sendable {
         return args
     }
 }
+
+// MARK: - SFTPUploadOutcome
+
+/// The real outcome of an `scp` upload attempt.
+///
+/// Mirrors `SFTPSettingsView.ConnectionProbeResult` (Issue #447) one
+/// layer down, in `ConverterEngine`, so callers such as
+/// `PostEncodeActionChain` (Issue #450) get the same honest-failure
+/// guarantee — success/failure/message are always what `scp` actually
+/// reported, never fabricated.
+public struct SFTPUploadOutcome: Sendable {
+    /// Whether `scp` exited with status 0.
+    public let succeeded: Bool
+
+    /// A human-readable success confirmation, or the real error `scp`
+    /// reported (its stderr output, or a process-launch failure
+    /// description).
+    public let message: String
+
+    public init(succeeded: Bool, message: String) {
+        self.succeeded = succeeded
+        self.message = message
+    }
+}
+
+// MARK: - SFTPUploader Execution
+
+extension SFTPUploader {
+
+    /// Uploads `localPath` to the server described by `config` via `scp`,
+    /// blocking the calling thread until the transfer finishes or fails.
+    ///
+    /// This is a **blocking** call — the caller MUST run it off the
+    /// main/calling actor (e.g. via `Task.detached`), exactly as
+    /// `SFTPSettingsView.probeConnection(config:)` does for connection
+    /// tests (Issue #447). It is marked `nonisolated` to document that it
+    /// touches no actor-isolated state; hopping off-actor before invoking
+    /// it remains the caller's responsibility.
+    ///
+    /// Credential handling reuses `buildSCPArguments(localPath:config:)`
+    /// as-is — nothing new is added to argv, so key-file paths and
+    /// hostnames are the only configuration data that ever appears in
+    /// process arguments. A password-based profile is a documented
+    /// exception: `-o BatchMode=yes` is prepended ahead of the builder's
+    /// own `-o BatchMode=no` for `.password` configs so `scp` can never
+    /// block on a password prompt with no controlling terminal to read it
+    /// from. Per `ssh_config(5)`, the first value supplied for a given
+    /// `-o` key wins, so the prepended flag takes precedence — the same
+    /// technique `SFTPSettingsView.probeConnection` already uses and
+    /// documents. A password-only profile therefore fails fast with
+    /// `scp`'s real "Permission denied" error rather than hanging; that
+    /// is a genuine SSH-protocol limitation (no non-interactive way to
+    /// submit a plaintext password), not a fabricated failure. Key-file
+    /// and SSH-agent authentication are unaffected and upload normally.
+    ///
+    /// - Parameters:
+    ///   - localPath: Absolute path to the file to upload.
+    ///   - config: The destination SFTP server configuration.
+    /// - Returns: The real `scp` outcome — never a fabricated success.
+    public nonisolated static func upload(
+        localPath: String,
+        config: SFTPServerConfig
+    ) -> SFTPUploadOutcome {
+        var args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+        args.append(contentsOf: buildSCPArguments(localPath: localPath, config: config))
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+        process.arguments = args
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        process.standardInput = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return SFTPUploadOutcome(
+                succeeded: false,
+                message: "Could not launch scp: \(error.localizedDescription)"
+            )
+        }
+
+        // Drain both pipes concurrently so a chatty remote (e.g. a login
+        // banner/MOTD written to stdout) can't fill the pipe buffer and
+        // deadlock `waitUntilExit()` — the same pitfall documented at
+        // `SFTPSettingsView.probeConnection` and `FFmpegProbe.runFFprobe`.
+        let ioState = SFTPUploadIOState()
+        let stdoutDone = DispatchSemaphore(value: 0)
+        let stderrDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global(qos: .utility).async {
+            ioState.stdout = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            stdoutDone.signal()
+        }
+        DispatchQueue.global(qos: .utility).async {
+            ioState.stderr = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            stderrDone.signal()
+        }
+
+        process.waitUntilExit()
+        stdoutDone.wait()
+        stderrDone.wait()
+
+        guard process.terminationStatus == 0 else {
+            let stderrText = String(data: ioState.stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = stderrText.isEmpty
+                ? "scp exited with status \(process.terminationStatus)."
+                : stderrText
+            return SFTPUploadOutcome(succeeded: false, message: detail)
+        }
+
+        return SFTPUploadOutcome(
+            succeeded: true,
+            message: "Uploaded to \(config.username)@\(config.host):\(config.remotePath)"
+        )
+    }
+}
+
+// MARK: - SFTPUploadIOState
+
+/// Holds the drained stdout/stderr bytes from `SFTPUploader.upload`'s
+/// `scp` invocation.
+///
+/// `@unchecked Sendable`: the two background readers each own a
+/// disjoint property (`stdout`/`stderr`) and `upload` only reads them
+/// after waiting on the `DispatchSemaphore` each reader signals on
+/// completion, so the semaphore hand-off — not the compiler —
+/// establishes the happens-before relationship. Mirrors
+/// `SFTPSettingsView.ProbeIOState`, which does the equivalent job for
+/// the connection-test probe.
+private final class SFTPUploadIOState: @unchecked Sendable {
+    var stdout = Data()
+    var stderr = Data()
+}
+
+// MARK: - SFTPProfileStore
+
+/// Read-only access to the SFTP server profiles saved by
+/// `SFTPSettingsView` (Issue #312), for consumers outside the app's
+/// SwiftUI layer — e.g. `PostEncodeActionChain` (Issue #450), which runs
+/// inside `ConverterEngine` and has no view to bind form state to.
+///
+/// This intentionally does not duplicate storage: it reads the exact
+/// same `UserDefaults` blob and the exact same `SFTPCredentialStore`
+/// Keychain entries that `SFTPSettingsView.loadProfiles()` /
+/// `persistProfiles()` already own. There is a single source of truth
+/// for "what SFTP servers has the user configured" — this type just
+/// gives non-UI code a way to read it.
+public enum SFTPProfileStore {
+
+    /// `UserDefaults` key under which the redacted profile array lives.
+    /// Shared with `SFTPSettingsView` so the storage key cannot drift
+    /// between the write side (settings UI) and this read side.
+    public static let userDefaultsKey = "sftpProfiles"
+
+    /// Loads every saved SFTP profile, restoring each profile's
+    /// plaintext password (if any) from the Keychain via
+    /// `SFTPCredentialStore`.
+    ///
+    /// Read-only: unlike `SFTPSettingsView.loadProfiles()`, this never
+    /// rewrites `UserDefaults` — the legacy-plaintext-blob migration
+    /// (SECURITY.md F-005) remains the settings view's responsibility.
+    /// A profile whose Keychain lookup fails (deleted out of band, no
+    /// entry yet, etc.) is returned with its password left as stored
+    /// (typically empty); callers should treat that as "credential
+    /// unavailable" rather than assume it will authenticate.
+    ///
+    /// - Returns: The saved profiles, or an empty array if none are
+    ///   saved or the stored JSON cannot be decoded.
+    public static func loadProfiles() -> [SFTPServerConfig] {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+              let profiles = try? JSONDecoder().decode(
+                  [SFTPServerConfig].self, from: data
+              ) else {
+            return []
+        }
+
+        return profiles.map { profile in
+            guard case .password(let storedPassword) = profile.authMethod,
+                  storedPassword.isEmpty else {
+                return profile
+            }
+            guard let realPassword = try? SFTPCredentialStore.read(forProfileID: profile.id),
+                  !realPassword.isEmpty else {
+                return profile
+            }
+            var copy = profile
+            copy.authMethod = .password(realPassword)
+            return copy
+        }
+    }
+
+    /// Looks up a single saved profile by its stable `id`.
+    ///
+    /// - Parameter id: The profile's `SFTPServerConfig.id`.
+    /// - Returns: The matching profile (with its password restored from
+    ///   the Keychain when applicable), or `nil` if no profile with that
+    ///   id is currently saved.
+    public static func profile(withID id: UUID) -> SFTPServerConfig? {
+        loadProfiles().first { $0.id == id }
+    }
+}

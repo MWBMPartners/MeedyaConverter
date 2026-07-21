@@ -495,9 +495,10 @@ struct SFTPSettingsView: View {
     // MARK: - Persistence
 
     /// UserDefaults key under which the redacted profile array lives.
-    /// String literal kept in a `Self.` constant so the load / persist
-    /// pair cannot drift.
-    private static let userDefaultsKey = "sftpProfiles"
+    /// Sourced from `SFTPProfileStore.userDefaultsKey` (Issue #450) so
+    /// this view and the read-only `SFTPProfileStore` used by
+    /// `PostEncodeActionChain` can never drift onto different keys.
+    private static let userDefaultsKey = SFTPProfileStore.userDefaultsKey
 
     /// Loads saved profiles from UserDefaults and restores their
     /// passwords from the Keychain.

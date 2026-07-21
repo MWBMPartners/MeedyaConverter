@@ -15,8 +15,9 @@ import AppKit
 /// The type of action to execute after an encoding job completes.
 ///
 /// Actions run in the order they appear in a `PostEncodeActionChain`.
-/// Some types (`.uploadSFTP`, `.uploadCloud`) are reserved for future
-/// implementation and currently throw an "unsupported" error if executed.
+/// `.uploadCloud` remains reserved for future implementation and
+/// currently throws an "unsupported" error if executed — see its doc
+/// comment for why (Issue #450).
 public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// Move the source file to the macOS Trash.
     case moveSourceToTrash
@@ -32,10 +33,19 @@ public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// Send a webhook POST request (delegates to `WebhookSender`).
     case webhook
 
-    /// Upload the output file via SFTP (future — not yet implemented).
+    /// Upload the output file via SFTP/`scp`, using a server profile saved
+    /// in `SFTPSettingsView` and looked up through `SFTPProfileStore`
+    /// (Issue #450). See `PostEncodeAction.config` for the expected key.
     case uploadSFTP
 
-    /// Upload the output file to cloud storage (future — not yet implemented).
+    /// Upload the output file to cloud storage (future — not yet
+    /// implemented). `CloudStorageUploader` / `VideoUploader` /
+    /// `S3Uploader` only build `URLRequest`s / argument lists for a
+    /// hand-entered OAuth token — nothing in this codebase actually
+    /// executes an authenticated network upload of file bytes for any
+    /// cloud provider, so there is no real API yet for this action to
+    /// call. Wiring this honestly requires that execution path to exist
+    /// first (tracked separately from Issue #450).
     case uploadCloud
 
     /// Send a macOS notification with a custom message.
@@ -72,6 +82,11 @@ public struct PostEncodeAction: Identifiable, Codable, Sendable {
     /// - `.webhook`: `"url"` — the webhook endpoint URL.
     /// - `.sendNotification`: `"message"` — the notification body text.
     /// - `.sendNotification`: `"title"` — optional notification title.
+    /// - `.uploadSFTP`: `"sftpProfileID"` — the `UUID` string of a saved
+    ///   `SFTPServerConfig` profile (see `SFTPSettingsView` /
+    ///   `SFTPProfileStore`). No credentials are ever stored here —
+    ///   only a reference to a profile whose secret lives in the
+    ///   Keychain via `SFTPCredentialStore`.
     public var config: [String: String]
 
     /// Whether this action is enabled. Disabled actions are skipped.
@@ -152,15 +167,30 @@ public struct PostEncodeActionChain: Codable, Sendable {
         case unsupportedAction(PostEncodeActionType)
         /// A required configuration key is missing.
         case missingConfig(key: String, actionName: String)
+        /// A configured upload (SFTP/cloud) genuinely failed. Carries the
+        /// real error the uploader reported — never a fabricated one.
+        case uploadFailed(actionName: String, message: String)
 
         public var errorDescription: String? {
             switch self {
             case .shellScriptFailed(let code, let output):
                 return "Shell script exited with code \(code): \(output)"
             case .unsupportedAction(let type):
-                return "Action type '\(type.rawValue)' is not yet supported."
+                switch type {
+                case .uploadCloud:
+                    return "Action type 'uploadCloud' requires cloud-upload execution "
+                        + "support (OAuth token exchange + authenticated file transfer) "
+                        + "that does not exist yet in this codebase — only "
+                        + "request-builder helpers (CloudStorageUploader, VideoUploader, "
+                        + "S3Uploader) are implemented, not real execution. Not "
+                        + "implemented (Issue #450)."
+                default:
+                    return "Action type '\(type.rawValue)' is not yet supported."
+                }
             case .missingConfig(let key, let name):
                 return "Action '\(name)' is missing required config key '\(key)'."
+            case .uploadFailed(let name, let message):
+                return "Action '\(name)' upload failed: \(message)"
             }
         }
     }
@@ -271,9 +301,14 @@ public struct PostEncodeActionChain: Codable, Sendable {
             await sendMacOSNotification(title: title, body: substituted)
 
         case .uploadSFTP:
-            throw ActionError.unsupportedAction(.uploadSFTP)
+            try await uploadViaSFTP(action: action, outputURL: outputURL)
 
         case .uploadCloud:
+            // Honest "not implemented" — see the doc comment on
+            // `PostEncodeActionType.uploadCloud` and Issue #450: no
+            // component in this codebase actually executes an
+            // authenticated cloud upload, so there is nothing real to
+            // wire this to yet.
             throw ActionError.unsupportedAction(.uploadCloud)
         }
     }
@@ -319,6 +354,48 @@ public struct PostEncodeActionChain: Codable, Sendable {
     /// - Parameter inputURL: The source file URL.
     private func moveToTrash(inputURL: URL) async throws {
         try FileManager.default.trashItem(at: inputURL, resultingItemURL: nil)
+    }
+
+    /// Upload the encoded output file to a saved SFTP server profile via
+    /// `scp`.
+    ///
+    /// Reuses the existing uploader plumbing end to end rather than
+    /// inventing a parallel path:
+    /// - `action.config["sftpProfileID"]` resolves to a profile through
+    ///   `SFTPProfileStore.profile(withID:)`, which reads the exact same
+    ///   `UserDefaults` blob `SFTPSettingsView` writes and restores the
+    ///   password (if any) from the Keychain via `SFTPCredentialStore` —
+    ///   no credential is ever stored inside `PostEncodeAction.config`.
+    /// - `SFTPUploader.upload(localPath:config:)` builds argv with
+    ///   `SFTPUploader.buildSCPArguments(localPath:config:)` (unchanged —
+    ///   credentials never touch argv) and runs `scp`.
+    ///
+    /// Concurrency mirrors `SFTPSettingsView.probeConnection` (Issue
+    /// #447): the blocking `scp`/`waitUntilExit()` work happens inside
+    /// `Task.detached`, capturing and returning only `Sendable` values
+    /// (`SFTPServerConfig` in, `SFTPUploadOutcome` out) — never `self`.
+    ///
+    /// - Parameters:
+    ///   - action: The configured `.uploadSFTP` action.
+    ///   - outputURL: The encoded output file to upload.
+    /// - Throws: `ActionError.missingConfig` if no valid profile
+    ///   reference is configured, or `ActionError.uploadFailed` with the
+    ///   real `scp` error if the transfer fails.
+    private func uploadViaSFTP(action: PostEncodeAction, outputURL: URL) async throws {
+        guard let profileIDString = action.config["sftpProfileID"],
+              let profileID = UUID(uuidString: profileIDString),
+              let profile = SFTPProfileStore.profile(withID: profileID) else {
+            throw ActionError.missingConfig(key: "sftpProfileID", actionName: action.name)
+        }
+
+        let localPath = outputURL.path
+        let outcome = await Task.detached {
+            SFTPUploader.upload(localPath: localPath, config: profile)
+        }.value
+
+        guard outcome.succeeded else {
+            throw ActionError.uploadFailed(actionName: action.name, message: outcome.message)
+        }
     }
 
     /// Reveal the output file in Finder.
