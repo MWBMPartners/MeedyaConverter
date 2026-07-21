@@ -61,6 +61,13 @@ struct EncodingGraphsView: View {
     @State private var selectedMetric: GraphMetric = .fps
     @State private var selectedJobID: UUID?
 
+    /// Persisted history of completed encoding job statistics, backing
+    /// the graphs below. Real, already-tested component
+    /// (`EncodingStatisticsStore` in `ConverterEngine`) — reads its JSON
+    /// history from disk in its initializer, the same way `CloudSyncView`
+    /// seeds its `@State` directly from `CloudProfileSync.shared`.
+    @State private var statisticsStore = EncodingStatisticsStore()
+
     // MARK: - Body
 
     var body: some View {
@@ -85,6 +92,25 @@ struct EncodingGraphsView: View {
             }
         }
         .navigationTitle("Encoding Graphs")
+        .onAppear {
+            // Reload from disk each time this view appears so a job
+            // completed since the store was last constructed shows up.
+            // `EncodingStatisticsStore` only reads its history file inside
+            // `init()`, so a fresh instance is how a re-read happens.
+            // `EncodingStatisticsStore` is `@unchecked Sendable`, so the
+            // (potentially non-trivial) JSON decode of the history file is
+            // kept off the main actor via `Task.detached`, mirroring
+            // `QualityMetricsView.runAnalysis()`'s handling of
+            // `FFmpegBundleManager.locateFFmpeg()` — this `Task { }` itself
+            // is created from a `View` body closure, so it inherits
+            // main-actor isolation and the assignment below is a direct
+            // `@State` write, not a `MainActor.run` hop.
+            Task {
+                statisticsStore = await Task.detached {
+                    EncodingStatisticsStore()
+                }.value
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -289,10 +315,18 @@ struct EncodingGraphsView: View {
 
     // MARK: - Helpers
 
+    /// The statistics currently displayed: the history entry matching
+    /// `selectedJobID` if one is set, otherwise the most recently
+    /// completed job. Real data sourced from `EncodingStatisticsStore`
+    /// (`ConverterEngine`) — `nil` (driving `emptyStateView` above) is an
+    /// honest reflection of "no encode has been recorded yet", not a
+    /// placeholder.
     private var currentStatistics: EncodingStatistics? {
-        // Placeholder — in a real implementation this would come from
-        // the active job's statistics collector or the history store
-        nil
+        let history = statisticsStore.allStatistics
+        if let selectedJobID {
+            return history.first { $0.jobID == selectedJobID }
+        }
+        return history.first
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
