@@ -325,7 +325,7 @@ jobs:
       # Step 13: Upload app bundle artifact
       # -----------------------------------------------------------------
       - name: Upload app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-app"
           path: MeedyaConverter.app
@@ -336,7 +336,7 @@ jobs:
       # -----------------------------------------------------------------
       - name: Upload DMG
         if: ${{ github.event.inputs.create_dmg != 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-dmg"
           path: "*.dmg"
@@ -347,7 +347,7 @@ jobs:
       # -----------------------------------------------------------------
       - name: Upload CLI binary
         if: ${{ hashFiles('meedya-convert-*-macOS.tar.gz') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-cli"
           path: "meedya-convert-*-macOS.tar.gz"
