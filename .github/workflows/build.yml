@@ -82,7 +82,7 @@ jobs:
       # dependencies and git-based version info is available.
       # ---------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ---------------------------------------------------------------------
       # Step 2: Verify Swift version

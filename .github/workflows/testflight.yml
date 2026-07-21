@@ -93,7 +93,7 @@ jobs:
       # Full history is needed for build number generation (commit count).
       # ---------------------------------------------------------------------
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
