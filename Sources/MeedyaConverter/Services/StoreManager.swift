@@ -212,24 +212,31 @@ final class StoreManager {
     ///
     /// Call this once during app startup. The listener runs for the
     /// lifetime of the `StoreManager` instance.
+    ///
+    /// `StoreManager` is `@MainActor`, so a plain `Task { }` created here
+    /// inherits main-actor isolation (mirrors `QualityMetricsView
+    /// .runAnalysis()`, Issue #434/#451): `self` never crosses an
+    /// isolation boundary, so `checkVerified`/`updatePurchasedProducts`/
+    /// `syncEntitlement` are called directly rather than via nested
+    /// `MainActor.run` hops. The previous `Task.detached { [weak self] in
+    /// ... MainActor.run { try self.checkVerified(...) } ... }` shape sent
+    /// a `@MainActor`-class `self` into a detached, non-isolated context —
+    /// the "sending 'self' risks data races" error Swift 6 rejects.
+    /// `StoreKit.Transaction.updates` is a non-blocking `AsyncSequence`
+    /// (it suspends between elements), so running the loop directly on
+    /// the main actor does not block the UI.
     func listenForTransactions() {
         #if canImport(StoreKit)
         transactionListenerTask?.cancel()
-        transactionListenerTask = Task.detached { [weak self] in
+        transactionListenerTask = Task { [weak self] in
             for await result in StoreKit.Transaction.updates {
                 guard let self else { return }
 
                 do {
-                    let transaction = try await MainActor.run {
-                        try self.checkVerified(result)
-                    }
+                    let transaction = try self.checkVerified(result)
                     await transaction.finish()
-                    _ = await MainActor.run {
-                        Task {
-                            await self.updatePurchasedProducts()
-                            self.syncEntitlement()
-                        }
-                    }
+                    await self.updatePurchasedProducts()
+                    self.syncEntitlement()
                 } catch {
                     // Verification failed — ignore this transaction
                 }
