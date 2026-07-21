@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-07-15
+> **Last Updated:** 2026-05-19
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -12,38 +12,12 @@
 
 | Metric | Value |
 | ------ | ----- |
-| **Current Version** | 0.1.0 -- code is feature-complete for GA; release ritual pending (`VERSION` file already reads `0.1.0`) |
-| **Last Release** | `v0.1.0-rc.3` (2026-05-18) -- direct distribution DMG + CLI tarball; most recent published artifact |
-| **Current Phase** | Release execution -- GA tag, notarisation re-verify, and GitHub Release publication (tracking issue #428) |
-| **Next Target** | `v0.1.0` GA tag: signed/notarised/stapled DMG published to GitHub Releases with checksums |
-| **Overall Completion** | Code: 100% feature-complete (the autopilot feature-gap ledger in `FEATURES.md` confirms zero remaining in-scope, autonomously-buildable gaps). Security hardening: complete (see below). Release process: **not yet executed** -- do not treat this as a shipped GA |
-| **Active Work** | Executing the #428 release checklist: version bump to GA, git tag, `release.yml` run, `xcrun stapler validate`, Gatekeeper smoke-test on a clean Mac, CHANGELOG fold, GitHub Release with checksums. App Store "Lite" path is prepared but deliberately deferred pending user-side cert/provisioning work (#392) |
-
----
-
-## Recent milestones (2026-06-30 autopilot run)
-
-- **Autopilot run completed** (26 cycles, 58+ commits on the now-superseded
-  `autopilot/2026-06-30` run branch) -- drove the codebase from "mostly
-  built" to feature-complete and security-hardened. Full cycle-by-cycle
-  ledger in [`PROJECT.md`](PROJECT.md).
-- **STABILIZE phase closed** all remaining #428 ship-blockers: Package.swift
-  consolidation, Sparkle Option A (GitHub-Releases update poller),
-  fail-fast Apple-secrets precheck in `release.yml`, CONTRIBUTING.md +
-  CODE_OF_CONDUCT.md, distribution runbooks, and the App Store ITMS sweep
-  (#386-#391).
-- **SECURE phase closed** all seven planned threat rotations (T1-T7);
-  findings F-001 through F-010 are each fixed or explicitly risk-accepted.
-  **No open Critical/High/Medium security finding remains.**
-- **COMPLETE phase confirmed feature-completeness** -- the feature-gap
-  ledger in [`FEATURES.md`](FEATURES.md) shows zero autonomously-buildable
-  in-scope gaps ("Bucket 1" empty).
-  Remaining differentiator features (#419-#427) are multi-month efforts
-  explicitly gated on user greenlight, not v0.1.0 blockers.
-- **POLISH and VERIFY phases passed** -- zero compiler warnings, 1039/1039
-  tests green, clean-build verified.
-- **Net effect: the code is GA-ready. The release process (#428) -- version
-  bump, tag, notarisation, and publication -- has not yet been run.**
+| **Current Version** | 0.1.0-rc.3 (signed + notarized DMG published) |
+| **Last Release** | `v0.1.0-rc.3` (2026-05-18) -- direct distribution DMG + CLI tarball |
+| **Current Phase** | Phase 16 -- Polish and Distribution (ongoing) |
+| **Next Target** | `v0.1.0` GA tag once rc.3 DMG passes Gatekeeper smoke-test |
+| **Overall Completion** | ~70% (#381 UI gap fully closed; engine + UI parity restored across the 2026-04-20 integration batch) |
+| **Active Work** | Awaiting rc.3 smoke-test sign-off; App Store compliance work (#386-#391) deferred until explicit re-enable per #392 |
 
 ---
 
@@ -76,21 +50,15 @@
 | ------- | ------ | ----------- | ------ |
 | **Alpha 0.1** | 0, 1, 2 | Core engine + macOS app -- first testable build | Complete |
 | **Alpha 0.2** | 3, 4 | Essential codecs, passthrough, HDR + CLI tool | Complete |
-| **Beta 0.5** | 5, 6 | Subtitles, audio normalisation, HLS/DASH | Complete |
-| **Beta 0.7** | 7, 8 | Extended formats, spatial audio, advanced audio | Complete |
-| **RC 0.9** | 9 | Professional features (VMAF, watch folders, AI upscaling) | Complete |
-| **Ongoing** | 16 | Polish and Distribution -- runs throughout development | Ongoing -- release execution pending (#428) |
-| **v1.1+** | 10, 11 | Optical disc ripping and authoring | Complete |
-| **v1.3+** | 12 | Cloud uploads | Complete |
-| **v1.5+** | 15 | Media metadata lookup | Complete |
+| **Beta 0.5** | 5, 6 | Subtitles, audio normalisation, HLS/DASH | In Progress |
+| **Beta 0.7** | 7, 8 | Extended formats, spatial audio, advanced audio | In Progress |
+| **RC 0.9** | 9 | Professional features (VMAF, watch folders, AI upscaling) | In Progress |
+| **Ongoing** | 16 | Polish and Distribution -- runs throughout development | Ongoing |
+| **v1.1+** | 10, 11 | Optical disc ripping and authoring | Planned |
+| **v1.3+** | 12 | Cloud uploads | In Progress |
+| **v1.5+** | 15 | Media metadata lookup | In Progress |
 | **v2.0** | 13, 14 | Windows and Linux | Planned |
-| **v3.0+** | 17 | Image conversion | Complete |
-
-> Phases through 15 and 17 reached code-complete state together within the
-> single v0.1.0 GA delivery, ahead of the originally-staged per-version
-> rollout above. The version markers are retained for historical
-> task-tracking reference; see [What's Complete](#whats-complete) below for
-> the current feature inventory.
+| **v3.0+** | 17 | Image conversion | Planned |
 
 ---
 
@@ -103,20 +71,20 @@
 | **2** | macOS SwiftUI Application (MVP) | Complete | 100% | Alpha 0.1 |
 | **3** | Essential Encoding and Passthrough | Complete | 100% | Alpha 0.2 |
 | **4** | CLI Tool (meedya-convert) | Complete | 100% | Alpha 0.2 |
-| **5** | Subtitles and Core Audio Processing | Complete | 100% | Beta 0.5 |
-| **6** | Adaptive Streaming (HLS/MPEG-DASH) | Complete | 100% | Beta 0.5 |
-| **7** | Extended Formats and Spatial Audio | Complete | 100% | Beta 0.7 |
-| **8** | Advanced Audio Processing | Complete | 100% | Beta 0.7 |
-| **9** | Professional Features | Complete | 100% | RC 0.9 |
-| **10** | Optical Disc Ripping (22 types) | Complete | 100% | v1.1+ |
-| **11** | Disc Image Creation and Burning | Complete | 100% | v1.2+ |
-| **12** | Cloud Integration and Uploads | Complete | 100% | v1.3+ |
+| **5** | Subtitles and Core Audio Processing | In Progress | 70% | Beta 0.5 |
+| **6** | Adaptive Streaming (HLS/MPEG-DASH) | In Progress | 80% | Beta 0.5 |
+| **7** | Extended Formats and Spatial Audio | In Progress | 60% | Beta 0.7 |
+| **8** | Advanced Audio Processing | In Progress | 50% | Beta 0.7 |
+| **9** | Professional Features | In Progress | 60% | RC 0.9 |
+| **10** | Optical Disc Ripping (22 types) | In Progress | 30% | v1.1+ |
+| **11** | Disc Image Creation and Burning | In Progress | 20% | v1.2+ |
+| **12** | Cloud Integration and Uploads | In Progress | 50% | v1.3+ |
 | **13** | Platform Expansion -- Windows | Planned | 0% | v2.0 |
 | **14** | Platform Expansion -- Linux | Planned | 0% | v2.0 |
-| **15** | Media Metadata Lookup | Complete | 100% | v1.5+ |
-| **16** | Polish and Distribution | Ongoing | Code complete; release execution pending (#428) | Ongoing |
-| **17** | Image Conversion (future) | Complete | 100% | v3.0+ |
-| **18** | AI-Powered Features (wishlist) | Wishlist | 0% | TBD |
+| **15** | Media Metadata Lookup | In Progress | 40% | v1.5+ |
+| **16** | Polish and Distribution | Ongoing | 30% | Ongoing |
+| **17** | Image Conversion (future) | In Progress | 10% | v3.0+ |
+| **18** | AI-Powered Features (wishlist) | In Progress | 10% | TBD |
 
 ---
 
@@ -267,23 +235,18 @@
 
 ## What's Next
 
-1. **Execute the #428 release checklist** -- version bump to GA, git tag,
-   run `release.yml`, `xcrun stapler validate`, Gatekeeper smoke-test on a
-   clean Mac, fold CHANGELOG, publish the GitHub Release with checksums.
-   This is the sole outstanding gate before v0.1.0 GA ships.
-2. **App Store "Lite" submission** -- deliberately deferred until the
-   user-side certificate/provisioning work tracked in #392 is done; the
-   ITMS compliance sweep (#386-#391) and FFmpegKit backend scaffold are
-   already prepared and waiting.
-3. **MeedyaSuite-core binding stabilisation** -- once MeedyaSuite-core
+1. **UI surfacing** (#381) -- Expose new Configuration types in SwiftUI for
+   subtitle tone-mapping, render farm, metadata backend, AccurateRip
+   submission, and vector conversion
+2. **MeedyaSuite-core binding stabilisation** -- Once MeedyaSuite-core
    publishes a Swift Package tag, flip `SUITE_CORE` to default-on and
-   execute the #374 cleanup checklist (currently an opt-in build flag, not
-   on the ship path).
-4. **Render-farm agent binary** -- standalone agent app that runs on
-   remote Macs and services the REST protocol defined in #346.
-5. **Post-GA differentiators** -- #419-#427 (OFX host, OpenColorIO, audio
-   offset/drift sync, subtitle sync) are multi-month efforts awaiting
-   explicit user greenlight; not v0.1.0 blockers.
+   execute the #374 cleanup checklist
+3. **Render-farm agent binary** -- Standalone agent app that runs on
+   remote Macs and services the REST protocol defined in #346
+4. **App Store submission** -- Produce screenshot captures, verify the
+   FFmpegKit LGPL variant, tag a `v1.0.0-beta.1`, soak in TestFlight
+5. **Phase 5/6 completion** -- Finish subtitle conversion and streaming
+   features; still at 70% and 80% respectively
 
 ---
 
@@ -291,29 +254,10 @@
 
 | Issue | Severity | Status | Notes |
 | ----- | -------- | ------ | ----- |
-| Release process not yet executed | High | Pending | Code is GA-ready; the #428 release ritual (tag, notarisation re-verify, GitHub Release) has not run -- do not treat v0.1.0 as shipped |
 | FFmpeg App Store strategy | Resolved | Resolved | Hybrid engine: AVFoundation/FFmpegKit for App Store |
 | App Store sandbox file access | Resolved | Resolved | Three-tier: user-selected, bookmarks, Full Disk Access |
 | Optical disc DRM legality | Medium | Noted | CSS/AACS legality varies by jurisdiction |
 | Swift 6.3 Windows maturity | Low | Noted | Windows UI framework TBD |
-
----
-
-## Deliberate gaps & stubs
-
-These are intentional design decisions, not bugs or unfinished work --
-flagged here so a future contributor doesn't "fix" them by mistake.
-
-- **`Sources/ConverterEngine/FFmpeg/FFmpegKitBackend.swift`** throws
-  `.notImplemented` from every method by design -- it is scaffolding for
-  the App Store/FFmpegKit path, which is parked until the Lite submission
-  is greenlit (#392).
-- **TestFlight auto-submission is disabled by design**, per issue #392 --
-  automated App Store submissions cannot fire on tag pushes until
-  explicit re-enable.
-- **MeedyaSuite-core integration is behind an opt-in `SUITE_CORE=1` build
-  flag** -- not on the ship path; it activates once the sibling repo cuts
-  a tagged Swift Package release.
 
 ---
 

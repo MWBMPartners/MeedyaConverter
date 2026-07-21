@@ -286,19 +286,19 @@ MeedyaConverter/
 | **Phase 2** | macOS SwiftUI Application (MVP) | ✅ Complete | Alpha 0.1 |
 | **Phase 3** | Essential Encoding & Passthrough | ✅ Complete | Alpha 0.2 |
 | **Phase 4** | CLI Tool | ✅ Complete | Alpha 0.2 |
-| **Phase 5** | Subtitles & Core Audio Processing | ✅ Complete | Beta 0.5 |
-| **Phase 6** | Adaptive Streaming (HLS/MPEG-DASH) | ✅ Complete | Beta 0.5 |
-| **Phase 7** | Extended Formats & Spatial Audio | ✅ Complete | Beta 0.7 |
-| **Phase 8** | Advanced Audio Processing | ✅ Complete | Beta 0.7 |
-| **Phase 9** | Professional Features | ✅ Complete | RC 0.9 |
-| **Phase 10** | Optical Disc Ripping (22 disc types) | ✅ Complete | v1.1+ |
-| **Phase 11** | Disc Image Creation & Burning | ✅ Complete | v1.2+ |
-| **Phase 12** | Cloud Integration & Uploads | ✅ Complete | v1.3+ |
+| **Phase 5** | Subtitles & Core Audio Processing | 🚧 In Progress (70%) | Beta 0.5 |
+| **Phase 6** | Adaptive Streaming (HLS/MPEG-DASH) | 🚧 In Progress (80%) | Beta 0.5 |
+| **Phase 7** | Extended Formats & Spatial Audio | 🚧 In Progress (60%) | Beta 0.7 |
+| **Phase 8** | Advanced Audio Processing | 🚧 In Progress (50%) | Beta 0.7 |
+| **Phase 9** | Professional Features | 🚧 In Progress (60%) | RC 0.9 |
+| **Phase 10** | Optical Disc Ripping (22 disc types) | 🚧 In Progress (30%) | v1.1+ |
+| **Phase 11** | Disc Image Creation & Burning | 🚧 In Progress (20%) | v1.2+ |
+| **Phase 12** | Cloud Integration & Uploads | 🚧 In Progress (50%) | v1.3+ |
 | **Phase 13** | Platform Expansion — Windows | ⏳ Planned | v2.0 |
 | **Phase 14** | Platform Expansion — Linux | ⏳ Planned | v2.0 |
-| **Phase 15** | Media Metadata Lookup | ✅ Complete | v1.5+ |
-| **Phase 16** | Polish & Distribution | 🚧 Ongoing (release execution pending, #428) | Ongoing |
-| **Phase 17** | Image Conversion (future version) | ✅ Complete | v3.0+ |
+| **Phase 15** | Media Metadata Lookup | 🚧 In Progress (40%) | v1.5+ |
+| **Phase 16** | Polish & Distribution | 🚧 Ongoing | Ongoing |
+| **Phase 17** | Image Conversion (future version) | 🚧 In Progress (10%) | v3.0+ |
 | **Phase 18** | AI-Powered Features (wishlist) | 🔮 Wishlist | TBD |
 
 > 📌 See [Project_Plan.md](Project_Plan.md) for the detailed milestone breakdown.
