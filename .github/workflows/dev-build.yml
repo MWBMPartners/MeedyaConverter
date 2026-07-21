@@ -159,19 +159,26 @@ jobs:
           cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
           chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
 
-          # Info.plist with version substitution
+          # Info.plist: copy template verbatim, then drive version keys
+          # with PlistBuddy. The previous sed-based CFBundleShortVersionString
+          # substitution silently no-op'd whenever the template's placeholder
+          # didn't match the literal "<string>0.1.0</string>" pattern (e.g.
+          # after the placeholder was bumped past 0.1.0), shipping builds
+          # with stale version metadata. PlistBuddy targets the key by name,
+          # so it's resilient to template edits.
+          cp Sources/MeedyaConverter/Resources/Info.plist "${APP}/Contents/Info.plist"
+
+          # App Store variant uses a separate bundle ID (Lite SKU) — that one
+          # genuinely needs a string substitution, so keep sed for it.
           if [ "$BUILD_TYPE" = "appstore" ]; then
-            sed -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
-                -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
-                Sources/MeedyaConverter/Resources/Info.plist \
-                > "${APP}/Contents/Info.plist"
-          else
-            sed -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
-                Sources/MeedyaConverter/Resources/Info.plist \
-                > "${APP}/Contents/Info.plist"
+            sed -i.bak \
+                -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
+                "${APP}/Contents/Info.plist"
+            rm -f "${APP}/Contents/Info.plist.bak"
           fi
 
-          # Set build number
+          # Version + build number via PlistBuddy
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP}/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${APP}/Contents/Info.plist"
 
           # Copy resources

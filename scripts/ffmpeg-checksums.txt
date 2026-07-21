@@ -1,0 +1,33 @@
+# ============================================================================
+# MeedyaConverter — pinned SHA-256 checksums for bundled tool downloads
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Per SECURITY.md F-011 (T7 — supply-chain). `bundle-ffmpeg.sh` verifies each
+# downloaded archive against a pin here and FAILS CLOSED when a URL has no pin
+# or the hash mismatches.
+#
+# Format (one entry per line):
+#     <full-download-url> <sha256-of-the-downloaded-archive>
+#
+# Verification precedence in bundle-ffmpeg.sh:
+#   1. MeedyaDL-Tools `SHA256SUMS` from the pinned release (MeedyaDL-Tools#19)
+#      — preferred; when present these pins are not consulted for mirror assets.
+#   2. The pins below — used for fallback-source (osxexperts) artefacts, and as
+#      a BRIDGE for MeedyaDL-Tools artefacts until #19 publishes SHA256SUMS.
+#
+# HOW TO POPULATE / UPDATE (deliberate, trust-on-first-use):
+#     scripts/bundle-ffmpeg.sh --refresh-checksums 7.1.2 arm64
+#     scripts/bundle-ffmpeg.sh --refresh-checksums 7.1.2 x86_64
+#   then review the appended pins and commit alongside the version/tag bump.
+#
+# STATUS
+#   * MeedyaDL-Tools ffmpeg (macOS arm64) — pinned below (verified 2026-07-02).
+#   * ffprobe / ffplay (all arch) and macOS x86_64 ffmpeg — NOT yet pinned:
+#     the mirror doesn't publish them (MeedyaDL-Tools#15 / Intel coverage), and
+#     the osxexperts fallback URLs did not resolve from the review sandbox, so
+#     the fallback pins must be populated from a trusted network before those
+#     tools can be bundled. Until then the build fails closed for them, by
+#     design. Preferred fix: land MeedyaDL-Tools#15 + #19 and source everything
+#     first-party.
+# ============================================================================
+https://github.com/MeedyaSuite/MeedyaDL-Tools/releases/download/2026-07-02/ffmpeg-macos-aarch64.tar.gz 6137374f2af8fcb7522fa50fc7d0069c9fccf9f624c1c7a519490b1c75cb746b

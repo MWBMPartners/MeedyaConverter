@@ -12,6 +12,14 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>MeedyaConverter</string>
+    <key>CFBundleIconFile</key>
+    <!-- Filename (without extension) of the .icns in Contents/Resources/.
+         scripts/generate-app-icns.sh assembles MeedyaConverter.icns from
+         the AppIcon.appiconset PNG sources; the release.yml + testflight.yml
+         workflows copy it into the bundle's Resources/ directory before
+         signing. Without this key the App Store Connect validator rejects
+         the build with ITMS-90236 (#390). -->
+    <string>MeedyaConverter</string>
     <key>CFBundleIdentifier</key>
     <!-- Direct distribution bundle ID. CI substitutes Ltd.MWBMpartners.MeedyaConverter.Lite for App Store builds. -->
     <string>Ltd.MWBMpartners.MeedyaConverter</string>

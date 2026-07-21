@@ -408,7 +408,9 @@ struct BackgroundRemovalView: View {
 
         for inputURL in inputURLs {
             let baseName = inputURL.deletingPathExtension().lastPathComponent
-            let outputURL = outputDir.appendingPathComponent("\(baseName)_nobg.\(ext)")
+            // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+            let component = PathSanitizer.sanitizeFilenameComponent("\(baseName)_nobg.\(ext)")
+            let outputURL = outputDir.appendingPathComponent(component)
 
             try await BackgroundRemover.removeBackground(
                 inputURL: inputURL,

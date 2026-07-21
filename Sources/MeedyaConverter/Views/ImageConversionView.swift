@@ -629,8 +629,9 @@ struct ImageConversionView: View {
 
                 let outputDir = outputDirectory ?? file.url.deletingLastPathComponent()
                 let baseName = file.url.deletingPathExtension().lastPathComponent
+                // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
                 let outputPath = outputDir
-                    .appendingPathComponent(baseName)
+                    .appendingPathComponent(PathSanitizer.sanitizeFilenameComponent(baseName))
                     .appendingPathExtension(outputFormat.fileExtension)
                     .path
 

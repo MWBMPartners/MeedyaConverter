@@ -134,7 +134,15 @@ public final class FFmpegBundleManager: @unchecked Sendable {
     // MARK: - Search Paths
 
     /// The ordered list of directories to search for FFmpeg/FFprobe binaries.
-    /// User path is checked first, then bundled, then Homebrew, then system.
+    /// User path is checked first, then the app's bundled Contents/Helpers
+    /// directory (where the release pipeline stages ffmpeg/ffprobe/ffplay and
+    /// the HDR helpers via scripts/bundle-ffmpeg.sh), then the legacy
+    /// Resources/Tools location, then Homebrew, then system.
+    ///
+    /// The bundled-helpers path is checked FIRST (after the user override) so a
+    /// notarised, self-contained .app uses its own vetted binaries even on a
+    /// machine that happens to have a Homebrew ffmpeg installed — Homebrew
+    /// versions may differ in codec support and complicate bug reports.
     private var searchPaths: [String] {
         var paths: [String] = []
 
@@ -146,7 +154,13 @@ public final class FFmpegBundleManager: @unchecked Sendable {
             }
         }
 
-        // 2. Application bundle (Tools/ directory)
+        // 2. Application bundle — Contents/Helpers (preferred, matches
+        //    ToolBundleManifest.bundledBinaryPath and the release pipeline).
+        let helpersURL = Bundle.main.bundleURL.appending(path: "Contents/Helpers")
+        paths.append(helpersURL.path)
+
+        // 3. Application bundle — legacy Resources/Tools and Resources root
+        //    (kept for backwards compatibility with older bundle layouts).
         if let bundlePath = Bundle.main.resourcePath {
             paths.append(bundlePath + "/Tools")
             paths.append(bundlePath)
@@ -158,14 +172,14 @@ public final class FFmpegBundleManager: @unchecked Sendable {
             paths.append(macOSDir)
         }
 
-        // 3. Homebrew paths (Apple Silicon first, then Intel legacy)
+        // 4. Homebrew paths (Apple Silicon first, then Intel legacy)
         paths.append("/opt/homebrew/bin")
         paths.append("/usr/local/bin")
 
-        // 4. MacPorts
+        // 5. MacPorts
         paths.append("/opt/local/bin")
 
-        // 5. Common Linux/Unix paths
+        // 6. Common Linux/Unix paths
         paths.append("/usr/bin")
         paths.append("/bin")
 

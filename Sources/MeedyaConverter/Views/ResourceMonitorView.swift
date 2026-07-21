@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import Darwin
 
 // ---------------------------------------------------------------------------
 // MARK: - ResourceMonitor
@@ -62,6 +63,12 @@ final class ResourceMonitor {
     /// Timer driving the polling loop.
     private var timer: Timer?
 
+    /// Previous-sample CPU tick totals, kept so each poll can compute
+    /// the *delta* between samples (the only way to derive a meaningful
+    /// percentage from monotonically-increasing tick counters).
+    /// `nil` until the first sample completes.
+    private var previousCPUTicks: CPUTickTotals?
+
     // MARK: - Lifecycle
 
     /// Starts resource monitoring with one-second polling intervals.
@@ -97,21 +104,35 @@ final class ResourceMonitor {
     private func pollResources() {
         let info = ProcessInfo.processInfo
 
-        // CPU: Use active processor count and system uptime as a
-        // heuristic. Real per-process CPU would use host_processor_info
-        // via mach calls; this is a simplified approximation.
-        let processorCount = Double(info.activeProcessorCount)
-        let load = info.systemUptime.truncatingRemainder(dividingBy: 100)
-        // Simulated CPU usage based on thermal state as proxy.
-        let thermalMultiplier: Double
-        switch info.thermalState {
-        case .nominal: thermalMultiplier = 0.3
-        case .fair: thermalMultiplier = 0.55
-        case .serious: thermalMultiplier = 0.8
-        case .critical: thermalMultiplier = 0.95
-        @unknown default: thermalMultiplier = 0.5
+        // CPU: real system-wide CPU usage via host_statistics(HOST_CPU_LOAD_INFO).
+        //
+        // The kernel exposes four monotonically-increasing tick
+        // counters per host (user / system / idle / nice). The
+        // percentage for the *interval since the previous poll* is:
+        //   busy_delta / total_delta * 100
+        // where busy_delta = (user + system + nice) deltas and
+        // total_delta = busy_delta + idle_delta.
+        //
+        // The first poll has no prior sample to diff against, so
+        // ``cpuUsage`` is left at its previous value (0.0 on first
+        // run) and the baseline is stashed for the next tick.
+        if let sample = sampleCPUTicks() {
+            if let prev = previousCPUTicks {
+                let userDelta   = sample.user   &- prev.user
+                let systemDelta = sample.system &- prev.system
+                let idleDelta   = sample.idle   &- prev.idle
+                let niceDelta   = sample.nice   &- prev.nice
+                let busy  = userDelta &+ systemDelta &+ niceDelta
+                let total = busy &+ idleDelta
+                if total > 0 {
+                    cpuUsage = min(
+                        (Double(busy) / Double(total)) * 100.0,
+                        100.0
+                    )
+                }
+            }
+            previousCPUTicks = sample
         }
-        cpuUsage = min(thermalMultiplier * processorCount * 10.0, 100.0)
 
         // Memory: Use ProcessInfo physical memory and approximate usage.
         let totalMemory = Double(info.physicalMemory)
@@ -171,6 +192,52 @@ final class ResourceMonitor {
     // the view's onDisappear modifier. A deinit cannot be used here
     // because @MainActor isolation prevents accessing `timer` from
     // the nonisolated deinit context in Swift 6.
+
+    // MARK: - CPU Sampling
+
+    /// Snapshot of the kernel's host-wide CPU tick counters.
+    ///
+    /// Each field is a *cumulative* count of clock ticks the system
+    /// has spent in that state since boot. They only become a usable
+    /// percentage when diffed against a prior sample.
+    fileprivate struct CPUTickTotals {
+        let user: natural_t
+        let system: natural_t
+        let idle: natural_t
+        let nice: natural_t
+    }
+
+    /// Reads the current host CPU tick counters via the mach
+    /// ``host_statistics`` API (`HOST_CPU_LOAD_INFO`).
+    ///
+    /// Returns `nil` if the kernel call fails for any reason — the
+    /// caller is expected to fall back to leaving ``cpuUsage`` at its
+    /// previous value rather than displaying a fabricated number.
+    private func sampleCPUTicks() -> CPUTickTotals? {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<host_cpu_load_info_data_t>.size
+                / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                intPtr in
+                host_statistics(
+                    mach_host_self(),
+                    HOST_CPU_LOAD_INFO,
+                    intPtr,
+                    &count
+                )
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return CPUTickTotals(
+            user:   info.cpu_ticks.0,   // CPU_STATE_USER
+            system: info.cpu_ticks.1,   // CPU_STATE_SYSTEM
+            idle:   info.cpu_ticks.2,   // CPU_STATE_IDLE
+            nice:   info.cpu_ticks.3    // CPU_STATE_NICE
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

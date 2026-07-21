@@ -87,22 +87,28 @@ final class ConverterEngineTests: XCTestCase {
 
     /// Verifies that the version string follows semantic versioning format.
     ///
-    /// While we do not enforce the full semver grammar here (pre-release
-    /// tags, build metadata, etc.), we check for the basic `X.Y.Z` shape
-    /// with at least two dot-separated components.
+    /// `ConverterEngine.version` is sourced from `CFBundleShortVersionString`
+    /// (with a build-time fallback) and may legally include a SemVer
+    /// pre-release identifier such as `0.2.0-alpha` or `0.2.0-rc.1`. We
+    /// therefore check only that the **core** `MAJOR.MINOR.PATCH` triple
+    /// is present and all-numeric, ignoring any `-pre.release` or `+build`
+    /// metadata that follows.
     func test_version_followsSemanticVersioning() {
-        // Split on "." and verify we get at least major.minor.patch.
-        let components = ConverterEngine.version.split(separator: ".")
+        // Strip SemVer build-metadata suffix ("+...") then pre-release suffix
+        // ("-..."). What remains must be the X.Y.Z core.
+        let withoutBuild    = ConverterEngine.version.split(separator: "+", maxSplits: 1).first.map(String.init) ?? ""
+        let coreVersion     = withoutBuild.split(separator: "-", maxSplits: 1).first.map(String.init) ?? ""
+        let components      = coreVersion.split(separator: ".")
+
         XCTAssertGreaterThanOrEqual(
             components.count, 3,
             "Version '\(ConverterEngine.version)' should have at least three dot-separated components (major.minor.patch)."
         )
 
-        // Each component should be a valid integer.
         for component in components {
             XCTAssertNotNil(
                 Int(component),
-                "Version component '\(component)' in '\(ConverterEngine.version)' must be a valid integer."
+                "Core version component '\(component)' in '\(ConverterEngine.version)' must be a valid integer."
             )
         }
     }

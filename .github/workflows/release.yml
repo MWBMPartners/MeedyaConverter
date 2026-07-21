@@ -55,9 +55,114 @@ permissions:
   contents: write
 
 jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Apple-secrets precheck (fail-fast)
+  # ---------------------------------------------------------------------------
+  # Cheap ubuntu-latest job that runs BEFORE the macos-15 release job. Its
+  # only purpose is to assert that the six secrets the release pipeline
+  # depends on are populated, AND that APPLE_SIGNING_IDENTITY contains the
+  # literal substring "Developer ID Application" — i.e. the right cert
+  # family for Direct distribution (not Apple Distribution / Mac App Store).
+  #
+  # Without this gate, a misconfigured secret means a v* tag silently
+  # produces an unsigned / wrong-cert DMG, which Apple notarisation later
+  # rejects deep into the build — wasting ~30 minutes and burning the
+  # tag's release number.
+  #
+  # Failing this job stops the release before any keychain / build /
+  # signing step runs, costing roughly one ubuntu-minute. Re-running the
+  # workflow against the same tag is then a `gh workflow run` away once
+  # the secret is fixed.
+  #
+  # This job NEVER prints the secret values themselves — only their
+  # presence (and, for APPLE_SIGNING_IDENTITY, whether the substring
+  # check passes). The check uses `-n` on a masked variable; GitHub
+  # Actions auto-redacts any accidental echo of a secret in workflow
+  # logs as a defence-in-depth fallback.
+  # ---------------------------------------------------------------------------
+  precheck-secrets:
+    name: Pre-flight — Apple-secrets fail-fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Assert all 6 Apple secrets are populated and the cert family is Direct
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          # Non-empty asserts. The check tests whether the expanded value is
+          # the empty string (-z); GitHub Actions auto-masks secrets, so a
+          # populated secret expands to "***" or its literal value depending
+          # on the runner config, but never expands to "" if it is set.
+          assert_set() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "::error::Required secret '$name' is empty or missing."
+              fail=1
+            else
+              echo "  ✓ $name is populated"
+            fi
+          }
+
+          echo "Checking Apple Developer secrets are present (values not printed):"
+          assert_set APPLE_CERTIFICATE          "$APPLE_CERTIFICATE"
+          assert_set APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+          assert_set APPLE_SIGNING_IDENTITY     "$APPLE_SIGNING_IDENTITY"
+          assert_set APPLE_ID                   "$APPLE_ID"
+          assert_set APPLE_PASSWORD             "$APPLE_PASSWORD"
+          assert_set APPLE_TEAM_ID              "$APPLE_TEAM_ID"
+
+          # Cert-family assert. APPLE_SIGNING_IDENTITY must contain the
+          # literal substring "Developer ID Application" — the cert family
+          # Apple requires for Direct-distribution code signing. Mistakenly
+          # configuring "Apple Distribution" (App Store) or "Mac Installer"
+          # (the .pkg signer, not the .app signer) here would let the
+          # workflow keep going and produce a binary Gatekeeper rejects.
+          #
+          # We test the substring rather than the exact value so the team
+          # can rotate certs (the name suffix changes with the team-id /
+          # serial) without having to remember to update this assertion.
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            case "$APPLE_SIGNING_IDENTITY" in
+              *"Developer ID Application"*)
+                echo "  ✓ APPLE_SIGNING_IDENTITY contains 'Developer ID Application'"
+                ;;
+              *)
+                echo "::error::APPLE_SIGNING_IDENTITY must contain the literal substring 'Developer ID Application' — found a different cert family. This indicates the secret was populated with the wrong cert (likely 'Apple Distribution' or 'Mac Installer'). For Direct distribution use 'Developer ID Application: <Team Name> (<TEAM_ID>)'."
+                fail=1
+                ;;
+            esac
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Apple-secrets precheck failed. Open Repository → Settings → Secrets and variables → Actions and verify all six APPLE_* secrets are set with the correct values (APPLE_SIGNING_IDENTITY must use the Developer ID Application cert). The release workflow has been stopped before any signing or notarisation step ran."
+            exit 1
+          fi
+
+          echo ""
+          echo "All Apple-secrets prechecks passed. Release job will proceed."
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build & publish the Direct release
+  # ---------------------------------------------------------------------------
+  # Runs on macos-15 only after precheck-secrets has confirmed all six
+  # Apple Developer secrets are populated with the correct cert family.
+  # ---------------------------------------------------------------------------
   release:
     name: Build & Publish Production Release
     runs-on: macos-15
+    needs: precheck-secrets
 
     # -----------------------------------------------------------------------
     # Timeout: release builds and packaging should complete well within this
@@ -181,11 +286,17 @@ jobs:
           echo "${VERSION}" > VERSION
           echo "VERSION file updated to: ${VERSION}"
 
+          # Monotonic build number for CFBundleVersion (Apple requires this
+          # to increase across every uploaded build — using commit count gives
+          # us a deterministic, monotonically-increasing integer).
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+
           echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "major=${MAJOR}" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
-          echo "Release version: ${VERSION} (tag: ${TAG_NAME}, prerelease: ${IS_PRERELEASE})"
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION} (tag: ${TAG_NAME}, prerelease: ${IS_PRERELEASE}, build: ${BUILD_NUMBER})"
 
       # ---------------------------------------------------------------------
       # Step 9: Create app bundle structure
@@ -196,10 +307,11 @@ jobs:
       - name: Create app bundle
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          BUILD_NUMBER="${{ steps.version.outputs.build_number }}"
           APP_NAME="MeedyaConverter"
           APP_BUNDLE="${APP_NAME}.app"
 
-          echo "Creating app bundle: ${APP_BUNDLE}"
+          echo "Creating app bundle: ${APP_BUNDLE} (v${VERSION}, build ${BUILD_NUMBER})"
 
           # Create the bundle directory structure
           mkdir -p "${APP_BUNDLE}/Contents/MacOS"
@@ -213,10 +325,21 @@ jobs:
             exit 1
           fi
 
-          # Copy Info.plist with version substitution
-          sed -e "s/<string>0.1.0</<string>${VERSION}</" \
-            "Sources/${APP_NAME}/Resources/Info.plist" \
-            > "${APP_BUNDLE}/Contents/Info.plist"
+          # Copy Info.plist verbatim, then drive the version keys with
+          # PlistBuddy. The old sed-based substitution silently no-op'd
+          # the first time the template's placeholder didn't match
+          # exactly (e.g. after the placeholder version was bumped past
+          # 0.1.0), shipping a build with stale metadata.
+          cp "Sources/${APP_NAME}/Resources/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${APP_BUNDLE}/Contents/Info.plist"
+
+          # Generate the .icns from the AppIcon.appiconset PNG sources
+          # and stage it as Contents/Resources/MeedyaConverter.icns —
+          # the filename matches the CFBundleIconFile key in Info.plist.
+          # The script is deterministic given the PNG inputs; we don't
+          # commit the binary blob to the repo.
+          ./scripts/generate-app-icns.sh "${APP_BUNDLE}/Contents/Resources/MeedyaConverter.icns"
 
           # Set the executable bit
           chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
@@ -224,6 +347,35 @@ jobs:
           echo "App bundle created successfully."
           ls -la "${APP_BUNDLE}/Contents/"
           ls -la "${APP_BUNDLE}/Contents/MacOS/"
+          ls -la "${APP_BUNDLE}/Contents/Resources/"
+
+      # ---------------------------------------------------------------------
+      # Step 9b: Bundle FFmpeg + HDR tools into the .app
+      # ---------------------------------------------------------------------
+      # Stage ffmpeg/ffprobe/ffplay (and any HDR helpers the script supports)
+      # into Contents/Helpers BEFORE codesigning, so the notarised DMG is
+      # actually self-contained. Prior releases shipped a .app with no
+      # encoder inside; on a clean Mac the app launched but every job failed
+      # with "ffmpeg not found" because the search path only resolved when
+      # the user happened to already have Homebrew ffmpeg installed.
+      #
+      # The script writes to ${DEST_DIR}/{ffmpeg,ffprobe,ffplay}. The runner
+      # is Apple Silicon (macos-15) so we let the script pick its arm64
+      # default; if/when we ship a universal binary the script grows
+      # multi-arch handling.
+      # ---------------------------------------------------------------------
+      - name: Bundle FFmpeg + HDR tools
+        run: |
+          APP_BUNDLE="MeedyaConverter.app"
+          HELPERS_DIR="${APP_BUNDLE}/Contents/Helpers"
+
+          mkdir -p "${HELPERS_DIR}"
+
+          chmod +x scripts/bundle-ffmpeg.sh
+          ./scripts/bundle-ffmpeg.sh "${HELPERS_DIR}"
+
+          echo "Helpers staged into ${HELPERS_DIR}:"
+          ls -la "${HELPERS_DIR}"
 
       # ---------------------------------------------------------------------
       # Step 10: Sign the app bundle

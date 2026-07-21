@@ -235,8 +235,9 @@ struct ScheduleView: View {
         guard let file = viewModel.selectedFile,
               let outputDir = viewModel.outputDirectory else { return }
 
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
         let outputURL = outputDir.appendingPathComponent(
-            file.fileName
+            PathSanitizer.sanitizeFilenameComponent(file.fileName)
         ).deletingPathExtension().appendingPathExtension("mkv")
 
         let config = EncodingJobConfig(

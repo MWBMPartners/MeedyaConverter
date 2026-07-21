@@ -43,6 +43,18 @@ public enum AuthMethod: Codable, Sendable, Hashable {
 /// Phase 12.3 — Direct Upload via SFTP/FTP (Issue #312)
 public struct SFTPServerConfig: Codable, Sendable, Hashable {
 
+    /// Stable identifier for this profile. Generated fresh by the
+    /// default init and preserved across load/save cycles so the
+    /// `SFTPCredentialStore` Keychain entry stays addressable.
+    ///
+    /// Added in Cycle 17 alongside the F-005 fix that lifts the
+    /// `AuthMethod.password(String)` plaintext out of UserDefaults
+    /// and into the Keychain. The Codable decoder generates a fresh
+    /// UUID when this field is absent from JSON (legacy
+    /// `sftpProfiles` blobs predate the field) so the migration
+    /// path can succeed without manual intervention.
+    public var id: UUID
+
     /// The remote hostname or IP address.
     public var host: String
 
@@ -64,6 +76,7 @@ public struct SFTPServerConfig: Codable, Sendable, Hashable {
     /// Creates a new SFTP server configuration.
     ///
     /// - Parameters:
+    ///   - id: Profile UUID (defaults to a fresh `UUID()`).
     ///   - host: Remote hostname or IP.
     ///   - port: SSH port (default 22).
     ///   - username: SSH username.
@@ -71,6 +84,7 @@ public struct SFTPServerConfig: Codable, Sendable, Hashable {
     ///   - remotePath: Remote directory for uploads.
     ///   - label: Display label for this profile.
     public init(
+        id: UUID = UUID(),
         host: String,
         port: Int = 22,
         username: String,
@@ -78,12 +92,34 @@ public struct SFTPServerConfig: Codable, Sendable, Hashable {
         remotePath: String,
         label: String
     ) {
+        self.id = id
         self.host = host
         self.port = port
         self.username = username
         self.authMethod = authMethod
         self.remotePath = remotePath
         self.label = label
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, host, port, username, authMethod, remotePath, label
+    }
+
+    /// Backward-compatible decoder: legacy `sftpProfiles` blobs
+    /// written before Cycle 17 lack the `id` field. We assign a
+    /// fresh UUID in that case so the migration path in
+    /// `SFTPSettingsView.loadProfiles` can deposit the plaintext
+    /// password to the Keychain keyed by the newly-minted id and
+    /// then rewrite the plist without it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        self.host = try container.decode(String.self, forKey: .host)
+        self.port = try container.decode(Int.self, forKey: .port)
+        self.username = try container.decode(String.self, forKey: .username)
+        self.authMethod = try container.decode(AuthMethod.self, forKey: .authMethod)
+        self.remotePath = try container.decode(String.self, forKey: .remotePath)
+        self.label = try container.decode(String.self, forKey: .label)
     }
 }
 

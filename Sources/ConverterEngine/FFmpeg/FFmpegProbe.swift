@@ -6,6 +6,9 @@
 // ============================================================================
 
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // MARK: - FFmpegProbeError
 
@@ -23,6 +26,16 @@ public enum FFmpegProbeError: LocalizedError, Sendable {
     /// FFprobe binary is not available.
     case ffprobeNotAvailable
 
+    /// The watchdog timer fired before FFprobe finished — a
+    /// malicious or pathological media file that hangs / stalls
+    /// the probe is the typical trigger. Per SECURITY.md F-007.
+    case timeout(seconds: Double)
+
+    /// FFprobe produced more bytes on stdout or stderr than the
+    /// configured `byteCap`. The process is terminated and the
+    /// captured prefix is discarded. Per SECURITY.md F-007.
+    case bufferLimitExceeded(stream: String, byteCap: Int)
+
     public var errorDescription: String? {
         switch self {
         case .fileNotFound(let path):
@@ -33,6 +46,10 @@ public enum FFmpegProbeError: LocalizedError, Sendable {
             return "FFprobe exited with code \(code): \(stderr.prefix(300))"
         case .ffprobeNotAvailable:
             return "FFprobe is not available. Ensure FFmpeg is installed."
+        case .timeout(let seconds):
+            return "FFprobe timed out after \(seconds) seconds — the input file may be malformed or pathological."
+        case .bufferLimitExceeded(let stream, let byteCap):
+            return "FFprobe output exceeded the \(byteCap)-byte cap on \(stream)."
         }
     }
 }
@@ -57,13 +74,42 @@ public final class FFmpegProbe: Sendable {
     /// Path to the FFprobe binary.
     private let ffprobePath: String
 
+    /// Wall-clock cap for a single probe call. After this many
+    /// seconds the watchdog terminates the FFprobe process and
+    /// `runFFprobe` throws `.timeout`. Defaults to 60 seconds —
+    /// real-world probe runs complete in well under a second;
+    /// 60s leaves headroom for legitimately large containers
+    /// over slow storage while still capping a hung run.
+    /// Per SECURITY.md F-007.
+    private let timeoutSeconds: Double
+
+    /// Byte cap applied independently to stdout and stderr. If
+    /// either side exceeds this during the probe, the process
+    /// is terminated and `runFFprobe` throws
+    /// `.bufferLimitExceeded`. Default 10 MB — three orders of
+    /// magnitude above what a normal probe emits (well under
+    /// 100 KB for typical containers), low enough to keep a
+    /// runaway stderr from OOMing the app. Per SECURITY.md F-007.
+    private let byteCap: Int
+
     // MARK: - Initialiser
 
     /// Create a new FFmpegProbe instance.
     ///
-    /// - Parameter ffprobePath: Full path to the FFprobe executable.
-    public init(ffprobePath: String) {
+    /// - Parameters:
+    ///   - ffprobePath: Full path to the FFprobe executable.
+    ///   - timeoutSeconds: Wall-clock cap on a single probe.
+    ///     Defaults to 60s. Per SECURITY.md F-007.
+    ///   - byteCap: Per-stream byte cap on stdout / stderr.
+    ///     Defaults to 10 MB. Per SECURITY.md F-007.
+    public init(
+        ffprobePath: String,
+        timeoutSeconds: Double = 60.0,
+        byteCap: Int = 10 * 1024 * 1024
+    ) {
         self.ffprobePath = ffprobePath
+        self.timeoutSeconds = timeoutSeconds
+        self.byteCap = byteCap
     }
 
     // MARK: - Public API
@@ -111,7 +157,38 @@ public final class FFmpegProbe: Sendable {
     // MARK: - FFprobe Execution
 
     /// Run FFprobe and capture its JSON output.
-    private func runFFprobe(arguments: [String]) throws -> Data {
+    ///
+    /// Three F-007 protections (per SECURITY.md) are applied here:
+    ///
+    /// 1. **Watchdog timeout** — a `DispatchSourceTimer` armed at
+    ///    `timeoutSeconds` calls `process.terminate()` if FFprobe is
+    ///    still running at the deadline. The synchronous
+    ///    `waitUntilExit()` returns once the terminate signal lands.
+    ///    The error surfaces as `.timeout(seconds:)` so the caller
+    ///    can distinguish a hang from an honest probe failure.
+    ///
+    /// 2. **Bounded chunked read** — stdout and stderr are drained
+    ///    by background tasks that append to a shared, locked Data
+    ///    buffer in chunks. As soon as either buffer crosses
+    ///    `byteCap` the relevant task terminates the process and
+    ///    sets the `capExceededStream` flag. The cap prevents a
+    ///    malicious file that triggers gigabytes of ffprobe error
+    ///    output from OOMing the app.
+    ///
+    /// 3. **Independent stderr drain** — without an independent
+    ///    drainer, a flood on stderr fills the pipe buffer
+    ///    (`PIPE_BUF`, typically 64 KB on macOS) and blocks
+    ///    FFprobe's next write; FFprobe then never reaches its
+    ///    JSON output to stdout, causing the watchdog to fire
+    ///    even though the program would have completed if we
+    ///    kept reading. The two-drainer pattern is the standard
+    ///    Process pipe-deadlock-avoidance recipe.
+    ///
+    /// `internal` rather than `private` so the watchdog tests in
+    /// the test target (which uses `@testable import
+    /// ConverterEngine`) can drive the path directly with mocked
+    /// "ffprobe" scripts.
+    internal func runFFprobe(arguments: [String]) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffprobePath)
         process.arguments = arguments
@@ -122,18 +199,135 @@ public final class FFmpegProbe: Sendable {
         process.standardError = stderrPipe
         process.standardInput = FileHandle.nullDevice
 
+        let state = ProbeRunState()
+
         do {
             try process.run()
         } catch {
             throw FFmpegProbeError.ffprobeNotAvailable
         }
 
+        // -------------------------------------------------------
+        // Watchdog timer #1: SIGTERM at the configured deadline
+        // -------------------------------------------------------
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + timeoutSeconds, leeway: .milliseconds(50))
+        timer.setEventHandler { [weak process] in
+            guard let p = process else { return }
+            // SIGTERM — can be ignored. Gated on !finished under the
+            // state lock so it can't fire after the run completed.
+            state.terminateIfActive(p)
+        }
+        timer.activate()
+
+        // -------------------------------------------------------
+        // Watchdog timer #2: SIGKILL escalation 3s after timer #1
+        //
+        // `Process.terminate()` sends SIGTERM, which a hostile or
+        // pathological subprocess can trap. Foundation's Process
+        // API does not expose SIGKILL — we go directly to the
+        // POSIX `kill(2)` syscall (Darwin/BSD on macOS) to force
+        // exit. SIGKILL cannot be trapped or ignored, so the
+        // kernel reaps the process immediately and
+        // `waitUntilExit()` returns.
+        //
+        // Tests prove this: a `trap '' TERM; sleep 30` shell
+        // script with a 1-second timeout exits within ~5s wall-
+        // clock instead of running the full 30 seconds.
+        // -------------------------------------------------------
+        let killTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        killTimer.schedule(deadline: .now() + timeoutSeconds + 3.0, leeway: .milliseconds(50))
+        killTimer.setEventHandler { [weak process] in
+            guard let p = process else { return }
+            // SIGKILL escalation, gated on !finished + isRunning under
+            // the state lock (F-012 — closes the pid-reuse late-fire
+            // window; residual sub-µs kernel race documented on
+            // ProbeRunState.killIfActive).
+            state.killIfActive(p)
+        }
+        killTimer.activate()
+
+        // -------------------------------------------------------
+        // Pipe drainers
+        //
+        // Each runs on its own background queue. `availableData`
+        // blocks until the pipe has data OR returns empty on EOF
+        // (which happens when the process exits / closes the pipe).
+        // -------------------------------------------------------
+        let stdoutDone = DispatchSemaphore(value: 0)
+        let stderrDone = DispatchSemaphore(value: 0)
+        let cap = byteCap
+
+        DispatchQueue.global(qos: .utility).async { [weak process] in
+            defer { stdoutDone.signal() }
+            let fh = stdoutPipe.fileHandleForReading
+            while true {
+                let chunk = fh.availableData
+                if chunk.isEmpty { return }
+                if state.appendStdout(chunk, cap: cap) {
+                    state.markCapExceeded(stream: "stdout")
+                    process?.terminate()
+                    return
+                }
+            }
+        }
+
+        DispatchQueue.global(qos: .utility).async { [weak process] in
+            defer { stderrDone.signal() }
+            let fh = stderrPipe.fileHandleForReading
+            while true {
+                let chunk = fh.availableData
+                if chunk.isEmpty { return }
+                if state.appendStderr(chunk, cap: cap) {
+                    state.markCapExceeded(stream: "stderr")
+                    process?.terminate()
+                    return
+                }
+            }
+        }
+
+        // -------------------------------------------------------
+        // Wait. Watchdog timers escalate SIGTERM → SIGKILL so
+        // waitUntilExit() is guaranteed to return — even on a
+        // SIGTERM-trapping subprocess — within
+        // `timeoutSeconds + ~3s`.
+        // -------------------------------------------------------
         process.waitUntilExit()
+        // Mark finished BEFORE cancelling the timers: a handler that has
+        // already begun executing (cancel() does not interrupt an
+        // in-flight handler) will observe `_finished` under the state
+        // lock and take no action, so it cannot SIGKILL a reused PID
+        // after the child was reaped. (F-012)
+        state.markFinished()
+        timer.cancel()
+        killTimer.cancel()
 
-        let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drainers will see EOF on the now-closed pipes and
+        // signal. Wait briefly so we don't lose their final
+        // bytes; a short ceiling guards against the kernel
+        // taking longer than expected to close pipes after
+        // SIGKILL.
+        _ = stdoutDone.wait(timeout: .now() + .milliseconds(500))
+        _ = stderrDone.wait(timeout: .now() + .milliseconds(500))
 
-        // Check exit code
+        // -------------------------------------------------------
+        // Classify the result.
+        //
+        // Order matters: a buffer-cap trip can ALSO race the
+        // timeout (we terminate, the timer fires too). The
+        // user-visible error should be the *root cause* — buffer
+        // cap is the more specific signal.
+        // -------------------------------------------------------
+        if let stream = state.capExceededStream {
+            throw FFmpegProbeError.bufferLimitExceeded(stream: stream, byteCap: byteCap)
+        }
+        if state.timedOut {
+            throw FFmpegProbeError.timeout(seconds: timeoutSeconds)
+        }
+
+        let outputData = state.stdoutData
+        let stderrData = state.stderrData
+
         if process.terminationStatus != 0 {
             let stderr = String(data: stderrData, encoding: .utf8) ?? "unknown error"
             throw FFmpegProbeError.probeFailed(exitCode: process.terminationStatus, stderr: stderr)
@@ -144,6 +338,93 @@ public final class FFmpegProbe: Sendable {
         }
 
         return outputData
+    }
+
+    // MARK: - Probe-run coordination state
+
+    /// Shared mutable state between the watchdog timer, the two
+    /// pipe-drain tasks, and the main caller. Protected by a
+    /// single `NSLock` because contention is minimal — drainers
+    /// append at most a few times per call.
+    private final class ProbeRunState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _stdoutData = Data()
+        private var _stderrData = Data()
+        private var _timedOut = false
+        private var _capExceededStream: String?
+        private var _finished = false
+
+        var stdoutData: Data { lock.withLock { _stdoutData } }
+        var stderrData: Data { lock.withLock { _stderrData } }
+        var timedOut: Bool { lock.withLock { _timedOut } }
+        var capExceededStream: String? { lock.withLock { _capExceededStream } }
+
+        /// Marks the probe as finished. Called immediately after
+        /// `waitUntilExit()` returns (i.e. the child has been reaped),
+        /// BEFORE the watchdog timers are cancelled, so that any timer
+        /// handler that starts after this point takes no action.
+        func markFinished() {
+            lock.withLock { _finished = true }
+        }
+
+        /// SIGTERM the process IFF the run is neither finished nor
+        /// already reaped. Folds the finished-check, the `isRunning`
+        /// re-check, the `_timedOut` flag, and the signal into ONE lock
+        /// acquisition (NSLock is not reentrant, so the handler must not
+        /// call other locking methods). Per SECURITY.md F-012.
+        func terminateIfActive(_ process: Process) {
+            lock.withLock {
+                guard !_finished, process.isRunning else { return }
+                _timedOut = true
+                process.terminate()
+            }
+        }
+
+        /// SIGKILL escalation, gated identically to `terminateIfActive`.
+        ///
+        /// - Note: a sub-microsecond kernel-level window remains inherent
+        ///   to signalling a `Foundation.Process` by PID — the child
+        ///   could exit and be reaped (freeing its PID for reuse) between
+        ///   the `isRunning` check and the `kill(2)` call. The
+        ///   `_finished` gate + single-lock serialisation removes the
+        ///   realistic case (a timer firing after the run completed
+        ///   normally); the residual race is accepted (F-012, nit).
+        func killIfActive(_ process: Process) {
+            lock.withLock {
+                guard !_finished, process.isRunning else { return }
+                #if canImport(Darwin)
+                _ = kill(process.processIdentifier, SIGKILL)
+                #endif
+            }
+        }
+
+        /// First caller to mark a cap-exceeded stream wins —
+        /// subsequent calls are ignored so the user-visible error
+        /// reflects which side actually overflowed first.
+        func markCapExceeded(stream: String) {
+            lock.withLock {
+                if _capExceededStream == nil {
+                    _capExceededStream = stream
+                }
+            }
+        }
+
+        /// Append a chunk to stdout. Returns `true` if the buffer
+        /// has crossed `cap` after this append — the caller is
+        /// expected to terminate the process and stop draining.
+        func appendStdout(_ chunk: Data, cap: Int) -> Bool {
+            lock.withLock {
+                _stdoutData.append(chunk)
+                return _stdoutData.count > cap
+            }
+        }
+
+        func appendStderr(_ chunk: Data, cap: Int) -> Bool {
+            lock.withLock {
+                _stderrData.append(chunk)
+                return _stderrData.count > cap
+            }
+        }
     }
 
     // MARK: - JSON Parsing
@@ -182,11 +463,25 @@ public final class FFmpegProbe: Sendable {
             overallBitrate = nil
         }
 
-        // Parse format-level metadata tags
+        // Parse format-level metadata tags.
+        //
+        // Both the tag *key* and *value* are sanitised through
+        // `MetadataSanitizer` per SECURITY.md F-006 (T5):
+        // ffprobe surfaces arbitrary bytes from the source
+        // container, so titles / artist / comment fields can
+        // legitimately carry NUL bytes, VT100 escape sequences,
+        // and bidirectional-override codepoints when the source
+        // is a crafted media file. Sanitising at this single
+        // chokepoint defends every downstream renderer (the
+        // SwiftUI metadata panel, the AppleScript bridge
+        // results, the conversion logs, the CLI JSON output)
+        // without each having to know the rule.
         let formatTags = formatDict?["tags"] as? [String: Any] ?? [:]
         var metadata: [String: String] = [:]
         for (key, value) in formatTags {
-            metadata[key] = "\(value)"
+            let sanitisedKey = MetadataSanitizer.sanitize(key)
+            let sanitisedValue = MetadataSanitizer.sanitize("\(value)")
+            metadata[sanitisedKey] = sanitisedValue
         }
 
         // Get file size
@@ -260,10 +555,15 @@ public final class FFmpegProbe: Sendable {
             duration = nil
         }
 
-        // Parse tags
+        // Parse tags. Title and language flow into UI labels,
+        // CLI output, and the AppleScript bridge — sanitise per
+        // SECURITY.md F-006 (T5). Language codes are short ASCII
+        // tokens in practice (`eng`, `jpn`, etc.) but a crafted
+        // file could embed control codes; the sanitiser is
+        // idempotent so the legitimate case is unchanged.
         let tags = dict["tags"] as? [String: Any] ?? [:]
-        let language = tags["language"] as? String
-        let title = tags["title"] as? String
+        let language = (tags["language"] as? String).map(MetadataSanitizer.sanitize)
+        let title = (tags["title"] as? String).map(MetadataSanitizer.sanitize)
 
         // Parse disposition (default, forced, etc.)
         let disposition = dict["disposition"] as? [String: Any] ?? [:]
@@ -382,12 +682,17 @@ public final class FFmpegProbe: Sendable {
             return nil
         }
 
+        // Chapter title + per-chapter metadata flow into the same
+        // UI / log / AppleScript-bridge surfaces as format-level
+        // metadata — apply the same sanitiser per SECURITY.md F-006.
         let tags = dict["tags"] as? [String: Any] ?? [:]
-        let title = tags["title"] as? String
+        let title = (tags["title"] as? String).map(MetadataSanitizer.sanitize)
 
         var chapterMeta: [String: String] = [:]
         for (key, value) in tags {
-            chapterMeta[key] = "\(value)"
+            let sanitisedKey = MetadataSanitizer.sanitize(key)
+            let sanitisedValue = MetadataSanitizer.sanitize("\(value)")
+            chapterMeta[sanitisedKey] = sanitisedValue
         }
 
         return Chapter(

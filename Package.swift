@@ -82,7 +82,69 @@ if isSuiteCoreBuild {
     suiteCoreSwiftSettings.append(.define("SUITE_CORE"))
 }
 
-let baseConverterEngineSwiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)] + suiteCoreSwiftSettings
+// ---------------------------------------------------------------------------
+// Sparkle (DIRECT-build conditional dependency)
+// ---------------------------------------------------------------------------
+// Sparkle 2 provides Cocoa-native auto-update via EdDSA-signed appcasts.
+// It is FORBIDDEN by App Store review (updates must flow through the
+// store), so we wire it in only when DIRECT=1. The MeedyaConverter
+// executable target picks up the product via `meedyaConverterAppDeps`
+// below, and gates its imports with `#if canImport(Sparkle) && DIRECT`.
+//
+// The corresponding `DIRECT` SwiftSetting define is applied to the
+// MeedyaConverter target's `swiftSettings` so the gate compiles correctly
+// even in test builds that don't see the env var.
+//
+// For v0.1.0 the app ships Sparkle Option A (GitHub-Releases poll, no
+// Sparkle framework) — Sparkle Option B is scaffolded here for a future
+// release once the EdDSA keypair + update.mwbm.io Cloudflare Worker are
+// stood up (issue #416).
+// ---------------------------------------------------------------------------
+var sparklePackageDependencies: [Package.Dependency] = []
+var meedyaConverterAppDeps: [Target.Dependency] = []
+var meedyaConverterAppSwiftSettings: [SwiftSetting] = []
+
+if isDirectBuild {
+    sparklePackageDependencies.append(
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.0")
+    )
+    meedyaConverterAppDeps.append(
+        .product(name: "Sparkle", package: "Sparkle")
+    )
+    meedyaConverterAppSwiftSettings.append(.define("DIRECT"))
+}
+
+// ---------------------------------------------------------------------------
+// FFmpegKit (APP_STORE-build conditional dependency)
+// ---------------------------------------------------------------------------
+// FFmpegKit wraps FFmpeg + codec libraries into an XCFramework suitable for
+// App Store sandboxed distribution. DIRECT builds use the Process-based
+// backend (the system / bundled `ffmpeg` binary launched via
+// Foundation.Process), since the App Store sandbox forbids arbitrary
+// subprocess launches.
+//
+// The FFmpegKitBackend.swift implementation (scaffolded in a sibling
+// commit) reads `#if APP_STORE` to know whether to use the framework or
+// fall back to the Process backend. The corresponding define is applied
+// to the ConverterEngine target's `swiftSettings` so the gate compiles
+// correctly in test builds.
+// ---------------------------------------------------------------------------
+var ffmpegKitPackageDependencies: [Package.Dependency] = []
+var ffmpegKitConverterEngineDeps: [Target.Dependency] = []
+var appStoreSwiftSettings: [SwiftSetting] = []
+
+if isAppStoreBuild {
+    ffmpegKitPackageDependencies.append(
+        .package(url: "https://github.com/arthenica/ffmpeg-kit.git", from: "6.0.0")
+    )
+    ffmpegKitConverterEngineDeps.append(
+        .product(name: "ffmpegkit-macos", package: "ffmpeg-kit")
+    )
+    appStoreSwiftSettings.append(.define("APP_STORE"))
+}
+
+let baseConverterEngineSwiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)] + suiteCoreSwiftSettings + appStoreSwiftSettings
+let baseMeedyaConverterSwiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)] + meedyaConverterAppSwiftSettings
 
 // ---------------------------------------------------------------------------
 // MARK: - Package Definition
@@ -168,7 +230,7 @@ let package = Package(
         // Repository : https://github.com/apple/swift-argument-parser.git
         // Pin        : ~> 1.5.0
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
-    ] + extraPackageDependencies + [
+    ] + extraPackageDependencies + sparklePackageDependencies + ffmpegKitPackageDependencies + [
 
         // -- swift-log ----------------------------------------------------
         // Apple's structured logging facade. All subsystems log through
@@ -218,35 +280,15 @@ let package = Package(
         // Conditional / Build-Variant Dependencies
         // -----------------------------------------------------------------
         //
-        // Sparkle (DIRECT builds only)
-        // ----------------------------
-        // Sparkle provides Cocoa-native auto-update functionality via the
-        // EdDSA-signed appcast model. It is forbidden in Mac App Store
-        // builds because Apple mandates that updates flow through the
-        // App Store review process.
+        // Sparkle (DIRECT builds only) — wired above via
+        // `sparklePackageDependencies` (concatenated into the dependencies
+        // array near the top). Resolved only when `DIRECT=1` is set in
+        // the environment at `swift package resolve` time.
         //
-        // Repository : https://github.com/sparkle-project/Sparkle.git
-        // Pin        : ~> 2.6.0
-        // Condition  : Only resolved when the DIRECT environment flag is set.
-        //
-        // if isDirectBuild {
-        //     .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.6.0"),
-        // }
-        //
-        // FFmpegKit (APP_STORE builds only)
-        // ----------------------------------
-        // FFmpegKit wraps FFmpeg (and its codec libraries) into an
-        // XCFramework that can be embedded in sandboxed App Store apps.
-        // For DIRECT builds, the system-installed FFmpeg binary is invoked
-        // via Process (see FFmpegBackend), so this framework is not needed.
-        //
-        // Repository : https://github.com/arthenica/ffmpeg-kit.git
-        // Pin        : ~> 6.0.0
-        // Condition  : Only resolved when the APP_STORE environment flag is set.
-        //
-        // if isAppStoreBuild {
-        //     .package(url: "https://github.com/arthenica/ffmpeg-kit.git", from: "6.0.0"),
-        // }
+        // FFmpegKit (APP_STORE builds only) — wired above via
+        // `ffmpegKitPackageDependencies`. Resolved only when `APP_STORE=1`
+        // is set. The FFmpegKitBackend.swift consumer gates its import
+        // with `#if APP_STORE`.
     ],
 
     // ---------------------------------------------------------------------
@@ -284,7 +326,7 @@ let package = Package(
                 // .product(name: "SwiftSoup", package: "SwiftSoup"),
                 // .product(name: "Yams", package: "Yams"),
                 // .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-            ] + converterEngineProductDeps,
+            ] + converterEngineProductDeps + ffmpegKitConverterEngineDeps,
             path: "Sources/ConverterEngine",
             swiftSettings: baseConverterEngineSwiftSettings
         ),
@@ -336,7 +378,7 @@ let package = Package(
                 "ConverterEngine",
                 // Uncomment when dependencies are integrated:
                 // .product(name: "Logging", package: "swift-log"),
-            ],
+            ] + meedyaConverterAppDeps,
             path: "Sources/MeedyaConverter",
             exclude: [
                 "Resources/Info.plist",
@@ -346,10 +388,15 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/Assets.xcassets"),
+                // AppleScript scripting definition. Without this declaration
+                // SwiftPM silently emits an "unhandled file" warning and
+                // drops the .sdef from the built .app bundle, leaving
+                // AppleScript / Automator integration non-functional in
+                // Direct DMGs. Using .process() (not .copy()) so SPM
+                // can validate the XML at build time.
+                .process("Scripting/MeedyaConverter.sdef"),
             ],
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
+            swiftSettings: baseMeedyaConverterSwiftSettings
         ),
 
         // =================================================================

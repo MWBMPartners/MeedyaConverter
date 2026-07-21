@@ -685,9 +685,21 @@ private enum KeychainStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecValueData as String: value,
-            // After-first-unlock keeps the item available to background
-            // tasks but does not migrate it to other devices via iCloud.
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            // `WhenUnlockedThisDeviceOnly` is two protections:
+            // (1) accessibility is gated on the device being currently
+            //     unlocked (not merely first-unlocked-since-boot), so a
+            //     stolen+locked device cannot have these keys read by a
+            //     background process; and
+            // (2) the `ThisDeviceOnly` qualifier suppresses iCloud
+            //     Keychain sync AND excludes the item from Keychain
+            //     backups — so an exfiltrated Time Machine archive
+            //     cannot leak the user's cloud API tokens, and a
+            //     different Mac signed into the same Apple ID does
+            //     not inherit them. Per SECURITY.md F-004.
+            // Prior to Cycle 16 this was `AfterFirstUnlock`, whose
+            // comment claimed iCloud isolation — that claim was wrong;
+            // only `ThisDeviceOnly` provides it.
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {

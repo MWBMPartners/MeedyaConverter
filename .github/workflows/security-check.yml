@@ -1,0 +1,54 @@
+# ============================================================================
+# MeedyaConverter — security-check workflow
+# Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+#
+# Runs the SECURITY.md F-010 (T7 — supply-chain) static linters
+# whenever workflow YAML changes lands in a PR or push:
+#
+# * scripts/security-check-action-pins.sh — fails CI if any new
+#   `uses: actor/repo@<branch>` reference appears. Allowed: `@vX`,
+#   `@vX.Y`, `@vX.Y.Z`, and 40-char SHA pins.
+#
+# This is a fast (under 5 second) ubuntu-latest job — no
+# checkout-of-history, no language toolchain setup, just shellcheck-
+# adjacent bash hygiene. The job intentionally pins
+# `actions/checkout@v4` for now and is itself subject to the gate
+# (see SECURITY.md F-010 + G-015 for the SHA-pin sweep follow-up).
+#
+# Triggered on:
+#   * any push to the run branch or main
+#   * any PR that touches .github/workflows/ OR scripts/
+#     (so a refactor of the linter itself runs against itself)
+# ============================================================================
+
+name: security-check
+
+on:
+  push:
+    branches:
+      - main
+      - "autopilot/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "scripts/security-check-*.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  action-pin-audit:
+    name: GitHub Actions pin hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          # Only need the worktree; no history.
+          fetch-depth: 1
+
+      - name: Run security-check-action-pins.sh
+        run: |
+          chmod +x scripts/security-check-action-pins.sh
+          scripts/security-check-action-pins.sh

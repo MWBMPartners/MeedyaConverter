@@ -74,7 +74,18 @@ struct ConvertMediaIntent: AppIntent {
             let tempDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("meedya-intent-\(UUID().uuidString.prefix(8))", isDirectory: true)
             try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            let fileName = inputFile.filename
+            // F-008: sanitise the Shortcuts-supplied filename
+            // before appending. Shortcuts normally hands us a
+            // clean basename, but the IntentFile.filename type is
+            // an arbitrary `String` — a caller (or a future
+            // Shortcuts host on a different platform) that
+            // supplies `../../escape.bin` would otherwise escape
+            // the per-intent temp directory. PathSanitizer strips
+            // path separators, NUL bytes, and `..` segments,
+            // returning the placeholder `"unnamed"` for empty /
+            // dot-only inputs so the write always lands inside
+            // `tempDir`.
+            let fileName = PathSanitizer.sanitizeFilenameComponent(inputFile.filename)
             tempInputURL = tempDir.appendingPathComponent(fileName)
             try inputData.write(to: tempInputURL)
         }
@@ -97,7 +108,13 @@ struct ConvertMediaIntent: AppIntent {
 
         let outputDir = tempInputURL.deletingLastPathComponent()
         let baseName = tempInputURL.deletingPathExtension().lastPathComponent
-        let outputURL = outputDir.appendingPathComponent("\(baseName)-converted.\(outputExtension)")
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+        // Complements the Cycle 20 F-008 sanitisation of
+        // `inputFile.filename` above.
+        let outputComponent = PathSanitizer.sanitizeFilenameComponent(
+            "\(baseName)-converted.\(outputExtension)"
+        )
+        let outputURL = outputDir.appendingPathComponent(outputComponent)
 
         // Build FFmpeg arguments from the profile.
         let builder = profile.toArgumentBuilder(inputURL: tempInputURL, outputURL: outputURL)

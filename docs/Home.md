@@ -17,7 +17,8 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 | [CLI Reference](CLI-Reference) | `meedya-convert` commands, options, batch scripting |
 | [Architecture](Architecture) | System design, modules, data flow |
 | [Building from Source](Building-from-Source) | Prerequisites, clone, build, test, conditional builds |
-| [Contributing](Contributing) | Code style, PR process, branch strategy, linting |
+| [Contributing](../CONTRIBUTING.md) | Code style, PR process, branch strategy, linting |
+| [Code of Conduct](../CODE_OF_CONDUCT.md) | Contributor Covenant v2.1, community standards, enforcement |
 | [Codec Reference](Codec-Reference) | Supported video and audio codecs with settings |
 | [Troubleshooting](Troubleshooting) | Common issues and solutions |
 | [FAQ](FAQ) | Frequently asked questions |

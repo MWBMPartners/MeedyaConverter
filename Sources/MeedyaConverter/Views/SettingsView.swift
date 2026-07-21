@@ -658,13 +658,21 @@ struct AboutTab: View {
 
 // MARK: - UpdateSettingsTab
 
-/// Update settings: Sparkle auto-check configuration and manual update check.
+/// Update settings: dispatches to one of three update-mechanism UIs based
+/// on the running build.
 ///
-/// In direct distribution builds (non-App Store), this integrates with Sparkle 2
-/// for auto-update checking. In App Store builds, it shows that updates are
-/// managed by the Mac App Store.
+/// * **Sparkle** (Direct + Sparkle bundled) — full Sparkle 2 auto-update UI
+///   with EdDSA verification. Scheduled for v0.2.0 once issue #416's
+///   Cloudflare Worker stands up the appcast feed.
+/// * **GitHub Releases poller** (Direct, no Sparkle bundled) — v0.1.0 ship
+///   path. Polls `api.github.com/repos/MWBMPartners/MeedyaConverter/releases/latest`
+///   with a 1-hour cache, surfaces an "update available" banner when a newer
+///   GA version is published, and links the user to the .dmg download in
+///   their browser. No silent updates; the user installs manually.
+/// * **App Store** (Lite bundle) — defers to the Mac App Store updates UI.
 ///
 /// Phase 9 — Update Checker (Issue #94)
+/// Phase 16 release prep — Sparkle Option A wired (re #428).
 struct UpdateSettingsTab: View {
     @Environment(AppViewModel.self) private var viewModel
 
@@ -672,69 +680,154 @@ struct UpdateSettingsTab: View {
         let updateChecker = viewModel.updateChecker
 
         Form {
-            if updateChecker.isSparkleAvailable {
-                Section("Automatic Updates") {
-                    Toggle("Automatically check for updates", isOn: Binding(
-                        get: { updateChecker.automaticallyChecksForUpdates },
-                        set: { updateChecker.automaticallyChecksForUpdates = $0 }
-                    ))
-                    .accessibilityLabel("Enable automatic update checking on launch")
-
-                    if let lastCheck = updateChecker.lastUpdateCheckDate {
-                        LabeledContent("Last checked") {
-                            Text(lastCheck, style: .relative)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section("Manual Check") {
-                    HStack {
-                        Button {
-                            updateChecker.checkForUpdates()
-                        } label: {
-                            Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .disabled(!updateChecker.canCheckForUpdates || updateChecker.isCheckingForUpdates)
-
-                        Spacer()
-
-                        if updateChecker.isCheckingForUpdates {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    }
-
-                    Text(updateChecker.statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    Text("Updates are verified using EdDSA (Ed25519) code signatures before installation.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Section("Updates") {
-                    HStack(spacing: 8) {
-                        Image(systemName: "apple.logo")
-                            .foregroundStyle(.secondary)
-                        Text("Updates are managed by the Mac App Store.")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button("Open App Store Updates") {
-                        if let url = URL(string: "macappstore://showUpdatesPage") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.caption)
-                }
+            switch updateChecker.mechanism {
+            case .sparkle:
+                sparkleSections(updateChecker: updateChecker)
+            case .githubReleases:
+                githubReleasesSections(updateChecker: updateChecker)
+            case .appStore:
+                appStoreSections
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Updates")
+    }
+
+    // MARK: - Sparkle UI (Option B, v0.2.0+)
+
+    @ViewBuilder
+    private func sparkleSections(updateChecker: AppUpdateChecker) -> some View {
+        Section("Automatic Updates") {
+            Toggle("Automatically check for updates", isOn: Binding(
+                get: { updateChecker.automaticallyChecksForUpdates },
+                set: { updateChecker.automaticallyChecksForUpdates = $0 }
+            ))
+            .accessibilityLabel("Enable automatic update checking on launch")
+
+            if let lastCheck = updateChecker.lastUpdateCheckDate {
+                LabeledContent("Last checked") {
+                    Text(lastCheck, style: .relative)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        Section("Manual Check") {
+            HStack {
+                Button {
+                    updateChecker.checkForUpdates()
+                } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!updateChecker.canCheckForUpdates || updateChecker.isCheckingForUpdates)
+
+                Spacer()
+
+                if updateChecker.isCheckingForUpdates {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Text(updateChecker.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section {
+            Text("Updates are verified using EdDSA (Ed25519) code signatures before installation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - GitHub Releases poller UI (Option A, v0.1.0 ship path)
+
+    @ViewBuilder
+    private func githubReleasesSections(updateChecker: AppUpdateChecker) -> some View {
+        let github = updateChecker.githubChecker
+
+        Section("Check for Updates") {
+            HStack {
+                Button {
+                    updateChecker.checkForUpdates()
+                } label: {
+                    Label("Check GitHub for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(updateChecker.isCheckingForUpdates)
+
+                Spacer()
+
+                if updateChecker.isCheckingForUpdates {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .accessibilityHint("Polls the GitHub Releases API to see whether a newer signed and notarised DMG is available.")
+
+            Text(updateChecker.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        if github.updateAvailable, let release = github.latestRelease {
+            Section("Update Available") {
+                LabeledContent("New version") {
+                    Text(release.tagName)
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.primary)
+                }
+
+                if let dmg = release.dmgAsset {
+                    Button {
+                        NSWorkspace.shared.open(dmg.browserDownloadUrl)
+                    } label: {
+                        Label("Download DMG", systemImage: "arrow.down.circle")
+                    }
+                    .accessibilityHint("Opens the signed and notarised DMG in your browser. You install it manually by mounting and dragging to Applications.")
+                }
+
+                Button {
+                    NSWorkspace.shared.open(release.htmlUrl)
+                } label: {
+                    Label("View Release Notes", systemImage: "doc.text")
+                }
+                .accessibilityHint("Opens the GitHub release page in your browser.")
+            }
+        }
+
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("MeedyaConverter currently checks GitHub Releases for new versions. In-app updates via Sparkle (with EdDSA-verified signatures) are planned for v0.2.0.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Downloads open in your browser and you install manually.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - App Store UI
+
+    @ViewBuilder
+    private var appStoreSections: some View {
+        Section("Updates") {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.logo")
+                    .foregroundStyle(.secondary)
+                Text("Updates are managed by the Mac App Store.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Open App Store Updates") {
+                if let url = URL(string: "macappstore://showUpdatesPage") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .font(.caption)
+        }
     }
 }
 

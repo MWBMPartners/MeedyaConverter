@@ -155,8 +155,10 @@ struct ResumableJobsView: View {
         let outputDir = checkpoint.outputURL.deletingLastPathComponent()
         let outputExtension = checkpoint.profileSnapshot.containerFormat.fileExtensions.first ?? "mkv"
         let baseName = checkpoint.inputURL.deletingPathExtension().lastPathComponent
+        // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+        let component = PathSanitizer.sanitizeFilenameComponent("\(baseName)_resumed")
         let outputURL = outputDir
-            .appendingPathComponent("\(baseName)_resumed")
+            .appendingPathComponent(component)
             .appendingPathExtension(outputExtension)
 
         let config = EncodingJobConfig(

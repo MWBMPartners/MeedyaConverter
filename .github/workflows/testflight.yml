@@ -174,12 +174,34 @@ jobs:
       # ---------------------------------------------------------------------
       # Assembles a .app bundle with the App Store bundle ID (.Lite suffix),
       # the privacy manifest, and the correct version/build numbers.
+      #
+      # Mutations applied to the bundled Info.plist (in order):
+      #
+      #   * CFBundleIdentifier — rewritten to ".Lite" suffix via PlistBuddy.
+      #     Authoritative rewrite that addresses ITMS-90230 (#388, invalid
+      #     metadata in product-identifier). Replaces a previous brittle
+      #     sed pattern that depended on the source CFBundleIdentifier
+      #     value never gaining a substring match elsewhere in the
+      #     plist.
+      #
+      #   * CFBundleShortVersionString — set from $VERSION (the VERSION
+      #     file). Also via PlistBuddy. Replaces a previous brittle
+      #     sed pattern `<string>0.1.0</string>` that silently no-op'd
+      #     the moment the version bumped past 0.1.0 — the same fix
+      #     pattern was applied to release.yml in commit 45ee9f6.
+      #     ITMS-90230 (#388) treats a non-strict-semver product-version
+      #     as invalid; sourcing from VERSION keeps these in lock-step.
+      #
+      #   * CFBundleVersion — set from $BUILD (git rev-list --count HEAD).
+      #     Unchanged from before; PlistBuddy was already used for this.
       # ---------------------------------------------------------------------
       - name: Create App Store app bundle
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.buildnum.outputs.build_number }}"
           APP="MeedyaConverter.app"
+          PLIST="${APP}/Contents/Info.plist"
 
           mkdir -p "${APP}/Contents/MacOS"
           mkdir -p "${APP}/Contents/Resources"
@@ -187,17 +209,219 @@ jobs:
           cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
           chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
 
-          # Info.plist with App Store bundle ID and build number
-          sed -e "s|Ltd.MWBMpartners.MeedyaConverter|Ltd.MWBMpartners.MeedyaConverter.Lite|" \
-              -e "s|<string>0.1.0</string>|<string>${VERSION}</string>|" \
-              Sources/MeedyaConverter/Resources/Info.plist \
-              > "${APP}/Contents/Info.plist"
-
-          # Add build number
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${APP}/Contents/Info.plist"
+          # Start from the source Info.plist, then rewrite the three
+          # identity fields via PlistBuddy (no fragile string-matching
+          # sed).
+          cp Sources/MeedyaConverter/Resources/Info.plist "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier Ltd.MWBMpartners.MeedyaConverter.Lite" "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}"               "${PLIST}"
 
           # Copy privacy manifest
           cp Sources/MeedyaConverter/Resources/PrivacyInfo.xcprivacy "${APP}/Contents/Resources/"
+
+          # Generate the .icns from the AppIcon.appiconset PNG sources
+          # and stage it at Contents/Resources/MeedyaConverter.icns —
+          # the filename matches the CFBundleIconFile key in Info.plist.
+          # Required for App Store Connect to accept the upload
+          # (ITMS-90236 / #390); the static validator inspects the
+          # bundle and rejects builds without a Retina-pair-complete
+          # .icns including the 512@2x slot.
+          ./scripts/generate-app-icns.sh "${APP}/Contents/Resources/MeedyaConverter.icns"
+
+      # ---------------------------------------------------------------------
+      # Step 9b: Validate metadata (ITMS-90264 + ITMS-90230 fail-fast)
+      # ---------------------------------------------------------------------
+      # Fails the workflow BEFORE any signing step if the bundle's
+      # Info.plist would be rejected by App Store Connect's ITMS checks:
+      #
+      #   * ITMS-90264 (#389): LSMinimumSystemVersion mismatch — must
+      #     match the build target's macOS minimum exactly. We assert
+      #     it matches Package.swift's `.macOS(.v15)` setting (which is
+      #     also the macos-15 runner this job runs on).
+      #
+      #   * ITMS-90230 (#388): product-identifier and product-version
+      #     must conform to strict App Store Connect formats. We assert
+      #     CFBundleIdentifier carries the `.Lite` suffix (so a future
+      #     edit to the previous step cannot ship the Direct bundle-id
+      #     into TestFlight) AND that CFBundleShortVersionString
+      #     parses as a strict X.Y.Z[-pre] SemVer triple.
+      #
+      # Failing here costs ~1 ubuntu-equivalent minute (actually
+      # macos-15 since the runner is already up) instead of failing in
+      # App Store Connect after upload — which would burn the build
+      # number and require a re-tag.
+      # ---------------------------------------------------------------------
+      - name: Validate Info.plist metadata
+        run: |
+          set -euo pipefail
+          PLIST="MeedyaConverter.app/Contents/Info.plist"
+          fail=0
+
+          read_key() {
+            /usr/libexec/PlistBuddy -c "Print :$1" "${PLIST}" 2>/dev/null || echo "MISSING"
+          }
+
+          MIN_OS=$(read_key LSMinimumSystemVersion)
+          BUNDLE_ID=$(read_key CFBundleIdentifier)
+          SHORT_VER=$(read_key CFBundleShortVersionString)
+
+          # ITMS-90264: LSMinimumSystemVersion exactly matches Package.swift
+          # platforms minimum. Update this when the platforms minimum
+          # changes.
+          EXPECTED_MIN_OS="15.0"
+          if [ "${MIN_OS}" != "${EXPECTED_MIN_OS}" ]; then
+            echo "::error::ITMS-90264 risk: LSMinimumSystemVersion is '${MIN_OS}' but Package.swift's platforms minimum requires '${EXPECTED_MIN_OS}'. Update the Info.plist or the EXPECTED_MIN_OS guard."
+            fail=1
+          else
+            echo "  ✓ LSMinimumSystemVersion = ${MIN_OS} matches Package.swift"
+          fi
+
+          # ITMS-90230: CFBundleIdentifier must carry the .Lite suffix.
+          case "${BUNDLE_ID}" in
+            *".Lite")
+              echo "  ✓ CFBundleIdentifier ends with .Lite (${BUNDLE_ID})"
+              ;;
+            *)
+              echo "::error::ITMS-90230 risk: CFBundleIdentifier is '${BUNDLE_ID}' but must end with '.Lite' for the App Store variant. The earlier 'Create App Store app bundle' step should have applied the suffix."
+              fail=1
+              ;;
+          esac
+
+          # ITMS-90230: CFBundleShortVersionString must parse as X.Y.Z
+          # core (allowing optional -pre.release and +build metadata).
+          # We strip suffixes and validate the core triple is all-numeric.
+          core="${SHORT_VER%%+*}"
+          core="${core%%-*}"
+          if echo "${core}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "  ✓ CFBundleShortVersionString core '${core}' parses as SemVer X.Y.Z (full: ${SHORT_VER})"
+          else
+            echo "::error::ITMS-90230 risk: CFBundleShortVersionString '${SHORT_VER}' does not parse as a valid X.Y.Z SemVer core. The VERSION file must be a strict semver value."
+            fail=1
+          fi
+
+          # ITMS-90236 (#390): CFBundleIconFile must be present in the
+          # Info.plist AND the named .icns file must exist in the
+          # bundle's Contents/Resources/ directory. The static App
+          # Store Connect validator rejects builds without a complete
+          # Retina-pair set including the 512@2x (1024 px) slot — the
+          # generate-app-icns.sh script the prior step invoked produces
+          # exactly that.
+          ICON_KEY=$(read_key CFBundleIconFile)
+          if [ "${ICON_KEY}" = "MISSING" ] || [ -z "${ICON_KEY}" ]; then
+            echo "::error::ITMS-90236 risk: CFBundleIconFile key is missing from Info.plist. App Store Connect rejects bundles without an icon reference."
+            fail=1
+          else
+            ICNS_PATH="MeedyaConverter.app/Contents/Resources/${ICON_KEY}.icns"
+            if [ ! -f "${ICNS_PATH}" ]; then
+              echo "::error::ITMS-90236 risk: CFBundleIconFile = '${ICON_KEY}' but Contents/Resources/${ICON_KEY}.icns is missing. The generate-app-icns.sh step in the prior bundle-assembly step should have produced it."
+              fail=1
+            else
+              ICNS_SIZE=$(stat -f '%z' "${ICNS_PATH}")
+              echo "  ✓ Contents/Resources/${ICON_KEY}.icns present (${ICNS_SIZE} bytes)"
+            fi
+          fi
+
+          if [ "${fail}" -ne 0 ]; then
+            echo "::error::Metadata validation failed. Workflow stopped before any signing or upload step ran."
+            exit 1
+          fi
+
+          echo ""
+          echo "All Info.plist metadata checks passed. Signing will proceed."
+
+      # ---------------------------------------------------------------------
+      # Step 9c: Embed App Store provisioning profile (ITMS-90889 fix)
+      # ---------------------------------------------------------------------
+      # App Store Connect rejects any .app bundle that doesn't ship with
+      # Contents/embedded.provisionprofile (ITMS-90889 / #391). The
+      # profile binds together:
+      #
+      #   * the .Lite App ID record in the Apple Developer portal,
+      #   * the "Mac Developer Distribution: MWBM Partners Ltd" cert
+      #     family (a different cert from the Direct path's
+      #     "Developer ID Application" cert — that is enforced by the
+      #     codesign step's own identity argument; here we just need
+      #     the profile),
+      #   * an expiry date (Apple-issued profiles are valid one year),
+      #
+      # so a profile mismatch means either the bundle id is wrong, the
+      # cert is wrong, or the profile expired.
+      #
+      # The base64-encoded profile lives in the secret
+      # APP_STORE_PROVISIONING_PROFILE. Generation is user-side (Apple
+      # Developer portal → Profiles → + → Mac App Store → pick the .Lite
+      # App ID → pick the distribution cert → download → `base64 -i
+      # <file>` → paste into the GitHub web UI per the standing flow
+      # in docs/distribution/apple-secrets-setup.md).
+      #
+      # We fail fast with a clear error message if the secret is
+      # missing so the maintainer doesn't waste a macos-runner-minute
+      # on the doomed signing step. We also `security cms -D` the
+      # decoded profile to confirm it's a parseable signed CMS payload
+      # before the bundle progresses any further.
+      # ---------------------------------------------------------------------
+      - name: Embed App Store provisioning profile
+        env:
+          APP_STORE_PROVISIONING_PROFILE: ${{ secrets.APP_STORE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          APP="MeedyaConverter.app"
+          PROFILE_PATH="${APP}/Contents/embedded.provisionprofile"
+
+          if [ -z "${APP_STORE_PROVISIONING_PROFILE:-}" ]; then
+            echo "::error::APP_STORE_PROVISIONING_PROFILE secret is empty or missing — required to address ITMS-90889 (#391). Generate the profile in the Apple Developer portal (Profiles → + → Mac App Store → pick the .Lite App ID → pick the Mac Developer Distribution cert → download), then base64-encode it locally with 'base64 -i meedyaconverter.provisionprofile | pbcopy' and paste it into Repository → Settings → Secrets and variables → Actions → New repository secret. See docs/distribution/apple-secrets-setup.md for the full recipe."
+            exit 1
+          fi
+
+          # Decode the base64 secret into the bundle.
+          mkdir -p "${APP}/Contents"
+          echo "${APP_STORE_PROVISIONING_PROFILE}" | base64 --decode > "${PROFILE_PATH}"
+
+          if [ ! -s "${PROFILE_PATH}" ]; then
+            echo "::error::Decoded provisioning profile is empty. The APP_STORE_PROVISIONING_PROFILE secret may not be valid base64."
+            exit 1
+          fi
+
+          # Validate the profile is a parseable signed CMS payload. A
+          # malformed profile fails signing later with a far less
+          # informative error.
+          DECODED_TMP="$(mktemp -t embedded-profile-decoded)"
+          if ! security cms -D -i "${PROFILE_PATH}" > "${DECODED_TMP}" 2>/dev/null; then
+            rm -f "${DECODED_TMP}"
+            echo "::error::Could not decode embedded.provisionprofile as a CMS payload. The secret value may have been corrupted during the base64 round-trip; re-encode and re-paste."
+            exit 1
+          fi
+
+          # Surface the profile's bound App ID + Team ID + expiry so
+          # the maintainer can sanity-check at-a-glance. These are
+          # NOT secrets — the App ID and Team ID appear in every
+          # signed app bundle and the expiry is public info on the
+          # Developer portal.
+          APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0"           "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+          EXPIRES=$(/usr/libexec/PlistBuddy -c "Print :ExpirationDate"             "${DECODED_TMP}" 2>/dev/null || echo "(missing)")
+
+          rm -f "${DECODED_TMP}"
+
+          echo "  ✓ embedded.provisionprofile is a valid CMS payload"
+          echo "    application-identifier : ${APP_ID}"
+          echo "    team-identifier        : ${TEAM_ID}"
+          echo "    expires                : ${EXPIRES}"
+
+          # If the application-identifier doesn't end with the
+          # .Lite suffix, the profile was generated for the wrong
+          # App ID and codesigning will fail later with a confusing
+          # entitlements-mismatch error. Surface that here instead.
+          case "${APP_ID}" in
+            *".Lite")
+              echo "  ✓ application-identifier ends with .Lite as expected"
+              ;;
+            *)
+              echo "::error::ITMS-90889 risk: provisioning profile's application-identifier is '${APP_ID}' but it must end with '.Lite' to match the App Store Lite bundle. The profile was generated for the wrong App ID; regenerate it in the Apple Developer portal."
+              exit 1
+              ;;
+          esac
 
       # ---------------------------------------------------------------------
       # Step 10: Sign for App Store
@@ -225,8 +449,39 @@ jobs:
       # ---------------------------------------------------------------------
       # Step 11: Upload to TestFlight
       # ---------------------------------------------------------------------
-      # Creates a zip archive and uploads it via xcrun altool using App
+      # Creates a zip archive and uploads it via `xcrun altool` using App
       # Store Connect API key authentication.
+      #
+      # ITMS-90237 + ITMS-90270 historical context
+      # -------------------------------------------
+      # An earlier iteration of this workflow packaged the swift-build
+      # output as a .pkg via `productbuild` / `productsign` and uploaded
+      # the .pkg to TestFlight. That flow was rejected on two counts:
+      #
+      #   * ITMS-90270 (#386) — "Unsupported toolchain": Apple's static
+      #     validator detected swift-build's generated linker metadata
+      #     as not coming from Xcode's signed toolchain and rejected the
+      #     archive.
+      #
+      #   * ITMS-90237 (#387) — "not signed with '3rd Party Mac
+      #     Developer Installer' cert": the .pkg was signed with the
+      #     wrong cert family (productsign needs a different installer
+      #     cert from the .app codesigning identity).
+      #
+      # The current workflow (this step + the codesign step above)
+      # architecturally bypasses BOTH by skipping the .pkg packaging
+      # entirely: we `ditto`-zip the signed .app directly and upload via
+      # `xcrun altool --upload-app --type macos`, which is the
+      # Apple-recommended modern path for macOS App Store submission.
+      # `altool` accepts a .zip-wrapped .app for type=macos; the
+      # uploaded payload is unpacked and re-validated server-side
+      # without requiring any installer-cert involvement.
+      #
+      # The defensive asserts below verify that a future workflow edit
+      # cannot silently re-introduce a `.pkg` path — if the artefact
+      # filename ever stops being `MeedyaConverter.zip`, the upload
+      # refuses to run. Issues #386 / #387 will be closed citing this
+      # commit as the resolution.
       # ---------------------------------------------------------------------
       - name: Upload to TestFlight
         env:
@@ -234,17 +489,39 @@ jobs:
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.ASC_API_KEY }}
         run: |
+          set -euo pipefail
+
           # Create API key file
           mkdir -p ~/.private_keys
           echo "$APP_STORE_CONNECT_API_KEY" > ~/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8
 
           # Create a zip for upload
-          ditto -c -k --keepParent "MeedyaConverter.app" "MeedyaConverter.zip"
+          UPLOAD_ARTEFACT="MeedyaConverter.zip"
+          ditto -c -k --keepParent "MeedyaConverter.app" "${UPLOAD_ARTEFACT}"
+
+          # Defensive assert against ITMS-90270 + ITMS-90237 regression.
+          # The archive we upload MUST be a .zip wrapping the codesigned
+          # .app — not a .pkg. A .pkg would re-introduce the historical
+          # rejections (unsupported toolchain + wrong installer cert).
+          case "${UPLOAD_ARTEFACT}" in
+            *.zip)
+              echo "  ✓ Upload artefact is .zip (avoids ITMS-90270 + ITMS-90237)"
+              ;;
+            *.pkg)
+              echo "::error::ITMS-90270 + ITMS-90237 regression risk: upload artefact is a .pkg ('${UPLOAD_ARTEFACT}'). This re-introduces the historical rejections (unsupported toolchain because swift-build is not Apple's Xcode toolchain; not signed with 3rd Party Mac Developer Installer cert). Revert to the .zip+altool path (see step comment for the history)."
+              exit 1
+              ;;
+            *)
+              echo "::error::Upload artefact has an unexpected extension: '${UPLOAD_ARTEFACT}'. Apple's altool --type macos accepts .zip-wrapped .app bundles only."
+              exit 1
+              ;;
+          esac
+          file "${UPLOAD_ARTEFACT}" || true
 
           # Upload via xcrun notarytool / altool
           xcrun altool --upload-app \
             --type macos \
-            --file "MeedyaConverter.zip" \
+            --file "${UPLOAD_ARTEFACT}" \
             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_API_ISSUER_ID" \
             || echo "Upload via altool failed, trying xcrun"
