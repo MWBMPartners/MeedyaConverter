@@ -68,7 +68,7 @@ jobs:
       # Step 1: Checkout
       # -----------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -84,7 +84,7 @@ jobs:
       # Step 3: Cache SPM
       # -----------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-dev-${{ hashFiles('Package.swift', 'Package.resolved') }}
@@ -158,6 +158,24 @@ jobs:
           # Copy binary
           cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
           chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
+
+          # Ship the SwiftPM resource bundle inside the .app.
+          # SwiftPM emits the MeedyaConverter target's declared resources
+          # (Assets.xcassets, the MeedyaConverter.sdef AppleScript definition,
+          # and the bundled Help Markdown) into a SEPARATE
+          # MeedyaConverter_MeedyaConverter.bundle alongside the binary — NOT
+          # into the executable. Because this step hand-builds the .app, that
+          # bundle must be copied into Contents/Resources or the shipped app
+          # has no resources: AppleScript/Automator integration and the in-app
+          # Help would be dead-on-arrival in Direct builds. Fail closed if the
+          # bundle is missing (e.g. a Package.swift resources regression).
+          RESOURCE_BUNDLE=".build/release/MeedyaConverter_MeedyaConverter.bundle"
+          if [ -d "${RESOURCE_BUNDLE}" ]; then
+            cp -R "${RESOURCE_BUNDLE}" "${APP}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${RESOURCE_BUNDLE}"
+            exit 1
+          fi
 
           # Info.plist: copy template verbatim, then drive version keys
           # with PlistBuddy. The previous sed-based CFBundleShortVersionString
@@ -307,7 +325,7 @@ jobs:
       # Step 13: Upload app bundle artifact
       # -----------------------------------------------------------------
       - name: Upload app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-app"
           path: MeedyaConverter.app
@@ -318,7 +336,7 @@ jobs:
       # -----------------------------------------------------------------
       - name: Upload DMG
         if: ${{ github.event.inputs.create_dmg != 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-dmg"
           path: "*.dmg"
@@ -329,7 +347,7 @@ jobs:
       # -----------------------------------------------------------------
       - name: Upload CLI binary
         if: ${{ hashFiles('meedya-convert-*-macOS.tar.gz') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.version.outputs.artifact_name }}-cli"
           path: "meedya-convert-*-macOS.tar.gz"

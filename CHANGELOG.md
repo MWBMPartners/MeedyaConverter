@@ -11,6 +11,228 @@
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **F-002 defence-in-depth complete -- remaining user-derived path
+  components sanitised** -- the last ~13 `appendingPathComponent` call
+  sites that build a filename from user-supplied data (rename-rule
+  find/replace output, user-typed profile/template names, media-file
+  basenames) now route through `PathSanitizer.sanitizeFilenameComponent`,
+  matching the migration already completed for the GUI views in an
+  earlier cycle. The highest-value fix is `BatchRenamer.apply` --
+  unlike a plain `lastPathComponent`, a rename rule's `replaceWith`
+  text is fully attacker-controllable and previously flowed unsanitised
+  into the destination path. Multi-segment relative directory paths
+  (which intentionally contain `/`) were left untouched to avoid
+  flattening legitimate subdirectory structure. See `SECURITY.md`
+  finding F-002 for the full site-by-site breakdown (re #428).
+- **FFmpeg supply chain hardened -- universal, first-party, verified
+  (F-011)** -- `scripts/bundle-ffmpeg.sh` now sources `ffmpeg` / `ffprobe` /
+  `ffplay` solely from the first-party mirror `MeedyaSuite/MeedyaDL-Tools`,
+  pinned to an immutable dated release tag, instead of an unverified
+  third-party static-build host. Each per-arch archive is SHA-256-verified
+  against the release's own `SHA256SUMS` **before** unpack, fail-closed
+  (missing pin/checksums -> exit 6, mismatch -> exit 7). The two per-arch
+  archives are `lipo`-combined into a genuinely **universal (arm64 +
+  x86_64)** binary per tool, and the app itself is now built universal too
+  (`swift build -c release --arch arm64 --arch x86_64` in `release.yml`).
+  The former URL-keyed `scripts/ffmpeg-checksums.txt` bridge (and its
+  `--refresh-checksums` mode) has been removed -- the trust root is the
+  first-party tagged release's own checksums, so there is no local hash
+  list to keep in sync. Found by the post-VERIFY adversarial review; fixed
+  across two commits (re #428).
+- **Probe-watchdog PID-reuse TOCTOU mitigated (F-012)** -- `FFmpegProbe`'s
+  finished-check, `isRunning` re-check, and the actual terminate/kill now
+  happen under a single `ProbeRunState` lock, closing the realistic window
+  where a timer could fire just after the process had already exited. A
+  sub-microsecond kernel-level PID-reuse race remains inherent to signalling
+  any `Foundation.Process` by PID and is accepted, documented inline (re #428).
+
+### Added
+
+- **`RenderFarmConfigurationLoader` consumes `RenderFarmSettingsTab`'s
+  AppStorage settings (#346)** -- a new pure, Foundation-only
+  `ConverterEngine.RenderFarmConfigurationLoader` reads the
+  `renderFarm.*` `UserDefaults` keys the settings tab already persists
+  and builds a `RenderFarmClient.Configuration` plus the initial
+  `[RenderFarmAgentInfo]` registry from them. It enforces the same
+  insecure-transport contract as `RenderFarmClient` itself: plain HTTP
+  is only permitted when the user has both enabled the toggle **and**
+  supplied a non-blank acknowledgement string, otherwise no
+  `InsecureTransportOverride` is produced. Malformed or empty
+  `agentsJSON` decodes to an empty registry rather than throwing/
+  crashing, and the discovery-interval/chunk-size settings are clamped
+  to sane bounds before conversion. `RenderFarmSettingsTab` now shares
+  its exact `UserDefaults` key strings with the loader via
+  `RenderFarmConfigurationLoader.Keys` so the two sides cannot drift.
+  This lands the settings-to-engine bridge the tab's header comment
+  described as deferred; the transport implementations (SSH/TLS),
+  Bonjour discovery, and the agent binary remain and #346 stays open.
+- **Lossless/spatial audio badges in the Stream Inspector (#372)** --
+  `FFmpegProbe` now tags each audio stream with a
+  `SuiteCoreCodecDescriptor` via `SuiteCoreCodecClassifier` (codec name +
+  channel layout + sample format), using its built-in fallback
+  classification table by default -- no `SUITE_CORE` build flag required.
+  `MediaStream` gains an optional `suiteCoreCodecDescriptor` field (and
+  `isLosslessAudio`/`isSpatialAudio` convenience accessors), defaulted to
+  `nil` so existing call sites and previously-persisted `Codable` data
+  are unaffected. The Stream Inspector shows "Lossless"/"Spatial" badges
+  on audio streams accordingly. This is the default-build fallback
+  slice; the live MeedyaSuite-core Rust classification path remains
+  gated on its tagged release (#372 stays open).
+- **SHA-256 checksums attached to Direct release assets** -- `release.yml`
+  now generates `<asset>.sha256` for both the DMG and the CLI tarball
+  after they're built/signed/notarised, and attaches both `.sha256`
+  files to the GitHub Release alongside the DMG and tarball. Closes a
+  #428 Direct-distribution must-do; README already documented a
+  `shasum -a 256 -c` verification step that had no file to check
+  against until now (re #428).
+
+### Fixed
+
+- **`LoudnessReportView` wired to real EBU R128 / ITU-R BS.1770 loudness
+  analysis (#433)** -- `runAnalysis()` was a stub that set `isAnalysing =
+  false` immediately and never ran anything, so the Phase 12 loudness
+  compliance feature (#340) showed no results despite `LoudnessReporter`
+  being fully implemented. It now locates FFmpeg via
+  `FFmpegBundleManager`, runs `LoudnessReporter.buildAnalysisArguments`
+  through `FFmpegProcessController` for each queued source file
+  (mirroring `QualityPreviewView`'s proven execution pattern), parses the
+  `loudnorm` JSON block from the captured stderr with
+  `LoudnessReporter.parseAnalysisOutput`, and evaluates compliance with
+  `LoudnessReporter.checkCompliance` against the selected standard. A
+  missing FFmpeg binary now surfaces a clear error message instead of
+  silently doing nothing, and cancelling (or navigating away) stops the
+  running FFmpeg process and analysis task cleanly -- no leaked process
+  or task. Also fixes a latent crash in `LoudnessReporter.
+  parseAnalysisOutput` found while adding test coverage: it subscripted a
+  `ClosedRange` up to `jsonEnd.upperBound`, which equals `String.
+  endIndex` (an invalid, one-past-the-end index) whenever the loudnorm
+  JSON's closing `}` was the last captured character, crashing with an
+  out-of-bounds fatal error; switched to a half-open range, which is both
+  correct and crash-safe.
+- **`QualityMetricsView` wired to real VMAF/SSIM/PSNR analysis (#434)** --
+  `runAnalysis()` built the FFmpeg argument list for the selected
+  metric(s), populated the command preview, and immediately set
+  `isAnalysing = false` without ever executing FFmpeg, so the Phase 7
+  quality-scoring feature (#291) -- gauges, quality grade, per-frame
+  chart -- could never show real data despite `QualityMetrics` being
+  fully implemented. It now mirrors `LoudnessReportView`'s proven
+  pattern (#433): locates FFmpeg via `FFmpegBundleManager`, and for
+  each selected metric ("All" runs VMAF, SSIM, and PSNR as three
+  sequential passes) builds arguments with `QualityMetrics.build*
+  Arguments` and executes them through `FFmpegProcessController.
+  startEncoding`. SSIM/PSNR scores are parsed from stderr via
+  `QualityMetrics.parseSSIMOutput`/`parsePSNROutput`; VMAF writes a
+  JSON log to a unique temp file which is parsed with `QualityMetrics.
+  parseVMAFLog` for both the aggregate score and the per-frame series
+  that feeds the chart (falling back to stderr parsing if the log
+  can't be read), and the temp log is always deleted afterwards. A
+  new pre-flight check probes `ffmpeg -hide_banner -filters` for
+  `libvmaf` support before attempting VMAF -- if absent, VMAF is
+  skipped with a clear message while SSIM/PSNR still run in "All"
+  mode, rather than failing the whole pass with an obscure
+  filter-not-found error. A missing FFmpeg binary surfaces a clear
+  error message instead of silently doing nothing; a new Cancel
+  button, `.onDisappear`, and `deinit` all stop the running process
+  and analysis task cleanly, with no leaked process, task, or temp
+  file. Verified end-to-end against real FFmpeg on the dev machine
+  (Homebrew `ffmpeg-full` 8.1.2 with libvmaf): PSNR 36.79 dB, SSIM
+  0.9749, VMAF mean 86.12 (20 frames) on a `crf 10` vs `crf 40`
+  synthetic test clip. Added pure unit tests for the previously
+  untested `QualityMetrics` (Utility) builders/parsers using
+  real-captured FFmpeg stderr and a real-shaped VMAF JSON log (re
+  #291, re #428).
+- **`BenchmarkView` wired to real FFmpeg benchmark execution (#435)** --
+  `runStandardBenchmarks()` built real FFmpeg arguments for each
+  codec/preset/resolution combination via `EncodingBenchmark.
+  buildBenchmarkArguments` but then fabricated a "simulated" fps figure
+  from hard-coded per-codec/preset multipliers instead of ever running
+  them, so the Phase 13 encoding-speed benchmark feature (#325) showed
+  entirely made-up numbers. It now mirrors `QualityMetricsView`'s
+  proven pattern (#434), the closest reference since benchmarks also
+  loop multiple sequential FFmpeg passes: locates FFmpeg via
+  `FFmpegBundleManager`, then for each `standardBenchmarks` entry runs
+  the real arguments through `FFmpegProcessController.startEncoding`
+  (output discarded via `-f null -`; `BenchmarkResult` has no size
+  field, so no temp output file is needed), measures real wall-clock
+  encode time with `Date()`, and reads the real frame count from the
+  last `-progress` update. A new pure helper, `EncodingBenchmark.
+  makeResult(codec:preset:resolution:frames:encodeTime:
+  hardwareAccelerated:)`, computes `fps = frames / encodeTime` so the
+  figure reflects genuine throughput rather than FFmpeg's `speed=`
+  multiplier. Runs on a `Task.detached` (mirroring `QualityMetricsView`)
+  so the blocking FFmpeg-locate probe and the passes themselves can't
+  block the UI thread; a missing FFmpeg binary surfaces a clear error
+  instead of showing fabricated data; a new Cancel button and
+  `.onDisappear` stop the running process and benchmark task cleanly,
+  with results already collected up to that point retained. Verified
+  end-to-end against real FFmpeg 8.1.2 on the dev machine: `h264/
+  ultrafast@1920x1080` measured 300 frames / 0.463s = 648.55 fps,
+  `h264/medium@1920x1080` measured 300 frames / 1.938s = 154.76 fps --
+  sane, clearly differentiated real numbers. Added 14 pure unit tests
+  for the previously-untested `EncodingBenchmark` (argument building,
+  stderr-output parsing, and the new `makeResult` helper) (re #325,
+  re #428).
+- **`release.yml` header/precheck/FFmpeg comments corrected** -- three
+  stale or incorrect comments fixed with no logic change: the header no
+  longer implies GitHub can branch-filter a tag push to `main` (it
+  can't -- tagging the right commit is a maintainer responsibility);
+  the precheck job's recovery note now points at `gh run rerun
+  <run-id>` instead of the non-existent `gh workflow run` (this
+  workflow has no `workflow_dispatch` trigger); and the FFmpeg-bundling
+  step comment no longer claims arm64-only output now that the script
+  produces genuinely universal binaries (F-011) (re #428).
+- **README install/verify instructions matched to the real asset
+  names** -- README referenced `MeedyaConverter-<version>.dmg` and a
+  bare `.dmg.sha256`; the actual asset (and the one `release.yml`
+  now produces a checksum for) is `MeedyaConverter-<version>-macOS.dmg`.
+  The CLI tarball name and the `shasum -a 256 -c` example are corrected
+  to match (re #428).
+
+### Documentation
+
+- **New Direct-distribution release runbook**
+  (`docs/distribution/direct-release.md`) documenting the actual
+  `release.yml` flow end-to-end: pre-flight checklist, cutting an rc/GA
+  tag, a step-by-step walkthrough of what CI does, a local smoke-test
+  procedure for the published artefacts, failure/re-run guidance, a
+  soak-window policy placeholder, and known gaps (the CHANGELOG-date
+  step not being committed by CI; the CLI tarball being signed but not
+  notarised; the FFmpeg pin being a single deliberate edit) (re #428).
+- **`apple-secrets-setup.md` verification section rewritten** -- it
+  told the reader to dry-run via Actions -> "Run workflow", but
+  `release.yml` has no `workflow_dispatch` trigger; that button doesn't
+  exist. Rewritten to state the precheck can only be observed on a real
+  `v*` tag push, with a pointer to the new release runbook and a noted
+  (but not implemented) option to add a `workflow_dispatch`
+  precheck-only path later (re #428).
+- **`help/cli-reference.md` rewritten** against the real `meedya-convert`
+  command surface -- it previously called the binary `meedya-cli` and
+  claimed "the CLI tool will be implemented in Phase 6"; both were stale,
+  since the CLI shipped in Phase 4. All six subcommands (`encode`, `probe`,
+  `profiles`, `batch`, `manifest`, `validate`), their real options, and the
+  actual POSIX exit codes (0/1/2/3/4/5/6/130) are now documented from
+  source and cross-checked against `docs/api/meedya-convert-api.yaml` (#429).
+- **New help topic `help/vector-conversion.md`** documenting the Tools
+  sidebar's Vector Conversion (raster -> SVG) and ProRes to Vector
+  (ProRes 4444 -> animated SVG) views: input formats, editability presets,
+  tracing modes, alpha strategies, animation methods, and the ProRes
+  output-size warning, sourced from `RasterVectorConverter.swift`,
+  `ProResToVectorConverter.swift`, and the corresponding SwiftUI views (#429).
+- **`PROJECT_STATUS.md`, `Project_Plan.md`, and `DEV_NOTES.md` refreshed**
+  to post-autopilot reality: verified test count (1053, all green, 0
+  compiler warnings), the F-001..F-012 security findings register status,
+  the universal/first-party FFmpeg supply chain, and the `v0.1.0-rc.4`
+  (soak) -> `v0.1.0` GA release posture. Removed a stale "CLI: Phase 6"
+  platform-strategy row in `Project_Plan.md` (the CLI shipped in Phase 4)
+  and corrected the `profiles`/`validate` CLI command descriptions there
+  to match the shipped flag surface (#429).
+
+---
+
 ## [0.1.0-rc.4] -- 2026-MM-DD (TBD)
 
 ### Highlights

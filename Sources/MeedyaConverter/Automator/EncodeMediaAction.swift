@@ -193,6 +193,12 @@ final class EncodeMediaActionHandler {
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         let outputName = "\(stem) (\(sanitisedProfile)).\(containerExtension)"
-        return directory.appendingPathComponent(outputName)
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `profileName` is caller-supplied to this
+        // Automator action, mirroring the same surface already
+        // hardened on the Shortcuts side (`ConvertMediaIntent`).
+        return directory.appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent(outputName)
+        )
     }
 }

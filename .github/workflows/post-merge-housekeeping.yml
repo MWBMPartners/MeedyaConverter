@@ -1,0 +1,49 @@
+# =============================================================================
+# MeedyaConverter — Post-merge housekeeping reminder
+# Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
+# =============================================================================
+#
+# Standing task #12 (see .claude/standing_tasks.md) asks that
+# `scripts/clean-dev-caches.sh --quick` be run after each merge to main to
+# reclaim build/DerivedData space. That task was being silently skipped
+# (flagged in the #429 standing-tasks audit).
+#
+# This workflow makes the reminder self-enforcing without touching a
+# developer's machine: on every push to `main` it writes a short note to the
+# run's Step Summary. It intentionally:
+#   * runs on ubuntu-latest (cheap; no macOS minutes),
+#   * needs no repository checkout and no `uses:` actions (so it is exempt from
+#     the action-pin supply-chain linter, F-010), and
+#   * only emits a message — it never mutates the repo or a workstation.
+# =============================================================================
+
+name: Post-merge housekeeping
+
+on:
+  push:
+    branches: [main]
+
+# Read-only; this workflow only writes to its own step summary.
+permissions:
+  contents: read
+
+jobs:
+  remind:
+    name: Dev-cache cleanup reminder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit housekeeping reminder
+        shell: bash
+        run: |
+          {
+            echo "### 🧹 Post-merge housekeeping reminder"
+            echo ""
+            echo "A merge just landed on \`main\`. Per **standing task #12**, run the"
+            echo "dev-cache cleanup locally to reclaim build / DerivedData space:"
+            echo ""
+            echo '```bash'
+            echo "scripts/clean-dev-caches.sh --quick   # ~1-3 GiB; safe, regenerates on next build"
+            echo '```'
+            echo ""
+            echo "Use \`--deep\` at session end or under disk pressure, and \`--dry-run\` to preview."
+          } >> "$GITHUB_STEP_SUMMARY"

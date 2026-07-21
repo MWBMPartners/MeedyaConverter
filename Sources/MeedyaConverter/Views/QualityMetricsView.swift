@@ -25,6 +25,17 @@ enum MetricSelection: String, CaseIterable, Identifiable {
     case all = "All"
 
     var id: String { rawValue }
+
+    /// The engine metric type(s) this selection expands to. "All" runs
+    /// VMAF, SSIM, and PSNR as separate sequential FFmpeg passes (Issue #434).
+    var qualityMetricTypes: [QualityMetricType] {
+        switch self {
+        case .vmaf: return [.vmaf]
+        case .ssim: return [.ssim]
+        case .psnr: return [.psnr]
+        case .all: return [.vmaf, .ssim, .psnr]
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +95,21 @@ final class QualityMetricsViewModel {
     /// Human-readable summary of the generated FFmpeg command.
     var generatedCommand: String = ""
 
+    // MARK: - Cancellation (Issue #434)
+
+    /// The in-flight analysis task, retained so it can be cancelled when the
+    /// user cancels or the view disappears. `nonisolated(unsafe)` because
+    /// `deinit` (always nonisolated, even for `@MainActor` classes) needs to
+    /// cancel it too — mirrors `StoreManager.transactionListenerTask`.
+    @ObservationIgnored
+    nonisolated(unsafe) private var analysisTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the pass currently running,
+    /// retained so `cancelAnalysis()` can stop the running process rather
+    /// than merely abandoning it.
+    @ObservationIgnored
+    nonisolated(unsafe) private var currentController: FFmpegProcessController?
+
     // MARK: - Computed Properties
 
     /// Whether both file paths are set and valid for analysis.
@@ -111,48 +137,192 @@ final class QualityMetricsViewModel {
 
     /// Runs the quality analysis with the current configuration.
     ///
-    /// Generates the FFmpeg command arguments, updates the command
-    /// preview, and (in a full implementation) would execute FFmpeg
-    /// and parse the results.
+    /// Mirrors the execution pattern proven in
+    /// `LoudnessReportView.runAnalysis()` (Issue #433): locate FFmpeg via
+    /// `FFmpegBundleManager`, build arguments with the `QualityMetrics`
+    /// builders, run them through `FFmpegProcessController.startEncoding(
+    /// arguments:)`, then parse the result — from the VMAF JSON log for
+    /// VMAF, or from `controller.errorOutput` (stderr) for SSIM/PSNR.
+    ///
+    /// "All" runs VMAF, SSIM, and PSNR as three sequential FFmpeg passes so
+    /// each metric gets its own dedicated filter graph and log/output to
+    /// parse (a single combined pass cannot report all three independently).
+    ///
+    /// The work runs on a plain `Task { }`, which — created from this
+    /// `@MainActor`-isolated method — inherits main-actor isolation, so
+    /// `self` never crosses an isolation boundary (Swift 6 would reject
+    /// sending a `@MainActor`-class `self` out of a detached task and back
+    /// via `MainActor.run`). UI-state mutations are therefore direct
+    /// property writes, not actor hops. The two genuinely blocking calls —
+    /// `FFmpegBundleManager.locateFFmpeg()` (file I/O) and
+    /// `probeLibvmafAvailable(ffmpegPath:)` (blocks synchronously on
+    /// process exit) — are kept off the main thread by running them in
+    /// child `Task.detached` blocks that capture/return only `Sendable`
+    /// values (`String`/`Bool`), never `self`. The FFmpeg passes themselves
+    /// stream progress via a non-blocking `AsyncStream`, so they're awaited
+    /// directly on the main actor without needing to be detached.
     func runAnalysis() {
         guard canRunAnalysis else { return }
 
         isAnalysing = true
         errorMessage = nil
+        result = nil
+        perFrameData = []
+        generatedCommand = ""
 
-        // Generate the appropriate FFmpeg arguments
-        var args: [String] = []
+        let reference = referencePath
+        let distorted = distortedPath
+        let metric = selectedMetric
 
-        switch selectedMetric {
-        case .vmaf:
-            let logPath = NSTemporaryDirectory() + "vmaf_log_\(UUID().uuidString).json"
-            args = QualityMetrics.buildVMAFArguments(
-                referencePath: referencePath,
-                distortedPath: distortedPath,
-                logPath: logPath
+        analysisTask = Task { [weak self] in
+            guard let self else { return }
+
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                self.errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before analysing quality."
+                self.isAnalysing = false
+                return
+            }
+
+            var metricsToRun = metric.qualityMetricTypes
+
+            // VMAF pre-flight (Issue #434): libvmaf may be absent even in an
+            // otherwise-working FFmpeg build. Skip VMAF gracefully rather
+            // than letting the whole pass fail with a filter-not-found error.
+            if metricsToRun.contains(.vmaf) {
+                let hasLibvmaf = await Task.detached {
+                    Self.probeLibvmafAvailable(ffmpegPath: ffmpegPath)
+                }.value
+                if !hasLibvmaf {
+                    metricsToRun.removeAll { $0 == .vmaf }
+                    if metric == .vmaf {
+                        self.errorMessage = "VMAF requires an FFmpeg build with libvmaf support, which this FFmpeg binary does not have. Install a build with --enable-libvmaf, or choose SSIM/PSNR instead."
+                    } else {
+                        self.errorMessage = "VMAF was skipped: this FFmpeg binary was not built with libvmaf support. SSIM and PSNR were still computed."
+                    }
+                }
+            }
+
+            guard !metricsToRun.isEmpty else {
+                self.isAnalysing = false
+                return
+            }
+
+            var vmafScore: Double?
+            var perFrame: [Double]?
+            var ssimScore: Double?
+            var psnrScore: Double?
+            var commandsRun: [String] = []
+
+            passLoop: for metricType in metricsToRun {
+                if Task.isCancelled { break passLoop }
+
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                self.currentController = controller
+
+                var vmafLogPath: String?
+                let arguments: [String]
+                switch metricType {
+                case .vmaf:
+                    let logPath = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("vmaf_log_\(UUID().uuidString).json").path
+                    vmafLogPath = logPath
+                    arguments = QualityMetrics.buildVMAFArguments(
+                        referencePath: reference,
+                        distortedPath: distorted,
+                        logPath: logPath
+                    )
+                case .ssim:
+                    arguments = QualityMetrics.buildSSIMArguments(
+                        referencePath: reference,
+                        distortedPath: distorted
+                    )
+                case .psnr:
+                    arguments = QualityMetrics.buildPSNRArguments(
+                        referencePath: reference,
+                        distortedPath: distorted
+                    )
+                }
+
+                commandsRun.append("ffmpeg " + arguments.joined(separator: " "))
+
+                defer {
+                    if let vmafLogPath {
+                        try? FileManager.default.removeItem(atPath: vmafLogPath)
+                    }
+                }
+
+                do {
+                    let progressStream = try controller.startEncoding(arguments: arguments)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                } catch {
+                    self.errorMessage = "\(metricType.rawValue.uppercased()) analysis failed: \(error.localizedDescription)"
+                    continue passLoop
+                }
+
+                if Task.isCancelled { break passLoop }
+
+                switch metricType {
+                case .vmaf:
+                    if let vmafLogPath, let parsed = QualityMetrics.parseVMAFLog(vmafLogPath) {
+                        vmafScore = parsed.vmaf
+                        perFrame = parsed.perFrameScores
+                    } else {
+                        // Fall back to the aggregate score FFmpeg also prints
+                        // to stderr, in case the JSON log could not be read.
+                        vmafScore = QualityMetricsBuilder.parseVMAFScore(from: controller.errorOutput)
+                    }
+                case .ssim:
+                    ssimScore = QualityMetrics.parseSSIMOutput(controller.errorOutput)
+                case .psnr:
+                    psnrScore = QualityMetrics.parsePSNROutput(controller.errorOutput)
+                }
+            }
+
+            let finalResult = QualityScoreResult(
+                vmaf: vmafScore,
+                ssim: ssimScore,
+                psnr: psnrScore,
+                perFrameScores: perFrame
             )
-        case .ssim:
-            args = QualityMetrics.buildSSIMArguments(
-                referencePath: referencePath,
-                distortedPath: distortedPath
-            )
-        case .psnr:
-            args = QualityMetrics.buildPSNRArguments(
-                referencePath: referencePath,
-                distortedPath: distortedPath
-            )
-        case .all:
-            args = QualityMetricsBuilder.buildCombinedArguments(
-                referencePath: referencePath,
-                distortedPath: distortedPath
-            )
+            let combinedCommand = commandsRun.joined(separator: "\n\n")
+
+            self.currentController = nil
+            self.generatedCommand = combinedCommand
+            if vmafScore == nil && ssimScore == nil && psnrScore == nil {
+                if self.errorMessage == nil {
+                    self.errorMessage = "Could not read quality metric data from the FFmpeg output."
+                }
+            } else {
+                self.result = finalResult
+                self.perFrameData = (perFrame ?? []).enumerated().map {
+                    PerFrameDataPoint(frame: $0.offset, score: $0.element)
+                }
+            }
+            self.isAnalysing = false
         }
+    }
 
-        generatedCommand = "ffmpeg " + args.joined(separator: " ")
-
-        // In a full implementation, this would execute FFmpeg via
-        // FFmpegProcessController and parse the output. For now,
-        // we populate the command preview and mark analysis as complete.
+    /// Cancel an in-progress quality analysis.
+    ///
+    /// Stops the currently-running FFmpeg process (if any), cancels the
+    /// analysis `Task`, and deletes any in-flight VMAF temp log so no
+    /// process, task, or temp file is left behind after the user cancels or
+    /// navigates away from this view.
+    func cancelAnalysis() {
+        currentController?.stopEncoding()
+        currentController = nil
+        analysisTask?.cancel()
+        analysisTask = nil
         isAnalysing = false
     }
 
@@ -162,6 +332,44 @@ final class QualityMetricsViewModel {
         perFrameData = []
         generatedCommand = ""
         errorMessage = nil
+    }
+
+    /// Whether the given FFmpeg binary was built with libvmaf support.
+    ///
+    /// Probes the compiled-in filter list (`-hide_banner -filters`) rather
+    /// than attempting to run VMAF outright, so a build missing libvmaf can
+    /// be detected and reported gracefully instead of failing the whole
+    /// pass with an obscure "no such filter" error. Bundled static builds
+    /// usually include libvmaf; a user-supplied or Homebrew FFmpeg might not.
+    ///
+    /// `nonisolated` (not `@MainActor`, despite the enclosing class) and
+    /// invoked from a detached task so the blocking `waitUntilExit()` call
+    /// never runs on the main thread.
+    private nonisolated static func probeLibvmafAvailable(ffmpegPath: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = ["-hide_banner", "-filters"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+        process.standardInput = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return output.contains("libvmaf")
+    }
+
+    deinit {
+        currentController?.stopEncoding()
+        analysisTask?.cancel()
     }
 }
 
@@ -224,6 +432,9 @@ struct QualityMetricsView: View {
             if case .success(let urls) = result, let url = urls.first {
                 viewModel.distortedPath = url.path
             }
+        }
+        .onDisappear {
+            viewModel.cancelAnalysis()
         }
     }
 
@@ -289,6 +500,16 @@ struct QualityMetricsView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!viewModel.canRunAnalysis)
                 .accessibilityLabel(viewModel.isAnalysing ? "Analysis in progress" : "Run quality analysis")
+
+                if viewModel.isAnalysing {
+                    Button {
+                        viewModel.cancelAnalysis()
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Cancel quality analysis")
+                }
 
                 Button {
                     viewModel.clearResults()

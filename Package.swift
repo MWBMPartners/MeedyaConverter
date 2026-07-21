@@ -388,6 +388,13 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/Assets.xcassets"),
+                // In-app help content (Markdown). Copied verbatim so the GUI
+                // can enumerate the bundled topics at runtime via
+                // `Bundle.module.urls(forResourcesWithExtension:subdirectory:)`
+                // and render them in HelpView. This is the single source of
+                // truth for user documentation — the same Markdown that used
+                // to live at repo-root `help/`.
+                .copy("Resources/Help"),
                 // AppleScript scripting definition. Without this declaration
                 // SwiftPM silently emits an "unhandled file" warning and
                 // drops the .sdef from the built .app bundle, leaving

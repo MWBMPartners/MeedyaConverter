@@ -1,8 +1,7 @@
 # MeedyaConverter — Autopilot Project Brief
 
-> Machine-authoritative state: `autopilot.json` (in this same archive
-> directory). This file is the human-readable narrative. Read both
-> together.
+> Machine-authoritative state: `.dev-team/autopilot.json`. This file is the
+> human-readable narrative. Read both together.
 
 ## Mission
 
@@ -43,7 +42,7 @@ MeedyaSuite-core (shared Rust crates).
 | Signing scripts | `scripts/codesign.sh`, `notarize.sh`, `create-dmg.sh`, `bundle-ffmpeg.sh` | Direct path wired |
 | Entitlements | separate Direct + Lite (App Store) entitlements files | Differentiated |
 | Suite-core integration | Behind `SUITE_CORE` flag | Optional |
-| In-app help | `Resources/Help/` (currently scaffold) | Needs population |
+| In-app help | `Sources/MeedyaConverter/Resources/Help/` (bundled Markdown) | Populated |
 | CLI API docs | `docs/api/` (OpenAPI/Swagger) | Needs audit + update |
 
 ## Definition of Done
@@ -73,7 +72,7 @@ Never pushed without explicit user instruction.
 |-------|-------|------|--------|--------|
 | 1 | Bootstrap + STABILIZE adoption | Cherry-picked 6 prior committed ship-blocker branches + committed 2 in-progress ones from killed workflow `wf_7bae08f4-b10`. Builds clean. State files committed at `aaecfed`. | `5dcd791` → `aaecfed` | ✅ |
 | 2 | STABILIZE | Package.swift consolidation: `.sdef` resource declaration (AppleScript now bundled — build log confirms `Copying MeedyaConverter.sdef`); Sparkle SPM dep conditional on `DIRECT=1`; FFmpegKit SPM dep conditional on `APP_STORE=1`. Build verifies clean default-config. | `ec28625` | ✅ |
-| 3 | STABILIZE | Sparkle Option A — `GitHubReleaseChecker` (new) polls `releases/latest` with 1-hour cache; `AppUpdateChecker` rewrites dispatch into three mechanisms (sparkle / githubReleases / appStore) selected by bundle ID + framework presence; `SettingsView`'s `UpdateSettingsTab` shows three distinct UI variants; `Resources/Help/updates.md` documents the v0.1.0 manual-DMG flow + DMG signature verification + the v0.2.0 Sparkle roadmap. Build clean. | `41f4994` | ✅ |
+| 3 | STABILIZE | Sparkle Option A — `GitHubReleaseChecker` (new) polls `releases/latest` with 1-hour cache; `AppUpdateChecker` rewrites dispatch into three mechanisms (sparkle / githubReleases / appStore) selected by bundle ID + framework presence; `SettingsView`'s `UpdateSettingsTab` shows three distinct UI variants; `Sources/MeedyaConverter/Resources/Help/updates.md` documents the v0.1.0 manual-DMG flow + DMG signature verification + the v0.2.0 Sparkle roadmap. Build clean. | `41f4994` | ✅ |
 | 4 | STABILIZE | Fail-fast Apple-secrets precheck job — new `precheck-secrets` ubuntu-latest job in release.yml that asserts the 6 APPLE_* secrets are populated and APPLE_SIGNING_IDENTITY contains "Developer ID Application" (correct cert family for Direct). The release job declares `needs: precheck-secrets` so a misconfigured secret fails in ~1 ubuntu-minute instead of ~30 macos-minutes deep into notarisation. Defence-in-depth: no secret values are ever printed; GitHub Actions auto-masking is the fallback. YAML validates; pre-commit security review clean. | `5634d28` | ✅ |
 | 5 | STABILIZE | Promoted `docs/Contributing.md` → root `CONTRIBUTING.md` (preserves git history); added MWBM Partners Ltd proprietary-with-contributions preamble (contributor retains copyright + grants MWBM perpetual sublicensable licence; no formal CLA yet; security disclosures via .github/SECURITY.md). Refreshed Development Setup with Swift 6.3 / Xcode 26.5 / macOS 14+ prerequisites + explicit build/test commands. New `CODE_OF_CONDUCT.md` adopts Contributor Covenant v2.1 verbatim with contact lance@mwmail.me and preamble noting it applies across the MeedyaSuite family. README + docs/Home.md inbound references updated. Build clean. | `fbc2ae7` | ✅ |
 | 6 | STABILIZE | Distribution maintainer docs. `docs/distribution/apple-secrets-setup.md` — per-secret recipe for the 6 APPLE_* GitHub Actions secrets using the web-UI flow (per user's standing preference; no `gh secret set`), with the cert-family substring check, app-specific password rotation guidance, and verification via the precheck-secrets job. `docs/distribution/sparkle-cloudflare-worker.md` — Sparkle Option B activation guide for v0.2.0: EdDSA keypair generation, SPARKLE_ED_PRIVATE_KEY secret, Cloudflare Worker deployment (wrangler + DNS + Workers route on update.mwbm.io, account_id e56a7dc0eaf24a365831e47388641a36 = MWBM Partners Ltd), sign_update wiring into release.yml, end-to-end test, key rotation playbook. Both unblock user-side actions currently gating release.yml dry-run + Sparkle B. | `dff0869` | ✅ |
@@ -109,7 +108,7 @@ Never pushed without explicit user instruction.
 | 3 | Refresh README.md for v0.1.0 public Direct release | `8e9f088` | README.md |
 | 4 | Reconcile SECURITY.md Supported Versions for 0.1.0 | `a7c8201` | .github/SECURITY.md |
 | 5 | Editorial pass on CHANGELOG.md for rc.4 ship | `07733a4` | CHANGELOG.md |
-| 6 | Fix wrong org slug + CLI binary name in help/getting-started.md | `22cb576` | help/getting-started.md |
+| 6 | Fix wrong org slug + CLI binary name in Sources/MeedyaConverter/Resources/Help/getting-started.md | `22cb576` | Sources/MeedyaConverter/Resources/Help/getting-started.md |
 | 7 | Sync AppInfo.Version from CFBundleShortVersionString at runtime | `a376f11` | AppInfo.swift, ConverterEngine.swift, tests |
 | 8 | Fix 3 real bugs (VideoStabilizer / DropHandler / ResourceMonitor) | `5dcd791` | 3 swift files |
 
@@ -118,7 +117,7 @@ Never pushed without explicit user instruction.
 | Item | Type | Owner | Status |
 |------|------|-------|--------|
 | Package.swift consolidation (.sdef resource, Sparkle dep scaffold, FFmpegKit dep) | Code | Autopilot | Next cycle (Cycle 2) |
-| Sparkle Option A — GitHub-Releases poll + honest UI copy + Resources/Help/updates.md | Code | Autopilot | Cycle 3 |
+| Sparkle Option A — GitHub-Releases poll + honest UI copy + Sources/MeedyaConverter/Resources/Help/updates.md | Code | Autopilot | Cycle 3 |
 | Sparkle Option B — Cloudflare Worker code + SparkleConfig.swift + deploy workflow | Code + Docs | Autopilot (scaffolding only; deployment by user) | Cycle 4 |
 | Fail-fast precheck job at top of release.yml asserting Apple secrets present | Code | Autopilot | Cycle 5 |
 | CONTRIBUTING.md | Docs | Autopilot | Cycle 6 |

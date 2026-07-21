@@ -145,8 +145,16 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         defaultFormatter.dateFormat = "yyyy-MM-dd"
         result = result.replacingOccurrences(of: "{date}", with: defaultFormatter.string(from: date))
 
-        // Sanitise: remove characters not allowed in filenames
-        return sanitiseFilename(result)
+        // Sanitise: remove characters not allowed in filenames.
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `sanitiseFilename` below strips "/", ":", "\\"
+        // but not a bare ".." — and `result` can be built entirely
+        // from untrusted media metadata (e.g. a crafted file's
+        // {title} tag) substituted into a user-editable template.
+        // Routing the final string through PathSanitizer additionally
+        // collapses ".." and strips NUL / trailing dot-whitespace; it
+        // is a no-op for any ordinary resolved filename.
+        return PathSanitizer.sanitizeFilenameComponent(sanitiseFilename(result))
     }
 
     // MARK: - Collision Handling
@@ -213,13 +221,18 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         formatter.dateFormat = "yyyy-MM-dd"
         let dateString = formatter.string(from: Date())
 
-        return sanitiseFilename(
-            template
-                .replacingOccurrences(of: "{title}", with: baseName)
-                .replacingOccurrences(of: "{name}", with: baseName)
-                .replacingOccurrences(of: "{container}", with: ext)
-                .replacingOccurrences(of: "{ext}", with: ext)
-                .replacingOccurrences(of: "{date}", with: dateString)
+        // F-002 defensive sanitisation per SECURITY.md — see the
+        // comment in `resolve(sourceFile:profile:date:)` above; same
+        // reasoning applies to this legacy overload.
+        return PathSanitizer.sanitizeFilenameComponent(
+            sanitiseFilename(
+                template
+                    .replacingOccurrences(of: "{title}", with: baseName)
+                    .replacingOccurrences(of: "{name}", with: baseName)
+                    .replacingOccurrences(of: "{container}", with: ext)
+                    .replacingOccurrences(of: "{ext}", with: ext)
+                    .replacingOccurrences(of: "{date}", with: dateString)
+            )
         )
     }
 }

@@ -68,7 +68,7 @@ jobs:
     steps:
       # Step 1: Check out the repository
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Step 2: Verify Swift version (already installed on runner)
       - name: Verify Swift version
@@ -83,7 +83,7 @@ jobs:
       # dependency download time on warm runners, same as in
       # build.yml and release.yml.
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.swift', 'Package.resolved') }}

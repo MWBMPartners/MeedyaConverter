@@ -14,8 +14,13 @@
 //   only the agent registry, configuration types, and InsecureTransportOverride
 //   token are stable. This tab therefore stores agents as a UserDefaults-
 //   backed JSON list rather than tying to a live `RenderFarmClient` instance.
-//   When #346 completes, the consumer reads these AppStorage keys to
-//   construct its Configuration + initial agent registry.
+//   The consumer that reads these AppStorage keys to construct a
+//   `RenderFarmClient.Configuration` + initial agent registry now exists:
+//   `ConverterEngine.RenderFarmConfigurationLoader`. It shares this tab's
+//   exact key names via `RenderFarmConfigurationLoader.Keys` and enforces
+//   the same insecure-transport acknowledgement contract. The remaining
+//   #346 work — SSH/TLS transport implementations, Bonjour discovery, and
+//   the agent binary — is unaffected and stays open.
 //
 // Bonjour-discovered agents are NOT present yet — discovery is part of
 // the gated #346 work. The agent list shows the manual-entry workflow
@@ -39,28 +44,32 @@ struct RenderFarmSettingsTab: View {
     /// Whether the user has enabled insecure (plain HTTP) transports.
     /// When `true`, the engine consumer constructs an
     /// `InsecureTransportOverride` from `insecureAcknowledgement`.
-    @AppStorage("renderFarm.allowInsecureTransports") private var allowInsecureTransports: Bool = false
+    @AppStorage(RenderFarmConfigurationLoader.Keys.allowInsecureTransports)
+    private var allowInsecureTransports: Bool = RenderFarmConfigurationLoader.defaultAllowInsecureTransports
 
     /// Required acknowledgement string passed to
     /// `InsecureTransportOverride.developmentOnly(acknowledgement:)`.
     /// Empty when `allowInsecureTransports` is false; required when it
     /// is true.
-    @AppStorage("renderFarm.insecureAcknowledgement") private var insecureAcknowledgement: String = ""
+    @AppStorage(RenderFarmConfigurationLoader.Keys.insecureAcknowledgement)
+    private var insecureAcknowledgement: String = RenderFarmConfigurationLoader.defaultInsecureAcknowledgement
 
     /// Bonjour-discovery interval in seconds. Default matches
     /// `RenderFarmClient.Configuration.init`'s default of 30s.
-    @AppStorage("renderFarm.discoveryIntervalSeconds") private var discoveryIntervalSeconds: Double = 30.0
+    @AppStorage(RenderFarmConfigurationLoader.Keys.discoveryIntervalSeconds)
+    private var discoveryIntervalSeconds: Double = RenderFarmConfigurationLoader.defaultDiscoveryIntervalSeconds
 
     /// Chunk upload size in MiB. Persisted as the user-facing value
     /// (1/4/16/64) rather than raw bytes; converted to bytes when
     /// the consumer constructs the engine Configuration.
-    @AppStorage("renderFarm.chunkSizeMiB") private var chunkSizeMiB: Int = 4
+    @AppStorage(RenderFarmConfigurationLoader.Keys.chunkSizeMiB)
+    private var chunkSizeMiB: Int = RenderFarmConfigurationLoader.defaultChunkSizeMiB
 
     /// JSON-encoded `[RenderFarmAgentInfo]` for the manually-added agent
     /// registry. Stored as `Data` rather than a String because the
     /// AppStorage `Data` initialiser is more direct than wrapping JSON
     /// in a String. An empty `Data()` decodes to `[]` via our binding.
-    @AppStorage("renderFarm.agentsJSON") private var agentsJSON: Data = Data()
+    @AppStorage(RenderFarmConfigurationLoader.Keys.agentsJSON) private var agentsJSON: Data = Data()
 
     // -----------------------------------------------------------------
     // MARK: - View state

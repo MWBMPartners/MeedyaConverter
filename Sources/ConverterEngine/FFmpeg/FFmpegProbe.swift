@@ -137,7 +137,7 @@ public final class FFmpegProbe: Sendable {
             "-show_chapters",                  // Include chapter markers
             "-show_entries",                   // Additional metadata entries
             "stream=index,codec_name,codec_long_name,codec_type,profile,bit_rate,"
-            + "sample_rate,channels,channel_layout,width,height,coded_width,coded_height,"
+            + "sample_rate,channels,channel_layout,sample_fmt,width,height,coded_width,coded_height,"
             + "display_aspect_ratio,sample_aspect_ratio,r_frame_rate,avg_frame_rate,"
             + "pix_fmt,color_range,color_space,color_transfer,color_primaries,"
             + "bits_per_raw_sample,duration,nb_frames,"
@@ -623,6 +623,10 @@ public final class FFmpegProbe: Sendable {
         var channelLayout: ChannelLayout?
         var audioBitDepth: Int?
         var audioCodec: AudioCodec?
+        // Populated via `SuiteCoreCodecClassifier` (#372) below — nil for
+        // non-audio streams and only ever additive to the existing fields
+        // above, which continue to be sourced exactly as before.
+        var suiteCoreCodecDescriptor: SuiteCoreCodecDescriptor?
 
         if streamType == .audio {
             if let srStr = dict["sample_rate"] as? String {
@@ -638,6 +642,21 @@ public final class FFmpegProbe: Sendable {
             }
 
             audioCodec = mapToAudioCodec(codecName)
+
+            // Tag lossless/spatial classification using the built-in
+            // fallback table (or, when `SUITE_CORE` is linked, the
+            // authoritative Rust `meedya-codecs` classification). This
+            // supplements — and never replaces — `audioCodec` above;
+            // it drives the Stream Inspector's "Lossless"/"Spatial"
+            // badges. Per #372.
+            let sampleFormat = dict["sample_fmt"] as? String
+            if let name = codecName {
+                suiteCoreCodecDescriptor = SuiteCoreCodecClassifier.classify(
+                    ffprobeCodecName: name,
+                    channelLayout: layoutName,
+                    sampleFormat: sampleFormat
+                )
+            }
         }
 
         // Subtitle-specific parsing
@@ -669,6 +688,7 @@ public final class FFmpegProbe: Sendable {
             channelLayout: channelLayout,
             audioBitDepth: audioBitDepth,
             audioCodec: audioCodec,
+            suiteCoreCodecDescriptor: suiteCoreCodecDescriptor,
             subtitleFormat: subtitleFormat
         )
     }

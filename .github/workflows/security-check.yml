@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Only need the worktree; no history.
           fetch-depth: 1

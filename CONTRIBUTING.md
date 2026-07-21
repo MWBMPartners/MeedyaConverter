@@ -253,7 +253,7 @@ Closes #92
    ```
 
 For a deeper guide see [`docs/Getting-Started.md`](docs/Getting-Started.md).
-For the in-app help index see [`Resources/Help/`](Resources/Help/).
+For the in-app help index see [`Sources/MeedyaConverter/Resources/Help/`](Sources/MeedyaConverter/Resources/Help/).
 
 ---
 

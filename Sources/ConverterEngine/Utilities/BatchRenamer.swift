@@ -166,7 +166,15 @@ public struct BatchRenamer: Sendable {
             }
 
             let baseName = ext.isEmpty ? stem : "\(stem).\(ext)"
-            var newURL = directory.appendingPathComponent(baseName)
+            // F-002 defensive sanitisation per SECURITY.md (POLISH
+            // follow-up): unlike a plain `lastPathComponent`, `stem`
+            // here has been rewritten by arbitrary user-supplied
+            // find/replace (and regex-replacement-template) rules, so
+            // it can genuinely contain "/" or ".." if a rule's
+            // `replaceWith` includes them. Sanitising closes that off.
+            var newURL = directory.appendingPathComponent(
+                PathSanitizer.sanitizeFilenameComponent(baseName)
+            )
 
             // Handle filename collisions by appending a numeric suffix.
             var counter = 1
@@ -174,7 +182,9 @@ public struct BatchRenamer: Sendable {
                 let suffixed = ext.isEmpty
                     ? "\(stem)_\(counter)"
                     : "\(stem)_\(counter).\(ext)"
-                newURL = directory.appendingPathComponent(suffixed)
+                newURL = directory.appendingPathComponent(
+                    PathSanitizer.sanitizeFilenameComponent(suffixed)
+                )
                 counter += 1
             }
 

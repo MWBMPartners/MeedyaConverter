@@ -200,8 +200,12 @@ public struct PipelineExecutor: Sendable {
         // -----------------------------------------------------------------
         case .encode:
             let ext = step.config["extension"] ?? "mkv"
+            // F-002 defensive sanitisation per SECURITY.md (POLISH
+            // follow-up): `baseName` derives from the input file's
+            // name; sanitising is a no-op for ordinary names but
+            // closes the door on a future traversal via `..`.
             let outputPath = (outputDir as NSString).appendingPathComponent(
-                "\(baseName)_step\(stepIndex).\(ext)"
+                PathSanitizer.sanitizeFilenameComponent("\(baseName)_step\(stepIndex).\(ext)")
             )
             var args = ["-i", inputPath, "-y"]
             // Delegate detailed argument construction to the profile if available;
@@ -221,8 +225,9 @@ public struct PipelineExecutor: Sendable {
         // -----------------------------------------------------------------
         case .extractThumbnail:
             let timestamp = step.config["timestamp"] ?? "00:00:05"
+            // F-002 defensive sanitisation per SECURITY.md.
             let outputPath = (outputDir as NSString).appendingPathComponent(
-                "\(baseName)_thumb.jpg"
+                PathSanitizer.sanitizeFilenameComponent("\(baseName)_thumb.jpg")
             )
             let args = [
                 "-i", inputPath,
@@ -241,8 +246,9 @@ public struct PipelineExecutor: Sendable {
             let duration = step.config["duration"] ?? "5"
             let fps = step.config["fps"] ?? "10"
             let width = step.config["width"] ?? "480"
+            // F-002 defensive sanitisation per SECURITY.md.
             let outputPath = (outputDir as NSString).appendingPathComponent(
-                "\(baseName)_preview.gif"
+                PathSanitizer.sanitizeFilenameComponent("\(baseName)_preview.gif")
             )
             let filterComplex = "fps=\(fps),scale=\(width):-1:flags=lanczos,split[s0][s1];" +
                 "[s0]palettegen[p];[s1][p]paletteuse"
@@ -260,8 +266,9 @@ public struct PipelineExecutor: Sendable {
         // -----------------------------------------------------------------
         case .extractAudio:
             let format = step.config["format"] ?? "flac"
+            // F-002 defensive sanitisation per SECURITY.md.
             let outputPath = (outputDir as NSString).appendingPathComponent(
-                "\(baseName)_audio.\(format)"
+                PathSanitizer.sanitizeFilenameComponent("\(baseName)_audio.\(format)")
             )
             var args = [
                 "-i", inputPath,
@@ -285,8 +292,11 @@ public struct PipelineExecutor: Sendable {
         // -----------------------------------------------------------------
         case .probe:
             let probeFormat = step.config["format"] ?? "json"
+            // F-002 defensive sanitisation per SECURITY.md.
             let outputPath = (outputDir as NSString).appendingPathComponent(
-                "\(baseName)_probe.\(probeFormat == "json" ? "json" : "txt")"
+                PathSanitizer.sanitizeFilenameComponent(
+                    "\(baseName)_probe.\(probeFormat == "json" ? "json" : "txt")"
+                )
             )
             let args = [
                 "-v", "quiet",

@@ -4,13 +4,18 @@
 #
 # Purpose:
 #   Builds a release-optimised binary, packages it into a DMG, and publishes
-#   a GitHub Release whenever a version tag (e.g. v1.0.0) is pushed to the
-#   main branch.
+#   a GitHub Release whenever a version tag (e.g. v1.0.0) is pushed to this
+#   repository.
 #
 # Trigger:
-#   Push a tag matching the pattern "v*" on the main branch, for example:
-#     git tag v1.0.0
+#   Push a tag matching the pattern "v*", for example:
+#     git tag v1.0.0 <commit-sha-on-main>
 #     git push origin v1.0.0
+#
+#   GitHub Actions has no mechanism to restrict `on.push.tags` to commits
+#   reachable from a given branch — a v* tag fires this workflow no matter
+#   which commit it points at. Only ever tag a commit that is actually on
+#   `main`; this is enforced by maintainer discipline, not by CI.
 #
 # Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
 # =============================================================================
@@ -23,8 +28,11 @@ name: "Production Release"
 # This workflow only runs when a tag starting with "v" is pushed. Tags are
 # expected to follow semantic versioning: v1.0.0, v2.3.1, etc.
 #
-# The branch filter on push/tags ensures this fires only for version tags
-# and not for arbitrary branch pushes.
+# `on.push.tags` is a tag-NAME filter, not a branch filter — GitHub Actions
+# has no way to restrict a tag push to commits reachable from a specific
+# branch, so a v* tag pushed against any commit (on any branch, or no
+# branch at all) will trigger this workflow. Tagging the intended commit
+# on `main` is a maintainer responsibility, not something CI enforces.
 # ---------------------------------------------------------------------------
 on:
   push:
@@ -71,9 +79,11 @@ jobs:
   # tag's release number.
   #
   # Failing this job stops the release before any keychain / build /
-  # signing step runs, costing roughly one ubuntu-minute. Re-running the
-  # workflow against the same tag is then a `gh workflow run` away once
-  # the secret is fixed.
+  # signing step runs, costing roughly one ubuntu-minute. This workflow has
+  # no `workflow_dispatch` trigger, so once the secret is fixed the way to
+  # retry against the same tag is `gh run rerun <run-id>` (find the run ID
+  # with `gh run list --workflow=release.yml`) — NOT `gh workflow run`,
+  # which requires a dispatch-style trigger this workflow doesn't have.
   #
   # This job NEVER prints the secret values themselves — only their
   # presence (and, for APPLE_SIGNING_IDENTITY, whether the substring
@@ -177,7 +187,7 @@ jobs:
       # changelog from commit messages between the previous tag and this one.
       # ---------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -216,7 +226,7 @@ jobs:
       # Reuse cached dependencies to speed up the release build.
       # ---------------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.swift', 'Package.resolved') }}
@@ -231,13 +241,22 @@ jobs:
         run: swift package resolve
 
       # ---------------------------------------------------------------------
-      # Step 6: Build in release configuration
+      # Step 6: Build a UNIVERSAL (arm64 + x86_64) release binary
       # ---------------------------------------------------------------------
-      # Release builds enable full optimisations (-O) producing smaller and
-      # faster binaries suitable for distribution.
+      # Release builds enable full optimisations (-O). Building for both arches
+      # produces a single universal Mach-O that runs natively on Apple Silicon
+      # AND Intel (no Rosetta). SwiftPM writes universal output to
+      # `.build/apple/Products/Release`, not `.build/release`, so we resolve the
+      # exact bin path via --show-bin-path and export it for later steps.
       # ---------------------------------------------------------------------
-      - name: Build (release)
-        run: swift build -c release
+      - name: Build (release, universal arm64 + x86_64)
+        run: |
+          set -euo pipefail
+          swift build -c release --arch arm64 --arch x86_64
+          SWIFT_BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+          echo "SWIFT_BIN=${SWIFT_BIN}" >> "$GITHUB_ENV"
+          echo "→ universal build output: ${SWIFT_BIN}"
+          lipo -archs "${SWIFT_BIN}/MeedyaConverter" || true
 
       # ---------------------------------------------------------------------
       # Step 7: Run tests against the release build
@@ -317,11 +336,30 @@ jobs:
           mkdir -p "${APP_BUNDLE}/Contents/MacOS"
           mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-          # Copy the release binary into the bundle
-          if [ -f ".build/release/${APP_NAME}" ]; then
-            cp ".build/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+          # Copy the universal release binary into the bundle
+          # (SWIFT_BIN was exported by the universal build step).
+          if [ -f "${SWIFT_BIN}/${APP_NAME}" ]; then
+            cp "${SWIFT_BIN}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
           else
-            echo "::error::GUI binary not found at .build/release/${APP_NAME}"
+            echo "::error::GUI binary not found at ${SWIFT_BIN}/${APP_NAME}"
+            exit 1
+          fi
+
+          # Ship the SwiftPM resource bundle inside the .app.
+          # SwiftPM emits the MeedyaConverter target's declared resources
+          # (Assets.xcassets, the MeedyaConverter.sdef AppleScript definition,
+          # and the bundled Help Markdown) into a SEPARATE
+          # MeedyaConverter_MeedyaConverter.bundle alongside the binary — NOT
+          # into the executable. Because this step hand-builds the .app, that
+          # bundle must be copied into Contents/Resources or the shipped app
+          # has no resources: AppleScript/Automator integration and the in-app
+          # Help would be dead-on-arrival in Direct DMGs. Fail closed if the
+          # bundle is missing (e.g. a Package.swift resources regression).
+          RESOURCE_BUNDLE="${SWIFT_BIN}/${APP_NAME}_${APP_NAME}.bundle"
+          if [ -d "${RESOURCE_BUNDLE}" ]; then
+            cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${RESOURCE_BUNDLE}"
             exit 1
           fi
 
@@ -359,10 +397,11 @@ jobs:
       # with "ffmpeg not found" because the search path only resolved when
       # the user happened to already have Homebrew ffmpeg installed.
       #
-      # The script writes to ${DEST_DIR}/{ffmpeg,ffprobe,ffplay}. The runner
-      # is Apple Silicon (macos-15) so we let the script pick its arm64
-      # default; if/when we ship a universal binary the script grows
-      # multi-arch handling.
+      # The script writes UNIVERSAL (arm64 + x86_64) binaries to
+      # ${DEST_DIR}/{ffmpeg,ffprobe,ffplay}: each per-arch archive is
+      # downloaded from the first-party MeedyaDL-Tools mirror, SHA-256
+      # verified against that release's own SHA256SUMS, and `lipo`-combined
+      # (F-011). No arch-specific branching is needed on the runner side.
       # ---------------------------------------------------------------------
       - name: Bundle FFmpeg + HDR tools
         run: |
@@ -397,9 +436,9 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             chmod +x scripts/codesign.sh
-            ./scripts/codesign.sh .build/release/meedya-convert
+            ./scripts/codesign.sh "${SWIFT_BIN}/meedya-convert"
           else
             echo "::warning::CLI binary not found, skipping CLI signing."
           fi
@@ -457,16 +496,52 @@ jobs:
       - name: Package CLI binary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             mkdir -p cli-staging
-            cp .build/release/meedya-convert cli-staging/
+            cp "${SWIFT_BIN}/meedya-convert" cli-staging/
             tar -czf "meedya-convert-${VERSION}-macOS.tar.gz" -C cli-staging .
             rm -rf cli-staging
             echo "CLI package created: meedya-convert-${VERSION}-macOS.tar.gz"
           fi
 
       # ---------------------------------------------------------------------
-      # Step 16: Generate changelog
+      # Step 16: Generate SHA-256 checksums for the release assets
+      # ---------------------------------------------------------------------
+      # Direct downloads have no App Store integrity guarantee, and the DMG
+      # is the primary Gatekeeper trust anchor only up to the point a user's
+      # browser preserves the quarantine attribute correctly — a detached
+      # SHA-256 lets a user (or README's documented `shasum -a 256 -c`
+      # command) verify the bytes they downloaded match what was published,
+      # independent of code signing. Runs after BOTH assets exist (DMG
+      # signed+notarized in Step 14, CLI tarball packaged in Step 15) and
+      # before "Create GitHub Release" so both checksum files can be
+      # attached alongside their assets.
+      #
+      # `shasum -a 256 <asset>` writes "<hash>  <asset>" using the bare
+      # filename (both assets live at the repo/workspace root here), which
+      # is exactly the line `shasum -a 256 -c <asset>.sha256` expects when
+      # run from the same directory as the downloaded asset.
+      # ---------------------------------------------------------------------
+      - name: Generate SHA-256 checksums
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="MeedyaConverter-${VERSION}-macOS.dmg"
+          CLI_TAR="meedya-convert-${VERSION}-macOS.tar.gz"
+
+          for ASSET in "$DMG_NAME" "$CLI_TAR"; do
+            if [ -f "$ASSET" ]; then
+              shasum -a 256 "$ASSET" > "${ASSET}.sha256"
+              echo "Checksum written: ${ASSET}.sha256"
+              cat "${ASSET}.sha256"
+            else
+              echo "::warning::Asset ${ASSET} not found; skipping its checksum."
+            fi
+          done
+
+      # ---------------------------------------------------------------------
+      # Step 17: Generate changelog
       # ---------------------------------------------------------------------
       # Extract the changelog section for this version from CHANGELOG.md
       # using the extract-changelog.sh helper. Falls back to git log if
@@ -484,7 +559,7 @@ jobs:
           echo "Changelog generated with ${LINES} lines for version ${VERSION}."
 
       # ---------------------------------------------------------------------
-      # Step 16b: Update CHANGELOG.md with release date
+      # Step 17b: Update CHANGELOG.md with release date
       # ---------------------------------------------------------------------
       # Stamp the [Unreleased] or version heading with today's date so
       # the changelog reflects when the release was actually published.
@@ -510,12 +585,13 @@ jobs:
           fi
 
       # ---------------------------------------------------------------------
-      # Step 17: Create GitHub Release
+      # Step 18: Create GitHub Release
       # ---------------------------------------------------------------------
       # Publish a GitHub Release with:
       #   - The version tag as the release name
       #   - The auto-generated changelog as the release body
-      #   - The signed/notarized DMG and CLI tarball as release assets
+      #   - The signed/notarized DMG and CLI tarball as release assets, plus
+      #     their SHA-256 checksum files (Step 16) for integrity verification
       #   - Marked as a full (non-pre-release) production release
       #
       # Uses the GitHub CLI (gh) which is pre-installed on GitHub-hosted
@@ -534,10 +610,22 @@ jobs:
             ASSETS+=("${DMG}#MeedyaConverter ${VERSION} (macOS DMG)")
           fi
 
+          # DMG SHA-256 checksum
+          DMG_SHA="${DMG}.sha256"
+          if [ -f "$DMG_SHA" ]; then
+            ASSETS+=("${DMG_SHA}#MeedyaConverter ${VERSION} DMG SHA-256 checksum")
+          fi
+
           # CLI tarball (optional additional artifact)
           CLI_TAR="meedya-convert-${VERSION}-macOS.tar.gz"
           if [ -f "$CLI_TAR" ]; then
             ASSETS+=("${CLI_TAR}#meedya-convert ${VERSION} (macOS CLI)")
+          fi
+
+          # CLI tarball SHA-256 checksum
+          CLI_TAR_SHA="${CLI_TAR}.sha256"
+          if [ -f "$CLI_TAR_SHA" ]; then
+            ASSETS+=("${CLI_TAR_SHA}#meedya-convert ${VERSION} CLI SHA-256 checksum")
           fi
 
           # Determine release flags based on semver pre-release status
@@ -561,7 +649,7 @@ jobs:
             "${ASSETS[@]}"
 
       # ---------------------------------------------------------------------
-      # Step 18: Clean up keychain
+      # Step 19: Clean up keychain
       # ---------------------------------------------------------------------
       # Remove the temporary keychain to avoid leaking the signing
       # certificate on shared runners. Runs even if previous steps fail.
