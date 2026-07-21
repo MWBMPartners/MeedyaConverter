@@ -109,6 +109,54 @@ final class ScriptingBridge: NSObject {
         )
     }
 
+    // MARK: - Synchronous probe/async bridge (Issue #451)
+
+    /// Thread-safe box carrying the probe reply string from the detached
+    /// probing task back to the semaphore-waiting caller in `probe(file:)`.
+    ///
+    /// `probe(file:)` must return a `String` synchronously: it is invoked
+    /// directly by Cocoa's Open Scripting Architecture as a "direct
+    /// parameter" command (see `MeedyaConverter.sdef`, which declares no
+    /// `<cocoa class="...">` override for `probe`), so OSA dispatches it
+    /// on the main thread via ordinary message send and expects an
+    /// immediate reply. There is no async/completion-handler
+    /// accommodation for that dispatch style — a genuinely non-blocking
+    /// version of this command would require restructuring `probe` as an
+    /// `NSScriptCommand` subclass using `suspendExecution()` /
+    /// `resumeExecutionWithResult(_:)`, a materially larger architecture
+    /// change that is out of scope here. A `DispatchSemaphore` therefore
+    /// still bridges the synchronous return to the async `FFmpegProbe`
+    /// call, and the call still blocks the calling (main) thread for up
+    /// to the same 60-second cap as before — unchanged behaviour.
+    ///
+    /// What actually changes for Issue #451 is *how* the result crosses
+    /// that bridge. The previous implementation captured a
+    /// `nonisolated(unsafe) var` local variable by reference into a
+    /// `Task.detached` closure and mutated it there — a shape Swift 6
+    /// flags as risking a data race, because the compiler has no way to
+    /// see that the semaphore establishes a happens-before edge between
+    /// the write and the later read. `ProbeResultBox` replaces the bare
+    /// local var with an explicitly `Sendable` reference type — an
+    /// `NSLock`-protected box, the same pattern already proven safe by
+    /// `FFmpegProbe.ProbeRunState` in this codebase — so no
+    /// isolation-unsafe capture crosses the `Task.detached` boundary.
+    private final class ProbeResultBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value: String
+
+        init(_ initial: String) {
+            self._value = initial
+        }
+
+        var value: String {
+            lock.withLock { _value }
+        }
+
+        func setValue(_ newValue: String) {
+            lock.withLock { _value = newValue }
+        }
+    }
+
     // MARK: - Properties
 
     /// Shared singleton instance for scripting dispatch.
@@ -246,8 +294,12 @@ final class ScriptingBridge: NSObject {
 
         // Run the probe synchronously using Process (FFmpegProbe.analyzeSync).
         // Since FFmpegProbe's analyze(url:) is async, we invoke it from a
-        // detached context and collect the result via a thread-safe box.
-        nonisolated(unsafe) var probeResult = Self.formatError("Probe did not complete.")
+        // detached task and collect the result via `ProbeResultBox`
+        // (Issue #451) — a thread-safe Sendable box, never a captured
+        // mutable local var — so the write-then-signal / wait-then-read
+        // handoff below is provably safe to the Swift 6 concurrency
+        // checker, not just safe in practice.
+        let resultBox = ProbeResultBox(Self.formatError("Probe did not complete."))
         let prober = FFmpegProbe(ffprobePath: ffprobePath)
         let semaphore = DispatchSemaphore(value: 0)
 
@@ -257,8 +309,9 @@ final class ScriptingBridge: NSObject {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 let data = try encoder.encode(mediaFile)
-                probeResult = String(data: data, encoding: .utf8)
-                    ?? Self.formatError("Failed to encode JSON.")
+                resultBox.setValue(
+                    String(data: data, encoding: .utf8) ?? Self.formatError("Failed to encode JSON.")
+                )
             } catch {
                 // F-008: sanitise the localizedDescription before
                 // returning. Foundation can include filesystem paths
@@ -268,20 +321,21 @@ final class ScriptingBridge: NSObject {
                 // strips any embedded control codes that would
                 // otherwise allow log forgery from the AppleScript
                 // caller's perspective.
-                probeResult = Self.formatError("Probe failed — \(error.localizedDescription)")
+                resultBox.setValue(Self.formatError("Probe failed — \(error.localizedDescription)"))
             }
             semaphore.signal()
         }
 
         // Wait with a generous timeout (media probing can take a few seconds
         // for large files on slow storage). Note: this blocks the main thread,
-        // which is acceptable for AppleScript's synchronous calling convention.
+        // which is acceptable for AppleScript's synchronous calling convention
+        // (see `ProbeResultBox` above for why this handoff can no longer race).
         let timeout = semaphore.wait(timeout: .now() + 60)
         if timeout == .timedOut {
             return Self.formatError("Probe timed out after 60 seconds.")
         }
 
-        return probeResult
+        return resultBox.value
     }
 
     /// Return a list of all available encoding profile names.

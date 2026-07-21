@@ -385,41 +385,48 @@ struct BurnSettingsView: View {
 
     // MARK: - Actions
 
+    /// Detect connected optical drives via `drutil`.
+    ///
+    /// `BurnSettingsView` is a `struct: View`, so its methods are
+    /// implicitly main-actor isolated. A plain `Task { }` here therefore
+    /// inherits that isolation (mirrors `VideoTrimmerView.applyTrim()`,
+    /// Issue #451): `@State` mutations and the `parseDrutilOutput` call
+    /// are direct, MainActor-isolated calls, not `MainActor.run` hops.
+    /// Only the genuinely blocking work — launching `drutil` and waiting
+    /// for it to exit — runs in a `Task.detached` that returns a
+    /// `Sendable` `String` and never touches `self`.
     private func detectDrives() {
-        // Run drutil on a background thread to avoid blocking the UI
-        Task.detached {
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
-            task.arguments = ["list"]
-
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = pipe
-
+        Task {
             do {
-                try task.run()
-                task.waitUntilExit()
+                let output = try await Task.detached {
+                    let task = Process()
+                    task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
+                    task.arguments = ["list"]
 
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
+                    let pipe = Pipe()
+                    task.standardOutput = pipe
+                    task.standardError = pipe
 
-                await MainActor.run {
-                    if output.contains("No drives") || output.isEmpty {
-                        availableDrives = []
-                        driveStatus = .noDrive
-                    } else {
-                        availableDrives = parseDrutilOutput(output)
-                        if let first = availableDrives.first {
-                            selectedDevicePath = first.devicePath
-                            driveStatus = .ready
-                        }
+                    try task.run()
+                    task.waitUntilExit()
+
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    return String(data: data, encoding: .utf8) ?? ""
+                }.value
+
+                if output.contains("No drives") || output.isEmpty {
+                    availableDrives = []
+                    driveStatus = .noDrive
+                } else {
+                    availableDrives = parseDrutilOutput(output)
+                    if let first = availableDrives.first {
+                        selectedDevicePath = first.devicePath
+                        driveStatus = .ready
                     }
                 }
             } catch {
-                await MainActor.run {
-                    availableDrives = []
-                    driveStatus = .noDrive
-                }
+                availableDrives = []
+                driveStatus = .noDrive
             }
         }
     }
@@ -488,13 +495,19 @@ struct BurnSettingsView: View {
 
         viewModel.appendLog(.info, "Starting disc burn: \(discFormat.displayName) to \(selectedDevicePath)")
 
-        // Capture main-actor-isolated values before entering detached context
+        // Capture main-actor-isolated values before entering the detached context.
         let capturedDiscFormat = discFormat
         let capturedSourcePath = sourcePath
         let capturedVerifyAfterBurn = verifyAfterBurn
 
-        // Build and execute burn command on a background thread to avoid blocking UI
-        Task.detached {
+        // A plain `Task { }` inherits this view's main-actor isolation
+        // (mirrors `detectDrives()` above and `VideoTrimmerView.applyTrim()`,
+        // Issue #451), so state mutations and `viewModel.appendLog` calls
+        // are direct, not `MainActor.run` hops. Argument building is cheap
+        // (string formatting only); only the actual `Process` launch and
+        // wait are pulled into a `Task.detached` that returns Sendable-only
+        // values and never touches `self`.
+        Task {
             do {
                 let args: [String]
                 let executable: String
@@ -511,66 +524,77 @@ struct BurnSettingsView: View {
                     args = DiscBurner.buildHdiutilBurnArguments(isoPath: capturedSourcePath, verify: capturedVerifyAfterBurn)
                 }
 
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = [executable] + args
+                let (exitCode, errorOutput): (Int32, String?) = try await Task.detached {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    process.arguments = [executable] + args
 
-                let outputPipe = Pipe()
-                process.standardOutput = outputPipe
-                process.standardError = outputPipe
+                    let outputPipe = Pipe()
+                    process.standardOutput = outputPipe
+                    process.standardError = outputPipe
 
-                try process.run()
-                process.waitUntilExit()
+                    try process.run()
+                    process.waitUntilExit()
 
-                let exitCode = process.terminationStatus
-
-                await MainActor.run {
-                    if exitCode == 0 {
-                        burnProgress = BurnProgress(phase: .complete, bytesWritten: 0, totalBytes: 0)
-                        burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: capturedVerifyAfterBurn)
-                        viewModel.appendLog(.info, "Disc burn completed successfully")
+                    let code = process.terminationStatus
+                    let errorOutput: String?
+                    if code == 0 {
+                        errorOutput = nil
                     } else {
-                        burnProgress = BurnProgress(phase: .failed, bytesWritten: 0, totalBytes: 0)
                         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                        let errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-                        burnResult = BurnResult(success: false, message: errorOutput, verified: false)
-                        viewModel.appendLog(.error, "Disc burn failed: \(errorOutput)")
+                        errorOutput = String(data: outputData, encoding: .utf8) ?? "Unknown error"
                     }
-                    isBurning = false
+                    return (code, errorOutput)
+                }.value
+
+                if exitCode == 0 {
+                    burnProgress = BurnProgress(phase: .complete, bytesWritten: 0, totalBytes: 0)
+                    burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: capturedVerifyAfterBurn)
+                    viewModel.appendLog(.info, "Disc burn completed successfully")
+                } else {
+                    burnProgress = BurnProgress(phase: .failed, bytesWritten: 0, totalBytes: 0)
+                    let message = errorOutput ?? "Unknown error"
+                    burnResult = BurnResult(success: false, message: message, verified: false)
+                    viewModel.appendLog(.error, "Disc burn failed: \(message)")
                 }
+                isBurning = false
             } catch {
-                await MainActor.run {
-                    burnResult = BurnResult(success: false, message: error.localizedDescription, verified: false)
-                    isBurning = false
-                    viewModel.appendLog(.error, "Disc burn error: \(error.localizedDescription)")
-                }
+                burnResult = BurnResult(success: false, message: error.localizedDescription, verified: false)
+                isBurning = false
+                viewModel.appendLog(.error, "Disc burn error: \(error.localizedDescription)")
             }
         }
     }
 
+    /// Mirrors `startBurn()`: a plain `Task { }` inherits main-actor
+    /// isolation, so `viewModel.appendLog` is a direct call; only the
+    /// `Process` launch/wait is isolated in a `Task.detached`. Per #451.
     private func eraseDisc() {
         let args = DiscBurner.buildBlankArguments(devicePath: selectedDevicePath)
         viewModel.appendLog(.info, "Erasing disc on \(selectedDevicePath)")
 
-        Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["cdrecord"] + args
-
+        Task {
             do {
-                try process.run()
-                process.waitUntilExit()
-                await MainActor.run {
-                    viewModel.appendLog(.info, "Disc erased successfully")
-                }
+                try await Task.detached {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    process.arguments = ["cdrecord"] + args
+
+                    try process.run()
+                    process.waitUntilExit()
+                }.value
+                viewModel.appendLog(.info, "Disc erased successfully")
             } catch {
-                await MainActor.run {
-                    viewModel.appendLog(.error, "Disc erase failed: \(error.localizedDescription)")
-                }
+                viewModel.appendLog(.error, "Disc erase failed: \(error.localizedDescription)")
             }
         }
     }
 
+    /// Already Swift 6-safe as written (Issue #451 audit): this closure
+    /// captures no `@State`/`self` and never hops back via `MainActor.run`
+    /// — it fires the eject process and returns nothing, so `Task.detached`
+    /// is exactly the "isolate the genuinely blocking call" half of the
+    /// proven pattern, with no outer plain `Task` needed. Left unchanged.
     private func ejectDisc() {
         Task.detached {
             let process = Process()

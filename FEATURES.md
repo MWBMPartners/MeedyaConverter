@@ -16,19 +16,13 @@
 
 ## In-scope gaps the autopilot may build autonomously (Bucket 1)
 
-**None currently identified** (re-confirmed Cycle 22 / 2026-06-30).
+**Recent DISCOVER audit found autonomously-buildable gaps**, now tracked as GitHub issues. Status as of 2026-07-21:
 
-The codebase is feature-complete per `PROJECT_STATUS.md` and
-`.claude/project_brief.md`. The SECURE phase (Cycles 12-21) added
-defensive infrastructure (`PathSanitizer`, `MetadataSanitizer`,
-`SFTPCredentialStore`, FFmpegProbe watchdog, ScriptingBridge
-sanitised replies) — none of these surfaced new in-scope feature
-gaps. The remaining v0.1.0 must-do items in `PROJECT.md#Remaining`
-are all user-driven (Apple secrets verification, gh auth refresh)
-or tag-strategy decisions, not autonomously-buildable features.
+- **FIXED & merged to main:** #444 (VideoTrimmer real trim), #445 (QualityCheck real QC)
+- **ADDRESSED (disabled/probed pending resolution):** #447 (real SFTP probe), #446 (VideoUpload disabled pending OAuth), #449 (DuplicateFinder Perceptual hidden pending pHash)
+- **OPEN backlog:** #448 (placeholder UIs: DualDynamicHDR/BitrateHeatmap/AnimatedImage/EncodingGraphs/CloudSync), #450 (post-encode SFTP/cloud), #451 (Swift 6 concurrency audit — in progress on this branch)
 
-Net-new features at this stage need explicit user steer; the
-COMPLETE phase exits cleanly without building.
+Earlier cycles' defensive infrastructure additions (SECURE phase: `PathSanitizer`, `MetadataSanitizer`, `SFTPCredentialStore`, FFmpegProbe watchdog) did not surface new in-scope gaps at that time, but subsequent adversarial review and DISCOVER passes have identified the gaps above. The remaining v0.1.0 must-do items are user-driven or tag-strategy decisions, not autonomously-buildable features.
 
 ## In-scope gaps awaiting user approval (Bucket 2 — gate-ledger)
 

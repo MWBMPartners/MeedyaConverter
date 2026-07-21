@@ -622,17 +622,30 @@ struct ImageConversionView: View {
             stripMetadata: stripMetadata,
             autoRotate: autoRotate
         )
+        // Snapshot main-actor-isolated values before the loop, matching the
+        // frozen-at-start-time semantics of the previous explicit capture
+        // list `[filesToConvert, outputDirectory, outputFormat, config]`.
+        let capturedOutputDirectory = outputDirectory
+        let capturedOutputFormat = outputFormat
 
-        Task.detached { [filesToConvert, outputDirectory, outputFormat, config] in
+        // `ImageConversionView` is a `struct: View`, so a plain `Task { }`
+        // here inherits main-actor isolation (mirrors `VideoTrimmerView
+        // .applyTrim()`'s `passLoop`, Issue #451): `@State` reads/writes
+        // and `viewModel.appendLog` are direct calls, not `MainActor.run`
+        // hops, and `self` never crosses an isolation boundary. Only the
+        // genuinely blocking work per file — launching ffmpeg and waiting
+        // for it to exit — runs in a `Task.detached` that captures/returns
+        // only `Sendable` values, never `self`.
+        Task {
             for (index, file) in filesToConvert.enumerated() {
-                guard await MainActor.run(body: { isConverting }) else { break }
+                guard isConverting else { break }
 
-                let outputDir = outputDirectory ?? file.url.deletingLastPathComponent()
+                let outputDir = capturedOutputDirectory ?? file.url.deletingLastPathComponent()
                 let baseName = file.url.deletingPathExtension().lastPathComponent
                 // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
                 let outputPath = outputDir
                     .appendingPathComponent(PathSanitizer.sanitizeFilenameComponent(baseName))
-                    .appendingPathExtension(outputFormat.fileExtension)
+                    .appendingPathExtension(capturedOutputFormat.fileExtension)
                     .path
 
                 let args = ImageConverter.buildConvertArguments(
@@ -641,7 +654,7 @@ struct ImageConversionView: View {
                     config: config
                 )
 
-                do {
+                let (succeeded, errorOutput): (Bool, String?) = await Task.detached {
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                     process.arguments = ["ffmpeg"] + args
@@ -650,38 +663,40 @@ struct ImageConversionView: View {
                     process.standardOutput = pipe
                     process.standardError = pipe
 
-                    try process.run()
-                    process.waitUntilExit()
+                    let succeeded: Bool
+                    let errorOutput: String?
+                    do {
+                        try process.run()
+                        process.waitUntilExit()
 
-                    if process.terminationStatus == 0 {
-                        await MainActor.run {
-                            completedCount += 1
+                        if process.terminationStatus == 0 {
+                            succeeded = true
+                            errorOutput = nil
+                        } else {
+                            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+                            succeeded = false
+                            errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
                         }
-                    } else {
-                        let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-                        let errorStr = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        await MainActor.run {
-                            failedCount += 1
-                            conversionErrors.append("\(file.fileName): \(errorStr)")
-                        }
+                    } catch {
+                        succeeded = false
+                        errorOutput = error.localizedDescription
                     }
-                } catch {
-                    await MainActor.run {
-                        failedCount += 1
-                        conversionErrors.append("\(file.fileName): \(error.localizedDescription)")
-                    }
+                    return (succeeded, errorOutput)
+                }.value
+
+                if succeeded {
+                    completedCount += 1
+                } else {
+                    failedCount += 1
+                    conversionErrors.append("\(file.fileName): \(errorOutput ?? "Unknown error")")
                 }
 
-                await MainActor.run {
-                    conversionProgress = Double(index + 1) / Double(filesToConvert.count)
-                }
+                conversionProgress = Double(index + 1) / Double(filesToConvert.count)
             }
 
-            await MainActor.run {
-                isConverting = false
-                viewModel.appendLog(.info,
-                    "Image conversion complete: \(completedCount) succeeded, \(failedCount) failed")
-            }
+            isConverting = false
+            viewModel.appendLog(.info,
+                "Image conversion complete: \(completedCount) succeeded, \(failedCount) failed")
         }
     }
 
