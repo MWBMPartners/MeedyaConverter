@@ -34,6 +34,11 @@ struct BitrateHeatmapView: View {
     @State private var showComparison = false
     @State private var errorMessage: String?
 
+    /// The in-flight analysis task, retained so it can be cancelled when
+    /// the user navigates away from this view mid-analysis. Mirrors
+    /// `LoudnessReportView.analysisTask` / `BenchmarkView.benchmarkTask`.
+    @State private var analysisTask: Task<Void, Never>?
+
     // MARK: - Body
 
     var body: some View {
@@ -53,6 +58,9 @@ struct BitrateHeatmapView: View {
             }
         }
         .navigationTitle("Bitrate Heatmap")
+        .onDisappear {
+            cancelAnalysis()
+        }
     }
 
     // MARK: - Toolbar
@@ -60,7 +68,7 @@ struct BitrateHeatmapView: View {
     private var toolbar: some View {
         HStack {
             Button {
-                Task { await analyzeBitrate() }
+                analysisTask = Task { await analyzeBitrate() }
             } label: {
                 Label("Analyze Bitrate", systemImage: "waveform.path.ecg")
             }
@@ -397,26 +405,88 @@ struct BitrateHeatmapView: View {
 
     /// Trigger bitrate analysis for the currently selected file.
     ///
-    /// Builds FFprobe arguments via ``BitrateAnalyzer``, but the actual
-    /// process execution is deferred to the view model or engine layer.
-    /// For now, we store the arguments for the caller to execute.
+    /// Builds FFprobe arguments via ``BitrateAnalyzer/buildAnalysisArguments(inputPath:)``,
+    /// actually runs them through the existing process runner —
+    /// `FFmpegBackendFactory.makeDefault().runFFprobe(arguments:timeout:)`
+    /// (`ProcessFFmpegBackend`/`FFmpegKitBackend` in `ConverterEngine`,
+    /// the same one-shot invocation surface documented for "new code" in
+    /// `FFmpegBackend.swift`) — and parses the resulting per-frame CSV
+    /// output with ``BitrateAnalyzer/parseProbeOutput(_:)`` to populate
+    /// the heatmap. No new ffprobe/parsing logic is introduced here.
+    ///
+    /// `BitrateHeatmapView` is a `struct: View`, so this `async` method
+    /// (and the plain `Task { }` that invokes it from the toolbar button)
+    /// is implicitly main-actor isolated via `View` conformance — `@State`
+    /// writes below are direct property mutations, matching
+    /// `QualityMetricsView.runAnalysis()`'s shape. `runFFprobe(...)`
+    /// itself is non-blocking (it suspends on a `CheckedContinuation`
+    /// while the process runs on background dispatch queues internally),
+    /// so it is awaited directly here without needing `Task.detached` —
+    /// the same reasoning `QualityMetricsView` applies to
+    /// `FFmpegProcessController.startEncoding`'s `AsyncStream`.
+    ///
+    /// Known limitation: `ProcessFFmpegBackend`'s one-shot `runFFprobe`
+    /// has no cancellation hook for an invocation already in flight (only
+    /// the streaming `runEncode` path supports `cancelCurrent()`), so
+    /// cancelling this task (via `cancelAnalysis()` / `onDisappear`) stops
+    /// this method from touching `@State` afterwards but does not itself
+    /// terminate an already-running ffprobe process early. Adding that
+    /// would require an `EncodingEngine`/`ConverterEngine` change, which
+    /// is out of scope here.
     private func analyzeBitrate() async {
         guard let file = viewModel.selectedFile else { return }
 
         isAnalyzing = true
         errorMessage = nil
 
-        // Build the ffprobe arguments (execution handled by engine)
         let args = BitrateAnalyzer.buildAnalysisArguments(inputPath: file.fileURL.path)
+        let backend = FFmpegBackendFactory.makeDefault()
 
-        // In a full implementation, the view model would execute ffprobe
-        // and return the output. For now we log the intent.
-        viewModel.appendLog(
-            .info,
-            "Bitrate analysis requested for \(file.fileName) with \(args.count) arguments",
-            category: .general
-        )
+        do {
+            let result = try await backend.runFFprobe(arguments: args, timeout: 300)
 
+            if Task.isCancelled {
+                isAnalyzing = false
+                return
+            }
+
+            let parsed = BitrateAnalyzer.parseProbeOutput(result.stdout)
+            guard !parsed.dataPoints.isEmpty else {
+                errorMessage = "FFprobe returned no readable bitrate data for \(file.fileName)."
+                isAnalyzing = false
+                return
+            }
+
+            analysis = parsed
+            viewModel.appendLog(
+                .info,
+                "Bitrate analysis complete for \(file.fileName): \(parsed.dataPoints.count) data point(s), "
+                + "average \(Int(parsed.averageBitrate)) bps, peak \(Int(parsed.peakBitrate)) bps",
+                category: .general
+            )
+        } catch {
+            if !Task.isCancelled {
+                errorMessage = "Bitrate analysis failed for \(file.fileName): \(error.localizedDescription)"
+                viewModel.appendLog(
+                    .error,
+                    "Bitrate analysis failed for \(file.fileName): \(error.localizedDescription)",
+                    category: .general
+                )
+            }
+        }
+
+        isAnalyzing = false
+    }
+
+    /// Cancel an in-progress bitrate analysis.
+    ///
+    /// Cancels the analysis `Task` so no pending state mutation runs
+    /// after the user navigates away from this view. See the known
+    /// limitation noted on `analyzeBitrate()`: the underlying ffprobe
+    /// process itself is not forcibly terminated by this call.
+    private func cancelAnalysis() {
+        analysisTask?.cancel()
+        analysisTask = nil
         isAnalyzing = false
     }
 
