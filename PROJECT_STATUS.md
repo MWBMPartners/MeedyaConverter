@@ -21,11 +21,11 @@
 
 ---
 
-## Recent milestones (2026-06-30 to 2026-07-18 -- autopilot security & release-engineering mission)
+## Recent milestones (2026-06-30 to 2026-07-21 -- autopilot security & release-engineering mission)
 
 - **Autopilot mission reached TERMINAL** at commit `b58d676` -- 1039/1039 tests
   green and 0 compiler warnings at that checkpoint (re-verified independently
-  in this pass at **1053** tests green; see [CHANGELOG.md](CHANGELOG.md) for
+  in this pass at **1129** tests green as of 2026-07-21; see [CHANGELOG.md](CHANGELOG.md) for
   the running total as new tests land).
 - **Security findings F-001..F-010 closed or risk-accepted** across a
   red-team/blue-team/purple-team review rotation documented in
@@ -70,6 +70,7 @@
   and ProRes-to-Vector Tools views, and this file, `Project_Plan.md`,
   `DEV_NOTES.md`, and `CHANGELOG.md` brought back in line with the current
   state of the repository.
+- **GA-honesty fixes landed (2026-07-21)** -- Recent DISCOVER audit identified autonomously-buildable feature gaps and UI fabrications. Fixes: #444 (VideoTrimmer real trim) and #445 (QualityCheck real QC) merged to main; #446 (VideoUpload OAuth), #447 (SFTP probe), #449 (DuplicateFinder Perceptual) addressed with honest disable/probe status; #448/#450/#451 open for backlog triage (#451 is Swift 6 concurrency audit in progress on fix/quality-sweep). FEATURES.md updated to reflect actual discovered gaps rather than stale "none identified" claim.
 
 ---
 
@@ -345,7 +346,7 @@
 | ------ | ----- |
 | Total tasks across all phases | 215+ |
 | GitHub Issues | 257+ |
-| Automated tests | 1053 (all green, 0 compiler warnings) |
+| Automated tests | 1129 (all green, 0 compiler warnings, as of 2026-07-21) |
 | Supported video codecs | 16 |
 | Supported audio codecs | 30+ (including spatial) |
 | Supported subtitle formats | 14+ |
