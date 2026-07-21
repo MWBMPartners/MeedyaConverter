@@ -78,7 +78,7 @@ jobs:
       #   - Generate a changelog from recent commits
       # ---------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
