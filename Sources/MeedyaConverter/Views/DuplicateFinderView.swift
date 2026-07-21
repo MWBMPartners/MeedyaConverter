@@ -106,7 +106,16 @@ struct DuplicateFinderView: View {
             }
 
             Picker("Method:", selection: $selectedMethod) {
-                ForEach(MatchType.allCases, id: \.self) { method in
+                // TODO(#449): re-enable when perceptual-hash matching is
+                // implemented. `.perceptual` is filtered out of the
+                // selectable options here because
+                // `DuplicateDetector.findDuplicates(in:method:)` returns an
+                // empty result for it unconditionally
+                // (DuplicateDetector.swift:101-104) — there is no pHash
+                // implementation behind it yet, so exposing it would let
+                // the user "successfully" run a scan that can never find
+                // anything, with no indication anything is wrong.
+                ForEach(MatchType.allCases.filter { $0 != .perceptual }, id: \.self) { method in
                     Text(method.rawValue).tag(method)
                 }
             }
