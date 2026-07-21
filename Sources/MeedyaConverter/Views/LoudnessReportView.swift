@@ -54,6 +54,15 @@ struct LoudnessReportView: View {
     /// Selected export format.
     @State private var exportFormat: ExportFormat = .html
 
+    /// The in-flight analysis task, retained so it can be cancelled when the
+    /// user cancels or the view disappears (Issue #433).
+    @State private var analysisTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the file currently being analysed,
+    /// retained so `cancelAnalysis()` can stop the running process rather
+    /// than merely abandoning it.
+    @State private var currentController: FFmpegProcessController?
+
     // MARK: - Export Format
 
     /// Supported export formats for loudness reports.
@@ -95,6 +104,9 @@ struct LoudnessReportView: View {
             }
         }
         .navigationTitle("Loudness Compliance")
+        .onDisappear {
+            cancelAnalysis()
+        }
     }
 
     // MARK: - Controls Bar
@@ -162,6 +174,12 @@ struct LoudnessReportView: View {
             Text("Measuring integrated loudness, true peak, and loudness range.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Button("Cancel") {
+                cancelAnalysis()
+            }
+            .buttonStyle(.bordered)
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -180,6 +198,15 @@ struct LoudnessReportView: View {
             Text("Click \"Analyze\" to measure loudness levels and check compliance.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -376,19 +403,118 @@ struct LoudnessReportView: View {
 
     // MARK: - Actions
 
-    /// Run loudness analysis on current source files.
+    /// Run loudness analysis on the queued source files.
+    ///
+    /// Mirrors the execution pattern proven in
+    /// `QualityPreviewView.generatePreview()`: locate FFmpeg via
+    /// `FFmpegBundleManager`, build arguments with
+    /// `LoudnessReporter.buildAnalysisArguments(inputPath:)`, run them
+    /// through `FFmpegProcessController.startEncoding(arguments:)` off the
+    /// main actor, then parse the `loudnorm` JSON block that FFmpeg writes
+    /// to stderr with `LoudnessReporter.parseAnalysisOutput(_:)` and check
+    /// compliance with `LoudnessReporter.checkCompliance(report:standard:)`.
+    ///
+    /// Multiple queued files are analysed sequentially so `reports` always
+    /// reflects a consistent, fully-settled batch.
     private func runAnalysis() {
+        guard !isAnalysing else { return }
+
+        let filesToAnalyse = viewModel.sourceFiles
+        guard !filesToAnalyse.isEmpty else {
+            errorMessage = "Add a source file before analysing loudness."
+            return
+        }
+
         isAnalysing = true
         errorMessage = nil
+        reports = []
 
-        // In a full implementation, this would:
-        // 1. Get source file paths from the view model.
-        // 2. Run LoudnessReporter.buildAnalysisArguments() for each file.
-        // 3. Execute via FFmpegProcessController.
-        // 4. Parse output with LoudnessReporter.parseAnalysisOutput().
-        // 5. Check compliance with LoudnessReporter.checkCompliance().
-        //
-        // For now, mark analysis as complete.
+        let standard = selectedStandard
+
+        analysisTask = Task {
+            let bundleManager = FFmpegBundleManager()
+            let ffmpegPath: String
+            do {
+                let ffmpegInfo = try bundleManager.locateFFmpeg()
+                ffmpegPath = ffmpegInfo.path
+            } catch {
+                await MainActor.run {
+                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before analysing loudness."
+                    isAnalysing = false
+                }
+                return
+            }
+
+            var collectedReports: [LoudnessReport] = []
+
+            for file in filesToAnalyse {
+                if Task.isCancelled { break }
+
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                await MainActor.run { currentController = controller }
+
+                let arguments = LoudnessReporter.buildAnalysisArguments(inputPath: file.fileURL.path)
+
+                do {
+                    // Loudness measurement output is discarded (-f null -),
+                    // so the progress stream carries no meaningful fraction;
+                    // it is drained purely to let the process run to
+                    // completion and to notice cancellation promptly.
+                    let progressStream = try controller.startEncoding(arguments: arguments)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorMessage = "Loudness analysis failed for \(file.fileName): \(error.localizedDescription)"
+                    }
+                    continue
+                }
+
+                if Task.isCancelled { break }
+
+                guard let parsed = LoudnessReporter.parseAnalysisOutput(controller.errorOutput) else {
+                    await MainActor.run {
+                        errorMessage = "Could not read loudness data for \(file.fileName)."
+                    }
+                    continue
+                }
+
+                let compliant = LoudnessReporter.checkCompliance(report: parsed, standard: standard)
+                let report = LoudnessReport(
+                    integratedLUFS: parsed.integratedLUFS,
+                    truePeakDBTP: parsed.truePeakDBTP,
+                    loudnessRange: parsed.loudnessRange,
+                    shortTermMax: parsed.shortTermMax,
+                    momentaryMax: parsed.momentaryMax,
+                    compliant: compliant,
+                    standard: standard.displayName,
+                    fileName: file.fileName
+                )
+                collectedReports.append(report)
+            }
+
+            await MainActor.run {
+                reports = collectedReports
+                currentController = nil
+                isAnalysing = false
+            }
+        }
+    }
+
+    /// Cancel an in-progress loudness analysis.
+    ///
+    /// Stops the currently-running FFmpeg process (if any) and cancels the
+    /// analysis `Task` so no process or task is left running in the
+    /// background after the user cancels or navigates away from this view.
+    private func cancelAnalysis() {
+        currentController?.stopEncoding()
+        currentController = nil
+        analysisTask?.cancel()
+        analysisTask = nil
         isAnalysing = false
     }
 }

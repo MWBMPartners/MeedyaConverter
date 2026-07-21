@@ -130,7 +130,13 @@ public struct LoudnessReporter: Sendable {
             return nil
         }
 
-        let jsonString = String(output[jsonStart.lowerBound...jsonEnd.upperBound])
+        // Guard against `jsonEnd` sitting at the very end of the buffer: a
+        // half-open range (rather than a `ClosedRange` ending at
+        // `jsonEnd.upperBound`) avoids subscripting past `output.endIndex`
+        // when the closing brace is the final captured character, which
+        // previously crashed with an out-of-bounds fatal error.
+        guard jsonStart.lowerBound < jsonEnd.upperBound else { return nil }
+        let jsonString = String(output[jsonStart.lowerBound..<jsonEnd.upperBound])
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

@@ -305,7 +305,10 @@ struct EncodeCommand: AsyncParsableCommand {
         let dir = inputURL.deletingLastPathComponent()
         let stem = inputURL.deletingPathExtension().lastPathComponent
         let ext = profile.preferredExtension
-        return dir.appendingPathComponent("\(stem)_converted.\(ext)")
+        // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
+        return dir.appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent("\(stem)_converted.\(ext)")
+        )
     }
 
     private func parseResolution(_ str: String) -> (width: Int, height: Int)? {

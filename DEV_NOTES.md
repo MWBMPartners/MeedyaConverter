@@ -19,6 +19,7 @@ This document covers packaging, release, signing, and CI/CD configuration for Me
 - [TestFlight Submission](#testflight-submission)
 - [Production Release](#production-release)
 - [Pre-Release Tags](#pre-release-tags)
+- [FFmpeg Bundling & Supply Chain](#ffmpeg-bundling--supply-chain)
 - [External Tools](#external-tools)
 - [CI/CD Workflows](#cicd-workflows)
 - [Troubleshooting](#troubleshooting)
@@ -33,12 +34,26 @@ This document covers packaging, release, signing, and CI/CD configuration for Me
 | **App Store** | `-Xswiftc -DAPP_STORE` | `Ltd.MWBMpartners.MeedyaConverter.Lite` | App Sandbox, FFmpegKit (embedded), no Sparkle, no subprocess calls |
 
 ```bash
-# Direct distribution build
+# Direct distribution build (single-arch, matches your local Mac)
 swift build -c release
+
+# Direct distribution build, universal (arm64 + x86_64) -- what release.yml runs
+swift build -c release --arch arm64 --arch x86_64
 
 # App Store build
 swift build -c release -Xswiftc -DAPP_STORE
 ```
+
+**Universal builds**: `release.yml` builds the app itself universal
+(`--arch arm64 --arch x86_64`) so the shipped `.app` runs natively on both
+Apple Silicon and Intel with no Rosetta translation -- Apple has signalled
+Rosetta 2 will eventually be decommissioned, so a real arm64 slice from day
+one is required either way. SwiftPM writes universal output under a
+distinct build path; resolve it with `swift build -c release --arch arm64
+--arch x86_64 --show-bin-path` rather than assuming `.build/release`. A
+plain local `swift build -c release` (no `--arch` flags) still produces a
+single-arch binary matching your Mac, which is fine for day-to-day
+development.
 
 ---
 
@@ -297,17 +312,27 @@ git push origin v1.0.0
 ```
 
 This triggers `.github/workflows/release.yml` which:
-1. Builds in release configuration
+1. Builds the app itself in release configuration, **universal**
+   (`swift build -c release --arch arm64 --arch x86_64`)
 2. Runs all tests
 3. Imports signing certificate from secrets
-4. Creates .app bundle
-5. Signs with Developer ID
-6. Notarizes with Apple
-7. Creates DMG with /Applications symlink
-8. Signs and notarizes DMG
-9. Creates GitHub Release with assets
+4. Creates the .app bundle
+5. Runs `scripts/bundle-ffmpeg.sh` to stage universal `ffmpeg`/`ffprobe`/`ffplay`
+   into `Contents/Helpers/` -- see
+   [FFmpeg Bundling & Supply Chain](#ffmpeg-bundling--supply-chain) below
+6. Signs with Developer ID
+7. Notarizes with Apple (`xcrun notarytool submit ... --wait`)
+8. Creates DMG with /Applications symlink
+9. Signs and notarizes the DMG, then staples the notarization ticket
+   (`xcrun stapler staple`)
+10. Creates the GitHub Release with the `.dmg` and a signed/notarised CLI
+    tarball as assets
 
 **Versions < v1.0.0 are automatically marked as pre-release** per semver.
+For the current v0.1.0 line this means every `v0.1.0-rc.N` and the eventual
+`v0.1.0` GA tag are all "Direct distribution only" -- the same
+sign/notarise/staple/GitHub-Release pipeline described above, with App
+Store Lite submission deferred (see `PROJECT_STATUS.md`).
 
 ---
 
@@ -322,13 +347,65 @@ This triggers `.github/workflows/release.yml` which:
 
 ---
 
+## FFmpeg Bundling & Supply Chain
+
+`scripts/bundle-ffmpeg.sh <DEST_DIR>` stages the `ffmpeg` / `ffprobe` /
+`ffplay` binaries that ship inside the Direct-distribution `.app` at
+`Contents/Helpers/`. It is called by `release.yml` (and can be run locally
+for a fully self-contained checkout). This is also SECURITY.md finding
+**F-011** -- closed as of 2026-07.
+
+**Source -- first-party, pinned, universal:**
+
+- The sole source is the first-party mirror
+  **[`MeedyaSuite/MeedyaDL-Tools`](https://github.com/MeedyaSuite/MeedyaDL-Tools)**,
+  pinned in the script to an immutable dated release tag (`MDLT_TAG`,
+  e.g. `2026-07-05.3`). There is no third-party fallback in this repo --
+  the mirror is the only source, so the supply chain is entirely
+  first-party.
+- The mirror itself fetches real native static builds for both macOS
+  arches (arm64 from osxexperts.net, x86_64 from evermeet.cx),
+  repackages each as `<tool>-macos-<arch>.tar.gz`, and publishes a
+  `SHA256SUMS` asset alongside them.
+- `bundle-ffmpeg.sh` downloads both per-arch archives for each tool and
+  `lipo -create`s them into a single **universal (arm64 + x86_64)**
+  binary, then asserts the result actually reports both arches
+  (`lipo -archs`) before accepting it.
+
+**Integrity -- fail-closed SHA-256 verification:**
+
+- Every archive is SHA-256-verified against the pinned release's own
+  `SHA256SUMS` **before** it is unpacked. Missing `SHA256SUMS` or a
+  missing pin exits `6`; a hash **mismatch** exits `7` (always fatal,
+  even for the optional `ffplay`). Nothing unverified reaches the
+  sign/notarise step.
+- The trust root is the first-party tagged release's own `SHA256SUMS` --
+  no local checksum list is maintained in this repo. (An earlier
+  revision used a URL-keyed `scripts/ffmpeg-checksums.txt` bridge file;
+  it has been removed now that the mirror publishes its own
+  `SHA256SUMS`.)
+- `ffmpeg` and `ffprobe` are **required** -- either arch missing for
+  either tool is fatal (exit `6`/`8`). `ffplay` (in-app preview only) is
+  best-effort but still hash-gated when it is present.
+
+**Bumping the FFmpeg version**: edit `MDLT_TAG` in
+`scripts/bundle-ffmpeg.sh` to a newer MeedyaDL-Tools release -- that is
+the single deliberate edit. MeedyaDL-Tools tracks upstream FFmpeg on its
+own update schedule, so newer builds flow through automatically once you
+bump the pin.
+
+See `SECURITY.md`'s Findings Register (F-011) for the full incident
+write-up and verification log.
+
+---
+
 ## External Tools
 
 MeedyaConverter bundles or detects several external tools:
 
 | Tool | Purpose | Source | Detection |
 |------|---------|--------|-----------|
-| **FFmpeg** | Media encoding/decoding | [ffmpeg.org](https://ffmpeg.org) | PATH, Homebrew, bundled |
+| **FFmpeg** | Media encoding/decoding | Bundled: first-party [MeedyaDL-Tools](https://github.com/MeedyaSuite/MeedyaDL-Tools) mirror (universal, SHA-256-verified -- see above). User-installed: [ffmpeg.org](https://ffmpeg.org) | PATH, Homebrew, bundled |
 | **FFprobe** | Media analysis | Included with FFmpeg | Same as FFmpeg |
 | **dovi_tool** | Dolby Vision metadata | [github.com/quietvoid/dovi_tool](https://github.com/quietvoid/dovi_tool) | PATH, bundled |
 | **hlg-tools** | PQ→HLG conversion | [github.com/wswartzendruber/hlg-tools](https://github.com/wswartzendruber/hlg-tools) | PATH, bundled |
@@ -347,9 +424,11 @@ All tools are checked for updates via `ToolUpdateChecker` which queries GitHub R
 | **CI Build & Test** | `build.yml` | Push/PR to main/beta/alpha | Build, test, SwiftLint |
 | **CodeQL Security** | `codeql.yml` | Push/PR + weekly cron | Static security analysis |
 | **Dependency Review** | `dependency-review.yml` | PRs | Scan dependency changes |
+| **Security Check** | `security-check.yml` | Push + PRs touching `.github/workflows/**` or `scripts/security-check-*.sh` | F-010 static linters (Actions tag-pin regression gate) |
 | **Beta & Alpha Pre-Release** | `beta-alpha.yml` | Push to beta/alpha | Auto-tag, pre-release |
-| **Production Release** | `release.yml` | Push v* tag | Sign, notarize, DMG, GitHub Release |
-| **TestFlight** | `testflight.yml` | Manual + beta/RC tags | App Store build, upload |
+| **Dev Build** | `dev-build.yml` | Manual dispatch + push to alpha | Signed .app/DMG/CLI artefacts for internal testing, pre-TestFlight |
+| **Production Release** | `release.yml` | Push `v*` tag | Universal build, sign, notarize, staple, DMG + CLI tarball, GitHub Release |
+| **TestFlight** | `testflight.yml` | Manual + beta/RC tags (currently `disabled_manually`, see #392) | App Store build, upload |
 
 ---
 

@@ -56,7 +56,16 @@ public struct ProfileSharing: Sendable {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
             .trimmingCharacters(in: .whitespaces)
-        let fileName = "\(sanitisedName).meedyaprofile.json"
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `profile.name` is a free-form user-typed
+        // string. The replacements above already strip the two
+        // characters historically used here; routing the composed
+        // name through PathSanitizer additionally collapses a bare
+        // ".." and strips NUL / trailing dot-whitespace, with no
+        // effect on an ordinary profile name.
+        let fileName = PathSanitizer.sanitizeFilenameComponent(
+            "\(sanitisedName).meedyaprofile.json"
+        )
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(fileName)
         try data.write(to: tempURL, options: .atomic)

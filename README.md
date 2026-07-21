@@ -78,19 +78,21 @@ notarisation ticket, so Gatekeeper will accept it without a network call.
 1. Open the
    [Releases page](https://github.com/MWBMPartners/MeedyaConverter/releases/latest).
 2. Under **Assets**, download the asset named
-   `MeedyaConverter-<version>.dmg` (e.g. `MeedyaConverter-0.1.0-rc.3.dmg`).
+   `MeedyaConverter-<version>-macOS.dmg`
+   (e.g. `MeedyaConverter-0.1.0-rc.3-macOS.dmg`). A `meedya-convert-<version>-macOS.tar.gz`
+   CLI tarball is published alongside it for command-line use.
 3. *Optional but recommended:* also download the matching
-   `.dmg.sha256` checksum file alongside it.
+   `.sha256` checksum file alongside whichever asset you downloaded.
 
 ### 2. Verify the download *(optional)*
 
 ```bash
 # From your Downloads folder
 cd ~/Downloads
-shasum -a 256 -c MeedyaConverter-0.1.0-rc.3.dmg.sha256
+shasum -a 256 -c MeedyaConverter-0.1.0-rc.3-macOS.dmg.sha256
 ```
 
-You should see `MeedyaConverter-0.1.0-rc.3.dmg: OK`.
+You should see `MeedyaConverter-0.1.0-rc.3-macOS.dmg: OK`.
 
 ### 3. Mount and install
 
@@ -261,11 +263,10 @@ MeedyaConverter/
 ├── Sources/
 │   ├── ConverterEngine/     # Cross-platform core engine
 │   ├── meedya-convert/      # Command-line interface
-│   └── MeedyaConverter/     # macOS SwiftUI application
+│   └── MeedyaConverter/     # macOS SwiftUI app (bundles in-app help under Resources/Help/)
 ├── Tests/                   # Unit & integration tests
-├── Resources/               # Built-in profiles & help content
+├── Resources/               # Built-in encoding profiles
 ├── Tools/                   # Bundled third-party executables
-├── help/                    # User documentation (Markdown)
 ├── branding/                # Brand assets (logos, icons)
 ├── docs/                    # Extended documentation
 ├── .github/                 # CI/CD workflows & issue templates
@@ -369,9 +370,9 @@ and [docs/LOCAL_BUILD.md](docs/LOCAL_BUILD.md).
 | 📋 [Project Plan](Project_Plan.md) | Milestones, architecture, and tech stack |
 | 📊 [Project Status](PROJECT_STATUS.md) | Current development progress |
 | 📝 [Changelog](CHANGELOG.md) | Version history and changes |
-| 📚 [Help Documentation](help/) | User guides, FAQ, troubleshooting |
-| 🔧 [CLI Reference](help/cli-reference.md) | Command-line usage |
-| 🔊 [Audio Format Compatibility](help/audio-format-compatibility.md) | Conversion matrix — what converts to what |
+| 📚 [Help Documentation](Sources/MeedyaConverter/Resources/Help/) | User guides, FAQ, troubleshooting |
+| 🔧 [CLI Reference](Sources/MeedyaConverter/Resources/Help/cli-reference.md) | Command-line usage |
+| 🔊 [Audio Format Compatibility](Sources/MeedyaConverter/Resources/Help/audio-format-compatibility.md) | Conversion matrix — what converts to what |
 | 📖 [GitHub Wiki](https://github.com/MWBMPartners/MeedyaConverter/wiki) | Architecture, API docs, dev guide |
 | 🔒 [Security Policy](.github/SECURITY.md) | Vulnerability reporting |
 

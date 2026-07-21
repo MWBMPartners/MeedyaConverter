@@ -161,7 +161,7 @@ Also create a CHANGELOG.md which lists, in detail, every change made, including 
 
 Markdown (.md) files should be layed-out well and easy to read. Please use text formatting, and even graphics via emojis to help with user-friendly readability.
 
-We also want to create detailed usage documentation, including troubleshooting steps and FAQs. The documentation should be in help/ in Markdown (.md) formaat, but should also have embedded help in the application on each OS platform, in a native way.
+We also want to create detailed usage documentation, including troubleshooting steps and FAQs. The documentation should be in Sources/MeedyaConverter/Resources/Help/ in Markdown (.md) formaat, but should also have embedded help in the application on each OS platform, in a native way.
 
 Please also keep a record of all CLAUDE prompts, context, memory etc as well as this project brief in .claude/ so that this is retaained and can allow us to pick up where we left off, keeping project requirements and plan. Claude Memory must also be in .claude/ so that it can be included in the repo and available to other developers
 

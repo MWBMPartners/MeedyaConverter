@@ -63,7 +63,12 @@ public struct OutputPathResolver: Sendable {
         mode: OutputMode,
         template: FilenameTemplate?
     ) -> URL {
-        let fileName = inputURL.lastPathComponent
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `lastPathComponent` cannot itself contain a
+        // path separator, but wrapping closes the door on a future
+        // regression (e.g. a caller passing a raw user-supplied
+        // string here instead of a real `URL`'s last component).
+        let fileName = PathSanitizer.sanitizeFilenameComponent(inputURL.lastPathComponent)
 
         switch mode {
         case .flatten:
@@ -113,7 +118,12 @@ public struct OutputPathResolver: Sendable {
         case .custom:
             // Custom template mode — apply template if available, else flatten
             if let template {
-                let resolvedName = template.resolve(for: inputURL)
+                // `FilenameTemplate.resolve(for:)` already sanitises
+                // its result (F-002); wrapping again here is a
+                // no-op-if-already-sanitised belt-and-suspenders.
+                let resolvedName = PathSanitizer.sanitizeFilenameComponent(
+                    template.resolve(for: inputURL)
+                )
                 let candidate = outputDir.appendingPathComponent(resolvedName)
 
                 // Create intermediate directories if the template includes path separators

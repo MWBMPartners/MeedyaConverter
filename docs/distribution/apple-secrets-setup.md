@@ -6,6 +6,10 @@ This guide walks the project maintainer through populating the six
 `APPLE_*` GitHub Actions secrets that `.github/workflows/release.yml`
 requires for the **Direct distribution** signed-and-notarised DMG path.
 
+Once these secrets are populated, see
+[`direct-release.md`](direct-release.md) for the end-to-end release
+runbook (cutting a tag, what CI does, and how to verify the result).
+
 The procedure uses the **GitHub web UI** throughout — `gh secret set`
 is deliberately avoided so secret values never enter shell history or
 clipboard for longer than necessary.
@@ -146,12 +150,17 @@ The 10-character team identifier.
 
 ## Verification
 
-After all six secrets are set, run a dry-run of the release pipeline
-to confirm the precheck passes:
+`release.yml` has **no `workflow_dispatch` trigger** — there is no
+"Run workflow" button to click for a dry-run. The `precheck-secrets`
+job (and everything after it) can only be observed by actually pushing
+a `v*` tag:
 
-1. Go to **Actions** → **Production Release** → **Run workflow**.
-2. Pick the `autopilot/2026-06-30` (or whichever release-ready
-   branch).
+1. Cut a real (or disposable release-candidate) tag on `main`, e.g.
+   `git tag v0.1.0-rc.4 <sha-on-main> && git push origin v0.1.0-rc.4`.
+   See `docs/distribution/direct-release.md` for the full release
+   procedure.
+2. Go to **Actions** → **Production Release** and open the run the
+   tag push triggered.
 3. Watch the **precheck-secrets** job. All six asserts should print:
 
    ```text
@@ -166,12 +175,18 @@ to confirm the precheck passes:
    All Apple-secrets prechecks passed. Release job will proceed.
    ```
 
-If any line shows `::error::`, fix that secret and re-run.
+If any line shows `::error::`, fix that secret and retry with
+`gh run rerun <run-id>` (the failed run's ID — `gh run list
+--workflow=release.yml`) rather than pushing a new tag, since the
+precheck failure happens before anything version- or asset-specific
+has been produced.
 
-> **Note**: the production-release workflow only fires on `v*` tag
-> pushes, not on `workflow_dispatch` by default. To dry-run without
-> cutting a real tag, see the "End-to-end dry-run" entry in
-> issue #428.
+> **Note**: if a secrets-only dry-run (no tag, no release artefacts)
+> becomes a recurring need, a maintainer could add a second,
+> `workflow_dispatch`-triggered job that runs only `precheck-secrets`
+> in isolation. That trigger does not exist today and is out of scope
+> for this document — this is a suggestion for a future PR, not an
+> instruction being carried out here.
 
 ## Optional: alternative auth via App Store Connect API key
 
