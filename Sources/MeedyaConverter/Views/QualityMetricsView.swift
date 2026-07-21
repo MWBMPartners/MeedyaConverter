@@ -148,12 +148,19 @@ final class QualityMetricsViewModel {
     /// each metric gets its own dedicated filter graph and log/output to
     /// parse (a single combined pass cannot report all three independently).
     ///
-    /// The background work runs on a detached task — this view model is
-    /// `@MainActor`-isolated, so a plain `Task { }` here would infer that
-    /// isolation and could block the UI thread on the libvmaf pre-flight
-    /// probe (which blocks synchronously on process exit) and on the
-    /// FFmpeg passes themselves. All UI-state mutations explicitly hop back
-    /// to the main actor.
+    /// The work runs on a plain `Task { }`, which — created from this
+    /// `@MainActor`-isolated method — inherits main-actor isolation, so
+    /// `self` never crosses an isolation boundary (Swift 6 would reject
+    /// sending a `@MainActor`-class `self` out of a detached task and back
+    /// via `MainActor.run`). UI-state mutations are therefore direct
+    /// property writes, not actor hops. The two genuinely blocking calls —
+    /// `FFmpegBundleManager.locateFFmpeg()` (file I/O) and
+    /// `probeLibvmafAvailable(ffmpegPath:)` (blocks synchronously on
+    /// process exit) — are kept off the main thread by running them in
+    /// child `Task.detached` blocks that capture/return only `Sendable`
+    /// values (`String`/`Bool`), never `self`. The FFmpeg passes themselves
+    /// stream progress via a non-blocking `AsyncStream`, so they're awaited
+    /// directly on the main actor without needing to be detached.
     func runAnalysis() {
         guard canRunAnalysis else { return }
 
@@ -167,16 +174,17 @@ final class QualityMetricsViewModel {
         let distorted = distortedPath
         let metric = selectedMetric
 
-        analysisTask = Task.detached { [weak self] in
-            let bundleManager = FFmpegBundleManager()
+        analysisTask = Task { [weak self] in
+            guard let self else { return }
+
             let ffmpegPath: String
             do {
-                ffmpegPath = try bundleManager.locateFFmpeg().path
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
             } catch {
-                await MainActor.run {
-                    self?.errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before analysing quality."
-                    self?.isAnalysing = false
-                }
+                self.errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before analysing quality."
+                self.isAnalysing = false
                 return
             }
 
@@ -186,21 +194,21 @@ final class QualityMetricsViewModel {
             // otherwise-working FFmpeg build. Skip VMAF gracefully rather
             // than letting the whole pass fail with a filter-not-found error.
             if metricsToRun.contains(.vmaf) {
-                let hasLibvmaf = Self.probeLibvmafAvailable(ffmpegPath: ffmpegPath)
+                let hasLibvmaf = await Task.detached {
+                    Self.probeLibvmafAvailable(ffmpegPath: ffmpegPath)
+                }.value
                 if !hasLibvmaf {
                     metricsToRun.removeAll { $0 == .vmaf }
-                    await MainActor.run {
-                        if metric == .vmaf {
-                            self?.errorMessage = "VMAF requires an FFmpeg build with libvmaf support, which this FFmpeg binary does not have. Install a build with --enable-libvmaf, or choose SSIM/PSNR instead."
-                        } else {
-                            self?.errorMessage = "VMAF was skipped: this FFmpeg binary was not built with libvmaf support. SSIM and PSNR were still computed."
-                        }
+                    if metric == .vmaf {
+                        self.errorMessage = "VMAF requires an FFmpeg build with libvmaf support, which this FFmpeg binary does not have. Install a build with --enable-libvmaf, or choose SSIM/PSNR instead."
+                    } else {
+                        self.errorMessage = "VMAF was skipped: this FFmpeg binary was not built with libvmaf support. SSIM and PSNR were still computed."
                     }
                 }
             }
 
             guard !metricsToRun.isEmpty else {
-                await MainActor.run { self?.isAnalysing = false }
+                self.isAnalysing = false
                 return
             }
 
@@ -214,7 +222,7 @@ final class QualityMetricsViewModel {
                 if Task.isCancelled { break passLoop }
 
                 let controller = FFmpegProcessController(binaryPath: ffmpegPath)
-                await MainActor.run { self?.currentController = controller }
+                self.currentController = controller
 
                 var vmafLogPath: String?
                 let arguments: [String]
@@ -257,9 +265,7 @@ final class QualityMetricsViewModel {
                         }
                     }
                 } catch {
-                    await MainActor.run {
-                        self?.errorMessage = "\(metricType.rawValue.uppercased()) analysis failed: \(error.localizedDescription)"
-                    }
+                    self.errorMessage = "\(metricType.rawValue.uppercased()) analysis failed: \(error.localizedDescription)"
                     continue passLoop
                 }
 
@@ -290,21 +296,19 @@ final class QualityMetricsViewModel {
             )
             let combinedCommand = commandsRun.joined(separator: "\n\n")
 
-            await MainActor.run {
-                self?.currentController = nil
-                self?.generatedCommand = combinedCommand
-                if vmafScore == nil && ssimScore == nil && psnrScore == nil {
-                    if self?.errorMessage == nil {
-                        self?.errorMessage = "Could not read quality metric data from the FFmpeg output."
-                    }
-                } else {
-                    self?.result = finalResult
-                    self?.perFrameData = (perFrame ?? []).enumerated().map {
-                        PerFrameDataPoint(frame: $0.offset, score: $0.element)
-                    }
+            self.currentController = nil
+            self.generatedCommand = combinedCommand
+            if vmafScore == nil && ssimScore == nil && psnrScore == nil {
+                if self.errorMessage == nil {
+                    self.errorMessage = "Could not read quality metric data from the FFmpeg output."
                 }
-                self?.isAnalysing = false
+            } else {
+                self.result = finalResult
+                self.perFrameData = (perFrame ?? []).enumerated().map {
+                    PerFrameDataPoint(frame: $0.offset, score: $0.element)
+                }
             }
+            self.isAnalysing = false
         }
     }
 
