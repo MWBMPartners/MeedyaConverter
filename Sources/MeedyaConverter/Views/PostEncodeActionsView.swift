@@ -305,8 +305,36 @@ struct PostEncodeActionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-        case .uploadSFTP, .uploadCloud:
-            Text("This action type is not yet available.")
+        case .uploadSFTP:
+            let profiles = SFTPProfileStore.loadProfiles()
+            if profiles.isEmpty {
+                Text("No saved SFTP servers. Add one in Settings → SFTP, then pick it here.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else {
+                Picker(
+                    "SFTP Server",
+                    selection: Binding(
+                        get: { action.config["sftpProfileID"] ?? "" },
+                        set: { action.config["sftpProfileID"] = $0 }
+                    )
+                ) {
+                    Text("Select a server…").tag("")
+                    ForEach(profiles, id: \.id) { profile in
+                        Text("\(profile.label) (\(profile.host))").tag(profile.id.uuidString)
+                    }
+                }
+                .accessibilityLabel("SFTP server profile")
+
+                Text("Uploads the encoded output file via scp to the selected server.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+        case .uploadCloud:
+            Text("Cloud upload is not yet available: no component in this app performs an "
+                + "authenticated upload to Dropbox, OneDrive, Google Drive, S3, YouTube, or "
+                + "Vimeo — only the request-builder helpers exist. Use SFTP upload instead.")
                 .font(.caption)
                 .foregroundStyle(.orange)
         }
@@ -397,8 +425,8 @@ struct AddActionSheet: View {
         case .openInFinder: return "Reveal in Finder"
         case .runShellScript: return "Run Shell Script"
         case .webhook: return "Send Webhook"
-        case .uploadSFTP: return "Upload via SFTP (Future)"
-        case .uploadCloud: return "Upload to Cloud (Future)"
+        case .uploadSFTP: return "Upload via SFTP"
+        case .uploadCloud: return "Upload to Cloud (Not Yet Available)"
         case .sendNotification: return "Send Notification"
         }
     }
