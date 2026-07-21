@@ -3,8 +3,8 @@
 # MeedyaConverter — Security Posture
 
 > This is the **dev-team-autopilot SECURE-phase working document** —
-> the security-side equivalent of [`PROJECT.md`](.dev-team/archive/PROJECT.md) +
-> [`FEATURES.md`](.dev-team/archive/FEATURES.md). It captures attack surface, trust
+> the security-side equivalent of [`PROJECT.md`](PROJECT.md) +
+> [`FEATURES.md`](FEATURES.md). It captures attack surface, trust
 > boundaries, scanner coverage, threat model, and findings register
 > for the autopilot's per-cycle SECURE work.
 >

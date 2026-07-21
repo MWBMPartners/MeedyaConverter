@@ -26,8 +26,7 @@
 - **Autopilot run completed** (26 cycles, 58+ commits on the now-superseded
   `autopilot/2026-06-30` run branch) -- drove the codebase from "mostly
   built" to feature-complete and security-hardened. Full cycle-by-cycle
-  ledger in [`PROJECT.md`](.dev-team/archive/PROJECT.md) (archived --
-  superseded by this file).
+  ledger in [`PROJECT.md`](PROJECT.md).
 - **STABILIZE phase closed** all remaining #428 ship-blockers: Package.swift
   consolidation, Sparkle Option A (GitHub-Releases update poller),
   fail-fast Apple-secrets precheck in `release.yml`, CONTRIBUTING.md +
@@ -37,8 +36,8 @@
   findings F-001 through F-010 are each fixed or explicitly risk-accepted.
   **No open Critical/High/Medium security finding remains.**
 - **COMPLETE phase confirmed feature-completeness** -- the feature-gap
-  ledger in [`FEATURES.md`](.dev-team/archive/FEATURES.md) (archived)
-  shows zero autonomously-buildable in-scope gaps ("Bucket 1" empty).
+  ledger in [`FEATURES.md`](FEATURES.md) shows zero autonomously-buildable
+  in-scope gaps ("Bucket 1" empty).
   Remaining differentiator features (#419-#427) are multi-month efforts
   explicitly gated on user greenlight, not v0.1.0 blockers.
 - **POLISH and VERIFY phases passed** -- zero compiler warnings, 1039/1039
