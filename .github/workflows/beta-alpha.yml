@@ -94,7 +94,7 @@ jobs:
       # Step 4: Cache SPM dependencies
       # ---------------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-prerelease-${{ hashFiles('Package.swift', 'Package.resolved') }}

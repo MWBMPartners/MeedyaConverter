@@ -216,7 +216,7 @@ jobs:
       # Reuse cached dependencies to speed up the release build.
       # ---------------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.swift', 'Package.resolved') }}
