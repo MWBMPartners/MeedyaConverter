@@ -332,11 +332,34 @@ struct PostEncodeActionRow: View {
             }
 
         case .uploadCloud:
-            Text("Cloud upload is not yet available: no component in this app performs an "
-                + "authenticated upload to Dropbox, OneDrive, Google Drive, S3, YouTube, or "
-                + "Vimeo — only the request-builder helpers exist. Use SFTP upload instead.")
-                .font(.caption)
-                .foregroundStyle(.orange)
+            // Issue #459: Dropbox / Google Drive / OneDrive execute a
+            // real, authenticated upload via `CloudUploadExecutor`.
+            // S3/YouTube/Vimeo remain out of scope — see
+            // `CloudUploadExecutor`'s doc comment.
+            let profiles = CloudStorageProfileStore.loadProfiles()
+            if profiles.isEmpty {
+                Text("No saved cloud storage configurations. Add one in Settings → Cloud Storage, then pick it here.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else {
+                Picker(
+                    "Cloud Storage Configuration",
+                    selection: Binding(
+                        get: { action.config["cloudProfileID"] ?? "" },
+                        set: { action.config["cloudProfileID"] = $0 }
+                    )
+                ) {
+                    Text("Select a configuration…").tag("")
+                    ForEach(profiles, id: \.id) { profile in
+                        Text("\(profile.label) (\(profile.provider.rawValue))").tag(profile.id.uuidString)
+                    }
+                }
+                .accessibilityLabel("Cloud storage configuration")
+
+                Text("Uploads the encoded output file to the selected Dropbox, Google Drive, or OneDrive destination.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
 
         // "Run on failure" toggle — common to all action types.
@@ -426,7 +449,7 @@ struct AddActionSheet: View {
         case .runShellScript: return "Run Shell Script"
         case .webhook: return "Send Webhook"
         case .uploadSFTP: return "Upload via SFTP"
-        case .uploadCloud: return "Upload to Cloud (Not Yet Available)"
+        case .uploadCloud: return "Upload to Cloud"
         case .sendNotification: return "Send Notification"
         }
     }
