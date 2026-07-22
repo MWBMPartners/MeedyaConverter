@@ -25,7 +25,9 @@ public enum MatchType: String, Sendable, CaseIterable {
     /// Files whose durations differ by at most 1 second.
     case similarDuration
 
-    /// Perceptual fingerprint comparison (placeholder for future implementation).
+    /// Perceptual fingerprint comparison — DCT-based pHash over sampled
+    /// frames (see `PerceptualHasher`). Catches re-encodes, transcodes,
+    /// and trims that `.exactHash`/`.sameSize` miss (Issue #449).
     case perceptual
 }
 
@@ -89,8 +91,16 @@ public struct DuplicateDetector: Sendable {
     /// - Parameters:
     ///   - urls: The file URLs to analyse.
     ///   - method: The matching algorithm to apply.
+    ///   - perceptualThreshold: Maximum mean Hamming distance (out of 64)
+    ///     for two files to be grouped under `.perceptual` matching. Only
+    ///     consulted when `method == .perceptual`; defaults to
+    ///     `PerceptualHasher.defaultDistanceThreshold`.
     /// - Returns: An array of `DuplicateGroup` instances, each containing two or more files.
-    public static func findDuplicates(in urls: [URL], method: MatchType) async -> [DuplicateGroup] {
+    public static func findDuplicates(
+        in urls: [URL],
+        method: MatchType,
+        perceptualThreshold: Int = PerceptualHasher.defaultDistanceThreshold
+    ) async -> [DuplicateGroup] {
         switch method {
         case .exactHash:
             return findByExactHash(urls)
@@ -99,8 +109,7 @@ public struct DuplicateDetector: Sendable {
         case .similarDuration:
             return await findBySimilarDuration(urls)
         case .perceptual:
-            // Perceptual hashing is a placeholder; returns empty for now.
-            return []
+            return await findByPerceptualHash(urls, threshold: perceptualThreshold)
         }
     }
 
@@ -184,6 +193,56 @@ public struct DuplicateDetector: Sendable {
         }
 
         return groups
+    }
+
+    /// Groups files by perceptual (pHash) similarity across sampled frames.
+    ///
+    /// Each candidate is sampled and hashed via `PerceptualHasher.hashFile`
+    /// (blocking `AVFoundation` decode is isolated off-main inside the
+    /// sampler itself — see `AVAssetFrameSampler`'s doc comment), then
+    /// files are transitively grouped by `PerceptualHasher.groupByDistance`
+    /// wherever their mean Hamming distance falls within `threshold`.
+    ///
+    /// Files that cannot be decoded (corrupt media, non-video content,
+    /// zero/invalid duration, no readable frames) are skipped with a
+    /// logged reason — never silently dropped without explanation, and
+    /// never fabricated into a group.
+    ///
+    /// - Parameters:
+    ///   - urls: Candidate file URLs.
+    ///   - sampler: The `FrameSampling` implementation to use. Defaults to
+    ///     `AVAssetFrameSampler()`; overridable for testing.
+    ///   - threshold: Maximum mean Hamming distance (out of 64) for two
+    ///     files to be grouped as duplicates.
+    /// - Returns: Groups of two or more perceptually-similar files.
+    private static func findByPerceptualHash(
+        _ urls: [URL],
+        sampler: any FrameSampling = AVAssetFrameSampler(),
+        threshold: Int = PerceptualHasher.defaultDistanceThreshold
+    ) async -> [DuplicateGroup] {
+        var vectors: [FileHashVector] = []
+
+        for url in urls {
+            let hashes = await PerceptualHasher.hashFile(
+                at: url,
+                sampler: sampler,
+                frameCount: PerceptualHasher.defaultFrameCount
+            )
+            guard !hashes.isEmpty else {
+                print(
+                    "[DuplicateDetector] Skipping \(url.lastPathComponent) for perceptual " +
+                    "matching: no decodable video frames (unsupported format, corrupt " +
+                    "stream, or zero/invalid duration)."
+                )
+                continue
+            }
+            vectors.append(FileHashVector(url: url, hashes: hashes))
+        }
+
+        return PerceptualHasher.groupByDistance(vectors, threshold: threshold).map { files in
+            let size = fileSize(for: files[0]) ?? 0
+            return DuplicateGroup(files: files, matchType: .perceptual, fileSize: size)
+        }
     }
 
     /// Returns the file size in bytes for the given URL, or `nil` on failure.
