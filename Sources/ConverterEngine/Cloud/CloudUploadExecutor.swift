@@ -218,7 +218,7 @@ public struct CloudUploadExecutor: @unchecked Sendable {
             }
         }
 
-        let ids = parseSuccess?(data, http) ?? (nil, nil)
+        let ids: (remoteURL: String?, fileId: String?) = parseSuccess?(data, http) ?? (nil, nil)
         return UploadResult(
             remoteURL: ids.remoteURL,
             fileId: ids.fileId,
@@ -315,13 +315,20 @@ public struct CloudUploadExecutor: @unchecked Sendable {
             }
 
             let rangeEnd = offset + Int64(chunk.count) - 1
-            var chunkRequest = URLRequest(url: uploadURL)
-            chunkRequest.httpMethod = "PUT"
-            chunkRequest.setValue("\(chunk.count)", forHTTPHeaderField: "Content-Length")
-            chunkRequest.setValue(
+            var mutableChunkRequest = URLRequest(url: uploadURL)
+            mutableChunkRequest.httpMethod = "PUT"
+            mutableChunkRequest.setValue("\(chunk.count)", forHTTPHeaderField: "Content-Length")
+            mutableChunkRequest.setValue(
                 "bytes \(offset)-\(rangeEnd)/\(totalBytes)",
                 forHTTPHeaderField: "Content-Range"
             )
+            // Captured below inside a `@Sendable` closure: Swift 6 strict
+            // concurrency rejects capturing a mutable `var` in
+            // concurrently-executing code (even though nothing mutates it
+            // after this point), so it is finalised into an immutable
+            // `let` first — the same "build mutable, hand off immutable"
+            // shape as `chunk` above.
+            let chunkRequest = mutableChunkRequest
 
             let (data, _) = try await executeWithRetry {
                 try await self.session.upload(for: chunkRequest, from: chunk)
