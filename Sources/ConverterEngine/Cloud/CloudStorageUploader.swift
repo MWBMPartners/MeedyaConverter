@@ -119,10 +119,9 @@ public struct CloudStorageUploader: Sendable {
             return nil
         }
 
-        let fileName = (filePath as NSString).lastPathComponent
         let remoteDest = config.remotePath.hasSuffix("/")
-            ? config.remotePath + fileName
-            : config.remotePath + "/" + fileName
+            ? config.remotePath + filePath
+            : config.remotePath + "/" + filePath
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
