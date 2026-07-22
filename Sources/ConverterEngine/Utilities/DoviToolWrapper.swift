@@ -382,6 +382,34 @@ public final class DoviToolWrapper: @unchecked Sendable {
         return result.stdout
     }
 
+    // MARK: - Generic Invocation (Issue #370)
+
+    /// Run an arbitrary dovi_tool subcommand and return its raw result.
+    ///
+    /// Exposes the same process runner used by the typed convenience methods
+    /// above (`extractRPU`, `injectRPU`, `convertProfile`, `generateRPU`,
+    /// `info`) for pipeline orchestration callers — such as
+    /// `DualDynamicHDRPipelineExecutor` — that walk a pre-built list of
+    /// `PipelineStepDescriptor`s carrying their own argument arrays,
+    /// including subcommands (e.g. `export`) with no dedicated wrapper
+    /// method yet. Prefer the typed methods when one exists; this is the
+    /// escape hatch for the rest.
+    ///
+    /// - Parameter arguments: Full dovi_tool argument list, e.g.
+    ///   `["export", "-i", rpuBin, "-o", jsonPath]`.
+    /// - Returns: The process exit code and trimmed stdout/stderr.
+    /// - Throws: `DoviToolError.binaryNotFound` if dovi_tool is not
+    ///   installed. Never throws on a non-zero exit code — callers inspect
+    ///   `exitCode` themselves, matching `Process.terminationStatus` semantics.
+    public func run(arguments: [String]) async throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        guard let binary = locateBinary() else {
+            throw DoviToolError.binaryNotFound
+        }
+
+        let result = try await runAsync(binary, arguments: arguments)
+        return (result.exitCode, result.stdout, result.stderr)
+    }
+
     // MARK: - Private Helpers
 
     private struct CommandResult {
