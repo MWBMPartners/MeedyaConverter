@@ -301,6 +301,38 @@ public final class EncodingStatisticsCollector: @unchecked Sendable {
         defer { lock.unlock() }
         return statistics
     }
+
+    // MARK: - FPS Derivation (Issue #284)
+
+    /// Extracts FFmpeg's own `fps=` value from a raw `-progress pipe:1`
+    /// output chunk (`FFmpegProgressInfo.rawLine`).
+    ///
+    /// `FFmpegProcessController.FFmpegProgressInfo` has no `fps` field —
+    /// its `parseProgress(from:)` only extracts `frame`, `speed`,
+    /// `bitrate`, `total_size`, and `out_time`/`out_time_us` from that same
+    /// raw text, even though FFmpeg's `-progress` output includes an `fps=`
+    /// key per progress block (see the sample block in
+    /// `FFmpegProcessController.startEncoding`'s doc comment). This mirrors
+    /// that same `key=value`, one-per-line parsing so a caller wiring up
+    /// `EncodingStatisticsCollector.recordProgress(fps:...)` (which does
+    /// require an `fps` value) can recover it without any change to
+    /// `FFmpegProcessController` itself.
+    ///
+    /// - Parameter rawLine: `FFmpegProgressInfo.rawLine` (or any raw
+    ///   `-progress` output chunk).
+    /// - Returns: The parsed fps value, or `0` if the chunk contains no
+    ///   `fps=` line or its value isn't a valid number (e.g. FFmpeg's own
+    ///   placeholder — it does report `fps=0.00` before the first frame).
+    public static func fps(fromRawProgressLine rawLine: String?) -> Double {
+        guard let rawLine else { return 0 }
+        for line in rawLine.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespaces) == "fps" else { continue }
+            return Double(parts[1].trimmingCharacters(in: .whitespaces)) ?? 0
+        }
+        return 0
+    }
 }
 
 // MARK: - EncodingStatisticsStore

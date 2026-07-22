@@ -701,6 +701,24 @@ final class AppViewModel {
                 analytics.track(.profileUsed, properties: ["profile": jobState.config.profile.name])
             }
 
+            // Per-job encoding statistics collector (Issue #284, re #448).
+            // EncodingStatisticsCollector already existed in ConverterEngine
+            // but was referenced nowhere in the pipeline, so
+            // EncodingGraphsView (wired in #448) was always empty. This is
+            // the insertion point: create one collector per job, feed it
+            // from the existing `progressInfo` closure below, and persist
+            // it via `EncodingStatisticsStore` on completion.
+            let statsCollector = EncodingStatisticsCollector(
+                jobID: jobState.config.id,
+                jobName: jobState.config.inputURL.lastPathComponent
+            )
+            statsCollector.setInputMetadata(
+                fileSize: fileSizeInBytes(atPath: jobState.config.inputURL.path),
+                duration: nil,
+                videoCodec: jobState.config.profile.videoCodec?.rawValue,
+                audioCodec: jobState.config.profile.audioCodec?.rawValue
+            )
+
             do {
                 try await engine.encode(job: jobState.config) { progressInfo in
                     Task { @MainActor [weak self] in
@@ -730,6 +748,23 @@ final class AppViewModel {
                                             category: .progress, rawOutput: raw,
                                             jobID: jobState.config.id)
                         }
+
+                        // Record a statistics data point (Issue #284).
+                        // `FFmpegProgressInfo` has no `fps` field, so it is
+                        // recovered from FFmpeg's own raw "fps=" line via
+                        // `EncodingStatisticsCollector.fps(fromRawProgressLine:)`
+                        // rather than changing `FFmpegProcessController`'s
+                        // parser. `recordProgress` self-throttles to its
+                        // configured sample interval, so calling it on
+                        // every tick here is intentional, not wasteful.
+                        statsCollector.recordProgress(
+                            fps: EncodingStatisticsCollector.fps(fromRawProgressLine: progressInfo.rawLine),
+                            bitrate: progressInfo.bitrate,
+                            encodedSeconds: progressInfo.currentTime ?? 0,
+                            frameNumber: progressInfo.frame ?? 0,
+                            outputSizeBytes: progressInfo.totalSize.map { Int64($0) },
+                            speed: progressInfo.speed
+                        )
                     }
                 }
 
@@ -740,6 +775,23 @@ final class AppViewModel {
                 let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
                 appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
                           category: .encoding, jobID: jobState.config.id)
+
+                // Finalise and persist this job's statistics (Issue #284).
+                // `EncodingStatisticsStore` reads/writes its JSON history
+                // file synchronously in `init()`/`addStatistics(_:)`, so —
+                // mirroring `EncodingGraphsView`'s own handling of the same
+                // store — that disk I/O runs via `Task.detached` rather
+                // than blocking this `@MainActor`-isolated method. Only the
+                // `Sendable` `EncodingStatistics` snapshot crosses into the
+                // detached task, never `self`/`jobState`.
+                if let outputSize = fileSizeInBytes(atPath: jobState.config.outputURL.path) {
+                    statsCollector.setOutputFileSize(outputSize)
+                }
+                statsCollector.markComplete()
+                let finalStatistics = statsCollector.currentStatistics
+                await Task.detached {
+                    EncodingStatisticsStore().addStatistics(finalStatistics)
+                }.value
 
                 // Track encode completion with duration category (Issue #183)
                 let durationCategory: String
@@ -893,6 +945,24 @@ final class AppViewModel {
     }
 
     // MARK: - Helpers
+
+    /// The size, in bytes, of the file at `path`, or `nil` if it cannot be
+    /// determined (missing file, unreadable attributes, etc.). Used by the
+    /// queue runner's `EncodingStatisticsCollector` wiring (Issue #284) —
+    /// `nil` is passed straight through rather than fabricating `0`, so an
+    /// unreadable file size stays honestly absent from the stored stats.
+    private func fileSizeInBytes(atPath path: String) -> Int64? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return nil
+        }
+        if let size = attributes[.size] as? Int64 {
+            return size
+        }
+        if let size = attributes[.size] as? UInt64, size <= UInt64(Int64.max) {
+            return Int64(size)
+        }
+        return nil
+    }
 
     /// Format a time interval as a human-readable duration.
     private func formatDuration(_ interval: TimeInterval) -> String {
