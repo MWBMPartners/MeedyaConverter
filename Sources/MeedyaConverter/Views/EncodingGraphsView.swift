@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - GraphMetric
@@ -68,12 +69,22 @@ struct EncodingGraphsView: View {
     /// seeds its `@State` directly from `CloudProfileSync.shared`.
     @State private var statisticsStore = EncodingStatisticsStore()
 
+    /// Set after a failed CSV export attempt; cleared on the next
+    /// successful export or metric change. Never set on success — a
+    /// successful export closes the save panel with no further UI, mirroring
+    /// `BitrateHeatmapView.exportAsImage()`.
+    @State private var exportErrorMessage: String?
+
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
             // Metric selector
             metricPicker
+
+            if let exportErrorMessage {
+                exportErrorBanner(message: exportErrorMessage)
+            }
 
             Divider()
 
@@ -127,6 +138,15 @@ struct EncodingGraphsView: View {
 
             Spacer()
 
+            Button {
+                exportCSV()
+            } label: {
+                Label("Export CSV", systemImage: "square.and.arrow.up")
+            }
+            .disabled(statisticsStore.allStatistics.isEmpty)
+            .help("Export all recorded encoding statistics as CSV")
+            .accessibilityLabel("Export encoding statistics as CSV")
+
             if let stats = currentStatistics {
                 Text(stats.jobName)
                     .font(.headline)
@@ -135,6 +155,24 @@ struct EncodingGraphsView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    /// Inline banner shown after a failed CSV export attempt.
+    private func exportErrorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Dismiss") {
+                exportErrorMessage = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
@@ -327,6 +365,32 @@ struct EncodingGraphsView: View {
             return history.first { $0.jobID == selectedJobID }
         }
         return history.first
+    }
+
+    // MARK: - Actions
+
+    /// Exports every recorded job's statistics as CSV via
+    /// `EncodingStatisticsStore.exportAsCSV()` (Issue #363) — one row per
+    /// completed job, not just the currently-displayed one. Pure string
+    /// formatting on the `ConverterEngine` side (see
+    /// `EncodingStatistics.csvHeader`/`csvRow`); this method only adds the
+    /// `NSSavePanel` and the file write, mirroring
+    /// `BitrateHeatmapView.exportAsImage()` / `StatisticsExportView
+    /// .exportData()`'s CSV branch.
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.title = "Export Encoding Statistics"
+        panel.nameFieldStringValue = "encoding_statistics.csv"
+        panel.allowedContentTypes = [UTType.commaSeparatedText]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try statisticsStore.exportAsCSV().write(to: url, options: .atomic)
+            exportErrorMessage = nil
+        } catch {
+            exportErrorMessage = "Failed to export CSV: \(error.localizedDescription)"
+        }
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

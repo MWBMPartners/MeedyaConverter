@@ -195,6 +195,67 @@ public struct EncodingStatistics: Codable, Sendable {
             return (point.elapsedSeconds, q)
         }
     }
+
+    // MARK: - CSV Export (Issue #363)
+
+    /// CSV column headers matching `csvRow`'s field order. A single joined
+    /// string (rather than `[String]`) so `EncodingStatisticsStore
+    /// .exportAsCSV()` can prepend it to the row list with no further
+    /// formatting, and so a test can assert on it directly.
+    public static let csvHeader: String = [
+        "job_id", "job_name", "start_time", "end_time", "duration_seconds",
+        "average_fps", "peak_fps", "minimum_fps",
+        "average_bitrate_kbps", "peak_bitrate_kbps", "average_quantizer",
+        "input_file_size_bytes", "output_file_size_bytes",
+        "compression_ratio", "space_savings_percent", "average_speed_factor",
+        "video_codec", "audio_codec", "resolution",
+        "encoding_passes", "data_point_count",
+    ].joined(separator: ",")
+
+    /// A single CSV row summarising this job's statistics, in the same
+    /// column order as `csvHeader`. Reuses the same computed aggregate
+    /// properties (`averageFPS`, `compressionRatio`, etc.) already used to
+    /// drive `EncodingGraphsView`'s stat cards — no new aggregation logic,
+    /// just formatting. Pure string building: no file I/O, cannot throw.
+    public var csvRow: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+
+        let fields: [String] = [
+            jobID.uuidString,
+            Self.csvEscape(jobName),
+            formatter.string(from: startTime),
+            endTime.map { formatter.string(from: $0) } ?? "",
+            totalEncodingDuration.map { String(format: "%.2f", $0) } ?? "",
+            String(format: "%.2f", averageFPS),
+            String(format: "%.2f", peakFPS),
+            String(format: "%.2f", minimumFPS),
+            averageBitrate.map { String(format: "%.2f", $0) } ?? "",
+            peakBitrate.map { String(format: "%.2f", $0) } ?? "",
+            averageQuantizer.map { String(format: "%.2f", $0) } ?? "",
+            inputFileSize.map { String($0) } ?? "",
+            outputFileSize.map { String($0) } ?? "",
+            compressionRatio.map { String(format: "%.3f", $0) } ?? "",
+            spaceSavingsPercent.map { String(format: "%.2f", $0) } ?? "",
+            averageSpeedFactor.map { String(format: "%.2f", $0) } ?? "",
+            Self.csvEscape(videoCodec ?? ""),
+            Self.csvEscape(audioCodec ?? ""),
+            Self.csvEscape(resolution ?? ""),
+            String(encodingPasses),
+            String(dataPoints.count),
+        ]
+        return fields.joined(separator: ",")
+    }
+
+    /// Escapes a string for safe inclusion in a CSV field (RFC 4180-style):
+    /// wraps the value in double quotes (doubling any internal quotes) when
+    /// it contains a comma, quote, or newline. Left unescaped otherwise.
+    private static func csvEscape(_ value: String) -> String {
+        guard value.contains(",") || value.contains("\"") || value.contains("\n") else {
+            return value
+        }
+        return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
 }
 
 // MARK: - EncodingStatisticsCollector
@@ -389,6 +450,26 @@ public final class EncodingStatisticsStore: @unchecked Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(current)
+    }
+
+    /// Export all statistics as CSV — one row per completed job,
+    /// summarising the same aggregate fields `EncodingGraphsView`'s stat
+    /// cards already display (average/peak FPS, average/peak bitrate,
+    /// compression ratio, space savings, duration). See
+    /// `EncodingStatistics.csvHeader`/`csvRow` (Issue #363) for the pure,
+    /// independently-testable formatting; this method only adds the file
+    /// I/O-adjacent bit (reading `history` under the lock) that
+    /// `exportAsJSON` above also does. Same row order as `exportAsJSON`
+    /// (chronological, oldest first) — never throws, since CSV formatting
+    /// here is pure string building with no encoder that can fail.
+    public func exportAsCSV() -> Data {
+        lock.lock()
+        let current = history
+        lock.unlock()
+
+        var lines = [EncodingStatistics.csvHeader]
+        lines.append(contentsOf: current.map(\.csvRow))
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     /// Clear all stored statistics.
