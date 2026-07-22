@@ -86,9 +86,14 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
 
 ## Current work-in-flight
 
-- **[PR #460 open — CI running]** Bundle 1 core — `CloudUploadExecutor` (real URLSession upload, 2xx-only,
-  retry/backoff, progress) + Dropbox/GDrive/OneDrive execution + `PostEncodeActions.uploadCloud` + 21
-  URLProtocol-mock tests. Umbrella issue **#459** filed. Follow-up in Bundle 1: S3 SigV4 signer + YouTube/Vimeo (#446).
+- **[done 2026-07-22]** Bundle 1 core (#459 / #450) — cloud-upload execution: `CloudUploadExecutor`
+  (real URLSession upload, 2xx-only, retry/backoff, byte progress, OneDrive chunked session) +
+  Dropbox/GDrive/OneDrive real upload + `PostEncodeActions.uploadCloud` + 21 URLProtocol-mock tests.
+  **PR #460 merged (`a902cb6`).** Follow-up (Bundle 1b): **S3 SigV4** signer + **YouTube/Vimeo** (#446).
+- **[done 2026-07-22]** Bundle 2 (#449) — perceptual hash: `PerceptualHasher` (DCT/pHash/Hamming) +
+  un-hid the Perceptual option + threshold slider + 24 pure tests. **PR #461 merged.** #449 closed.
+- **[next]** Bundle 3 (#448 remainder) — DualDynamicHDR executor (#370), `EncodingStatisticsCollector`
+  pipeline wiring in `AppViewModel` (#284), CSV export (#363), AnimatedImage real execution (#321).
 
 ## Decisions / blockers needing the user
 
