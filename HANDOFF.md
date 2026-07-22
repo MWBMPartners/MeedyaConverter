@@ -50,12 +50,37 @@ tweaks/enhancements/features. Bundle work for efficiency.
 
 ## Task log (most recent first)
 
-- **[in progress]** Fable DISCOVER/STRATEGIZE pass — full open+closed issue review + brief/context →
-  prioritized bundled roadmap (covers cloud-upload, #449, #448 remainder + new work).
+- **[done]** Fable DISCOVER/STRATEGIZE pass (2026-07-22) — enumerated all 419 issues (50 open / 369
+  closed); produced the 7-bundle roadmap below. Key finding: ~11 CLOSED issues are **closed-in-error**
+  (feature never executes in current code): cloud upload #161–175/#347, YouTube/Vimeo #294,
+  DualDynamicHDR #370, GIF/APNG #321, Slate #343, metadata-tag write #320, comparison #329,
+  CSV #363, dashboard stats #284, QC #344.
 
-## Roadmap / next steps
+## Roadmap / next steps — 7 bundles (execute in order; each = its own issue(s) + PR + CI + issue-update + handoff-update)
 
-_Populated from the Fable analysis (in progress). See the DISCOVER output._
+- **Bundle 1 — Cloud-upload execution layer** (committed). Shared `CloudUploadExecutor` (URLSession
+  upload, real status/retry/progress); wire Dropbox/GDrive/OneDrive (token-paste v1), YouTube/Vimeo
+  (#446), S3 SigV4 signer, `PostEncodeActions.uploadCloud` (#450). NEW umbrella issue. **1f full OAuth
+  PKCE = HUMAN-BLOCKED** (needs user OAuth client IDs) — do token-paste v1 only.
+- **Bundle 2 — #449 perceptual hash** (committed). New `PerceptualHasher` (AVAssetImageGenerator frame
+  sample → 32×32 gray → DCT → 64-bit pHash → Hamming grouping); un-hide the Perceptual option. CI-testable.
+- **Bundle 3 — #448 remainder** (committed). 3a DualDynamicHDR executor (dovi_tool/hdr10plus_tool via
+  existing runAsync); 3b wire `EncodingStatisticsCollector` into `AppViewModel` queue runner (#284);
+  3c CSV export (#363); 3d AnimatedImage real execution (#321).
+- **Bundle 4 — Placeholder sweep round 3.** Slate (#343), MetadataTag write (#320), Comparison (#329),
+  SmartCrop/MediaBrowser/PluginManager handoff (spot-check first).
+- **Bundle 5 — QC residual detectors (#445).** levelCompliance (reuse ebur128), corruptFrames (ffmpeg
+  null decode scan), formatConformance (ffprobe vs spec); audioSync stays gated on #421/#422.
+- **Bundle 6 — Test coverage + CI.** Tests for #450 SFTP code, stats store, pHash, HDR executor; #437 actionlint.
+- **Bundle 7 — Issue hygiene (continuous).** Close #447 (fix merged); evidence-comment + reopen the
+  closed-in-error set as each bundle adopts it; backfill labels/milestones on #444–#453; refresh docs.
+
+**Human blockers (do NOT schedule):** OAuth client IDs (1f), real cloud/YouTube accounts + dovi/hdr10plus
+media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release cut G-010/G-013.
+
+## Current work-in-flight
+
+- **[starting]** Bundle 1 — filing the cloud-upload umbrella issue + implementing `CloudUploadExecutor` (Sonnet).
 
 ## Decisions / blockers needing the user
 
