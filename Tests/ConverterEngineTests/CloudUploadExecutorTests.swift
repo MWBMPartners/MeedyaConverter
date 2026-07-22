@@ -362,8 +362,18 @@ final class CloudUploadExecutorTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "https://content.dropboxapi.com/2/files/upload")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer dbx_tok")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
-        let apiArg = try XCTUnwrap(request.value(forHTTPHeaderField: "Dropbox-API-Arg"))
-        XCTAssertTrue(apiArg.contains("/Videos/movie.mp4"))
+        let apiArgString = try XCTUnwrap(request.value(forHTTPHeaderField: "Dropbox-API-Arg"))
+        // Decode as JSON rather than substring-matching the raw header:
+        // Foundation's JSONSerialization escapes "/" as "\/" by default, so
+        // a literal `.contains("/Videos/movie.mp4")` check is broken by
+        // valid, semantically-identical output (JSON unescapes "\/" to "/"
+        // on any conformant parse). Checking the decoded "path" value tests
+        // what actually matters — the destination path Dropbox receives.
+        let apiArgData = try XCTUnwrap(apiArgString.data(using: .utf8))
+        let apiArg = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: apiArgData) as? [String: Any]
+        )
+        XCTAssertEqual(apiArg["path"] as? String, "/Videos/movie.mp4")
     }
 
     func test_googleDriveRequestBuilder_methodURLHeaders() throws {
