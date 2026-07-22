@@ -89,11 +89,17 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
 - **[done 2026-07-22]** Bundle 1 core (#459 / #450) — cloud-upload execution: `CloudUploadExecutor`
   (real URLSession upload, 2xx-only, retry/backoff, byte progress, OneDrive chunked session) +
   Dropbox/GDrive/OneDrive real upload + `PostEncodeActions.uploadCloud` + 21 URLProtocol-mock tests.
-  **PR #460 merged (`a902cb6`).** Follow-up (Bundle 1b): **S3 SigV4** signer + **YouTube/Vimeo** (#446).
-- **[done 2026-07-22]** Bundle 2 (#449) — perceptual hash: `PerceptualHasher` (DCT/pHash/Hamming) +
-  un-hid the Perceptual option + threshold slider + 24 pure tests. **PR #461 merged.** #449 closed.
-- **[next]** Bundle 3 (#448 remainder) — DualDynamicHDR executor (#370), `EncodingStatisticsCollector`
-  pipeline wiring in `AppViewModel` (#284), CSV export (#363), AnimatedImage real execution (#321).
+  **PR #460 merged (`a902cb6`).**
+- **[done 2026-07-22]** Bundle 1b (#459) — **S3 SigV4** signer (`AWSV4Signer`, AWS test-vector-verified) +
+  real signed S3 PUT via `CloudUploadExecutor`. **PR #463 merged (`4af2bae`).** Cloud remaining: YouTube/Vimeo
+  (OAuth-blocked, #446), S3 multipart >5 GiB TODO.
+- **[done 2026-07-22]** Bundle 2 (#449) — perceptual hash: `PerceptualHasher` + un-hid Perceptual + 24 tests.
+  **PR #461 merged.** #449 closed.
+- **[PR #462 — CI re-running on fix `e4ac19d`]** Bundle 3 (#448 remainder) — DualDynamicHDR executor (#370),
+  `EncodingStatisticsCollector` pipeline (#284), CSV export (#363), AnimatedImage (#321). Closes those 4 on merge.
+- **[remaining]** Bundle 4 (Slate #343, MetadataTag #320, Comparison #329 + spot-checks), Bundle 5 (QC #445),
+  Bundle 6 (test coverage), Bundle 7 (issue hygiene). **NEW finding:** separate fabricated stats-export surface
+  (`StatisticsExportView`/`DashboardView`/`StatisticsTracker`) — needs a persistent store + its own issue.
 
 ## Decisions / blockers needing the user
 
