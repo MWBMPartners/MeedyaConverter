@@ -15,9 +15,11 @@ import AppKit
 /// The type of action to execute after an encoding job completes.
 ///
 /// Actions run in the order they appear in a `PostEncodeActionChain`.
-/// `.uploadCloud` remains reserved for future implementation and
-/// currently throws an "unsupported" error if executed — see its doc
-/// comment for why (Issue #450).
+/// All cases execute for real — `.uploadSFTP` (Issue #450) and
+/// `.uploadCloud` (Issue #459) both perform a genuine, authenticated
+/// transfer and only report success when the destination actually
+/// accepted the bytes; see their doc comments for the execution path
+/// each one uses.
 public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// Move the source file to the macOS Trash.
     case moveSourceToTrash
@@ -38,14 +40,15 @@ public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// (Issue #450). See `PostEncodeAction.config` for the expected key.
     case uploadSFTP
 
-    /// Upload the output file to cloud storage (future — not yet
-    /// implemented). `CloudStorageUploader` / `VideoUploader` /
-    /// `S3Uploader` only build `URLRequest`s / argument lists for a
-    /// hand-entered OAuth token — nothing in this codebase actually
-    /// executes an authenticated network upload of file bytes for any
-    /// cloud provider, so there is no real API yet for this action to
-    /// call. Wiring this honestly requires that execution path to exist
-    /// first (tracked separately from Issue #450).
+    /// Upload the output file to a saved cloud storage configuration
+    /// (Dropbox / Google Drive / OneDrive), using a profile saved in
+    /// `CloudStorageView` and looked up through
+    /// `CloudStorageProfileStore` (Issue #459 — mirrors the
+    /// `.uploadSFTP` wiring shipped for Issue #450). See
+    /// `PostEncodeAction.config` for the expected key. S3/YouTube/Vimeo
+    /// and full OAuth PKCE remain out of scope for this action; see
+    /// `CloudUploadExecutor`'s doc comment for what token-based
+    /// providers it actually executes.
     case uploadCloud
 
     /// Send a macOS notification with a custom message.
@@ -87,6 +90,12 @@ public struct PostEncodeAction: Identifiable, Codable, Sendable {
     ///   `SFTPProfileStore`). No credentials are ever stored here —
     ///   only a reference to a profile whose secret lives in the
     ///   Keychain via `SFTPCredentialStore`.
+    /// - `.uploadCloud`: `"cloudProfileID"` — the `UUID` string of a
+    ///   saved `CloudStorageConfig` (see `CloudStorageView` /
+    ///   `CloudStorageProfileStore`). As with `.uploadSFTP`, no
+    ///   credential is ever stored here — only a reference to a
+    ///   configuration whose OAuth token lives in the Keychain via
+    ///   `APIKeyManager`.
     public var config: [String: String]
 
     /// Whether this action is enabled. Disabled actions are skipped.
@@ -176,17 +185,7 @@ public struct PostEncodeActionChain: Codable, Sendable {
             case .shellScriptFailed(let code, let output):
                 return "Shell script exited with code \(code): \(output)"
             case .unsupportedAction(let type):
-                switch type {
-                case .uploadCloud:
-                    return "Action type 'uploadCloud' requires cloud-upload execution "
-                        + "support (OAuth token exchange + authenticated file transfer) "
-                        + "that does not exist yet in this codebase — only "
-                        + "request-builder helpers (CloudStorageUploader, VideoUploader, "
-                        + "S3Uploader) are implemented, not real execution. Not "
-                        + "implemented (Issue #450)."
-                default:
-                    return "Action type '\(type.rawValue)' is not yet supported."
-                }
+                return "Action type '\(type.rawValue)' is not yet supported."
             case .missingConfig(let key, let name):
                 return "Action '\(name)' is missing required config key '\(key)'."
             case .uploadFailed(let name, let message):
@@ -304,12 +303,7 @@ public struct PostEncodeActionChain: Codable, Sendable {
             try await uploadViaSFTP(action: action, outputURL: outputURL)
 
         case .uploadCloud:
-            // Honest "not implemented" — see the doc comment on
-            // `PostEncodeActionType.uploadCloud` and Issue #450: no
-            // component in this codebase actually executes an
-            // authenticated cloud upload, so there is nothing real to
-            // wire this to yet.
-            throw ActionError.unsupportedAction(.uploadCloud)
+            try await uploadViaCloud(action: action, outputURL: outputURL)
         }
     }
 
@@ -395,6 +389,61 @@ public struct PostEncodeActionChain: Codable, Sendable {
 
         guard outcome.succeeded else {
             throw ActionError.uploadFailed(actionName: action.name, message: outcome.message)
+        }
+    }
+
+    /// Upload the encoded output file to a saved cloud storage
+    /// configuration (Dropbox / Google Drive / OneDrive), executing the
+    /// transfer for real via `CloudUploadExecutor` (Issue #459).
+    ///
+    /// Reuses the same plumbing end to end that `CloudStorageView`
+    /// uses, mirroring `uploadViaSFTP` above (Issue #450):
+    /// - `action.config["cloudProfileID"]` resolves to a configuration
+    ///   through `CloudStorageProfileStore.profile(withID:)`, which
+    ///   reads the same `UserDefaults` blob `CloudStorageView` writes
+    ///   and restores the access/refresh token from the Keychain via
+    ///   `APIKeyManager` — no credential is ever stored inside
+    ///   `PostEncodeAction.config`.
+    /// - `CloudUploadExecutor.uploadToCloudStorage(fileURL:config:)`
+    ///   picks the matching `CloudStorageUploader` request builder
+    ///   (Dropbox / Google Drive / OneDrive, including OneDrive's
+    ///   chunked upload-session path for files over 4 MB) and performs
+    ///   the real, authenticated transfer.
+    ///
+    /// Unlike `uploadViaSFTP`'s `scp` invocation, the executor's work is
+    /// genuinely `async` (no blocking `Process.waitUntilExit()`), so no
+    /// `Task.detached` hop is needed here — `await`ing it directly
+    /// never blocks a thread.
+    ///
+    /// - Parameters:
+    ///   - action: The configured `.uploadCloud` action.
+    ///   - outputURL: The encoded output file to upload.
+    /// - Throws: `ActionError.missingConfig` if no valid profile
+    ///   reference is configured, or `ActionError.uploadFailed` with
+    ///   the real executor error (`CloudUploadExecutor.UploadError`'s
+    ///   description — real HTTP status + body, or a real transport
+    ///   failure) if the transfer fails.
+    private func uploadViaCloud(action: PostEncodeAction, outputURL: URL) async throws {
+        guard let profileIDString = action.config["cloudProfileID"],
+              let profileID = UUID(uuidString: profileIDString),
+              let profile = CloudStorageProfileStore.profile(withID: profileID) else {
+            throw ActionError.missingConfig(key: "cloudProfileID", actionName: action.name)
+        }
+
+        guard !profile.accessToken.isEmpty else {
+            throw ActionError.uploadFailed(
+                actionName: action.name,
+                message: "No access token is saved for \(profile.provider.rawValue). "
+                    + "Paste an OAuth token in Cloud Storage settings and save the "
+                    + "configuration first."
+            )
+        }
+
+        let executor = CloudUploadExecutor()
+        do {
+            _ = try await executor.uploadToCloudStorage(fileURL: outputURL, config: profile)
+        } catch {
+            throw ActionError.uploadFailed(actionName: action.name, message: error.localizedDescription)
         }
     }
 

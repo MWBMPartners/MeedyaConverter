@@ -35,6 +35,17 @@ public enum CloudStorageProvider: String, Codable, Sendable, CaseIterable {
 /// so the user can have multiple upload targets.
 public struct CloudStorageConfig: Codable, Sendable {
 
+    /// Stable identifier for this configuration, generated fresh by the
+    /// default init and preserved across load/save cycles so
+    /// `CloudStorageProfileStore` (Issue #459) — and
+    /// `PostEncodeActionChain.uploadViaCloud`, which resolves a saved
+    /// configuration by this id — stay addressable across app
+    /// launches. Added alongside the #459 execution layer; no prior
+    /// on-disk `CloudStorageConfig` data exists to migrate (before
+    /// #459 `CloudStorageView` never persisted `savedConfigs` at all —
+    /// see `CloudStorageProfileStore`'s doc comment).
+    public var id: UUID
+
     /// The cloud storage provider.
     public var provider: CloudStorageProvider
 
@@ -53,18 +64,21 @@ public struct CloudStorageConfig: Codable, Sendable {
     /// Creates a new cloud storage configuration.
     ///
     /// - Parameters:
+    ///   - id: Stable identifier (defaults to a fresh `UUID()`).
     ///   - provider: The cloud storage provider.
     ///   - accessToken: The OAuth 2.0 access token.
     ///   - refreshToken: An optional refresh token.
     ///   - remotePath: The remote folder path for uploads.
     ///   - label: A user-facing label for this configuration.
     public init(
+        id: UUID = UUID(),
         provider: CloudStorageProvider,
         accessToken: String,
         refreshToken: String? = nil,
         remotePath: String,
         label: String
     ) {
+        self.id = id
         self.provider = provider
         self.accessToken = accessToken
         self.refreshToken = refreshToken
@@ -105,10 +119,9 @@ public struct CloudStorageUploader: Sendable {
             return nil
         }
 
-        let fileName = (filePath as NSString).lastPathComponent
         let remoteDest = config.remotePath.hasSuffix("/")
-            ? config.remotePath + fileName
-            : config.remotePath + "/" + fileName
+            ? config.remotePath + filePath
+            : config.remotePath + "/" + filePath
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -165,6 +178,56 @@ public struct CloudStorageUploader: Sendable {
         request.httpMethod = "PUT"
         request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        return request
+    }
+
+    /// Build a Microsoft Graph API "create upload session" request for
+    /// OneDrive large-file uploads (Issue #459).
+    ///
+    /// The simple `/content` PUT endpoint (`buildOneDriveUploadRequest`)
+    /// rejects anything over 4 MB
+    /// (`OneDriveUploader.simpleUploadMaxBytes`) — media output files
+    /// routinely exceed that, so this REQUIRED companion request starts
+    /// a resumable upload session at
+    /// `/me/drive/root:/<path>:/createUploadSession`. The JSON response
+    /// carries an `uploadUrl` that the caller (`CloudUploadExecutor
+    /// .uploadInSessionChunks`) then `PUT`s the file to in
+    /// `Content-Range`-addressed chunks.
+    ///
+    /// - Parameters:
+    ///   - filePath: The local file name to include in the remote path.
+    ///   - config: The OneDrive cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildOneDriveCreateSessionRequest(
+        filePath: String,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        let fileName = (filePath as NSString).lastPathComponent
+        let remoteDest = config.remotePath.hasSuffix("/")
+            ? config.remotePath + fileName
+            : config.remotePath + "/" + fileName
+
+        let encodedPath = remoteDest.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+        ) ?? remoteDest
+
+        let urlString = "https://graph.microsoft.com/v1.0/me/drive/root:\(encodedPath):/createUploadSession"
+        guard let url = URL(string: urlString) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "item": [
+                "@microsoft.graph.conflictBehavior": "rename",
+            ],
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         return request
     }
@@ -255,5 +318,104 @@ public struct CloudStorageUploader: Sendable {
         // Force-unwrap is safe because the URL strings above are well-formed.
         // swiftlint:disable:next force_unwrapping
         return URL(string: urlString)!
+    }
+}
+
+// MARK: - CloudStorageProfileStore
+
+/// Read-only access to the cloud storage configurations saved by
+/// `CloudStorageView` (Issue #347 / #459), for consumers outside the
+/// app's SwiftUI layer — e.g. `PostEncodeActionChain.uploadViaCloud`
+/// (Issue #450), which runs inside `ConverterEngine` and has no view to
+/// bind form state to.
+///
+/// Mirrors `SFTPProfileStore`, which does the equivalent job for SFTP
+/// profiles: this does not duplicate storage. It reads the exact same
+/// `UserDefaults` blob `CloudStorageView` writes (provider / remotePath
+/// / label metadata, with the access/refresh token fields always
+/// redacted to empty/`nil`) and restores the real tokens from the
+/// Keychain via `APIKeyManager` — the same #380-audited secrets split
+/// every other provider in this codebase already uses.
+///
+/// Before Issue #459, `CloudStorageView` held `savedConfigs` purely in
+/// `@State` — it was never written to `UserDefaults` at all, so there
+/// was nothing for a non-UI consumer like `PostEncodeActionChain` to
+/// read. This store (and the matching persistence added to
+/// `CloudStorageView`) is what makes a saved cloud destination durable
+/// across app launches and referenceable by id from a post-encode
+/// action.
+public enum CloudStorageProfileStore {
+
+    /// `UserDefaults` key under which the redacted profile array lives.
+    /// Shared with `CloudStorageView` so the storage key cannot drift
+    /// between the write side (settings UI) and this read side.
+    public static let userDefaultsKey = "cloudStorageProfiles"
+
+    /// Loads every saved cloud storage configuration, restoring each
+    /// one's access/refresh token from the Keychain.
+    ///
+    /// - Parameter apiKeyManager: The manager to hydrate secrets from.
+    ///   Defaults to a fresh `APIKeyManager()` against the standard
+    ///   on-disk location (the same default `CloudStorageView` uses),
+    ///   so callers that don't already own an instance don't need to
+    ///   construct one.
+    /// - Returns: The saved configurations, or an empty array if none
+    ///   are saved or the stored JSON cannot be decoded.
+    public static func loadProfiles(
+        apiKeyManager: APIKeyManager = APIKeyManager()
+    ) -> [CloudStorageConfig] {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+              let profiles = try? JSONDecoder().decode([CloudStorageConfig].self, from: data) else {
+            return []
+        }
+
+        return profiles.map { profile in
+            guard profile.accessToken.isEmpty else { return profile }
+
+            let candidates = apiKeyManager.keys(for: apiKeyProvider(for: profile.provider))
+            guard let stored = candidates.first(where: { ($0.label ?? "") == profile.label }) ?? candidates.first,
+                  let token = stored.accessToken, !token.isEmpty else {
+                // No matching Keychain entry (deleted out of band, or
+                // never saved) — return the profile as-is. Callers
+                // should treat an empty accessToken as "credential
+                // unavailable" rather than assume it will authenticate,
+                // exactly as `SFTPProfileStore.loadProfiles()` treats an
+                // unrecoverable password.
+                return profile
+            }
+
+            var copy = profile
+            copy.accessToken = token
+            copy.refreshToken = stored.refreshToken
+            return copy
+        }
+    }
+
+    /// Looks up a single saved configuration by its stable `id`.
+    ///
+    /// - Parameters:
+    ///   - id: The configuration's `CloudStorageConfig.id`.
+    ///   - apiKeyManager: The manager to hydrate secrets from.
+    /// - Returns: The matching configuration (with its token restored
+    ///   from the Keychain when available), or `nil` if no
+    ///   configuration with that id is currently saved.
+    public static func profile(
+        withID id: UUID,
+        apiKeyManager: APIKeyManager = APIKeyManager()
+    ) -> CloudStorageConfig? {
+        loadProfiles(apiKeyManager: apiKeyManager).first { $0.id == id }
+    }
+
+    /// Maps the request-builder-side provider enum (`CloudStorageProvider`,
+    /// Issue #347) to the Keychain-side one (`APIKeyProvider`, Issue
+    /// #380). The two exist for historically separate features and use
+    /// slightly different case spellings (`onedrive` vs `oneDrive`) for
+    /// the same service.
+    public static func apiKeyProvider(for provider: CloudStorageProvider) -> APIKeyProvider {
+        switch provider {
+        case .dropbox: return .dropbox
+        case .onedrive: return .oneDrive
+        case .googleDrive: return .googleDrive
+        }
     }
 }

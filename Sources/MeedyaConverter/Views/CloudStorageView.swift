@@ -44,16 +44,34 @@ struct CloudStorageView: View {
     /// A user-facing label for this saved configuration.
     @State private var label = ""
 
-    /// The list of saved cloud storage configurations.
+    /// The list of saved cloud storage configurations. Hydrated from
+    /// `CloudStorageProfileStore` on appear and persisted through
+    /// `persistConfigs()` (Issue #459) — before #459 this array was
+    /// pure `@State` and never survived an app relaunch.
     @State private var savedConfigs: [CloudStorageConfig] = []
 
     /// The index of the currently selected saved configuration.
     @State private var selectedConfigIndex: Int?
 
+    /// The Keychain-backed store for provider OAuth tokens (Issue
+    /// #459). `@State` so this class instance — and the `keys` it
+    /// caches after `loadKeys()` — survives across this view's body
+    /// re-evaluations, matching the `@State private var manager = ...`
+    /// pattern already used by `ThemeSettingsView` / `PluginManagerView`
+    /// / `RecentFilesView` for other on-disk-backed managers.
+    @State private var apiKeyManager = APIKeyManager()
+
+    /// The local file path to test-upload via the real executor.
+    /// Defaults to the currently selected source file (if any) so the
+    /// common case — "upload the file I'm already working with" — needs
+    /// no extra picking.
+    @State private var uploadFilePath = ""
+
     /// Whether an upload is currently in progress.
     @State private var isUploading = false
 
-    /// Upload progress fraction from 0.0 to 1.0.
+    /// Upload progress fraction from 0.0 to 1.0, driven by real
+    /// `CloudUploadExecutor` progress callbacks (see `performUpload()`).
     @State private var uploadProgress: Double = 0.0
 
     /// Status message from the last operation.
@@ -82,6 +100,16 @@ struct CloudStorageView: View {
             .formStyle(.grouped)
         }
         .navigationTitle("Cloud Storage")
+        .onAppear {
+            loadSavedConfigsFromDisk()
+            hydrateTokenForSelectedProvider()
+            if uploadFilePath.isEmpty, let selected = viewModel.selectedFile {
+                uploadFilePath = selected.fileURL.path
+            }
+        }
+        .onChange(of: selectedProvider) { _, _ in
+            hydrateTokenForSelectedProvider()
+        }
     }
 
     // MARK: - Saved Configurations List
@@ -198,9 +226,24 @@ struct CloudStorageView: View {
     // MARK: - Upload
 
     /// Section with upload controls and progress display.
+    ///
+    /// Issue #459: this used to only validate that a `URLRequest` could
+    /// be built ("Test Configuration") — it never sent anything, so a
+    /// wrong path, an expired token, or a real server-side rejection
+    /// all reported the same fake success. The button now binds to
+    /// `performUpload()`, which executes a real, authenticated transfer
+    /// via `CloudUploadExecutor` and reports the real outcome.
     @ViewBuilder
     private var uploadSection: some View {
         Section("Upload") {
+            HStack {
+                TextField("File to Upload", text: $uploadFilePath, prompt: Text("/path/to/output.mp4"))
+                    .textFieldStyle(.roundedBorder)
+                Button("Browse…") {
+                    browseForFile()
+                }
+            }
+
             if isUploading {
                 ProgressView(value: uploadProgress) {
                     Text("Uploading...")
@@ -210,13 +253,11 @@ struct CloudStorageView: View {
             }
 
             Button {
-                // Upload is triggered from the main conversion flow;
-                // this button validates the configuration.
-                validateConfig()
+                performUpload()
             } label: {
-                Label("Test Configuration", systemImage: "checkmark.circle")
+                Label("Upload File", systemImage: "arrow.up.circle")
             }
-            .disabled(accessToken.isEmpty || remotePath.isEmpty)
+            .disabled(accessToken.isEmpty || remotePath.isEmpty || uploadFilePath.isEmpty || isUploading)
         }
     }
 
@@ -270,45 +311,23 @@ struct CloudStorageView: View {
         isError = false
     }
 
-    /// Validate the current configuration by attempting to build a request.
-    private func validateConfig() {
-        let config = CloudStorageConfig(
-            provider: selectedProvider,
-            accessToken: accessToken,
-            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
-            remotePath: remotePath,
-            label: label
-        )
-
-        let testRequest: URLRequest?
-        switch selectedProvider {
-        case .dropbox:
-            testRequest = CloudStorageUploader.buildDropboxUploadRequest(
-                filePath: "test.mp4",
-                config: config
-            )
-        case .onedrive:
-            testRequest = CloudStorageUploader.buildOneDriveUploadRequest(
-                filePath: "test.mp4",
-                config: config
-            )
-        case .googleDrive:
-            testRequest = CloudStorageUploader.buildGoogleDriveUploadRequest(
-                filePath: "test.mp4",
-                config: config
-            )
-        }
-
-        if testRequest != nil {
-            statusMessage = "Configuration is valid. Upload request can be built."
-            isError = false
-        } else {
-            statusMessage = "Invalid configuration. Could not build upload request."
-            isError = true
+    /// Opens a file panel to select the local file to test-upload.
+    /// Mirrors `SFTPSettingsView.browseForKeyFile()`.
+    private func browseForFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            uploadFilePath = url.path
         }
     }
 
-    /// Save the current form state as a new configuration.
+    /// Save the current form state as a new configuration and persist
+    /// it (Issue #459): the token goes to the Keychain via
+    /// `apiKeyManager`, and the redacted metadata goes to
+    /// `UserDefaults` so `PostEncodeActionChain.uploadViaCloud` can
+    /// resolve this configuration by id later. See `persistConfigs()`.
     private func saveCurrentConfig() {
         let config = CloudStorageConfig(
             provider: selectedProvider,
@@ -319,6 +338,7 @@ struct CloudStorageView: View {
         )
         savedConfigs.append(config)
         selectedConfigIndex = savedConfigs.count - 1
+        persistConfigs()
         statusMessage = "Configuration saved."
         isError = false
     }
@@ -332,12 +352,214 @@ struct CloudStorageView: View {
         label = config.label
     }
 
-    /// Delete the currently selected saved configuration.
+    /// Delete the currently selected saved configuration, including its
+    /// Keychain-stored token. Mirrors
+    /// `SFTPSettingsView.deleteProfile(at:)`'s cleanup — without this, a
+    /// deleted configuration's token would linger in the Keychain
+    /// indefinitely (orphaned but still resident).
     private func deleteSelectedConfig() {
         guard let idx = selectedConfigIndex, idx < savedConfigs.count else { return }
+        removeStoredToken(for: savedConfigs[idx])
         savedConfigs.remove(at: idx)
         selectedConfigIndex = nil
+        persistConfigs()
         statusMessage = "Configuration deleted."
         isError = false
+    }
+
+    // MARK: - Persistence (Issue #459)
+
+    /// `UserDefaults` key under which the redacted configuration array
+    /// lives. Sourced from `CloudStorageProfileStore.userDefaultsKey` so
+    /// this view and the read-only `CloudStorageProfileStore` used by
+    /// `PostEncodeActionChain` can never drift onto different keys.
+    private static let userDefaultsKey = CloudStorageProfileStore.userDefaultsKey
+
+    /// Loads saved configurations from `UserDefaults`, restoring each
+    /// entry's access/refresh token from the Keychain via
+    /// `apiKeyManager`. Delegates to `CloudStorageProfileStore` so the
+    /// read path is shared with `PostEncodeActionChain` rather than
+    /// reimplemented here.
+    private func loadSavedConfigsFromDisk() {
+        savedConfigs = CloudStorageProfileStore.loadProfiles(apiKeyManager: apiKeyManager)
+    }
+
+    /// Writes the current `savedConfigs` to `UserDefaults` with secrets
+    /// redacted, after pushing each entry's real access/refresh token to
+    /// the Keychain via `apiKeyManager`. This is the single chokepoint
+    /// where a token crosses from `@State` into durable storage — the
+    /// same "redact at the point of persistence" pattern
+    /// `SFTPSettingsView.persistProfiles()` uses for SFTP passwords —
+    /// so there is one place to audit for the #380 invariant ("no
+    /// secret in the on-disk JSON").
+    private func persistConfigs() {
+        var redacted: [CloudStorageConfig] = []
+
+        for config in savedConfigs {
+            if !config.accessToken.isEmpty {
+                // `clientId` is a single form field shared by every saved
+                // configuration in this view, so it must only overwrite
+                // the Keychain entry for the configuration currently
+                // being edited (matched by provider + label) — otherwise
+                // saving one configuration would stamp its Client ID
+                // onto every OTHER saved configuration's stored entry
+                // too. For any other configuration, preserve whatever
+                // apiKey value it already had in the Keychain.
+                let apiKeyToStore: String
+                if config.provider == selectedProvider && config.label == label {
+                    apiKeyToStore = clientId
+                } else {
+                    apiKeyToStore = apiKeyManager
+                        .keys(for: apiKeyProvider(for: config.provider))
+                        .first(where: { ($0.label ?? "") == config.label })?
+                        .apiKey ?? ""
+                }
+
+                apiKeyManager.storeKey(
+                    StoredAPIKey(
+                        provider: apiKeyProvider(for: config.provider),
+                        apiKey: apiKeyToStore,
+                        accessToken: config.accessToken,
+                        refreshToken: config.refreshToken,
+                        label: config.label
+                    )
+                )
+            }
+            var copy = config
+            copy.accessToken = ""
+            copy.refreshToken = nil
+            redacted.append(copy)
+        }
+
+        if let data = try? JSONEncoder().encode(redacted) {
+            UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+        }
+    }
+
+    /// Removes a configuration's Keychain-stored token.
+    private func removeStoredToken(for config: CloudStorageConfig) {
+        apiKeyManager.removeKey(provider: apiKeyProvider(for: config.provider), label: config.label)
+    }
+
+    /// Maps the request-builder-side provider enum to the Keychain-side
+    /// one. Delegates to `CloudStorageProfileStore.apiKeyProvider(for:)`
+    /// so the mapping lives in exactly one place.
+    private func apiKeyProvider(for provider: CloudStorageProvider) -> APIKeyProvider {
+        CloudStorageProfileStore.apiKeyProvider(for: provider)
+    }
+
+    /// Loads a previously-saved token for `selectedProvider` (if any)
+    /// into the client ID / access / refresh token fields, so switching
+    /// the provider picker or reopening this view doesn't leave the
+    /// user re-pasting a token they already saved.
+    private func hydrateTokenForSelectedProvider() {
+        let matches = apiKeyManager.keys(for: apiKeyProvider(for: selectedProvider))
+        guard let stored = matches.first(where: { ($0.label ?? "") == label }) ?? matches.first else {
+            return
+        }
+        if let token = stored.accessToken, !token.isEmpty {
+            accessToken = token
+        }
+        if let refresh = stored.refreshToken, !refresh.isEmpty {
+            refreshToken = refresh
+        }
+        if !stored.apiKey.isEmpty {
+            clientId = stored.apiKey
+        }
+    }
+
+    // MARK: - Real Upload (Issue #459)
+
+    /// Performs a real, authenticated upload of `uploadFilePath` using
+    /// the currently-configured provider, via `CloudUploadExecutor`.
+    ///
+    /// Progress crosses from `CloudUploadExecutor`'s `@Sendable`
+    /// callback (invoked on whatever thread `URLSession`'s delegate
+    /// queue uses, not necessarily the main actor) into this view's
+    /// `@State` via an `AsyncStream` — the documented-safe bridge for
+    /// exactly this "background callback into SwiftUI state" shape,
+    /// which avoids ever capturing `self` (a non-`Sendable` `View`)
+    /// inside a `@Sendable` closure. `AsyncStream.Continuation` is
+    /// itself `Sendable`, so it is the only thing the progress closure
+    /// captures.
+    ///
+    /// The upload itself runs in a plain `Task { }` — not
+    /// `Task.detached` — created directly from this (main-actor-
+    /// isolated, since `CloudStorageView` is a `View`) method, the same
+    /// pattern `SFTPSettingsView.testConnection()` uses for its
+    /// connection probe. Unlike that probe's blocking `Process`
+    /// invocation, `CloudUploadExecutor`'s work is genuinely `async`
+    /// (`URLSession`, no blocking syscalls), so no `Task.detached` hop
+    /// off the main actor is needed here.
+    private func performUpload() {
+        guard !isUploading else { return }
+        guard !accessToken.isEmpty else {
+            statusMessage = "Enter an access token first."
+            isError = true
+            return
+        }
+        guard !uploadFilePath.isEmpty else {
+            statusMessage = "Choose a file to upload first."
+            isError = true
+            return
+        }
+
+        let fileURL = URL(fileURLWithPath: uploadFilePath)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            statusMessage = "File not found: \(uploadFilePath)"
+            isError = true
+            return
+        }
+
+        let config = CloudStorageConfig(
+            provider: selectedProvider,
+            accessToken: accessToken,
+            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
+            remotePath: remotePath,
+            label: label.isEmpty ? providerDisplayName(selectedProvider) : label
+        )
+
+        isUploading = true
+        uploadProgress = 0
+        statusMessage = nil
+        isError = false
+
+        let (stream, continuation) = AsyncStream<UploadProgress>.makeStream()
+
+        let progressTask = Task {
+            for await update in stream {
+                uploadProgress = update.fraction
+            }
+        }
+
+        Task {
+            defer { progressTask.cancel() }
+            let executor = CloudUploadExecutor()
+
+            do {
+                let result = try await executor.uploadToCloudStorage(
+                    fileURL: fileURL,
+                    config: config
+                ) { update in
+                    continuation.yield(update)
+                }
+                continuation.finish()
+
+                isUploading = false
+                uploadProgress = 1.0
+                let formatter = ByteCountFormatter()
+                formatter.countStyle = .file
+                let sizeText = formatter.string(fromByteCount: result.fileSize)
+                let destination = result.remoteURL ?? config.remotePath
+                statusMessage = "Uploaded \(sizeText) to \(destination) "
+                    + "(\(String(format: "%.1f", result.uploadDuration))s)."
+                isError = false
+            } catch {
+                continuation.finish()
+                isUploading = false
+                statusMessage = error.localizedDescription
+                isError = true
+            }
+        }
     }
 }
