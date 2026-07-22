@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - DualDynamicHDRView
@@ -56,6 +57,11 @@ struct DualDynamicHDRView: View {
     /// Error message if conversion fails.
     @State private var errorMessage: String?
 
+    /// The in-flight conversion task, retained so it can be cancelled if the
+    /// user navigates away mid-conversion. Mirrors
+    /// `BitrateHeatmapView.analysisTask` / `VideoTrimmerView.applyTask`.
+    @State private var conversionTask: Task<Void, Never>?
+
     /// Whether both required tools are available.
     private var toolsReady: Bool {
         doviToolAvailable && hdr10PlusToolAvailable
@@ -89,6 +95,9 @@ struct DualDynamicHDRView: View {
         .onAppear {
             checkToolAvailability()
             updatePipelinePreview()
+        }
+        .onDisappear {
+            conversionTask?.cancel()
         }
     }
 
@@ -474,16 +483,189 @@ struct DualDynamicHDRView: View {
     }
 
     /// Start the dual dynamic HDR conversion pipeline.
+    ///
+    /// Real execution (Issue #370): extracts a raw HEVC elementary stream
+    /// from the selected source via FFmpeg — the same `-bsf:v
+    /// hevc_mp4toannexb` technique `EncodingEngine.encode(job:onProgress:)`
+    /// already uses for its own DV RPU preservation pass — builds the
+    /// pipeline steps via `DualDynamicHDRPipeline.buildPipelineSteps(...)`
+    /// against that real elementary stream, and runs them with
+    /// `DualDynamicHDRPipelineExecutor`, which dispatches each step to the
+    /// real `DoviToolWrapper` / `HDR10PlusToolWrapper` / (HLG-target-only)
+    /// `FFmpegProcessController` runners. The resulting dual-metadata HEVC
+    /// elementary stream is written to a location the user chooses via
+    /// `NSSavePanel`. Re-muxing it back into a container (mp4/mkv) is a
+    /// separate, larger feature and out of scope here — see the PR
+    /// description for why.
+    ///
+    /// `DualDynamicHDRView` is a `struct: View`, so the plain `Task { }`
+    /// below inherits main-actor isolation (mirrors `ImageConversionView
+    /// .startConversion()` / `VideoTrimmerView.applyTrim()`): `@State`
+    /// reads/writes here are direct property mutations, not `MainActor.run`
+    /// hops. `DualDynamicHDRPipelineExecutor`'s `onProgress` callback is a
+    /// plain `@Sendable` closure (see its doc comment) that may run off the
+    /// main actor, so it re-hops explicitly via `Task { @MainActor in ... }`
+    /// — the same pattern `AppViewModel.startQueue()` uses around
+    /// `engine.encode(job:onProgress:)`'s `progressInfo` callback.
     private func startConversion() {
-        guard toolsReady else { return }
+        guard toolsReady, !isConverting else { return }
+        guard let file = viewModel.selectedFile else {
+            errorMessage = "No source file selected. Import a Dolby Vision file before converting."
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Save Dual Dynamic HDR Output"
+        panel.nameFieldStringValue = PathSanitizer.sanitizeFilenameComponent(
+            file.fileURL.deletingPathExtension().lastPathComponent
+        ) + "_dual_hdr.hevc"
+        panel.allowedContentTypes = [UTType(filenameExtension: "hevc") ?? .data]
+
+        guard panel.runModal() == .OK, let outputURL = panel.url else { return }
+
         isConverting = true
         currentStepIndex = 0
         errorMessage = nil
+        statusMessage = "Locating FFmpeg..."
+
+        let sourceProfile = detectedProfile
+        let target = selectedTarget
+        let preserve = preserveDynamicMetadata
+        let inputURL = file.fileURL
+
+        conversionTask = Task {
+            do {
+                try await runDualDynamicHDRConversion(
+                    inputURL: inputURL,
+                    outputURL: outputURL,
+                    sourceProfile: sourceProfile,
+                    target: target,
+                    preserveDynamicMetadata: preserve
+                )
+                statusMessage = "Conversion complete: \(outputURL.lastPathComponent)"
+                viewModel.appendLog(
+                    .info,
+                    "Dual dynamic HDR conversion complete: \(outputURL.lastPathComponent)"
+                )
+            } catch is CancellationError {
+                // Cancelled by the user (or the view disappeared) — no
+                // error banner; the task's own cancellation already
+                // reflects the interruption.
+                statusMessage = "Cancelled."
+            } catch {
+                errorMessage = "Dual dynamic HDR conversion failed: \(error.localizedDescription)"
+                viewModel.appendLog(
+                    .error,
+                    "Dual dynamic HDR conversion failed: \(error.localizedDescription)"
+                )
+            }
+
+            isConverting = false
+        }
+    }
+
+    /// Extracts a raw HEVC elementary stream from `inputURL`, runs the dual
+    /// dynamic HDR pipeline (`DualDynamicHDRPipeline.buildPipelineSteps` +
+    /// `DualDynamicHDRPipelineExecutor`) against it, and writes the
+    /// resulting dual-metadata HEVC stream to `outputURL`. All intermediate
+    /// files live in a scratch temp directory removed before this function
+    /// returns, whether it succeeds or throws.
+    private func runDualDynamicHDRConversion(
+        inputURL: URL,
+        outputURL: URL,
+        sourceProfile: DoviProfile,
+        target: DualHDRTarget,
+        preserveDynamicMetadata: Bool
+    ) async throws {
+        let ffmpegPath = try await Task.detached {
+            try FFmpegBundleManager().locateFFmpeg().path
+        }.value
+
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dual_hdr_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+        // Step 0 (not part of the tool pipeline itself): dovi_tool/
+        // hdr10plus_tool operate on a raw HEVC Annex-B elementary stream,
+        // not an mp4/mkv container, so extract one first — mirroring
+        // EncodingEngine.encode(job:onProgress:)'s own DV RPU preservation
+        // pass (`-c:v copy -bsf:v hevc_mp4toannexb ... -f hevc`).
+        statusMessage = "Extracting elementary stream..."
+        let hevcES = scratchDir.appendingPathComponent("source.hevc")
+        let extractArgs = [
+            "-i", inputURL.path,
+            "-c:v", "copy",
+            "-bsf:v", "hevc_mp4toannexb",
+            "-an", "-sn",
+            "-f", "hevc",
+            "-y", hevcES.path,
+        ]
+        let extractController = FFmpegProcessController(binaryPath: ffmpegPath)
+        try await runToCompletion(extractController, arguments: extractArgs)
+
+        guard FileManager.default.fileExists(atPath: hevcES.path) else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: extractController.exitCode ?? -1,
+                stderr: "FFmpeg produced no elementary stream. Ensure the source uses HEVC video."
+            )
+        }
+
+        let config = DualDynamicHDRConfig(
+            sourceProfile: sourceProfile,
+            target: target,
+            preserveDVDynamicMetadata: preserveDynamicMetadata,
+            tempDirectory: scratchDir
+        )
+        let steps = DualDynamicHDRPipeline.buildPipelineSteps(
+            config: config,
+            inputPath: hevcES.path,
+            outputPath: scratchDir.appendingPathComponent("dual_hdr_output.hevc").path
+        )
+        pipelineSteps = steps
         statusMessage = "Starting pipeline..."
 
-        // Actual execution would be performed by the EncodingEngine.
-        // This view coordinates the UI state; the engine handles process
-        // orchestration and temp file management.
+        let executor = DualDynamicHDRPipelineExecutor()
+        try await executor.execute(steps: steps) { index, step in
+            Task { @MainActor in
+                self.currentStepIndex = index
+                self.statusMessage = "Step \(index + 1)/\(steps.count): \(step.description)"
+            }
+        }
+
+        guard let finalStep = steps.last,
+              FileManager.default.fileExists(atPath: finalStep.outputPath) else {
+            throw DoviToolError.operationFailed("Pipeline reported success but produced no output file.")
+        }
+
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try FileManager.default.removeItem(at: outputURL)
+        }
+        try FileManager.default.copyItem(atPath: finalStep.outputPath, toPath: outputURL.path)
+
+        currentStepIndex = steps.count
+    }
+
+    /// Runs an `FFmpegProcessController` encoding pass to completion by
+    /// draining its progress `AsyncStream`. Mirrors
+    /// `VideoTrimmerView.runToCompletion`.
+    private func runToCompletion(
+        _ controller: FFmpegProcessController,
+        arguments: [String]
+    ) async throws {
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await _ in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
     }
 
     // MARK: - Fallback Tier Data
