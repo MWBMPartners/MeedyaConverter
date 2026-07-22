@@ -57,9 +57,12 @@ final class MockDualDynamicHDRStepRunner: DualDynamicHDRStepRunning, @unchecked 
     }
 
     func run(step: PipelineStepDescriptor) async throws {
-        lock.lock()
-        recordedSteps.append(step.stepNumber)
-        lock.unlock()
+        // Use withLock so the lock/unlock pair is async-safe — bare
+        // `NSLock.lock()` / `.unlock()` calls are unavailable from
+        // async contexts under Swift 6 strict concurrency.
+        lock.withLock {
+            recordedSteps.append(step.stepNumber)
+        }
 
         if step.stepNumber == failAtStepNumber {
             throw SimulatedFailure(stepNumber: step.stepNumber)
