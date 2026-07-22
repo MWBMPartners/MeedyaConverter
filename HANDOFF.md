@@ -78,9 +78,17 @@ tweaks/enhancements/features. Bundle work for efficiency.
 **Human blockers (do NOT schedule):** OAuth client IDs (1f), real cloud/YouTube accounts + dovi/hdr10plus
 media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release cut G-010/G-013.
 
+## Standing tasks note
+
+- Added **standing task #14 — monitor GitHub PR security checks** (CodeQL/code-scanning, Dependency Review,
+  secret scanning, `security-check` pin-hygiene, OpenSSF Scorecard) to `.claude/standing_tasks.md`. Applies to
+  every PR, every session: a green macOS build is necessary but not sufficient — security checks must pass too.
+
 ## Current work-in-flight
 
-- **[starting]** Bundle 1 — filing the cloud-upload umbrella issue + implementing `CloudUploadExecutor` (Sonnet).
+- **[PR #460 open — CI running]** Bundle 1 core — `CloudUploadExecutor` (real URLSession upload, 2xx-only,
+  retry/backoff, progress) + Dropbox/GDrive/OneDrive execution + `PostEncodeActions.uploadCloud` + 21
+  URLProtocol-mock tests. Umbrella issue **#459** filed. Follow-up in Bundle 1: S3 SigV4 signer + YouTube/Vimeo (#446).
 
 ## Decisions / blockers needing the user
 

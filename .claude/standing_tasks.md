@@ -123,6 +123,16 @@ erode when incremental ticking is impractical.
 - Keep project brief current
 - Update MEMORY.md in Claude's memory directory
 
+### 14. GitHub PR Security Checks (monitor on EVERY PR — always applicable)
+
+- On every pull request, monitor GitHub's own security checks and fix any real finding before merge — a green `Build & Test (macOS)` is necessary but NOT sufficient:
+  - **CodeQL / code scanning** (`Analyze Swift`) — investigate and fix security alerts, not just the pass/fail box
+  - **Dependency Review** — resolve any flagged vulnerable or incompatible-license dependency
+  - **Secret scanning / push protection** — never merge if a secret is detected; remove + rotate it
+  - **`security-check` pin-hygiene workflow** — keep all GitHub Actions pinned (semver tag or SHA)
+  - **OpenSSF Scorecard** advisories surfaced in the dependency-review comment — address where actionable
+- Applies regardless of session, branch, or task. If a security check fails or a scanning alert appears, treat it like any CI failure: investigate, fix, re-run to green.
+
 ## Code Standards (Apply to All Code)
 
 - Detailed comments/annotations on every code block (not abbreviated)
