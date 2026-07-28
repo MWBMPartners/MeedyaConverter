@@ -25,10 +25,22 @@ import Foundation
 /// `WebhookSender.performRequest(bodyData:config:)`:
 ///
 /// - The request is actually sent — `URLSession.upload(for:fromFile:)`
-///   for whole-file transfers, or sequential `PUT` requests with
-///   `Content-Range` headers for provider "upload session" large-file
-///   transfers (`uploadInSessionChunks`).
-/// - Only a genuine `2xx` HTTP status is treated as success.
+///   for whole-file transfers, or sequential chunked requests for
+///   provider "upload session" large-file transfers:
+///   `Content-Range`-addressed `PUT`s for OneDrive (`uploadInSessionChunks`)
+///   and Google Drive (`uploadInGoogleDriveResumableChunks`), or
+///   cursor-addressed `POST`s for Dropbox's upload-session protocol
+///   (`uploadInDropboxSessionChunks`) — required (not optional) once a
+///   file exceeds `DropboxUploader.singleUploadMaxBytes` (150 MB) or
+///   `GoogleDriveUploader.simpleUploadMaxBytes` (5 MB), same as it
+///   already was for OneDrive's 4 MB simple-upload limit.
+/// - Only a genuine `2xx` HTTP status is treated as success — except
+///   Google Drive's resumable-upload chunks, where a non-final chunk's
+///   documented, real success response is `308 Resume Incomplete`
+///   rather than `2xx` (see `executeWithRetry(additionalSuccessStatusCodes:)`
+///   and `uploadInGoogleDriveResumableChunks`'s doc comment for how that
+///   stays scoped to non-final chunks only, never fabricating success
+///   on a `308` that means bytes are actually missing).
 /// - Any other status — or a transport-level failure (DNS, TLS, timeout,
 ///   connection reset, a filesystem error reading the local file) —
 ///   surfaces as a thrown `UploadError` carrying the real status code
@@ -349,6 +361,269 @@ public struct CloudUploadExecutor: @unchecked Sendable {
         )
     }
 
+    // MARK: - Dropbox upload-session (chunked) upload
+
+    /// Uploads a file too large for Dropbox's single-request
+    /// `/2/files/upload` endpoint (`DropboxUploader.singleUploadMaxBytes`,
+    /// 150 MB) via Dropbox's upload-session protocol: one
+    /// `upload_session/start` request, sequential
+    /// `upload_session/append_v2` `POST`s (one per `chunkSize`-byte
+    /// window), then one `upload_session/finish` request that commits
+    /// the assembled bytes to the destination path.
+    ///
+    /// Structurally mirrors `uploadInSessionChunks` (the OneDrive/Graph
+    /// equivalent): file-size guard → create/start request →
+    /// `FileHandle` chunk loop with per-chunk `executeWithRetry` →
+    /// final-response parse.
+    ///
+    /// **Known limitation** (shared with `uploadInSessionChunks`): a
+    /// chunk-level retry re-sends the *same* request — same cursor
+    /// offset — because the append request is built once, before the
+    /// offset advances, and reused for every retry attempt of that
+    /// chunk. This is correct when the original attempt genuinely
+    /// failed (nothing was applied server-side). But if the original
+    /// request actually succeeded and only its *response* was lost
+    /// (e.g. a dropped connection after the server processed it), the
+    /// retried append arrives at an offset the server has already
+    /// moved past — Dropbox then answers `409 incorrect_offset`, which
+    /// this method surfaces honestly as `.httpError(409, …)` rather
+    /// than silently absorbing it or fabricating success. A caller
+    /// hitting that must restart the whole upload. This is the exact
+    /// same offset-replay semantics already accepted for the OneDrive
+    /// session path above.
+    ///
+    /// - Parameters:
+    ///   - fileURL: The local file to upload.
+    ///   - config: The Dropbox cloud storage configuration.
+    ///   - chunkSize: Bytes per `append_v2` request. Defaults to
+    ///     `DropboxUploader.sessionChunkSize` (8 MB).
+    ///   - progress: Optional callback invoked after each chunk
+    ///     completes, with real, server-acknowledged progress.
+    /// - Returns: An `UploadResult` built from the finish response's
+    ///   real `path_display`/`id` fields.
+    /// - Throws: `UploadError` describing the real failure — including
+    ///   `.transport` if the session-start response has no
+    ///   `session_id`, or if the local file cannot be read.
+    public func uploadInDropboxSessionChunks(
+        fileURL: URL,
+        config: CloudStorageConfig,
+        chunkSize: Int64 = DropboxUploader.sessionChunkSize,
+        progress: (@Sendable (UploadProgress) -> Void)? = nil
+    ) async throws -> UploadResult {
+        let start = Date()
+        guard let totalBytes = Self.fileSize(at: fileURL), totalBytes > 0 else {
+            throw UploadError.transport("Could not determine the size of \(fileURL.lastPathComponent).")
+        }
+
+        guard let startRequest = CloudStorageUploader.buildDropboxSessionStartRequest(config: config) else {
+            throw UploadError.transport("Could not build the Dropbox upload-session start request.")
+        }
+
+        let (startData, _) = try await executeWithRetry {
+            try await self.session.data(for: startRequest)
+        }
+        guard let sessionId = Self.extractDropboxSessionID(from: startData) else {
+            throw UploadError.transport(
+                "The Dropbox upload-session response did not include a 'session_id' field."
+            )
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: fileURL)
+        } catch {
+            throw UploadError.transport("Could not open \(fileURL.lastPathComponent) for reading: \(error.localizedDescription)")
+        }
+        defer { try? handle.close() }
+
+        var offset: Int64 = 0
+
+        while offset < totalBytes {
+            let thisChunkSize = Int(min(chunkSize, totalBytes - offset))
+            let chunk: Data
+            do {
+                guard let read = try handle.read(upToCount: thisChunkSize), !read.isEmpty else {
+                    throw UploadError.transport(
+                        "Unexpected end of file while reading the upload chunk at offset \(offset)."
+                    )
+                }
+                chunk = read
+            } catch let err as UploadError {
+                throw err
+            } catch {
+                throw UploadError.transport("Could not read the upload chunk at offset \(offset): \(error.localizedDescription)")
+            }
+
+            // The append request is built with the cursor offset BEFORE
+            // `offset` advances — the offset a Dropbox cursor carries is
+            // "how many bytes the server already has", i.e. where this
+            // chunk starts, not where it ends.
+            guard let appendRequest = CloudStorageUploader.buildDropboxSessionAppendRequest(
+                sessionId: sessionId,
+                offset: offset,
+                config: config
+            ) else {
+                throw UploadError.transport("Could not build the Dropbox upload-session append request.")
+            }
+
+            _ = try await executeWithRetry {
+                try await self.session.upload(for: appendRequest, from: chunk)
+            }
+
+            offset += Int64(chunk.count)
+            progress?(UploadProgress(bytesUploaded: offset, totalBytes: totalBytes))
+        }
+
+        guard let finishRequest = CloudStorageUploader.buildDropboxSessionFinishRequest(
+            sessionId: sessionId,
+            offset: totalBytes,
+            filePath: fileURL.lastPathComponent,
+            config: config
+        ) else {
+            throw UploadError.transport("Could not build the Dropbox upload-session finish request.")
+        }
+
+        let (finishData, _) = try await executeWithRetry {
+            try await self.session.data(for: finishRequest)
+        }
+
+        let ids = Self.parseDropboxIdentifiers(from: finishData)
+        return UploadResult(
+            remoteURL: ids.remoteURL,
+            fileId: ids.fileId,
+            fileSize: totalBytes,
+            uploadDuration: Date().timeIntervalSince(start),
+            verified: false
+        )
+    }
+
+    // MARK: - Google Drive resumable (chunked) upload
+
+    /// Uploads a file too large for Google Drive's simple
+    /// `uploadType=media` endpoint (`GoogleDriveUploader
+    /// .simpleUploadMaxBytes`, 5 MB) via Drive's resumable-upload
+    /// protocol: one `POST …uploadType=resumable` request to obtain a
+    /// session URI (returned in the initiate response's `Location`
+    /// header, per Google's resumable-upload spec), followed by
+    /// sequential `PUT` requests to that URI with `Content-Range`
+    /// headers.
+    ///
+    /// Google's protocol answers **`308 Resume Incomplete`** for every
+    /// chunk that was accepted but is not yet the file's last byte —
+    /// the expected, successful outcome for a non-final chunk, not a
+    /// failure. Non-final chunks therefore call
+    /// `executeWithRetry(additionalSuccessStatusCodes: [308])`. The
+    /// FINAL chunk uses the plain default instead (no additional
+    /// success codes): a `308` there means the server is still missing
+    /// bytes it should have received by now, and MUST surface as a
+    /// genuine `.httpError(308, …)` — accepting it would fabricate a
+    /// success the server never actually reported.
+    ///
+    /// - Parameters:
+    ///   - fileURL: The local file to upload.
+    ///   - initiateRequest: The resumable-upload "initiate" request
+    ///     (built by `CloudStorageUploader
+    ///     .buildGoogleDriveResumableInitRequest(filePath:fileSize:
+    ///     config:)`).
+    ///   - chunkSize: Bytes per `PUT`. Defaults to
+    ///     `GoogleDriveUploader.resumableChunkSize` (5 MB).
+    ///   - progress: Optional callback invoked after each chunk
+    ///     completes, with real, server-acknowledged progress.
+    /// - Returns: An `UploadResult` built from the final chunk's real
+    ///   response (`id` / `webViewLink` — the latter is often absent
+    ///   from Drive's response and is never guessed when so).
+    /// - Throws: `UploadError` describing the real failure — including
+    ///   `.transport` if the initiate response has no `Location`
+    ///   header, or if the local file cannot be read.
+    public func uploadInGoogleDriveResumableChunks(
+        fileURL: URL,
+        initiateRequest: URLRequest,
+        chunkSize: Int64 = GoogleDriveUploader.resumableChunkSize,
+        progress: (@Sendable (UploadProgress) -> Void)? = nil
+    ) async throws -> UploadResult {
+        let start = Date()
+        guard let totalBytes = Self.fileSize(at: fileURL), totalBytes > 0 else {
+            throw UploadError.transport("Could not determine the size of \(fileURL.lastPathComponent).")
+        }
+
+        let (_, initiateResponse) = try await executeWithRetry {
+            try await self.session.data(for: initiateRequest)
+        }
+        guard let sessionURLString = initiateResponse.value(forHTTPHeaderField: "Location"),
+              let sessionURL = URL(string: sessionURLString) else {
+            throw UploadError.transport(
+                "The Google Drive resumable-upload initiate response did not include a 'Location' header."
+            )
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: fileURL)
+        } catch {
+            throw UploadError.transport("Could not open \(fileURL.lastPathComponent) for reading: \(error.localizedDescription)")
+        }
+        defer { try? handle.close() }
+
+        var offset: Int64 = 0
+        var finalChunkData = Data()
+
+        while offset < totalBytes {
+            let thisChunkSize = Int(min(chunkSize, totalBytes - offset))
+            let chunk: Data
+            do {
+                guard let read = try handle.read(upToCount: thisChunkSize), !read.isEmpty else {
+                    throw UploadError.transport(
+                        "Unexpected end of file while reading the upload chunk at offset \(offset)."
+                    )
+                }
+                chunk = read
+            } catch let err as UploadError {
+                throw err
+            } catch {
+                throw UploadError.transport("Could not read the upload chunk at offset \(offset): \(error.localizedDescription)")
+            }
+
+            let rangeEnd = offset + Int64(chunk.count) - 1
+            let isFinalChunk = offset + Int64(chunk.count) >= totalBytes
+
+            var mutableChunkRequest = URLRequest(url: sessionURL)
+            mutableChunkRequest.httpMethod = "PUT"
+            mutableChunkRequest.setValue("\(chunk.count)", forHTTPHeaderField: "Content-Length")
+            mutableChunkRequest.setValue(
+                "bytes \(offset)-\(rangeEnd)/\(totalBytes)",
+                forHTTPHeaderField: "Content-Range"
+            )
+            // Finalised to `let` before capture inside the `@Sendable`
+            // closure below — same "build mutable, hand off immutable"
+            // shape as `uploadInSessionChunks` above.
+            let chunkRequest = mutableChunkRequest
+
+            let data: Data
+            if isFinalChunk {
+                (data, _) = try await executeWithRetry {
+                    try await self.session.upload(for: chunkRequest, from: chunk)
+                }
+            } else {
+                (data, _) = try await executeWithRetry(additionalSuccessStatusCodes: [308]) {
+                    try await self.session.upload(for: chunkRequest, from: chunk)
+                }
+            }
+
+            offset += Int64(chunk.count)
+            finalChunkData = data
+            progress?(UploadProgress(bytesUploaded: offset, totalBytes: totalBytes))
+        }
+
+        let ids = Self.parseGoogleDriveIdentifiers(from: finalChunkData)
+        return UploadResult(
+            remoteURL: ids.remoteURL,
+            fileId: ids.fileId,
+            fileSize: totalBytes,
+            uploadDuration: Date().timeIntervalSince(start),
+            verified: false
+        )
+    }
+
     // MARK: - Retry core
 
     /// Runs `attempt` up to `retryPolicy.maxAttempts` times, retrying on
@@ -363,7 +638,18 @@ public struct CloudUploadExecutor: @unchecked Sendable {
     /// that survives every attempt instead falls through to
     /// `.allRetriesFailed(lastError:)` once the loop is exhausted,
     /// mirroring `WebhookSender.send(payload:config:)`'s retry shape.
+    ///
+    /// - Parameter additionalSuccessStatusCodes: Extra status codes
+    ///   treated as success alongside the `2xx` range, without being
+    ///   retried. Required for Google Drive's resumable-upload
+    ///   protocol, which answers **`308 Resume Incomplete`** for every
+    ///   chunk that was accepted but is not yet the file's final byte —
+    ///   a real, documented success for a non-final chunk, not a
+    ///   transient failure worth retrying. Defaults to empty, so every
+    ///   existing call site (whole-file upload, OneDrive/Dropbox session
+    ///   chunks) is unaffected and still requires a genuine `2xx`.
     private func executeWithRetry(
+        additionalSuccessStatusCodes: Set<Int> = [],
         _ attempt: @Sendable () async throws -> (Data, URLResponse)
     ) async throws -> (Data, HTTPURLResponse) {
         var lastErrorMessage = "Unknown error"
@@ -374,7 +660,7 @@ public struct CloudUploadExecutor: @unchecked Sendable {
                 guard let http = response as? HTTPURLResponse else {
                     throw UploadError.invalidResponse
                 }
-                if (200..<300).contains(http.statusCode) {
+                if (200..<300).contains(http.statusCode) || additionalSuccessStatusCodes.contains(http.statusCode) {
                     return (data, http)
                 }
 
@@ -438,6 +724,27 @@ public struct CloudUploadExecutor: @unchecked Sendable {
         }
         return (json["webUrl"] as? String, json["id"] as? String)
     }
+
+    private static func extractDropboxSessionID(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json["session_id"] as? String
+    }
+
+    private static func parseDropboxIdentifiers(from data: Data) -> (remoteURL: String?, fileId: String?) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
+        }
+        return (json["path_display"] as? String, json["id"] as? String)
+    }
+
+    private static func parseGoogleDriveIdentifiers(from data: Data) -> (remoteURL: String?, fileId: String?) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
+        }
+        return (json["webViewLink"] as? String, json["id"] as? String)
+    }
 }
 
 // MARK: - CloudUploadExecutor + provider routing
@@ -446,12 +753,20 @@ extension CloudUploadExecutor {
 
     /// Uploads `fileURL` to the destination described by `config`,
     /// automatically choosing the right provider request-builder and —
-    /// for OneDrive — the small-file `/content` PUT vs. the chunked
-    /// upload-session path based on the real on-disk file size.
+    /// for Dropbox, Google Drive, and OneDrive — the small-file
+    /// single-request path vs. the chunked upload-session path based on
+    /// the real on-disk file size:
+    /// - Dropbox: chunked above `DropboxUploader.singleUploadMaxBytes`
+    ///   (150 MB) — the `/2/files/upload` endpoint's real hard limit.
+    /// - Google Drive: chunked above `GoogleDriveUploader
+    ///   .simpleUploadMaxBytes` (5 MB) — `uploadType=media` is
+    ///   documented for small files only.
+    /// - OneDrive: chunked above `OneDriveUploader.simpleUploadMaxBytes`
+    ///   (4 MB) — unchanged from before roadmap item #2.
     ///
     /// Shared by `CloudStorageView.performUpload()` (Issue #459) and
     /// `PostEncodeActionChain.uploadViaCloud(action:outputURL:)` (Issue
-    /// #450) so the "which request builder, which OneDrive path" logic
+    /// #450) so the "which request builder, which chunked path" logic
     /// lives in exactly one place rather than being duplicated between
     /// the SwiftUI settings view and the post-encode action chain.
     ///
@@ -475,6 +790,16 @@ extension CloudUploadExecutor {
 
         switch config.provider {
         case .dropbox:
+            let fileSize = Self.fileSize(at: fileURL)
+
+            if let fileSize, fileSize > DropboxUploader.singleUploadMaxBytes {
+                return try await uploadInDropboxSessionChunks(
+                    fileURL: fileURL,
+                    config: config,
+                    progress: progress
+                )
+            }
+
             guard let request = CloudStorageUploader.buildDropboxUploadRequest(
                 filePath: fileName,
                 config: config
@@ -484,6 +809,23 @@ extension CloudUploadExecutor {
             return try await upload(fileURL: fileURL, request: request, progress: progress)
 
         case .googleDrive:
+            let fileSize = Self.fileSize(at: fileURL)
+
+            if let fileSize, fileSize > GoogleDriveUploader.simpleUploadMaxBytes {
+                guard let initiateRequest = CloudStorageUploader.buildGoogleDriveResumableInitRequest(
+                    filePath: fileName,
+                    fileSize: fileSize,
+                    config: config
+                ) else {
+                    throw UploadError.transport("Could not build the Google Drive resumable-upload initiate request.")
+                }
+                return try await uploadInGoogleDriveResumableChunks(
+                    fileURL: fileURL,
+                    initiateRequest: initiateRequest,
+                    progress: progress
+                )
+            }
+
             guard let request = CloudStorageUploader.buildGoogleDriveUploadRequest(
                 filePath: fileName,
                 config: config
