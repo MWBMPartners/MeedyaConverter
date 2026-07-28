@@ -208,6 +208,55 @@ public struct PostEncodeActionChain: Codable, Sendable {
     /// - Throws: The first error encountered during execution. Subsequent
     ///   actions are still attempted even if an earlier action fails.
     public func execute(inputURL: URL, outputURL: URL, success: Bool) async throws {
+        try await execute(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            success: success,
+            actionExecutor: nil
+        )
+    }
+
+    // MARK: - Test Seam (Issue #450 test coverage — roadmap #9)
+
+    /// Runs the chain exactly like ``execute(inputURL:outputURL:success:)``,
+    /// but lets a caller substitute the real per-action dispatch
+    /// (`executeAction`) with an injected closure.
+    ///
+    /// This exists purely so `PostEncodeActionsTests` can exercise the
+    /// chain's ordering / skip / error-aggregation logic without spawning
+    /// real processes or making real network calls — `executeAction`
+    /// ultimately shells out to `scp`/`curl`/`osascript`/`zsh` or hits the
+    /// network via `WebhookSender`/`CloudUploadExecutor`, none of which
+    /// belong in a fast, deterministic unit test.
+    ///
+    /// Deliberately NOT `public`: the only caller outside this file is the
+    /// test target, which reaches it via `@testable import ConverterEngine`
+    /// (documented at the top of `PostEncodeActionsTests.swift`). Every
+    /// production call site goes through the zero-argument-defaulted public
+    /// `execute(inputURL:outputURL:success:)` above, which always passes
+    /// `nil`, so behaviour for every existing caller is unchanged.
+    ///
+    /// - Parameters:
+    ///   - inputURL: The source file URL.
+    ///   - outputURL: The output file URL.
+    ///   - success: Whether the encoding job completed successfully.
+    ///   - actionExecutor: When `nil` (the public entry point's behaviour),
+    ///     every action runs through the real `executeAction`
+    ///     implementation. When non-nil, it replaces that dispatch
+    ///     entirely — the injected closure receives the action and the
+    ///     job's `success` flag and is responsible for throwing to
+    ///     simulate a failing action.
+    /// - Throws: The first error encountered during execution. Subsequent
+    ///   actions are still attempted even if an earlier action fails —
+    ///   this method does NOT abort the chain on a failing action; it
+    ///   collects the first error and keeps going, matching
+    ///   `execute(inputURL:outputURL:success:)`'s documented behaviour.
+    func execute(
+        inputURL: URL,
+        outputURL: URL,
+        success: Bool,
+        actionExecutor: (@Sendable (PostEncodeAction, Bool) async throws -> Void)?
+    ) async throws {
         var firstError: (any Error)?
 
         for action in actions {
@@ -218,12 +267,16 @@ public struct PostEncodeActionChain: Codable, Sendable {
             if !success && !action.runOnFailure { continue }
 
             do {
-                try await executeAction(
-                    action,
-                    inputURL: inputURL,
-                    outputURL: outputURL,
-                    success: success
-                )
+                if let actionExecutor {
+                    try await actionExecutor(action, success)
+                } else {
+                    try await executeAction(
+                        action,
+                        inputURL: inputURL,
+                        outputURL: outputURL,
+                        success: success
+                    )
+                }
             } catch {
                 if firstError == nil { firstError = error }
             }
@@ -324,7 +377,17 @@ public struct PostEncodeActionChain: Codable, Sendable {
     ///   - profile: The encoding profile name.
     ///   - status: The job outcome string.
     /// - Returns: The string with all placeholders replaced.
-    private func substituteVariables(
+    ///
+    /// Not `private`: kept at the default internal access level (instead
+    /// of `fileprivate`/`private`) solely so `PostEncodeActionsTests` can
+    /// assert on it directly via `@testable import ConverterEngine` —
+    /// substitution is a pure string transform with no process/network
+    /// side effects, ideal for a direct unit test, but every action that
+    /// uses it (`.runShellScript`, `.sendNotification`) does spawn a real
+    /// process to observe the substituted result otherwise. No public API
+    /// or behaviour changes: this remains unreachable from outside the
+    /// module for any non-`@testable` consumer.
+    func substituteVariables(
         in string: String,
         inputURL: URL,
         outputURL: URL,
