@@ -28,6 +28,7 @@ struct SidebarView: View {
             // Workflow section — the main encoding pipeline steps.
             Section("Workflow") {
                 sidebarLabel(for: .source)
+                sidebarLabel(for: .mediaBrowser)
                 sidebarLabel(for: .streams)
                 sidebarLabel(for: .output)
             }
@@ -39,12 +40,13 @@ struct SidebarView: View {
                 sidebarLabel(for: .log)
                     .badge(viewModel.logEntries.count)
                 sidebarLabel(for: .dashboard)
+                sidebarLabel(for: .encodingGraphs)
+                sidebarLabel(for: .statisticsExport)
                 sidebarLabel(for: .resourceMonitor)
             }
 
             // Tools section — editing, analysis, batch operations.
             Section("Tools") {
-                sidebarLabel(for: .images)
                 sidebarLabel(for: .burn)
                 sidebarLabel(for: .trimEdit)
                 sidebarLabel(for: .analyze)
@@ -53,10 +55,22 @@ struct SidebarView: View {
                 sidebarLabel(for: .concatenation)
                 sidebarLabel(for: .watermark)
                 sidebarLabel(for: .multiOutput)
+                sidebarLabel(for: .dualDynamicHDR)
                 sidebarLabel(for: .filterGraph)
                 sidebarLabel(for: .edlEditor)
-                sidebarLabel(for: .animatedImage)
                 sidebarLabel(for: .duplicateFinder)
+            }
+
+            // Images & Audio section — image/vector conversion, cropping,
+            // background removal, and voice isolation.
+            Section("Images & Audio") {
+                sidebarLabel(for: .images)
+                sidebarLabel(for: .animatedImage)
+                sidebarLabel(for: .vectorConversion)
+                sidebarLabel(for: .proresVector)
+                sidebarLabel(for: .smartCrop)
+                sidebarLabel(for: .backgroundRemoval)
+                sidebarLabel(for: .voiceIsolation)
             }
 
             // Performance section — benchmarking, optimisation, storage.

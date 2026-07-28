@@ -23,6 +23,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Source file import and metadata display.
     case source = "Source"
 
+    /// Media library browser — browse and import from a media library.
+    case mediaBrowser = "Media Browser"
+
     /// Stream inspector — display all streams with metadata.
     case streams = "Streams"
 
@@ -39,6 +42,12 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     /// Aggregate encoding statistics dashboard.
     case dashboard = "Dashboard"
+
+    /// Per-job encoding graphs (FPS, bitrate, speed over time).
+    case encodingGraphs = "Encoding Graphs"
+
+    /// Export encoding statistics history as CSV or JSON.
+    case statisticsExport = "Statistics Export"
 
     /// Live CPU / memory / disk resource monitor.
     case resourceMonitor = "Resource Monitor"
@@ -79,6 +88,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Multi-output encoding — one source to many outputs.
     case multiOutput = "Multi-Output"
 
+    /// Dual dynamic HDR conversion (Dolby Vision + HDR10+).
+    case dualDynamicHDR = "Dual Dynamic HDR"
+
     /// Visual FFmpeg filter graph editor.
     case filterGraph = "Filter Graph"
 
@@ -87,6 +99,15 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     /// Animated image (GIF / APNG / WebP) creation.
     case animatedImage = "Animated Image"
+
+    /// Smart crop — subject detection and intelligent cropping.
+    case smartCrop = "Smart Crop"
+
+    /// Background removal for images.
+    case backgroundRemoval = "Background Removal"
+
+    /// Voice isolation from audio/video sources.
+    case voiceIsolation = "Voice Isolation"
 
     /// Duplicate file finder across media library.
     case duplicateFinder = "Duplicate Finder"
@@ -135,11 +156,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .source:            return "doc.badge.plus"
+        case .mediaBrowser:      return "rectangle.stack.badge.play"
         case .streams:           return "list.bullet.rectangle"
         case .output:            return "gearshape.2"
         case .queue:             return "list.number"
         case .log:               return "text.page"
         case .dashboard:         return "chart.bar.xaxis"
+        case .encodingGraphs:    return "chart.xyaxis.line"
+        case .statisticsExport:  return "square.and.arrow.up.on.square"
         case .resourceMonitor:   return "gauge.with.dots.needle.33percent"
         case .images:            return "photo.on.rectangle.angled"
         case .vectorConversion:  return "scribble.variable"
@@ -152,9 +176,13 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "link"
         case .watermark:         return "text.below.photo"
         case .multiOutput:       return "arrow.triangle.branch"
+        case .dualDynamicHDR:    return "sparkles.tv"
         case .filterGraph:       return "flowchart"
         case .edlEditor:         return "list.clipboard"
         case .animatedImage:     return "photo.stack"
+        case .smartCrop:         return "crop"
+        case .backgroundRemoval: return "person.and.background.dotted"
+        case .voiceIsolation:    return "waveform.badge.mic"
         case .duplicateFinder:   return "doc.on.doc"
         case .parallelEncoding:  return "cpu"
         case .queueOptimizer:    return "arrow.up.arrow.down"
@@ -175,11 +203,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     var accessibilityLabel: String {
         switch self {
         case .source:            return "Import source media files"
+        case .mediaBrowser:      return "Browse and import media library"
         case .streams:           return "Inspect media streams"
         case .output:            return "Configure output settings"
         case .queue:             return "View encoding queue"
         case .log:               return "View activity log"
         case .dashboard:         return "View encoding statistics dashboard"
+        case .encodingGraphs:    return "View per-job encoding graphs"
+        case .statisticsExport:  return "Export encoding statistics"
         case .resourceMonitor:   return "Monitor system resources"
         case .images:            return "Convert images"
         case .vectorConversion:  return "Convert raster images to vector SVG"
@@ -192,9 +223,13 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "Join media files together"
         case .watermark:         return "Add watermark overlay"
         case .multiOutput:       return "Encode to multiple outputs"
+        case .dualDynamicHDR:    return "Convert dual dynamic HDR formats"
         case .filterGraph:       return "Edit FFmpeg filter graph"
         case .edlEditor:         return "Edit decision list editor"
         case .animatedImage:     return "Create animated images"
+        case .smartCrop:         return "Detect subjects and crop intelligently"
+        case .backgroundRemoval: return "Remove image backgrounds"
+        case .voiceIsolation:    return "Isolate voice from audio"
         case .duplicateFinder:   return "Find duplicate media files"
         case .parallelEncoding:  return "Configure parallel encoding"
         case .queueOptimizer:    return "Optimise encoding queue"
