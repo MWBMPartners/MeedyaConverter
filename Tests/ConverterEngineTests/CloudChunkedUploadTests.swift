@@ -101,6 +101,37 @@ final class CloudChunkedUploadTests: XCTestCase {
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: apiArgData) as? [String: Any])
     }
 
+    /// The body of a request as `URLProtocol` actually sees it.
+    ///
+    /// A `URLRequest` built with `.httpBody = someData` keeps that value
+    /// on the object the *caller* holds, but the URL loading system moves
+    /// the bytes into `.httpBodyStream` before handing the request to a
+    /// custom `URLProtocol` for delivery — this is true even for
+    /// `URLSession.data(for:)`, not just upload tasks. So the request a
+    /// `MockURLProtocol` responder receives has `httpBody == nil` and the
+    /// real bytes only reachable via `httpBodyStream`. Drains whichever
+    /// of the two is actually populated.
+    private func requestBodyData(from request: URLRequest) throws -> Data {
+        if let httpBody = request.httpBody {
+            return httpBody
+        }
+        let stream = try XCTUnwrap(
+            request.httpBodyStream,
+            "request has neither httpBody nor httpBodyStream"
+        )
+        stream.open()
+        defer { stream.close() }
+        var collected = Data()
+        let bufferSize = 8192
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(&buffer, maxLength: bufferSize)
+            guard bytesRead > 0 else { break }
+            collected.append(buffer, count: bytesRead)
+        }
+        return collected
+    }
+
     // MARK: - (1) Dropbox small file → simple upload path
 
     func test_dropboxSmallFile_usesSimpleUploadPath_exactlyOneRequest() async throws {
@@ -378,7 +409,7 @@ final class CloudChunkedUploadTests: XCTestCase {
         MockURLProtocol.enqueue { [self] request in
             let urlString = try XCTUnwrap(request.url?.absoluteString)
             XCTAssertTrue(urlString.contains("uploadType=resumable"))
-            let bodyData = try XCTUnwrap(request.httpBody)
+            let bodyData = try self.requestBodyData(from: request)
             let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
             XCTAssertEqual(body["name"] as? String, bigFileURL.lastPathComponent)
             let response = try makeResponse(
