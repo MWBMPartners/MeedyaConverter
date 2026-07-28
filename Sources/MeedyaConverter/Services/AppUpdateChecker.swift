@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import ConverterEngine
 
 #if canImport(Sparkle)
 import Sparkle
@@ -76,6 +77,47 @@ final class AppUpdateChecker {
     private var sparkleDelegate: SparkleDelegate?
     #endif
 
+    // MARK: - intAppsAPI (Roadmap #4 — alpha/beta update channel)
+
+    /// intAppsAPI client for the `.beta`/`.alpha` channel path. `nil`
+    /// when intAppsAPI credentials are not configured (Keychain +
+    /// environment both empty) — dormant; `performGitHubReleasesCheck`
+    /// then always falls back to the GitHub poller regardless of the
+    /// selected channel, exactly as if this integration didn't exist.
+    private let intAppsClient: IntAppsAPIClient?
+
+    /// Whether intAppsAPI is configured. The Settings UI uses this to
+    /// explain which backend a non-stable channel selection will
+    /// actually use (intAppsAPI vs the GitHub-releases-list fallback).
+    var isIntAppsAPIConfigured: Bool { intAppsClient != nil }
+
+    /// Result of the most recent intAppsAPI update check. `nil` until a
+    /// check using that path completes, or whenever the GitHub path was
+    /// used instead (`.stable` channel, or intAppsAPI not configured).
+    private(set) var intAppsUpdateResult: UpdateCheckResult?
+
+    /// Real error from the most recent intAppsAPI check, if any — mirrors
+    /// `GitHubReleaseChecker.lastError`'s "never fabricate, always
+    /// surface the honest failure" contract.
+    private(set) var intAppsError: String?
+
+    /// Whether an intAppsAPI check is currently in flight.
+    private var intAppsIsChecking: Bool = false
+
+    /// When the most recent intAppsAPI check completed (success or
+    /// failure). Mirrors `GitHubReleaseChecker.lastCheckedAt`.
+    private var intAppsLastCheckedAt: Date?
+
+    /// The user's selected update channel. Read fresh from
+    /// `UserDefaults.standard` on every access rather than cached,
+    /// mirroring the pattern `MetadataSettingsTab` documents for
+    /// `metadataBackend` — this type isn't a `View`, so it can't hold an
+    /// `@AppStorage` binding itself, but reads the same key the
+    /// `UpdateSettingsTab` Picker writes to (`"updateChannel"`).
+    var selectedChannel: UpdateChannel {
+        UpdateChannel(rawValue: UserDefaults.standard.string(forKey: "updateChannel") ?? "") ?? .stable
+    }
+
     // MARK: - Unified observable surface
 
     /// Whether a manual "check for updates" call can be issued.
@@ -88,7 +130,7 @@ final class AppUpdateChecker {
             return false
             #endif
         case .githubReleases:
-            return !githubChecker.isChecking
+            return !isCheckingForUpdates
         case .appStore:
             return false  // App Store handles updates natively
         }
@@ -100,6 +142,9 @@ final class AppUpdateChecker {
         case .sparkle:
             return sparkleIsCheckingForUpdates
         case .githubReleases:
+            if selectedChannel != .stable, isIntAppsAPIConfigured {
+                return intAppsIsChecking
+            }
             return githubChecker.isChecking
         case .appStore:
             return false
@@ -112,10 +157,34 @@ final class AppUpdateChecker {
         case .sparkle:
             return sparkleStatusMessage
         case .githubReleases:
+            // Roadmap #4: once the user opts into a pre-release channel
+            // AND intAppsAPI is configured, that path's status replaces
+            // the GitHub poller's — the two are never both "the current
+            // answer" at once (see `performGitHubReleasesCheck`, which
+            // only ever uses one of them per check).
+            if selectedChannel != .stable, isIntAppsAPIConfigured {
+                return intAppsStatusMessage
+            }
             return githubChecker.statusMessage
         case .appStore:
             return "Updates are managed by the Mac App Store"
         }
+    }
+
+    /// Status line for the intAppsAPI update-channel path. Mirrors the
+    /// shape of `GitHubReleaseChecker.statusMessage` ("Checking...",
+    /// "Couldn't check: ...", "Not yet checked", "Update available: ...",
+    /// "Up to date...") so the Settings UI doesn't need to branch on
+    /// which backend produced the message.
+    private var intAppsStatusMessage: String {
+        if intAppsIsChecking { return "Checking for updates…" }
+        if let intAppsError { return "Couldn't check: \(intAppsError)" }
+        guard let result = intAppsUpdateResult else { return "Not yet checked" }
+        if result.updateAvailable {
+            return "Update available on the \(selectedChannel.displayName) channel"
+                + (result.currentVersion.map { ": \($0)" } ?? "")
+        }
+        return "Up to date on the \(selectedChannel.displayName) channel"
     }
 
     /// When the most recent check completed (or `nil` if never checked).
@@ -128,6 +197,9 @@ final class AppUpdateChecker {
             return nil
             #endif
         case .githubReleases:
+            if selectedChannel != .stable, isIntAppsAPIConfigured {
+                return intAppsLastCheckedAt
+            }
             return githubChecker.lastCheckedAt
         case .appStore:
             return nil
@@ -164,6 +236,13 @@ final class AppUpdateChecker {
         // makes the property non-optional which simplifies consumers.
         self.githubChecker = GitHubReleaseChecker(session: session)
 
+        // Roadmap #4: resolves to `nil` when intAppsAPI isn't configured
+        // for this app (Keychain + environment both empty) — the single
+        // dormancy gate every intAppsAPI consumer in this codebase uses.
+        // A `nil` client here means `performGitHubReleasesCheck` always
+        // falls back to the GitHub poller, for every channel.
+        self.intAppsClient = IntAppsAPIClient.configured(session: session)
+
         // Decide mechanism. The Sparkle-vs-GitHub-poller split is a
         // compile-time choice (Sparkle is bundled or not), while the
         // Direct-vs-App-Store split is a runtime bundle-id check. The
@@ -190,7 +269,7 @@ final class AppUpdateChecker {
             // Kick off a non-blocking initial check so the Settings UI
             // shows useful state the first time the user opens it.
             Task { @MainActor [weak self] in
-                await self?.githubChecker.check(force: false)
+                await self?.performGitHubReleasesCheck(force: false)
             }
         case .appStore:
             break
@@ -215,12 +294,70 @@ final class AppUpdateChecker {
             #endif
         case .githubReleases:
             Task { @MainActor [weak self] in
-                await self?.githubChecker.check(force: true)
+                await self?.performGitHubReleasesCheck(force: true)
             }
         case .appStore:
             // No-op — the SettingsView surfaces a "Open App Store"
             // button when this mechanism is active.
             break
+        }
+    }
+
+    // MARK: - Roadmap #4: channel-aware "Direct" check dispatch
+
+    /// Runs the v0.1.0 "Direct" update check for whichever channel is
+    /// currently selected. Dispatches to intAppsAPI when the user has
+    /// opted into a pre-release channel AND intAppsAPI is configured;
+    /// falls back to the GitHub Releases poller otherwise —
+    /// UNCONDITIONALLY for the `.stable` channel, so users who never
+    /// touch the channel setting get byte-for-byte the same
+    /// `githubChecker.check(force:)` call this method always made.
+    private func performGitHubReleasesCheck(force: Bool) async {
+        let channel = selectedChannel
+        if channel != .stable, let intAppsClient {
+            await checkViaIntAppsAPI(client: intAppsClient, channel: channel, force: force)
+        } else {
+            // Either .stable, or a pre-release channel with intAppsAPI
+            // unconfigured — either way, the GitHub poller (with
+            // pre-release filtering controlled by `channel` per #4) is
+            // the answer. Clear any stale intAppsAPI result so the UI
+            // doesn't show a leftover verdict from a previous channel.
+            intAppsUpdateResult = nil
+            intAppsError = nil
+            await githubChecker.check(force: force, channel: channel)
+        }
+    }
+
+    /// Checks for an update via intAppsAPI for the given non-stable
+    /// channel. Never throws to its caller — every failure is caught and
+    /// surfaced honestly via `intAppsError`, matching
+    /// `GitHubReleaseChecker.check`'s "report, don't fabricate" contract.
+    private func checkViaIntAppsAPI(client: IntAppsAPIClient, channel: UpdateChannel, force: Bool) async {
+        // intAppsAPI is MWBM's own low-traffic internal service (unlike
+        // the public GitHub API's 60 req/hour anonymous rate limit), so
+        // this only needs a trivial "don't re-check if we already have a
+        // result and the caller didn't force it" guard, not a full TTL.
+        guard force || intAppsUpdateResult == nil else { return }
+
+        intAppsIsChecking = true
+        intAppsError = nil
+        defer {
+            intAppsIsChecking = false
+            intAppsLastCheckedAt = Date()
+        }
+
+        do {
+            let result = try await client.checkForUpdate(
+                appSlug: client.credentials.appSlug,
+                channel: channel.rawValue,
+                currentVersion: GitHubReleaseChecker.currentBundleVersion
+            )
+            intAppsUpdateResult = result
+        } catch {
+            // Never fabricate a result — keep whatever `intAppsUpdateResult`
+            // already held (or `nil`, if this is the first attempt) and
+            // surface the real failure.
+            intAppsError = String(describing: error)
         }
     }
 

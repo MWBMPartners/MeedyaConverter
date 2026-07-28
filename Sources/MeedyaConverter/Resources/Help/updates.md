@@ -12,8 +12,8 @@ If you installed MeedyaConverter from a `.dmg` file downloaded from
 For v0.1.0 the Direct build uses a **manual update flow**:
 
 1. Open **Settings → Updates**.
-2. Click **Check GitHub for Updates**. MeedyaConverter polls the
-   GitHub Releases API for the latest published release and compares
+2. Click **Check for Updates**. By default MeedyaConverter polls the
+   GitHub Releases API for the latest published GA release and compares
    it with the version you are running.
 3. If a newer version is available, the page shows a banner with
    **Download DMG** and **View Release Notes** buttons. Both open in
@@ -25,6 +25,22 @@ For v0.1.0 the Direct build uses a **manual update flow**:
 
 The check is cached for one hour so repeated clicks won't hammer the
 GitHub API.
+
+### Update channel (alpha/beta testers)
+
+Settings → Updates also has an **Update Channel** picker: **Stable**
+(the default — GA releases only), **Beta**, or **Alpha**. Switching to
+Beta or Alpha opts you into pre-release builds:
+
+- If MWBM's internal update service is configured for your build, the
+  channel check uses that service directly.
+- Otherwise, MeedyaConverter falls back to the same GitHub Releases
+  poller, but stops filtering out `-alpha`/`-beta`/`-rc` tags for the
+  selected channel.
+
+Alpha and beta builds may be unstable. Switch back to **Stable** at any
+time — nothing about the Stable channel's checks changes because this
+setting exists.
 
 ### Verifying the downloaded DMG
 

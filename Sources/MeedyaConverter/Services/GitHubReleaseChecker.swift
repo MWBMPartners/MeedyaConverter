@@ -7,6 +7,39 @@
 
 import Foundation
 
+// MARK: - UpdateChannel
+
+/// The user's opted-in update channel — which release "track" the app
+/// checks for updates on. Persisted at `@AppStorage("updateChannel")`
+/// (see `UpdateSettingsTab` in `SettingsView.swift`), read back via
+/// `UserDefaults.standard` from non-View code such as
+/// `AppUpdateChecker.selectedChannel`, mirroring the pattern already
+/// documented at `MetadataSettingsTab` for `metadataBackend`.
+///
+/// Roadmap #4:
+/// * `.stable` — GA releases only. The default, and behaviourally
+///   IDENTICAL to how `GitHubReleaseChecker` worked before this channel
+///   concept existed — see `check(force:channel:)`'s doc comment.
+/// * `.beta` / `.alpha` — opt-in pre-release channels for testers. When
+///   intAppsAPI is configured, `AppUpdateChecker` checks the matching
+///   remote channel slug via `IntAppsAPIClient.checkForUpdate`. When it
+///   is not configured, `GitHubReleaseChecker` falls back to listing
+///   GitHub releases and stops filtering out pre-release tags.
+enum UpdateChannel: String, Codable, CaseIterable, Sendable {
+    case stable
+    case beta
+    case alpha
+
+    /// Human-readable label for the Settings UI.
+    var displayName: String {
+        switch self {
+        case .stable: return "Stable"
+        case .beta:   return "Beta"
+        case .alpha:  return "Alpha"
+        }
+    }
+}
+
 // MARK: - GitHubReleaseChecker
 
 /// Polls the GitHub Releases API for the latest published release of the
@@ -27,8 +60,13 @@ import Foundation
 ///   public `/releases/latest` endpoint is rate-limited to 60 requests
 ///   per hour per unauthenticated IP, well above what a polite poll
 ///   would ever need, but caching keeps us honest.
-/// * Pre-release tags (`-alpha`, `-beta`, `-rc.N`) are skipped — only
-///   GA releases trigger an "update available" banner.
+/// * Pre-release tags (`-alpha`, `-beta`, `-rc.N`) are skipped for the
+///   `.stable` channel (the default, and the only channel most users
+///   ever see) — only GA releases trigger an "update available" banner
+///   there. Roadmap #4: a user who opts into the `.beta`/`.alpha`
+///   channel (Settings → Updates) gets pre-release tags surfaced too —
+///   see `check(force:channel:)`. This is purely additive: nothing about
+///   the `.stable` path below changed to add it.
 /// * Network errors are caught and reported via `lastError` rather than
 ///   thrown; the user-facing settings view simply shows "Couldn't check"
 ///   and the user retries.
@@ -62,6 +100,17 @@ final class GitHubReleaseChecker {
 
     /// Whether the most recent successful check found a version newer than
     /// the currently-running bundle.
+    ///
+    /// **Known limitation on the `.beta`/`.alpha` channels** (#4):
+    /// `SemVer.isNewer`/`parseTriple` deliberately strip the pre-release
+    /// suffix before comparing (documented on `SemVer` below) — left
+    /// untouched here so the `.stable` channel's comparison stays
+    /// byte-for-byte identical. Two pre-release tags sharing the same
+    /// `major.minor.patch` (e.g. `v0.2.0-alpha.2` → `v0.2.0-alpha.3`)
+    /// therefore compare equal, not newer, on the GitHub-fallback path.
+    /// This only affects testers WITHOUT intAppsAPI configured — the
+    /// intAppsAPI path (`AppUpdateChecker`) gets its `update_available`
+    /// verdict computed server-side, unaffected by this.
     var updateAvailable: Bool {
         guard let latest = latestRelease else { return false }
         return SemVer.isNewer(latest.tagName, than: Self.currentBundleVersion)
@@ -89,14 +138,38 @@ final class GitHubReleaseChecker {
     /// user's "Check for Updates" button does).
     private let cacheTTL: TimeInterval = 3_600  // 1 hour
 
-    /// The repository to poll. Hard-coded to MeedyaConverter's home.
+    /// The repository to poll for `.stable` (the default and — pre-#4 —
+    /// only — channel). GitHub's `/releases/latest` is DEFINED by GitHub
+    /// as "the most recent non-prerelease, non-draft release", so this
+    /// endpoint alone was always sufficient to implement the pre-#4
+    /// "skip pre-releases" behaviour.
     /// `https://api.github.com/repos/<owner>/<repo>/releases/latest`
-    private let releasesEndpoint = URL(
+    private static let latestReleaseEndpoint = URL(
         string: "https://api.github.com/repos/MWBMPartners/MeedyaConverter/releases/latest"
+    )!
+
+    /// The repository's full release list, used for the `.beta`/`.alpha`
+    /// channels (#4) — `/releases/latest` can never return a pre-release
+    /// by GitHub's own definition of that endpoint, so surfacing
+    /// pre-release tags requires listing releases instead and picking
+    /// the newest one that matches the selected channel client-side.
+    /// `per_page=20` is comfortably more than the gap between any two
+    /// alpha/beta drops in practice; if nothing in the page matches,
+    /// `latestRelease` is simply left unchanged, exactly like the
+    /// `.stable` "no GA release found" case below.
+    private static let releasesListEndpoint = URL(
+        string: "https://api.github.com/repos/MWBMPartners/MeedyaConverter/releases?per_page=20"
     )!
 
     /// The URLSession used for polling. Injected for testability.
     private let session: URLSession
+
+    /// The channel of the most recently COMPLETED check (successful or
+    /// not) — used only to invalidate the `cacheTTL` short-circuit when
+    /// the user switches channels between calls, so switching from
+    /// Stable to Alpha doesn't serve up to an hour of stale Stable data.
+    /// `nil` before the first check ever runs.
+    private var lastCheckedChannel: UpdateChannel?
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -104,13 +177,22 @@ final class GitHubReleaseChecker {
 
     // MARK: - Public API
 
-    /// Run a check. If a successful check completed within `cacheTTL`,
-    /// returns immediately unless `force == true`.
+    /// Run a check. If a successful check completed within `cacheTTL`
+    /// **for the same channel**, returns immediately unless `force ==
+    /// true`.
     ///
     /// The user's "Check for Updates" button passes `force: true`. The
     /// app-launch / settings-tab-opened automatic check passes `false`.
-    func check(force: Bool = false) async {
+    ///
+    /// - Parameter channel: Which release channel to check. Defaults to
+    ///   `.stable`, and every call site that doesn't explicitly opt a
+    ///   user into a pre-release channel gets byte-for-byte the same
+    ///   request (`latestReleaseEndpoint`) and filtering
+    ///   (`prerelease == false && draft == false`) this method always
+    ///   used, pre-#4.
+    func check(force: Bool = false, channel: UpdateChannel = .stable) async {
         if !force,
+           lastCheckedChannel == channel,
            let lastCheckedAt,
            Date().timeIntervalSince(lastCheckedAt) < cacheTTL,
            latestRelease != nil,
@@ -120,12 +202,13 @@ final class GitHubReleaseChecker {
 
         isChecking = true
         lastError = nil
+        lastCheckedChannel = channel
         defer {
             isChecking = false
             lastCheckedAt = Date()
         }
 
-        var request = URLRequest(url: releasesEndpoint)
+        var request = URLRequest(url: channel == .stable ? Self.latestReleaseEndpoint : Self.releasesListEndpoint)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("MeedyaConverter/\(Self.currentBundleVersion)", forHTTPHeaderField: "User-Agent")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
@@ -141,16 +224,31 @@ final class GitHubReleaseChecker {
 
             switch http.statusCode {
             case 200:
-                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-                // Only surface GA releases — pre-releases (rc / beta / alpha)
-                // are reserved for testers and shouldn't pop up as "update
-                // available" on the general-audience Direct builds.
-                if release.prerelease == false && release.draft == false {
-                    latestRelease = release
+                if channel == .stable {
+                    let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                    // Only surface GA releases — pre-releases (rc / beta / alpha)
+                    // are reserved for testers and shouldn't pop up as "update
+                    // available" on the general-audience Direct builds.
+                    if release.prerelease == false && release.draft == false {
+                        latestRelease = release
+                    } else {
+                        // Pre-release at the top of the list means the latest
+                        // GA is older. Keep whatever we had before; don't
+                        // surface a pre-release nag.
+                    }
                 } else {
-                    // Pre-release at the top of the list means the latest
-                    // GA is older. Keep whatever we had before; don't
-                    // surface a pre-release nag.
+                    // #4: Beta/Alpha — the newest non-draft release in the
+                    // list, pre-release tag or not. This is the one actual
+                    // behaviour change for issue #4: stop filtering out
+                    // `-alpha`/`-beta`/`-rc` tags once the tester has opted
+                    // in via Settings → Updates.
+                    let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+                    if let newest = releases.first(where: { $0.draft == false }) {
+                        latestRelease = newest
+                    }
+                    // else: nothing in this page qualifies — keep whatever
+                    // we had before, same "don't surface a nag" policy as
+                    // the .stable branch above.
                 }
             case 403:
                 lastError = "GitHub rate limit reached. Try again in an hour."

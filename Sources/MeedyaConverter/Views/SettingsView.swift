@@ -676,6 +676,25 @@ struct AboutTab: View {
 struct UpdateSettingsTab: View {
     @Environment(AppViewModel.self) private var viewModel
 
+    // MARK: - Update Channel (Roadmap #4)
+
+    /// Persisted channel choice. Default is `.stable` so existing installs
+    /// (no key written yet) behave exactly as before — this key is read
+    /// by `GitHubReleaseChecker`/`AppUpdateChecker` via `UserDefaults`,
+    /// mirroring the `metadataBackend` pattern documented on
+    /// `MetadataSettingsTab` above.
+    @AppStorage("updateChannel") private var rawUpdateChannel: String = UpdateChannel.stable.rawValue
+
+    /// Bridged `UpdateChannel` binding. Parses the persisted rawValue on
+    /// read; an unrecognised value (e.g. from a future build) silently
+    /// falls back to `.stable` rather than crashing the Settings window.
+    private var channelBinding: Binding<UpdateChannel> {
+        Binding<UpdateChannel>(
+            get: { UpdateChannel(rawValue: rawUpdateChannel) ?? .stable },
+            set: { rawUpdateChannel = $0.rawValue }
+        )
+    }
+
     var body: some View {
         let updateChecker = viewModel.updateChecker
 
@@ -746,13 +765,20 @@ struct UpdateSettingsTab: View {
     @ViewBuilder
     private func githubReleasesSections(updateChecker: AppUpdateChecker) -> some View {
         let github = updateChecker.githubChecker
+        // The intAppsAPI path is only ever "the answer" for a non-stable
+        // channel with intAppsAPI configured — matches
+        // `AppUpdateChecker.performGitHubReleasesCheck`'s dispatch rule
+        // exactly, so this View branches the same way the checker did.
+        let usingIntAppsAPI = channelBinding.wrappedValue != .stable && updateChecker.isIntAppsAPIConfigured
+
+        channelSection(updateChecker: updateChecker)
 
         Section("Check for Updates") {
             HStack {
                 Button {
                     updateChecker.checkForUpdates()
                 } label: {
-                    Label("Check GitHub for Updates", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(updateChecker.isCheckingForUpdates)
 
@@ -763,14 +789,29 @@ struct UpdateSettingsTab: View {
                         .controlSize(.small)
                 }
             }
-            .accessibilityHint("Polls the GitHub Releases API to see whether a newer signed and notarised DMG is available.")
+            .accessibilityHint("Checks for a new build on your selected update channel.")
 
             Text(updateChecker.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
 
-        if github.updateAvailable, let release = github.latestRelease {
+        if usingIntAppsAPI, let result = updateChecker.intAppsUpdateResult, result.updateAvailable {
+            Section("Update Available") {
+                LabeledContent("New build") {
+                    Text(result.currentVersion ?? "Unknown")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.primary)
+                }
+
+                Button {
+                    NSWorkspace.shared.open(result.updateURL)
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
+                .accessibilityHint("Opens the update download page in your browser.")
+            }
+        } else if !usingIntAppsAPI, github.updateAvailable, let release = github.latestRelease {
             Section("Update Available") {
                 LabeledContent("New version") {
                     Text(release.tagName)
@@ -798,11 +839,47 @@ struct UpdateSettingsTab: View {
 
         Section {
             VStack(alignment: .leading, spacing: 6) {
-                Text("MeedyaConverter currently checks GitHub Releases for new versions. In-app updates via Sparkle (with EdDSA-verified signatures) are planned for v0.2.0.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if channelBinding.wrappedValue == .stable {
+                    Text("MeedyaConverter currently checks GitHub Releases for new versions. In-app updates via Sparkle (with EdDSA-verified signatures) are planned for v0.2.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                Text("Downloads open in your browser and you install manually.")
+                    Text("Downloads open in your browser and you install manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if usingIntAppsAPI {
+                    Text("You're on the \(channelBinding.wrappedValue.displayName) channel — checking MWBM's update service for pre-release builds.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("You're on the \(channelBinding.wrappedValue.displayName) channel — checking GitHub Releases, including pre-release tags.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Update Channel picker (Roadmap #4)
+
+    @ViewBuilder
+    private func channelSection(updateChecker: AppUpdateChecker) -> some View {
+        Section("Update Channel") {
+            Picker("Channel", selection: channelBinding) {
+                ForEach(UpdateChannel.allCases, id: \.self) { channel in
+                    Text(channel.displayName).tag(channel)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Update channel")
+            .onChange(of: rawUpdateChannel) {
+                // Re-check immediately so switching channels doesn't leave
+                // a stale status message from the previous channel showing.
+                updateChecker.checkForUpdates()
+            }
+
+            if channelBinding.wrappedValue != .stable {
+                Text("Alpha and beta builds may be unstable. Switch back to Stable at any time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
