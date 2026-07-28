@@ -335,9 +335,20 @@ struct QualityCheckView: View {
     /// real stderr output with `QualityChecker.parseBlackFrameOutput`/
     /// `parseSilenceOutput` (Issue #445). `QualityChecker` itself stays a
     /// pure, process-free utility (per its own documentation), so this view
-    /// is where the actual FFmpeg execution for the two checks that have
-    /// real detectors happens; `QualityChecker.runAllChecks` supplies the
-    /// honest `.notImplemented` results for every other enabled check.
+    /// is where the actual FFmpeg execution for the checks that have real
+    /// detectors happens; `QualityChecker.runAllChecks` supplies the honest
+    /// `.notImplemented` results for every other enabled check.
+    ///
+    /// Roadmap #8 (Issue #445) extended this same shape to two more
+    /// checks: `corruptFrames` (an `ffmpeg -v error -f null -` decode-error
+    /// scan via `QualityChecker.buildCorruptFrameDetectionArgs`/
+    /// `parseCorruptFrameOutput`) and `levelCompliance` (the existing,
+    /// tested `LoudnessReporter` EBU R128/ebur128 measurement pass, via
+    /// `QualityChecker.buildLevelComplianceArgs`/`parseLevelComplianceOutput`,
+    /// which itself just adapts `LoudnessReporter.parseAnalysisOutput`/
+    /// `checkCompliance` into a `QCResult`). `audioSync` and
+    /// `formatConformance` remain `.notImplemented` — `audioSync` is
+    /// genuinely gated on #421/#422.
     ///
     /// `QualityCheckView` is a `struct: View`, not a `@MainActor` class, so
     /// (like the sibling views in this file's neighbourhood) its methods
@@ -370,6 +381,8 @@ struct QualityCheckView: View {
 
             let needsFFmpeg = profile.enabledChecks.contains(.blackFrames)
                 || profile.enabledChecks.contains(.silenceDetection)
+                || profile.enabledChecks.contains(.corruptFrames)
+                || profile.enabledChecks.contains(.levelCompliance)
 
             var ffmpegPath = ""
             if needsFFmpeg {
@@ -378,7 +391,7 @@ struct QualityCheckView: View {
                         try FFmpegBundleManager().locateFFmpeg().path
                     }.value
                 } catch {
-                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before running black-frame/silence checks."
+                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before running black-frame/silence/corrupt-frame/level-compliance checks."
                     results = collectedResults.sorted { $0.check.rawValue < $1.check.rawValue }
                     currentController = nil
                     isRunning = false
@@ -427,6 +440,54 @@ struct QualityCheckView: View {
                 } catch {
                     let prefix = errorMessage.map { "\($0) " } ?? ""
                     errorMessage = "\(prefix)Silence detection failed: \(error.localizedDescription)"
+                }
+            }
+
+            if !Task.isCancelled, profile.enabledChecks.contains(.corruptFrames) {
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                currentController = controller
+                let args = QualityChecker.buildCorruptFrameDetectionArgs(inputPath: inputPath)
+                do {
+                    let progressStream = try controller.startEncoding(arguments: args)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                    if !Task.isCancelled {
+                        collectedResults.append(contentsOf: QualityChecker.parseCorruptFrameOutput(controller.errorOutput))
+                    }
+                } catch {
+                    let prefix = errorMessage.map { "\($0) " } ?? ""
+                    errorMessage = "\(prefix)Corrupt-frame scan failed: \(error.localizedDescription)"
+                }
+            }
+
+            if !Task.isCancelled, profile.enabledChecks.contains(.levelCompliance) {
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                currentController = controller
+                let args = QualityChecker.buildLevelComplianceArgs(inputPath: inputPath)
+                do {
+                    let progressStream = try controller.startEncoding(arguments: args)
+                    for await _ in progressStream {
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                    if !Task.isCancelled {
+                        let standard = QualityChecker.normalizationStandard(
+                            forLoudnessStandard: profile.loudnessStandard
+                        )
+                        collectedResults.append(contentsOf: QualityChecker.parseLevelComplianceOutput(
+                            controller.errorOutput,
+                            standard: standard
+                        ))
+                    }
+                } catch {
+                    let prefix = errorMessage.map { "\($0) " } ?? ""
+                    errorMessage = "\(prefix)Level compliance check failed: \(error.localizedDescription)"
                 }
             }
 
