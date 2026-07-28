@@ -409,6 +409,21 @@ final class AppViewModel {
     /// Log entries for the unified activity log.
     var logEntries: [LogEntry] = []
 
+    // MARK: - Recent Files (Issue #334)
+
+    /// Tracks recently imported files for the Recent Files sidebar view.
+    ///
+    /// `RecentFilesView` holds its own separate `RecentFilesManager`
+    /// instance too — both read/write the same on-disk JSON store
+    /// (`~/Library/Application Support/MeedyaConverter/recent_files.json`),
+    /// so an entry recorded here (from `importFiles`) becomes visible the
+    /// next time the user navigates to Recent Files: `ContentView`'s
+    /// switch-based routing tears down and recreates `RecentFilesView`
+    /// (and its `@State` manager, which reloads from disk in `init()`) on
+    /// every navigation, so this doesn't need to be the same live
+    /// instance to be picked up.
+    let recentFilesManager = RecentFilesManager()
+
     // MARK: - Initialiser
 
     init() {
@@ -569,6 +584,14 @@ final class AppViewModel {
                 }
 
                 appendLog(.info, "Imported: \(mediaFile.fileName) — \(mediaFile.summaryString)")
+
+                // Record in Recent Files (Issue #334). `addRecent(_:)`
+                // previously had exactly one caller — RecentFilesView's
+                // own re-import action — so the list could never actually
+                // populate from a normal import. Only recorded on a
+                // successful probe, matching the `sourceFiles.append`
+                // above.
+                recentFilesManager.addRecent(mediaFile.fileURL)
             } catch {
                 let message = "Failed to probe \(url.lastPathComponent): \(error.localizedDescription)"
                 lastError = message
