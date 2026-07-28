@@ -266,8 +266,19 @@ struct WatchFolderView: View {
                     if monitor.isMonitoring {
                         monitor.stop(configId: config.id)
                     } else {
-                        monitor.start(config: config) { _ in
-                            // Encoding trigger handled by app coordinator.
+                        // `onNewFile` fires on `WatchFolderMonitor`'s
+                        // background `monitorQueue` (re #268 — this used
+                        // to discard every detection: `{ _ in }`, with a
+                        // comment claiming an "app coordinator" that never
+                        // existed). Hop to the main actor before touching
+                        // `viewModel`, the same shape
+                        // `DropHandler.extractURLs`'s completion handler
+                        // is consumed with elsewhere (e.g. `ContentView`'s
+                        // drop handling).
+                        monitor.start(config: config) { detectedURL in
+                            Task { @MainActor in
+                                viewModel.enqueueWatchFolderFile(detectedURL, config: config)
+                            }
                         }
                     }
                 }

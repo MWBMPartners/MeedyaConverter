@@ -750,6 +750,83 @@ final class AppViewModel {
         selectedNavItem = .queue
     }
 
+    // MARK: - Watch Folder Auto-Encoding (Issue #268)
+
+    /// Enqueue a file detected by a watch folder monitor and start the
+    /// queue if it isn't already running.
+    ///
+    /// `WatchFolderView` previously passed `WatchFolderMonitor.start` a
+    /// callback that discarded every detection (`{ _ in
+    /// /* Encoding trigger handled by app coordinator. */ }`) — no such
+    /// coordinator existed, so watch folders never actually encoded
+    /// anything. This is the wiring: build an `EncodingJobConfig` (same
+    /// shape `enqueueSelectedFile()` builds above) from the detected file
+    /// and the watch folder's own config, add it to the queue, then start
+    /// the queue if needed — mirroring the scheduler's `onJobReady`
+    /// wiring above.
+    ///
+    /// Uses `FileStabilityChecker.outputPath(for:config:outputExtension:)`
+    /// — the existing purpose-built helper for watch-folder output paths
+    /// (already handles the `recursive` subdirectory-mirroring case and
+    /// filename sanitisation) — rather than `FilenameTemplate`, since
+    /// building a `MediaFile` here would require an extra async probe of
+    /// every detected file before it could even be queued. Does not honour
+    /// the Source tab's `filenameTemplate`/`overwriteExisting` settings for
+    /// the same reason; watch folders have always had their own separate
+    /// output-path convention.
+    ///
+    /// - Parameters:
+    ///   - url: The detected file's URL.
+    ///   - config: The watch folder configuration that detected it.
+    func enqueueWatchFolderFile(_ url: URL, config: WatchFolderConfig) {
+        // Resolve the configured profile by name. `WatchFolderConfig`'s
+        // own default (`profileName: "webStandard"`, set by `addNewConfig()`
+        // in `WatchFolderView`) does not match any built-in profile's
+        // display name ("Web Standard") under `profileStore.profile(named:)`'s
+        // case-insensitive-exact match — so falling back to Web Standard
+        // with a warning (rather than silently dropping the file) is the
+        // common case, not just a defensive edge case.
+        let profile: EncodingProfile
+        if let resolved = engine.profileStore.profile(named: config.profileName) {
+            profile = resolved
+        } else {
+            appendLog(
+                .warning,
+                "Watch folder \"\(config.name)\": profile \"\(config.profileName)\" not found — using Web Standard.",
+                category: .encoding
+            )
+            profile = .webStandard
+        }
+
+        let outputExtension = profile.containerFormat.fileExtensions.first ?? "mp4"
+        let outputPath = FileStabilityChecker.outputPath(
+            for: url.path,
+            config: config,
+            outputExtension: outputExtension
+        )
+        let outputURL = URL(fileURLWithPath: outputPath)
+
+        try? FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: profile)
+        engine.queue.addJob(jobConfig)
+        appendLog(
+            .info,
+            "Watch folder \"\(config.name)\" queued: \(url.lastPathComponent) with profile \"\(profile.name)\"",
+            category: .encoding,
+            jobID: jobConfig.id
+        )
+
+        if isQueueRunning {
+            appendLog(.info, "Added to running queue.", category: .encoding, jobID: jobConfig.id)
+        } else {
+            Task { await startQueue() }
+        }
+    }
+
     // MARK: - Queue Processing
 
     /// Whether the queue is currently processing jobs sequentially.
