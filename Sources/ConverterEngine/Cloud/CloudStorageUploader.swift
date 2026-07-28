@@ -144,6 +144,152 @@ public struct CloudStorageUploader: Sendable {
         return request
     }
 
+    // MARK: - Dropbox (upload session, roadmap item #2 / Issue #459)
+
+    /// Build a Dropbox upload-session "start" request for files larger
+    /// than `DropboxUploader.singleUploadMaxBytes` (150 MB) — the
+    /// `/2/files/upload` endpoint used by `buildDropboxUploadRequest`
+    /// rejects anything over that limit.
+    ///
+    /// Uses `JSONSerialization` for the `Dropbox-API-Arg` body (unlike
+    /// `DropboxUploader.buildSessionStartHeaders`, kept untouched as
+    /// existing public API but not reused here — see
+    /// `CloudUploadExecutor.uploadInDropboxSessionChunks`'s doc comment).
+    ///
+    /// - Parameter config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionStartRequest(
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionStartURL) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        let apiArg: [String: Any] = ["close": false]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
+    /// Build a Dropbox upload-session "append" request for one chunk.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The `session_id` returned by the session-start
+    ///     request.
+    ///   - offset: The cursor offset — the number of bytes the server
+    ///     already has for this session, i.e. the byte offset this
+    ///     chunk starts at.
+    ///   - config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionAppendRequest(
+        sessionId: String,
+        offset: Int64,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionAppendURL) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        // Built as an explicitly-annotated intermediate `let` rather than
+        // a literal nested directly inside `apiArg`'s value position:
+        // `sessionId` (String) and `offset` (Int64) are heterogeneous, so
+        // an inline nested literal would leave Swift to infer its type
+        // from context alone, which the compiler flags with a
+        // "heterogeneous collection literal" warning. Naming the type
+        // explicitly avoids that ambiguity.
+        let cursor: [String: Any] = [
+            "session_id": sessionId,
+            "offset": offset,
+        ]
+        let apiArg: [String: Any] = [
+            "cursor": cursor,
+            "close": false,
+        ]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
+    /// Build a Dropbox upload-session "finish" request, closing the
+    /// session and committing the assembled bytes to the destination
+    /// path.
+    ///
+    /// Builds `remoteDest` with the same folder-join logic as
+    /// `buildDropboxUploadRequest` (append `filePath` to
+    /// `config.remotePath`, inserting a `/` unless `remotePath` already
+    /// ends with one). Uses `"mode":"overwrite"`, matching the simple
+    /// upload path — NOT the `"add"` mode hardcoded by the existing
+    /// unused `DropboxUploader.buildSessionFinishHeaders`.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The `session_id` returned by the session-start
+    ///     request.
+    ///   - offset: The final cursor offset — the total number of bytes
+    ///     appended across every chunk (i.e. the full file size).
+    ///   - filePath: The local file name to include in the remote path.
+    ///   - config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionFinishRequest(
+        sessionId: String,
+        offset: Int64,
+        filePath: String,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionFinishURL) else {
+            return nil
+        }
+
+        let remoteDest = config.remotePath.hasSuffix("/")
+            ? config.remotePath + filePath
+            : config.remotePath + "/" + filePath
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        // See `buildDropboxSessionAppendRequest` for why `cursor` and
+        // `commit` are hoisted to explicitly-annotated intermediate
+        // `let`s rather than nested inline inside `apiArg`'s literal.
+        let cursor: [String: Any] = [
+            "session_id": sessionId,
+            "offset": offset,
+        ]
+        let commit: [String: Any] = [
+            "path": remoteDest,
+            "mode": "overwrite",
+            "autorename": true,
+            "mute": false,
+            "strict_conflict": false,
+        ]
+        let apiArg: [String: Any] = [
+            "cursor": cursor,
+            "commit": commit,
+        ]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
     // MARK: - OneDrive
 
     /// Build a Microsoft Graph API upload request for OneDrive.
@@ -262,6 +408,54 @@ public struct CloudStorageUploader: Sendable {
         request.httpMethod = "POST"
         request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        return request
+    }
+
+    /// Build a Google Drive resumable-upload "initiate" request for
+    /// files larger than `GoogleDriveUploader.simpleUploadMaxBytes`
+    /// (5 MB) — Google documents the `uploadType=media` endpoint used by
+    /// `buildGoogleDriveUploadRequest` as being for small files only.
+    ///
+    /// A successful `2xx` response to this request carries the session
+    /// URI to `PUT` chunks to in its `Location` header (per Google's
+    /// resumable-upload protocol) — see
+    /// `CloudUploadExecutor.uploadInGoogleDriveResumableChunks`, which
+    /// extracts it.
+    ///
+    /// Uses `JSONSerialization` for the metadata body (unlike the
+    /// existing unused `GoogleDriveUploader.buildUploadMetadata`, kept
+    /// untouched as existing public API but not reused here — string
+    /// interpolation breaks on a filename containing a `"`).
+    ///
+    /// - Parameters:
+    ///   - filePath: The local file name (used to set the file name
+    ///     metadata).
+    ///   - fileSize: The real on-disk file size, sent as
+    ///     `X-Upload-Content-Length` so Drive knows the total size to
+    ///     expect up front.
+    ///   - config: The Google Drive cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildGoogleDriveResumableInitRequest(
+        filePath: String,
+        fileSize: Int64,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: GoogleDriveUploader.buildResumableUploadURL()) else {
+            return nil
+        }
+
+        let fileName = (filePath as NSString).lastPathComponent
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
+        request.setValue("\(fileSize)", forHTTPHeaderField: "X-Upload-Content-Length")
+
+        let body: [String: Any] = ["name": fileName]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         return request
     }
