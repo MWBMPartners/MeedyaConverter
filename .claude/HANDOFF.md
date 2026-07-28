@@ -84,7 +84,9 @@ tweaks/enhancements/features. Bundle work for efficiency.
   existing runAsync); 3b wire `EncodingStatisticsCollector` into `AppViewModel` queue runner (#284);
   3c CSV export (#363); 3d AnimatedImage real execution (#321).
 - **Bundle 4 — Placeholder sweep round 3.** Slate (#343), MetadataTag write (#320), Comparison (#329),
-  SmartCrop/MediaBrowser/PluginManager handoff (spot-check first).
+  PluginManager handoff (spot-check first). SmartCrop/MediaBrowser exposure done as part of roadmap
+  item #1 (2026-07-28, see below) — their nav entries are live and `MediaBrowserView`'s import path
+  is real; remaining Bundle 4 items are still open.
 - **Bundle 5 — QC residual detectors (#445).** levelCompliance (reuse ebur128), corruptFrames (ffmpeg
   null decode scan), formatConformance (ffprobe vs spec); audioSync stays gated on #421/#422.
 - **Bundle 6 — Test coverage + CI.** Tests for #450 SFTP code, stats store, pHash, HDR executor; #437 actionlint.
@@ -136,9 +138,51 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
     (`markFailed`/`markComplete`, new-field round trip, legacy-decode pin), `EncodingStatisticsCSVExportTests.swift`
     (date-window CSV/JSON export). No data migration needed — `statistics.json` could only ever have been
     written by the zero-caller `recordEncode`, so there was nothing real to migrate.
-- **[next]** Bundle 4 / roadmap item #1 — expose the 10 safe orphaned views (spot-check first), then
-  roadmap item #2 — chunked Dropbox/GDrive uploads. Also still open: Bundle 4 remainder (Slate #343,
-  MetadataTag #320, Comparison #329), Bundle 5 (QC #445), Bundle 6 (test coverage), Bundle 7 (issue hygiene).
+- **[done 2026-07-28]** Roadmap item #1 — expose the safe orphaned views, on `wip/alpha-consolidation`
+  (re #448, re #363, re #284, re #348). 16 fully-implemented views had no navigation entry; 6 stay
+  hidden because their backends are fabricated/dead (tracked separately in #355, #343, #329, #467,
+  #468, #469 — `APIServerView`, `MetadataEditorView`, `SlateGeneratorView`, `ComparisonView`,
+  `ResumableJobsView`, `ConditionalRulesView` — **no enum cases / nav entries added for these**). The
+  other 10 are now reachable:
+  - **7 new sidebar destinations** (`NavigationItem` cases in `AppViewModel.swift` + `ContentView`
+    detail-switch arms, both exhaustive switches updated): Media Browser, Encoding Graphs, Statistics
+    Export, Dual Dynamic HDR, Smart Crop, Background Removal, Voice Isolation.
+  - **Sidebar restructure** (`SidebarView.swift`): Workflow gains Media Browser; Monitor gains
+    Encoding Graphs + Statistics Export; Tools gains Dual Dynamic HDR; new **"Images & Audio"**
+    section holds Images, Animated Image, Vector Conversion, ProRes to Vector, Smart Crop, Background
+    Removal, Voice Isolation (moved Images/Animated Image out of Tools). **Pre-existing bug fixed**:
+    `vectorConversion` and `proresVector` already had enum cases + a `ContentView` switch arm but
+    appeared in NO sidebar section — unreachable via the UI despite being fully wired. Now live in
+    Images & Audio.
+  - **2 embedded (non-sidebar) exposures** in `OutputSettingsView.swift` — these take init params so
+    aren't sidebar destinations: `ProfileSuggestionView` banner inside "Encoding Profile"
+    (`.id(file.id)` resets its `@State` suggestions when the selected file changes), and a
+    `QualityPreviewView` sheet behind a new "Quality Preview..." button next to "Preview FFmpeg
+    Command...".
+  - **`MediaBrowserView.importSelectedFiles()` fixed** — was a documented no-op ("Queue integration
+    would be handled by the parent"). Now calls `viewModel.importFiles(urls)` +
+    `viewModel.selectedNavItem = .source`, mirroring `ContentView`'s proven drop-import path. Required
+    before exposing the view at all, per plan — otherwise it'd be another fabricated surface.
+  - **Part E shipped (#348), not skipped.** `EmailSettingsView` was orphaned AND its
+    `emailOnComplete`/`emailOnFailure` toggles had zero consumers, so both had to land together
+    (ship-both-or-neither). Added Settings → Services → "Email" tab; extracted
+    `EmailSettingsView.loadSMTPConfig() -> SMTPConfig?` (and made `loadPasswordFromKeychain()`
+    `static`) so it's callable without a live view instance; wired
+    `AppViewModel.sendCompletionEmail(...)` into both the encode-success and encode-failure branches
+    of `startQueue()`, next to the existing `sendNotification` calls, gated on
+    `UserDefaults.standard.bool(forKey: "emailOnComplete"/"emailOnFailure")`. The blocking `curl`
+    `Process` transport — the same one already proven inside
+    `EmailSettingsView.sendTestEmail()` — runs in `Task.detached`, capturing only the prepared
+    `Sendable` `String`/`[String]` values (subject/body/curl-args), never a `@MainActor self`.
+  - Compile-uncertain spots for CI to confirm (no local macOS build available): the
+    `ProfileSuggestionView(sourceFile:profiles:onSelectProfile:)` / `QualityPreviewView(sourceFile:
+    profile:)` memberwise-init argument labels — verified by inspection against their `let`
+    properties and cross-checked against the same `@Environment` + `let`-params pattern already
+    proven by `StreamMetadataEditorView(mediaFile:)` elsewhere in `OutputSettingsView.swift`; and the
+    `Task.detached` `Sendable`-capture shape in `sendCompletionEmail`.
+- **[next]** Roadmap item #2 — chunked Dropbox/GDrive uploads. Also still open: Bundle 4 remainder
+  (Slate #343, MetadataTag #320, Comparison #329), Bundle 5 (QC #445), Bundle 6 (test coverage),
+  Bundle 7 (issue hygiene).
 
 ## Decisions / blockers needing the user
 
