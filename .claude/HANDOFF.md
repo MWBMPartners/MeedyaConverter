@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-07-28 (roadmap #7, #14) · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
+**Last updated:** 2026-07-28 (roadmap #7, #14; completeness-audit "configured but never executed" cluster — #279, #268, #296, #348, #295/#203, #334, overwrite/delete-source-after-encode) · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
 
@@ -463,6 +463,92 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
   - Next queued: #13 (`ScriptingBridge` `NSScriptCommand` refactor), #16 (cloud-provider triage — needs
     human input), #12 (accessibility pass), then the closing phase (issue sweep, docs/OpenAPI refresh,
     new proposals).
+- **[done 2026-07-28]** Completeness-audit cluster — "configured but never executed" (persisted setting,
+  zero readers), on `wip/alpha-consolidation`, `899abd7` → `bc7fa4f`. Seven fixes, one commit each, all
+  landing in `AppViewModel.startQueue()`/`enqueueSelectedFile()`/`init()` unless noted:
+  1. **#279 — scheduled jobs never started.** `scheduler.onJobReady` called `addJob` and logged
+     "Scheduled job started" but nothing called `startQueue()`. Now starts the queue if not already
+     running; log message reflects which branch actually happened ("started" vs "added to running
+     queue").
+  2. **#268 — watch folders discarded every detection.** `WatchFolderView`'s `monitor.start(config:) { _
+     in /* handled by app coordinator */ }` dropped every file; no coordinator existed. New
+     `AppViewModel.enqueueWatchFolderFile(_:config:)` resolves the profile by name (falling back to Web
+     Standard with a logged warning — `WatchFolderConfig`'s own default `profileName`, `"webStandard"`,
+     doesn't match any built-in profile's display name, so this is the *common* case for a fresh watch
+     folder, not an edge case), builds the output path via the existing `FileStabilityChecker.outputPath`
+     helper (not `FilenameTemplate` — avoids an extra async probe per detected file; does not honour the
+     Source tab's `filenameTemplate`/`overwriteExisting` settings for the same reason), adds the job, and
+     starts the queue if needed. The view's callback hops onto the main actor
+     (`Task { @MainActor in viewModel.enqueueWatchFolderFile(...) } }`) since `WatchFolderMonitor` fires
+     `onNewFile` from its own background `monitorQueue` — same shape `DropHandler.extractURLs`'s
+     completion handlers already use elsewhere (`ContentView`'s drop handling). **Still open, found but
+     NOT fixed this session**: `WatchFolderConfig.postAction` (`.moveToCompleted`/`.deleteSource`) is
+     itself another "configured but never executed" toggle — nothing consumes it after a watch-folder
+     encode completes. Not in this session's assigned list; flagging for the backlog.
+  3. **#296 — webhooks never fired on real events.** `WebhookSettingsView` persisted `webhookURL` +
+     three trigger toggles + presets/custom headers; the only production `WebhookSender.send` call was
+     the Test button. Extracted `WebhookSettingsView.loadWebhookConfig()` (static, mirrors
+     `EmailSettingsView.loadSMTPConfig()`; the view's own `buildConfig()` now delegates to it — also
+     tightens an edge case: the static version explicitly rejects an empty URL string before calling
+     `URL(string:)`, which the original `buildConfig()` didn't). New
+     `AppViewModel.sendWebhookNotification(...)` wired into the same three points
+     `sendCompletionEmail` already covers (per-job success, per-job failure, end-of-queue); queue-finished
+     has no single "job" so the summary counts stand in for the job fields and `status` reflects whether
+     any job failed. Delivery runs in a plain (non-detached) `Task` — `WebhookSender.send` is already
+     non-blocking `async`/`URLSession`, so a slow retry (`WebhookConfig.retryDelaySeconds`) never stalls
+     the queue loop; failures are logged, never thrown.
+  4. **#348 — queue-finished email never sent.** `EmailSettingsView.emailOnQueueFinished` had no reader
+     (its siblings `emailOnComplete`/`emailOnFailure` were already wired). Added the third
+     `sendCompletionEmail` call at end-of-queue, same summary-stand-in shape as the webhook leg above.
+  5. **#295 / #203 — media-server auto-scan never triggered.** `MediaServerSettingsView.mediaServerAutoScan`
+     had no reader. Extracted `MediaServerSettingsView.loadMediaServerConfig()` (static, same
+     `loadSMTPConfig()` mirror; `currentConfig` now delegates to it). New
+     `AppViewModel.triggerMediaServerAutoScan()` fires the same `MediaServerIntegration.triggerLibraryScan`
+     the manual "Trigger Library Scan Now" button uses. Fires from the **per-job success path**, not
+     queue-end — the toggle's own label is "Auto-scan after successful encode," and that wording was
+     taken literally rather than choosing queue-end for convenience.
+  6. **#334 — Recent Files could never populate.** `RecentFilesManager.addRecent(_:)` had exactly one
+     caller — `RecentFilesView`'s own re-import action — a circularity that meant the list could never
+     grow from a normal import. Added an `AppViewModel`-owned `RecentFilesManager` instance, called from
+     `importFiles(_:)` for each successfully probed file. `RecentFilesView` keeps its own separate
+     manager instance (unchanged), but both read/write the same on-disk JSON store and the view is torn
+     down/recreated (reloading from disk) every time the user navigates to Recent Files, so no shared
+     live instance is needed.
+  7. **NEW-issue items (no GitHub issue filed yet) — `SettingsView.overwriteExisting` /
+     `.deleteSourceAfterEncode`, both persisted, both read by nothing.**
+     - `overwriteExisting`: added `FilenameTemplate.resolveOutputURL(..., overwriteExisting:)`, a small
+       pure helper (genuinely unit-testable — see below) that delegates to the existing
+       `resolveWithCollisionHandling` when `false` (today's auto-rename-on-collision behaviour,
+       unchanged) and returns the plain resolved path when `true` (FFmpeg, invoked with `-y` for every
+       job already, then overwrites it in place). Wired into `enqueueSelectedFile()`.
+     - `deleteSourceAfterEncode`: judged safe to implement (not disabled) with conservative guards — new
+       `AppViewModel.deleteSourceFileIfSafe(job:)`, called ONLY from the `.completed` success path in
+       `startQueue()` (never reachable from the failure/cancel `catch` branch), additionally requiring
+       the output file to exist and be non-empty and to have a different path from the input before
+       deleting anything; every outcome (deleted / skipped-why / failed-why) is logged; deletion failures
+       are caught, never thrown.
+  - **Tests**: `Tests/ConverterEngineTests/FilenameTemplateResolveOutputURLTests.swift` (new, 4 tests) —
+    the one piece of pure, public `ConverterEngine` logic this cluster introduced
+    (`FilenameTemplate.resolveOutputURL`). Everything else is `AppViewModel`/View wiring in the
+    `MeedyaConverter` executable target, which — like `meedya-convert` — cannot be `@testable import`ed
+    (Swift forbids importing a module containing `@main` into a test target), so that half was verified
+    by inspection only, same constraint every previous audit-cluster entry in this log has hit.
+  - **Compile-uncertain for CI (no local macOS build available):** the `@Sendable` closure passed to
+    `WatchFolderMonitor.start(config:onNewFile:)` capturing `viewModel` (a `@MainActor`, non-`Sendable`
+    class) directly, used only inside a nested `Task { @MainActor in }` — verified by inspection against
+    the identical, already-shipped shape `ContentView.swift`'s `DropHandler.extractURLs` completion
+    closures use (also `@Sendable ([URL]) -> Void`, also capturing `viewModel` directly), not by
+    compiling.
+  - **Remaining audit backlog (large items, not touched this session)** — same categories the completeness
+    audit that produced this task's brief flagged: #286 parallel encoding, #205 metadata lookup, disc
+    ripping tracker, #353 plugins, #278 pipelines (note: `PostEncodeActionsView`/`PostEncodeActionChain`,
+    issue #277, is a *separate* "configured but never executed"-shaped post-encode-hooks feature from
+    this session's #296 webhook fix — its own `.webhook` action type is explicitly unsupported per
+    `PostEncodeActionsTests.swift`; not touched here), #320/#322/#335/#298/#288 build-only views, #302
+    AppleScript plist, #331 shortcuts, #281 menu bar, #359/#360 widget, #275 output modes
+    (`AppViewModel.outputMode`/`OutputPathResolver` — also unused by `enqueueSelectedFile()`, which still
+    resolves output paths via `FilenameTemplate` only; not touched by the `overwriteExisting` fix above),
+    #345 team HTTP sync. Also newly noted: `WatchFolderConfig.postAction` (see #268 above).
 
 ## Decisions / blockers needing the user
 
