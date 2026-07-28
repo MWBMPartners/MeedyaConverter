@@ -31,6 +31,19 @@ import ConverterEngine
 ///
 /// Displays the current sync status, provides manual sync controls,
 /// and surfaces any conflicts that need resolution.
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28):**
+/// `performUpload()`/`performDownload()` (this file's only `Task.detached`
+/// sites) were re-checked against the genuine bug class — a `@MainActor`
+/// class `self` captured into `Task.detached` and mutated back via
+/// `MainActor.run` — and found already correct: these are `async` methods
+/// on a `View` struct, invoked via a plain `Task { await ... }` from a
+/// button action (inheriting the struct's implicit main-actor isolation,
+/// so `@State` writes are direct), with only the genuinely blocking
+/// `CloudProfileSync` file I/O isolated in an inner `Task.detached` that
+/// captures/returns `Sendable`-only values (`manager`/`profiles`/
+/// `[EncodingProfile]`), never `self`. No changes made — see
+/// `performUpload()`'s doc comment for the full reasoning.
 struct CloudSyncView: View {
 
     // MARK: - Environment

@@ -17,6 +17,17 @@ import ConverterEngine
 /// list, and a view of team member activity.
 ///
 /// Phase 14.1 — Team Shared Encoding Profiles (Issue #345)
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28, re #451):**
+/// `pushProfiles()`/`pullProfiles()` (this file's only `Task.detached`
+/// sites) were re-checked against the genuine bug class — a `@MainActor`
+/// class `self` captured into `Task.detached` and mutated back via
+/// `MainActor.run` — and found already correct: this is a `View` struct,
+/// so a plain `Task { }` inherits its implicit main-actor isolation
+/// (`@State` writes are direct), and the inner `Task.detached` in each
+/// method captures/returns only `Sendable` values (`profiles`/
+/// `repository`/`[EncodingProfile]`), never `self`. No changes made — see
+/// `pushProfiles()`'s doc comment for the full reasoning.
 struct TeamProfileView: View {
 
     // MARK: - Environment

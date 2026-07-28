@@ -44,6 +44,22 @@ enum DriveStatus: String {
 /// copy count, disc label, and progress display during burning.
 ///
 /// Phase 11 — Burn Settings UI (Issue #145)
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28, re #451):**
+/// every `Task.detached`/scheduling site in this file (`detectDrives()`,
+/// `startBurn()`, `eraseDisc()`, `ejectDisc()`) was re-checked against the
+/// genuine bug class — a `@MainActor` class `self` captured into
+/// `Task.detached` and mutated back via `MainActor.run` — and found
+/// already correct: `detectDrives()`/`startBurn()`/`eraseDisc()` each use
+/// a plain `Task { }` (inheriting this `View` struct's implicit
+/// main-actor isolation, so `@State`/`viewModel.appendLog` writes are
+/// direct, not `MainActor.run` hops) with only the genuinely blocking
+/// `Process` launch/wait pulled into an inner `Task.detached` that
+/// captures/returns `Sendable`-only values and never touches `self`;
+/// `ejectDisc()` is a bare `Task.detached` that captures no `self`/`@State`
+/// and never hops back at all. No changes made — see each method's own
+/// doc comment (added in the #451 fix pass this re-audit confirmed) for
+/// the full reasoning.
 struct BurnSettingsView: View {
 
     // MARK: - Environment

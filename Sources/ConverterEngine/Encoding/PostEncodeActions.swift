@@ -150,6 +150,19 @@ public struct PostEncodeAction: Identifiable, Codable, Sendable {
 /// - `{status}` — the job outcome (`success` or `failure`).
 ///
 /// Phase 17 — Post-Encode Hooks (Issue #277)
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28):** this
+/// file's two `Task.detached` sites (`uploadViaSFTP`'s and
+/// `sendMacOSNotification`'s) were re-checked against the genuine bug
+/// class — a `@MainActor` class `self` captured into `Task.detached` and
+/// mutated back via `MainActor.run` — and found already correct:
+/// `PostEncodeActionChain` is a plain `Sendable` struct, not a
+/// `@MainActor` class, so there is no main-actor state for either site to
+/// race on. `uploadViaSFTP`'s `Task.detached` captures/returns only
+/// `Sendable` values (`localPath`/`profile` in, `SFTPUploadOutcome` out),
+/// never `self`; `sendMacOSNotification`'s is a bare fire-and-forget
+/// `Task.detached` that captures no `self`/state and never hops back via
+/// `MainActor.run` at all. No changes made.
 public struct PostEncodeActionChain: Codable, Sendable {
 
     // MARK: - Properties

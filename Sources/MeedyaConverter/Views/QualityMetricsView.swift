@@ -61,6 +61,21 @@ struct PerFrameDataPoint: Identifiable {
 /// and parse output.
 ///
 /// Thread safety: `@MainActor`-isolated for safe SwiftUI binding.
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28):** the
+/// genuine bug class this audit looks for is a `@MainActor` class `self`
+/// captured into `Task.detached` and mutated back via `MainActor.run`.
+/// This class does neither: `runAnalysis()` uses a plain `Task {
+/// [weak self] }` (inherits `@MainActor` isolation, so state mutations
+/// are direct writes), with only the two genuinely blocking calls
+/// (`locateFFmpeg()`, `probeLibvmafAvailable(ffmpegPath:)`) isolated in
+/// child `Task.detached` blocks that capture/return `Sendable`-only
+/// values, never `self` — see `runAnalysis()`'s own doc comment. The
+/// `nonisolated(unsafe)` on `analysisTask`/`currentController` below is
+/// the OTHER documented-safe shape this audit accepts: it exists
+/// specifically so `deinit` (always `nonisolated`, even for `@MainActor`
+/// classes) can cancel/stop them, mirroring `StoreManager
+/// .transactionListenerTask`. No changes made.
 @MainActor
 @Observable
 final class QualityMetricsViewModel {
