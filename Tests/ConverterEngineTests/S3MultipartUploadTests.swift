@@ -226,9 +226,16 @@ final class S3MultipartUploadTests: XCTestCase {
 
     func test_uploadS3Multipart_partsInOrder_andCompletesWithRealETags() async throws {
         let fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("s3-multipart-tests-100kb-\(UUID().uuidString).bin")
+            .appendingPathComponent("s3-multipart-tests-12-5mib-\(UUID().uuidString).bin")
         defer { try? FileManager.default.removeItem(at: fileURL) }
-        let totalSize = 100 * 1024
+        // `uploadS3Multipart` clamps any requested `partSize` up to
+        // `S3Uploader.minimumMultipartPartSize` (S3's real 5 MiB-per-part
+        // floor, except the last part) — a fixture smaller than that limit
+        // would silently collapse to a single whole-file part instead of
+        // the 3 parts this test exercises. Use the real minimum as the
+        // part size so the requested value is honoured verbatim.
+        let partSize = S3Uploader.minimumMultipartPartSize // 5 MiB
+        let totalSize = Int(partSize) * 2 + Int(partSize) / 2 // 2 full parts + 1 half-size last part
         try Data(repeating: 0x41, count: totalSize).write(to: fileURL)
 
         // 1: CreateMultipartUpload.
@@ -248,8 +255,8 @@ final class S3MultipartUploadTests: XCTestCase {
                 )
             )
         }
-        // 2-4: three UploadPart PUTs (100 KB / 40 KB chunks = 40960 + 40960 + 20480),
-        // each returning a distinct real ETag header.
+        // 2-4: three UploadPart PUTs (12.5 MiB / 5 MiB chunks = 5,242,880 +
+        // 5,242,880 + 2,621,440), each returning a distinct real ETag header.
         for partNumber in 1...3 {
             MockURLProtocol.enqueue { [self] request in
                 XCTAssertEqual(request.httpMethod, "PUT")
@@ -284,7 +291,7 @@ final class S3MultipartUploadTests: XCTestCase {
             fileURL: fileURL,
             credential: sampleCredential(),
             objectKey: "videos/x.bin",
-            partSize: 40 * 1024
+            partSize: partSize
         )
 
         let requests = MockURLProtocol.requestLog
@@ -328,7 +335,13 @@ final class S3MultipartUploadTests: XCTestCase {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("s3-multipart-tests-abort-\(UUID().uuidString).bin")
         defer { try? FileManager.default.removeItem(at: fileURL) }
-        let totalSize = 100 * 1024
+        // See `test_uploadS3Multipart_partsInOrder_andCompletesWithRealETags`:
+        // `partSize` must meet `S3Uploader.minimumMultipartPartSize` or
+        // `uploadS3Multipart` clamps it up and reads the whole file as one
+        // part, so "part 1 succeeds, part 2 fails" below would never
+        // actually happen — the file must span more than one real part.
+        let partSize = S3Uploader.minimumMultipartPartSize // 5 MiB
+        let totalSize = Int(partSize) + Int(partSize) / 2 // 1 full part + 1 half-size second part
         try Data(repeating: 0x42, count: totalSize).write(to: fileURL)
 
         // 1: CreateMultipartUpload succeeds.
@@ -367,7 +380,7 @@ final class S3MultipartUploadTests: XCTestCase {
                 fileURL: fileURL,
                 credential: sampleCredential(),
                 objectKey: "videos/x.bin",
-                partSize: 40 * 1024
+                partSize: partSize
             )
             XCTFail("Expected the upload to throw when a part upload fails")
         } catch let error as CloudUploadExecutor.UploadError {
