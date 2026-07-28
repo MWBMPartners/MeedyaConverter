@@ -191,6 +191,38 @@ public struct FTPServerConfig: Codable, Sendable, Hashable {
 /// arrays that can be passed to `Process` or the shell execution layer.
 /// This keeps the uploader testable and avoids side effects in the engine.
 ///
+/// **Execution status (roadmap #10, Issue #174, audited 2026-07-28):** only
+/// the `scp` path is ever actually run — see the `SFTPUploader Execution`
+/// extension's `upload(localPath:config:)` below, which
+/// `PostEncodeActionChain.uploadViaSFTP` and `SFTPSettingsView` both call.
+/// `buildFTPUploadArguments(localPath:config:credentialsConfigPath:)`,
+/// `writeFTPCredentialsConfig(config:)`, and
+/// `buildRsyncArguments(localPath:config:)` below are real, tested argument
+/// builders with no bug — they are simply **never invoked from any
+/// execution path** in this app. Wiring them in was evaluated and
+/// deliberately descoped rather than half-done:
+/// - `buildRsyncArguments(localPath:config:)` reuses `SFTPServerConfig`
+///   (no new config shape needed), but `SFTPServerConfig` has no transfer-
+///   protocol selector field today — dispatching `upload(localPath:
+///   config:)` between `scp`/`rsync` per profile would require adding one,
+///   which ripples into both persistence (a new `Codable` field on a type
+///   with an established backward-compatible-decode contract — see `id`'s
+///   migration story above) and the UI (`SFTPSettingsView` would need a
+///   new picker with no way to test it end-to-end without a local macOS
+///   build).
+/// - `FTPServerConfig` is a structurally different type — no `id`, no
+///   `SFTPProfileStore`-style persistence, a `password` field with no
+///   Keychain split, and it has never been reachable from any SwiftUI
+///   form (`SFTPSettingsView` only ever constructs `SFTPServerConfig`).
+///   Wiring FTP in would mean designing that persistence/UI layer from
+///   scratch, not extending an existing selector.
+///
+/// Given no local macOS build is available to validate a UI change end to
+/// end, and CI (unit tests only) cannot exercise SwiftUI forms, the honest
+/// minimum was chosen over a partially-wired, partially-tested feature:
+/// these three builders stay exactly as they were, clearly marked below as
+/// not-yet-executed. See the `// TODO(#174)` markers on each.
+///
 /// Phase 12.3 — Direct Upload via SFTP/FTP (Issue #312)
 public struct SFTPUploader: Sendable {
 
@@ -241,6 +273,15 @@ public struct SFTPUploader: Sendable {
 
     // MARK: - FTP Upload
 
+    // TODO(#174): `writeFTPCredentialsConfig(config:)` and
+    // `buildFTPUploadArguments(localPath:config:credentialsConfigPath:)`
+    // below are NOT wired into any execution path — no code in this app
+    // ever calls them outside of tests. `FTPServerConfig` has no `id`, no
+    // profile store, and no `SFTPSettingsView` form to create one from, so
+    // there is currently no way for a user to even configure an FTP
+    // destination. See the descope rationale on `SFTPUploader`'s
+    // type-level doc comment above before wiring this in.
+
     // -------------------------------------------------------------------------
     // Why credentials live in a config file rather than `-u user:pass`
     // -------------------------------------------------------------------------
@@ -286,6 +327,9 @@ public struct SFTPUploader: Sendable {
     /// - Returns: The absolute URL of the freshly-written credentials file.
     /// - Throws: Any filesystem error from creating the file, writing its
     ///   contents, or applying the `0600` permission mode.
+    ///
+    /// - Important: `// TODO(#174)` — not called from any execution path
+    ///   in this app today; see the section note above.
     public static func writeFTPCredentialsConfig(
         config: FTPServerConfig
     ) throws -> URL {
@@ -373,6 +417,9 @@ public struct SFTPUploader: Sendable {
     ///   - credentialsConfigPath: Absolute path to the curl config file
     ///     produced by `writeFTPCredentialsConfig(config:)`.
     /// - Returns: An array of command-line arguments for `curl`.
+    ///
+    /// - Important: `// TODO(#174)` — not called from any execution path
+    ///   in this app today; see the section note above.
     public static func buildFTPUploadArguments(
         localPath: String,
         config: FTPServerConfig,
@@ -457,6 +504,15 @@ public struct SFTPUploader: Sendable {
 
     // MARK: - Rsync Upload
 
+    // TODO(#174): NOT wired into any execution path — `upload(localPath:
+    // config:)` below always uses `scp`. `SFTPServerConfig` carries no
+    // transfer-protocol selector to dispatch on, and adding one ripples
+    // into both the `Codable` migration story (see the `id` field's
+    // backward-compatible decode above) and `SFTPSettingsView`'s form —
+    // neither of which this session could validate without a local macOS
+    // build. See the descope rationale on `SFTPUploader`'s type-level doc
+    // comment above before wiring this in.
+
     /// Builds `rsync` command-line arguments for uploading via SSH.
     ///
     /// Rsync provides resume support, delta transfers, and progress
@@ -466,6 +522,9 @@ public struct SFTPUploader: Sendable {
     ///   - localPath: Absolute path to the local file or directory.
     ///   - config: The SFTP server configuration.
     /// - Returns: An array of command-line arguments for `rsync`.
+    ///
+    /// - Important: `// TODO(#174)` — not called from any execution path
+    ///   in this app today; see the section note above.
     public static func buildRsyncArguments(
         localPath: String,
         config: SFTPServerConfig

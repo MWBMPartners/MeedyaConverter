@@ -181,6 +181,62 @@ extension ConverterEngineTests {
     }
 
     // -----------------------------------------------------------------
+    // MARK: - Roadmap #10 (re #174): buildRsyncArguments / FTP builders
+    // are real, tested argument builders — but NOT wired into any
+    // execution path (see the `// TODO(#174)` markers and the
+    // descope rationale on `SFTPUploader`'s type-level doc comment).
+    // These two tests strengthen coverage of `buildRsyncArguments`'s
+    // per-`AuthMethod` branching, which the pre-existing `.agent` test
+    // above didn't exercise.
+    // -----------------------------------------------------------------
+
+    /// `.keyFile` auth must thread `-i '<path>'` into the `-e` ssh
+    /// command, with single-quote metacharacters escaped so a path
+    /// containing `'` cannot break out of the quoted form.
+    func test_sftpUploader_rsyncArguments_keyFileAuth_includesEscapedIdentityFile() {
+        let config = SFTPServerConfig(
+            host: "server.com",
+            port: 2222,
+            username: "user",
+            authMethod: .keyFile("/Users/o'brien/id_ed25519"),
+            remotePath: "/uploads",
+            label: "Test"
+        )
+        let args = SFTPUploader.buildRsyncArguments(localPath: "/tmp/file.mp4", config: config)
+
+        guard let eIndex = args.firstIndex(of: "-e") else {
+            return XCTFail("Expected an `-e` flag carrying the ssh command.")
+        }
+        XCTAssertLessThan(eIndex + 1, args.count)
+        let sshCmd = args[eIndex + 1]
+        XCTAssertTrue(sshCmd.contains("-p 2222"))
+        XCTAssertTrue(sshCmd.contains("-i '/Users/o'\\''brien/id_ed25519'"),
+                      "Embedded single quote must be escaped for the shell: \(sshCmd)")
+    }
+
+    /// `.password` auth must set `BatchMode=no` in the ssh command (the
+    /// same non-interactive-safe default the scp/ssh-probe paths use)
+    /// rather than silently defaulting to key/agent-only options.
+    func test_sftpUploader_rsyncArguments_passwordAuth_includesBatchModeNo() {
+        let config = SFTPServerConfig(
+            host: "server.com",
+            port: 22,
+            username: "user",
+            authMethod: .password("hunter2"),
+            remotePath: "/uploads",
+            label: "Test"
+        )
+        let args = SFTPUploader.buildRsyncArguments(localPath: "/tmp/file.mp4", config: config)
+
+        guard let eIndex = args.firstIndex(of: "-e") else {
+            return XCTFail("Expected an `-e` flag carrying the ssh command.")
+        }
+        let sshCmd = args[eIndex + 1]
+        XCTAssertTrue(sshCmd.contains("BatchMode=no"))
+        XCTAssertFalse(sshCmd.contains("hunter2"), "Plaintext password must never appear in argv.")
+    }
+
+    // -----------------------------------------------------------------
     // MARK: - Issue #380: FTP credentials via curl config file
     // -----------------------------------------------------------------
     //
