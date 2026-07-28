@@ -240,9 +240,11 @@ final class S3MultipartUploadTests: XCTestCase {
             return (
                 response,
                 Data(
-                    "<InitiateMultipartUploadResult><Bucket>my-bucket</Bucket>"
-                        + "<Key>videos/x.bin</Key><UploadId>upload-123</UploadId>"
-                        + "</InitiateMultipartUploadResult>".utf8
+                    (
+                        "<InitiateMultipartUploadResult><Bucket>my-bucket</Bucket>"
+                            + "<Key>videos/x.bin</Key><UploadId>upload-123</UploadId>"
+                            + "</InitiateMultipartUploadResult>"
+                    ).utf8
                 )
             )
         }
@@ -266,10 +268,12 @@ final class S3MultipartUploadTests: XCTestCase {
             return (
                 response,
                 Data(
-                    "<CompleteMultipartUploadResult>"
-                        + "<Location>https://my-bucket.s3.amazonaws.com/videos/x.bin</Location>"
-                        + "<Bucket>my-bucket</Bucket><Key>videos/x.bin</Key>"
-                        + "<ETag>\"final-etag\"</ETag></CompleteMultipartUploadResult>".utf8
+                    (
+                        "<CompleteMultipartUploadResult>"
+                            + "<Location>https://my-bucket.s3.amazonaws.com/videos/x.bin</Location>"
+                            + "<Bucket>my-bucket</Bucket><Key>videos/x.bin</Key>"
+                            + "<ETag>\"final-etag\"</ETag></CompleteMultipartUploadResult>"
+                    ).utf8
                 )
             )
         }
