@@ -211,6 +211,15 @@ struct VideoUploadView: View {
                 .progressViewStyle(.linear)
             }
 
+            if !viewModel.isVideoUploadEnabled {
+                Label(
+                    "Video upload is not available in this build yet.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Text("Direct upload requires connecting a YouTube/Vimeo account (coming in a future update).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -236,7 +245,17 @@ struct VideoUploadView: View {
                     // ever sending anything).
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(true)
+                // Roadmap #5: gated by the remote `video-upload` flag
+                // instead of a hardcoded `true`. The flag only controls
+                // EXPOSURE — this button's action is still the empty
+                // TODO(#446) above, since the actual OAuth2 upload wiring
+                // (#294) is a separate, blocked piece of work. A
+                // maintainer should only flip `video-upload` on once #294
+                // ships; until then this stays disabled regardless,
+                // because the flag's compiled-in fail-safe default (and
+                // the behaviour while intAppsAPI is unprovisioned) is
+                // `false` — see `RemoteFeatureGateProvider.builtInDefaults`.
+                .disabled(!viewModel.isVideoUploadEnabled)
             }
         }
     }

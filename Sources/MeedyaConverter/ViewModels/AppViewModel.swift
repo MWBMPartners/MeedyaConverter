@@ -242,6 +242,26 @@ final class AppViewModel {
     /// StoreKit 2 manager for in-app purchases and subscription tracking.
     let storeManager: StoreManager
 
+    // MARK: - Remote Feature Gate (Roadmap #5 / intAppsAPI)
+
+    /// Remote feature-flag provider backing the `video-upload` gate below.
+    /// Wraps intAppsAPI when credentials are configured (Keychain or
+    /// `MEEDYACONVERTER_INTAPPSAPI_*` env vars); completely dormant
+    /// otherwise — see `RemoteFeatureGateProvider`'s doc comment for the
+    /// dormancy + fail-safe contract.
+    let remoteFeatureGate: RemoteFeatureGateProvider
+
+    /// Whether the Video Upload feature (`VideoUploadView` + its sidebar
+    /// entry) is exposed, per the remote `video-upload` flag.
+    ///
+    /// Initialised synchronously in `init()` from whatever
+    /// `remoteFeatureGate` already has cached (a persisted cache from a
+    /// previous run, or the compiled-in fail-safe default of `false`) —
+    /// the sidebar renders correctly on the very first frame without
+    /// blocking launch on a network round trip.
+    /// `refreshRemoteFeatureFlags()` updates this after a fetch attempt.
+    var isVideoUploadEnabled: Bool
+
     // MARK: - Source Files
 
     /// The list of imported source media files awaiting configuration.
@@ -362,6 +382,21 @@ final class AppViewModel {
         self.storeManager = StoreManager()
         self.selectedProfile = .webStandard
 
+        // Remote feature gate (#5): seed synchronously from whatever is
+        // already cached (persisted cache or the compiled-in default) so
+        // the sidebar/VideoUploadView render correctly on the first
+        // frame. `refreshRemoteFeatureFlags()` is kicked off later from
+        // `MeedyaConverterApp`'s `.onAppear`, alongside the StoreKit
+        // product load — see that file for the "plain Task {} inside a
+        // @MainActor SwiftUI closure" pattern this mirrors.
+        // Assigned from a local (rather than reading `self.remoteFeatureGate`
+        // back out) so this doesn't trip Swift's two-phase-init rule —
+        // `self` can't be read from until every stored property has been
+        // assigned, and this class has many more below this point.
+        let featureGate = RemoteFeatureGateProvider()
+        self.remoteFeatureGate = featureGate
+        self.isVideoUploadEnabled = featureGate.isVideoUploadEnabled
+
         // Set default output directory to user's Movies folder
         if let moviesDir = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
             self.outputDirectory = moviesDir
@@ -377,6 +412,31 @@ final class AppViewModel {
                 self.engine.queue.addJob(config)
                 self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
             }
+        }
+    }
+
+    // MARK: - Remote Feature Gate (Roadmap #5 / intAppsAPI)
+
+    /// Refreshes the `video-upload` remote flag from intAppsAPI and
+    /// updates the observable `isVideoUploadEnabled`/sidebar state.
+    ///
+    /// Safe to call unconditionally on every launch (wired from
+    /// `MeedyaConverterApp`'s `.onAppear`, alongside the StoreKit product
+    /// load) — a no-op when intAppsAPI is not configured (dormant), and
+    /// never throws or surfaces an error to the UI when the API is
+    /// unreachable (fail-safe: `remoteFeatureGate.refreshFlags()` keeps
+    /// whatever was already cached/compiled-in on failure).
+    ///
+    /// If the flag comes back disabled while the user is currently
+    /// looking at Video Upload (e.g. a maintainer flips the flag off
+    /// mid-session), navigates back to Source rather than leaving the
+    /// user stranded on a view whose sidebar entry just disappeared.
+    func refreshRemoteFeatureFlags() async {
+        await remoteFeatureGate.refreshFlags()
+        isVideoUploadEnabled = remoteFeatureGate.isVideoUploadEnabled
+
+        if !isVideoUploadEnabled && selectedNavItem == .videoUpload {
+            selectedNavItem = .source
         }
     }
 

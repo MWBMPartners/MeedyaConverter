@@ -71,7 +71,16 @@ struct SidebarView: View {
 
             // Distribution section — upload, cloud, sharing.
             Section("Distribution") {
-                sidebarLabel(for: .videoUpload)
+                // Roadmap #5: Video Upload's nav entry is gated behind the
+                // remote `video-upload` flag (`RemoteFeatureGateProvider`).
+                // Hidden rather than shown-but-disabled — the feature isn't
+                // reachable at all when the flag is off/unknown/dormant,
+                // which for an unprovisioned intAppsAPI is always (matching
+                // today's behaviour exactly, since the flag's compiled-in
+                // default is `false`).
+                if viewModel.isVideoUploadEnabled {
+                    sidebarLabel(for: .videoUpload)
+                }
                 sidebarLabel(for: .cloudStorage)
                 sidebarLabel(for: .sftp)
                 sidebarLabel(for: .podcastFeed)

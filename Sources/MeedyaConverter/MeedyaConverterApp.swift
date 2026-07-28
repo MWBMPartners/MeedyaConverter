@@ -76,6 +76,13 @@ struct MeedyaConverterApp: App {
                     Task {
                         await appViewModel.storeManager.loadProducts()
                     }
+                    // Roadmap #5 — remote feature flags (e.g. `video-upload`).
+                    // No-op when intAppsAPI isn't configured; never surfaces
+                    // an error to the UI on failure. See
+                    // `AppViewModel.refreshRemoteFeatureFlags()`.
+                    Task {
+                        await appViewModel.refreshRemoteFeatureFlags()
+                    }
                 }
                 .sheet(isPresented: Binding(
                     get: { !hasCompletedOnboarding },
