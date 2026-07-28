@@ -907,6 +907,17 @@ final class AppViewModel {
                     settingKey: "notifyOnCompletion"
                 )
 
+                let outputSizeLabel = fileSizeInBytes(atPath: jobState.config.outputURL.path)
+                    .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown"
+                sendCompletionEmail(
+                    settingKey: "emailOnComplete",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    duration: elapsed,
+                    outputSize: outputSizeLabel,
+                    success: true
+                )
+
             } catch {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
@@ -927,6 +938,16 @@ final class AppViewModel {
                     title: "Encoding Failed",
                     body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
                     settingKey: "notifyOnFailure"
+                )
+
+                sendCompletionEmail(
+                    settingKey: "emailOnFailure",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    duration: jobState.elapsedTime.map { formatDuration($0) } ?? "unknown",
+                    outputSize: "—",
+                    success: false,
+                    errorMessage: error.localizedDescription
                 )
             }
 
@@ -1003,6 +1024,68 @@ final class AppViewModel {
         )
 
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Completion Email (Issue #348)
+
+    /// Send a completion-email notification if the corresponding setting
+    /// is enabled and a valid SMTP configuration exists.
+    ///
+    /// `emailOnComplete` / `emailOnFailure` (`EmailSettingsView`'s
+    /// trigger toggles) previously had zero consumers — this is the
+    /// wiring. Config loading and email/curl-argument construction happen
+    /// here on the `@MainActor`; the blocking `curl` subprocess itself —
+    /// the same transport already proven in
+    /// `EmailSettingsView.sendTestEmail()` — runs in a `Task.detached`
+    /// that captures only the prepared `Sendable` `String`/`[String]`
+    /// values, never `self`. Best-effort: failures are silently dropped,
+    /// matching `sendNotification`'s own fire-and-forget behaviour.
+    private func sendCompletionEmail(
+        settingKey: String,
+        fileName: String,
+        profile: String,
+        duration: String,
+        outputSize: String,
+        success: Bool,
+        errorMessage: String? = nil
+    ) {
+        guard UserDefaults.standard.bool(forKey: settingKey) else { return }
+        guard let config = EmailSettingsView.loadSMTPConfig() else { return }
+
+        let (subject, body) = EmailNotifier.formatJobCompletionEmail(
+            fileName: fileName,
+            profile: profile,
+            duration: duration,
+            outputSize: outputSize,
+            success: success,
+            errorMessage: errorMessage
+        )
+        let rawEmail = EmailNotifier.buildNotificationEmail(subject: subject, body: body, config: config)
+        let curlArgs = EmailNotifier.sendViaProcess(email: rawEmail, config: config)
+
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+            process.arguments = curlArgs
+
+            let inputPipe = Pipe()
+            process.standardInput = inputPipe
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+
+            do {
+                try process.run()
+                if let emailData = rawEmail.data(using: .utf8) {
+                    inputPipe.fileHandleForWriting.write(emailData)
+                }
+                inputPipe.fileHandleForWriting.closeFile()
+                process.waitUntilExit()
+            } catch {
+                // Completion emails are a convenience, not load-bearing —
+                // dropped silently here, same as `sendNotification` never
+                // surfacing `UNUserNotificationCenter` errors.
+            }
+        }
     }
 
     // MARK: - Logging

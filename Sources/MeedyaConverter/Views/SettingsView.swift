@@ -94,6 +94,13 @@ struct SettingsView: View {
                     WebhookSettingsView()
                 }
 
+                // Issue #348 — SMTP config UI, wired to AppViewModel's
+                // encode success/failure paths via `EmailSettingsView
+                // .loadSMTPConfig()` + `sendCompletionEmail`.
+                Tab("Email", systemImage: "envelope") {
+                    EmailSettingsView()
+                }
+
                 Tab("Media Server", systemImage: "server.rack") {
                     MediaServerSettingsView()
                 }
