@@ -332,9 +332,10 @@ struct PostEncodeActionRow: View {
             }
 
         case .uploadCloud:
-            // Issue #459: Dropbox / Google Drive / OneDrive execute a
-            // real, authenticated upload via `CloudUploadExecutor`.
-            // S3/YouTube/Vimeo remain out of scope — see
+            // Issue #459: Dropbox / Google Drive / OneDrive / S3 (S3
+            // added roadmap #7, re #459/#162) execute a real,
+            // authenticated upload via `CloudUploadExecutor`.
+            // YouTube/Vimeo remain out of scope — see
             // `CloudUploadExecutor`'s doc comment.
             let profiles = CloudStorageProfileStore.loadProfiles()
             if profiles.isEmpty {
@@ -356,7 +357,7 @@ struct PostEncodeActionRow: View {
                 }
                 .accessibilityLabel("Cloud storage configuration")
 
-                Text("Uploads the encoded output file to the selected Dropbox, Google Drive, or OneDrive destination.")
+                Text("Uploads the encoded output file to the selected Dropbox, Google Drive, OneDrive, or S3 destination.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

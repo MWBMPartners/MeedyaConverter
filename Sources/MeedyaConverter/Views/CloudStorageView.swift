@@ -10,13 +10,16 @@ import ConverterEngine
 
 // MARK: - CloudStorageView
 
-/// Settings view for configuring Dropbox, OneDrive, and Google Drive uploads.
+/// Settings view for configuring Dropbox, OneDrive, Google Drive, and S3
+/// uploads.
 ///
-/// Provides a provider picker, OAuth authorisation flow, remote folder
+/// Provides a provider picker, OAuth authorisation flow (or, for S3, a
+/// static AWS credential form — see `authSection`), remote folder/object-key
 /// browser, upload progress display, and management of saved upload
 /// configurations.
 ///
-/// Phase 12.4 — Dropbox/OneDrive/Google Drive Upload (Issue #347)
+/// Phase 12.4 — Dropbox/OneDrive/Google Drive Upload (Issue #347). S3 added
+/// as roadmap #7 (re #459/#162).
 struct CloudStorageView: View {
 
     // MARK: - Environment
@@ -38,11 +41,32 @@ struct CloudStorageView: View {
     /// The OAuth refresh token (if provided by the authorisation flow).
     @State private var refreshToken = ""
 
-    /// The remote folder path where files will be uploaded.
+    /// The remote folder path where files will be uploaded. For `.s3`,
+    /// doubles as the object-key prefix.
     @State private var remotePath = "/"
 
     /// A user-facing label for this saved configuration.
     @State private var label = ""
+
+    /// AWS Secret Access Key — `.s3` only (roadmap #7, re #459/#162).
+    /// `accessToken` above does double duty as the Access Key ID field
+    /// when `selectedProvider == .s3` (see `authSection`'s
+    /// provider-specific fields) so both S3 secrets follow the exact same
+    /// "never in `UserDefaults`, restored from the Keychain" path as the
+    /// OAuth providers' access/refresh tokens — see `CloudStorageConfig
+    /// .secretAccessKey`'s doc comment.
+    @State private var secretAccessKey = ""
+
+    /// S3 bucket name — `.s3` only.
+    @State private var bucket = ""
+
+    /// AWS region, e.g. `"us-east-1"` — `.s3` only. Left empty to let
+    /// `S3Uploader`/`AWSV4Signer` fall back to `"us-east-1"`.
+    @State private var s3Region = ""
+
+    /// Optional custom endpoint for S3-compatible providers (Backblaze
+    /// B2, DigitalOcean Spaces, MinIO, Cloudflare R2, ...) — `.s3` only.
+    @State private var s3Endpoint = ""
 
     /// The list of saved cloud storage configurations. Hydrated from
     /// `CloudStorageProfileStore` on appear and persisted through
@@ -187,25 +211,57 @@ struct CloudStorageView: View {
         }
     }
 
-    // MARK: - OAuth Authorisation
+    // MARK: - Authorisation / Credentials
 
-    /// Section for managing the OAuth authorisation flow.
+    /// Section for managing authentication: the OAuth authorisation flow
+    /// for Dropbox/OneDrive/Google Drive, or the static AWS credential
+    /// fields for S3 (roadmap #7, re #459/#162) — `selectedProvider
+    /// .usesOAuth` decides which form is shown, mirroring
+    /// `CloudStorageUploader.authURL`'s own OAuth-vs-not branch.
     @ViewBuilder
     private var authSection: some View {
-        Section("Authorisation") {
-            TextField("OAuth Client ID", text: $clientId)
-                .textFieldStyle(.roundedBorder)
+        if selectedProvider.usesOAuth {
+            Section("Authorisation") {
+                TextField("OAuth Client ID", text: $clientId)
+                    .textFieldStyle(.roundedBorder)
 
-            Button("Authorise with \(providerDisplayName(selectedProvider))") {
-                startOAuthFlow()
+                Button("Authorise with \(providerDisplayName(selectedProvider))") {
+                    startOAuthFlow()
+                }
+                .disabled(clientId.isEmpty)
+
+                TextField("Access Token", text: $accessToken)
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("Refresh Token (optional)", text: $refreshToken)
+                    .textFieldStyle(.roundedBorder)
             }
-            .disabled(clientId.isEmpty)
+        } else {
+            Section("AWS Credentials") {
+                TextField("Access Key ID", text: $accessToken)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("AWS Access Key ID")
 
-            TextField("Access Token", text: $accessToken)
-                .textFieldStyle(.roundedBorder)
+                SecureField("Secret Access Key", text: $secretAccessKey)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("AWS Secret Access Key")
 
-            TextField("Refresh Token (optional)", text: $refreshToken)
-                .textFieldStyle(.roundedBorder)
+                TextField("Bucket", text: $bucket)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("S3 bucket name")
+
+                TextField("Region (default: us-east-1)", text: $s3Region)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("AWS region")
+
+                TextField("Custom Endpoint (optional — S3-compatible providers)", text: $s3Endpoint)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Custom S3-compatible endpoint URL")
+
+                Text("Credentials are stored in the system Keychain, never in plain settings files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -215,8 +271,11 @@ struct CloudStorageView: View {
     @ViewBuilder
     private var destinationSection: some View {
         Section("Destination") {
-            TextField("Remote Folder Path", text: $remotePath)
-                .textFieldStyle(.roundedBorder)
+            TextField(
+                selectedProvider == .s3 ? "Object Key Prefix (e.g. \"videos/\")" : "Remote Folder Path",
+                text: $remotePath
+            )
+            .textFieldStyle(.roundedBorder)
 
             TextField("Label (e.g., \"Work Dropbox\")", text: $label)
                 .textFieldStyle(.roundedBorder)
@@ -257,7 +316,7 @@ struct CloudStorageView: View {
             } label: {
                 Label("Upload File", systemImage: "arrow.up.circle")
             }
-            .disabled(accessToken.isEmpty || remotePath.isEmpty || uploadFilePath.isEmpty || isUploading)
+            .disabled(!hasRequiredCredentials || remotePath.isEmpty || uploadFilePath.isEmpty || isUploading)
         }
     }
 
@@ -282,12 +341,24 @@ struct CloudStorageView: View {
 
     // MARK: - Helpers
 
+    /// Whether the currently-entered credentials satisfy the selected
+    /// provider's minimum requirements for an upload. OAuth providers
+    /// need a non-empty access token; S3 needs an access key ID, secret
+    /// access key, and bucket — mirrors `S3Uploader.validate(credential:)`.
+    private var hasRequiredCredentials: Bool {
+        if selectedProvider == .s3 {
+            return !accessToken.isEmpty && !secretAccessKey.isEmpty && !bucket.isEmpty
+        }
+        return !accessToken.isEmpty
+    }
+
     /// Return the SF Symbol name for a provider.
     private func providerIcon(_ provider: CloudStorageProvider) -> String {
         switch provider {
         case .dropbox: return "arrow.down.doc"
         case .onedrive: return "cloud"
         case .googleDrive: return "externaldrive"
+        case .s3: return "shippingbox"
         }
     }
 
@@ -297,15 +368,26 @@ struct CloudStorageView: View {
         case .dropbox: return "Dropbox"
         case .onedrive: return "OneDrive"
         case .googleDrive: return "Google Drive"
+        case .s3: return "Amazon S3"
         }
     }
 
     /// Start the OAuth 2.0 authorisation flow by opening the browser.
+    ///
+    /// Only reachable from the "Authorise with ..." button, which
+    /// `authSection` only shows when `selectedProvider.usesOAuth` — so
+    /// `authURL` returning `nil` (its `.s3` case) is not something a real
+    /// user interaction can trigger here, but is still handled honestly
+    /// rather than force-unwrapped.
     private func startOAuthFlow() {
-        let url = CloudStorageUploader.authURL(
+        guard let url = CloudStorageUploader.authURL(
             provider: selectedProvider,
             clientId: clientId
-        )
+        ) else {
+            statusMessage = "\(providerDisplayName(selectedProvider)) does not use OAuth authorisation."
+            isError = true
+            return
+        }
         openURL(url)
         statusMessage = "Opened browser for authorisation. Paste the access token above after granting access."
         isError = false
@@ -323,19 +405,34 @@ struct CloudStorageView: View {
         }
     }
 
+    /// Builds a `CloudStorageConfig` from the current form fields.
+    ///
+    /// The S3-specific fields (`secretAccessKey`/`bucket`/`region`/
+    /// `endpoint`) are only populated when `selectedProvider == .s3` —
+    /// the OAuth providers never carry them, so their round trip through
+    /// `saveCurrentConfig()`/`performUpload()` is unchanged from before
+    /// roadmap #7.
+    private func buildConfigFromForm() -> CloudStorageConfig {
+        CloudStorageConfig(
+            provider: selectedProvider,
+            accessToken: accessToken,
+            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
+            remotePath: remotePath,
+            label: label.isEmpty ? providerDisplayName(selectedProvider) : label,
+            secretAccessKey: selectedProvider == .s3 && !secretAccessKey.isEmpty ? secretAccessKey : nil,
+            bucket: selectedProvider == .s3 && !bucket.isEmpty ? bucket : nil,
+            region: selectedProvider == .s3 && !s3Region.isEmpty ? s3Region : nil,
+            endpoint: selectedProvider == .s3 && !s3Endpoint.isEmpty ? s3Endpoint : nil
+        )
+    }
+
     /// Save the current form state as a new configuration and persist
     /// it (Issue #459): the token goes to the Keychain via
     /// `apiKeyManager`, and the redacted metadata goes to
     /// `UserDefaults` so `PostEncodeActionChain.uploadViaCloud` can
     /// resolve this configuration by id later. See `persistConfigs()`.
     private func saveCurrentConfig() {
-        let config = CloudStorageConfig(
-            provider: selectedProvider,
-            accessToken: accessToken,
-            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
-            remotePath: remotePath,
-            label: label.isEmpty ? providerDisplayName(selectedProvider) : label
-        )
+        let config = buildConfigFromForm()
         savedConfigs.append(config)
         selectedConfigIndex = savedConfigs.count - 1
         persistConfigs()
@@ -350,6 +447,10 @@ struct CloudStorageView: View {
         refreshToken = config.refreshToken ?? ""
         remotePath = config.remotePath
         label = config.label
+        secretAccessKey = config.secretAccessKey ?? ""
+        bucket = config.bucket ?? ""
+        s3Region = config.region ?? ""
+        s3Endpoint = config.endpoint ?? ""
     }
 
     /// Delete the currently selected saved configuration, including its
@@ -385,28 +486,79 @@ struct CloudStorageView: View {
     }
 
     /// Writes the current `savedConfigs` to `UserDefaults` with secrets
-    /// redacted, after pushing each entry's real access/refresh token to
-    /// the Keychain via `apiKeyManager`. This is the single chokepoint
-    /// where a token crosses from `@State` into durable storage — the
-    /// same "redact at the point of persistence" pattern
-    /// `SFTPSettingsView.persistProfiles()` uses for SFTP passwords —
-    /// so there is one place to audit for the #380 invariant ("no
-    /// secret in the on-disk JSON").
+    /// redacted, after pushing each entry's real secret(s) to the
+    /// Keychain via `apiKeyManager`. This is the single chokepoint where
+    /// a secret crosses from `@State` into durable storage — the same
+    /// "redact at the point of persistence" pattern
+    /// `SFTPSettingsView.persistProfiles()` uses for SFTP passwords — so
+    /// there is one place to audit for the #380 invariant ("no secret in
+    /// the on-disk JSON").
+    ///
+    /// Branches per provider (roadmap #7, re #459/#162): S3's two secrets
+    /// (access key ID, secret access key) go into `StoredAPIKey.apiKey`/
+    /// `.secretKey` — the exact fields `S3Uploader.loadCredential` reads —
+    /// while the OAuth providers' `StoredAPIKey.apiKey` instead carries
+    /// the OAuth Client ID (`accessToken`/`refreshToken` carry the actual
+    /// OAuth secrets). Both branches redact `accessToken` after writing
+    /// it to the Keychain; only the S3 branch also redacts
+    /// `secretAccessKey` — `bucket`/`region`/`endpoint` are not secrets
+    /// and round-trip through `UserDefaults` unredacted, same as
+    /// `remotePath`/`label`.
     private func persistConfigs() {
         var redacted: [CloudStorageConfig] = []
 
         for config in savedConfigs {
+            // Whether `config` is the one currently open in the form —
+            // only that entry's Keychain item may be overwritten with the
+            // form's current field values; every other saved
+            // configuration must keep whatever it already had, since the
+            // form fields are shared across every saved entry (there is
+            // only one `accessToken`/`clientId`/etc. `@State` var, not one
+            // per saved config).
+            let isCurrentlyEditedConfig = config.provider == selectedProvider && config.label == label
+
+            if config.provider == .s3 {
+                let hasSecret = !config.accessToken.isEmpty || !(config.secretAccessKey ?? "").isEmpty
+                if hasSecret {
+                    let accessKeyIDToStore: String
+                    let secretToStore: String?
+                    if isCurrentlyEditedConfig {
+                        accessKeyIDToStore = accessToken
+                        secretToStore = secretAccessKey.isEmpty ? nil : secretAccessKey
+                    } else {
+                        let existing = apiKeyManager.keys(for: .awsS3)
+                            .first(where: { ($0.label ?? "") == config.label })
+                        accessKeyIDToStore = existing?.apiKey ?? config.accessToken
+                        secretToStore = existing?.secretKey ?? config.secretAccessKey
+                    }
+
+                    apiKeyManager.storeKey(
+                        StoredAPIKey(
+                            provider: .awsS3,
+                            apiKey: accessKeyIDToStore,
+                            secretKey: secretToStore,
+                            label: config.label
+                        )
+                    )
+                }
+                var copy = config
+                copy.accessToken = ""
+                copy.secretAccessKey = nil
+                redacted.append(copy)
+                continue
+            }
+
             if !config.accessToken.isEmpty {
                 // `clientId` is a single form field shared by every saved
                 // configuration in this view, so it must only overwrite
                 // the Keychain entry for the configuration currently
-                // being edited (matched by provider + label) — otherwise
-                // saving one configuration would stamp its Client ID
-                // onto every OTHER saved configuration's stored entry
-                // too. For any other configuration, preserve whatever
-                // apiKey value it already had in the Keychain.
+                // being edited — otherwise saving one configuration would
+                // stamp its Client ID onto every OTHER saved
+                // configuration's stored entry too. For any other
+                // configuration, preserve whatever apiKey value it
+                // already had in the Keychain.
                 let apiKeyToStore: String
-                if config.provider == selectedProvider && config.label == label {
+                if isCurrentlyEditedConfig {
                     apiKeyToStore = clientId
                 } else {
                     apiKeyToStore = apiKeyManager
@@ -448,15 +600,32 @@ struct CloudStorageView: View {
         CloudStorageProfileStore.apiKeyProvider(for: provider)
     }
 
-    /// Loads a previously-saved token for `selectedProvider` (if any)
-    /// into the client ID / access / refresh token fields, so switching
-    /// the provider picker or reopening this view doesn't leave the
-    /// user re-pasting a token they already saved.
+    /// Loads a previously-saved credential for `selectedProvider` (if
+    /// any) into the form fields, so switching the provider picker or
+    /// reopening this view doesn't leave the user re-entering a
+    /// credential they already saved.
+    ///
+    /// Branches per provider like `persistConfigs()`: for `.s3`,
+    /// `StoredAPIKey.apiKey`/`.secretKey` hydrate the Access Key ID /
+    /// Secret Access Key fields; for the OAuth providers,
+    /// `.accessToken`/`.refreshToken`/`.apiKey` hydrate the access token /
+    /// refresh token / OAuth Client ID fields as before.
     private func hydrateTokenForSelectedProvider() {
         let matches = apiKeyManager.keys(for: apiKeyProvider(for: selectedProvider))
         guard let stored = matches.first(where: { ($0.label ?? "") == label }) ?? matches.first else {
             return
         }
+
+        if selectedProvider == .s3 {
+            if !stored.apiKey.isEmpty {
+                accessToken = stored.apiKey
+            }
+            if let secret = stored.secretKey, !secret.isEmpty {
+                secretAccessKey = secret
+            }
+            return
+        }
+
         if let token = stored.accessToken, !token.isEmpty {
             accessToken = token
         }
@@ -493,8 +662,10 @@ struct CloudStorageView: View {
     /// off the main actor is needed here.
     private func performUpload() {
         guard !isUploading else { return }
-        guard !accessToken.isEmpty else {
-            statusMessage = "Enter an access token first."
+        guard hasRequiredCredentials else {
+            statusMessage = selectedProvider == .s3
+                ? "Enter an access key ID, secret access key, and bucket first."
+                : "Enter an access token first."
             isError = true
             return
         }
@@ -511,13 +682,7 @@ struct CloudStorageView: View {
             return
         }
 
-        let config = CloudStorageConfig(
-            provider: selectedProvider,
-            accessToken: accessToken,
-            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
-            remotePath: remotePath,
-            label: label.isEmpty ? providerDisplayName(selectedProvider) : label
-        )
+        let config = buildConfigFromForm()
 
         isUploading = true
         uploadProgress = 0

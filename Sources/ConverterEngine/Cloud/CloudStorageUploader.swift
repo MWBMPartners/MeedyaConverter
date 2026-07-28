@@ -24,6 +24,28 @@ public enum CloudStorageProvider: String, Codable, Sendable, CaseIterable {
 
     /// Google Drive — uses the Google Drive API v3 upload endpoint.
     case googleDrive
+
+    /// Amazon S3 (and S3-compatible providers — Backblaze B2, DigitalOcean
+    /// Spaces, MinIO, Cloudflare R2, ...) — uses AWS Signature V4-signed
+    /// requests via `S3Uploader`/`AWSV4Signer`, routed through
+    /// `CloudUploadExecutor.uploadToCloudStorage` exactly like the other
+    /// providers (roadmap #7, re #459/#162). Unlike the other three cases,
+    /// S3 authenticates with a static access key ID / secret access key
+    /// pair rather than OAuth — see `usesOAuth` below and
+    /// `CloudStorageConfig`'s `secretAccessKey`/`bucket`/`region`/
+    /// `endpoint` fields.
+    case s3
+
+    /// Whether this provider authenticates via the OAuth 2.0
+    /// authorise-then-paste-a-token flow (`authURL(provider:clientId:)` +
+    /// the access/refresh token fields) as opposed to a static credential
+    /// pair. `.s3` is the one exception — see its case doc comment.
+    public var usesOAuth: Bool {
+        switch self {
+        case .dropbox, .onedrive, .googleDrive: return true
+        case .s3: return false
+        }
+    }
 }
 
 // MARK: - CloudStorageConfig
@@ -49,34 +71,78 @@ public struct CloudStorageConfig: Codable, Sendable {
     /// The cloud storage provider.
     public var provider: CloudStorageProvider
 
-    /// The OAuth 2.0 access token for API requests.
+    /// The OAuth 2.0 access token for API requests (Dropbox / OneDrive /
+    /// Google Drive). For `.s3`, this field does double duty as the AWS
+    /// **Access Key ID** — S3 has no OAuth flow, but reusing this field
+    /// (rather than adding a parallel `awsAccessKeyID` field) keeps the
+    /// Keychain hydration path (`CloudStorageProfileStore`) and the
+    /// redact-before-persisting logic (`CloudStorageView.persistConfigs()`)
+    /// uniform across every provider: "the secret credential lives here,
+    /// is never written to `UserDefaults`/`PostEncodeAction.config`, and is
+    /// restored from the Keychain on load."
     public var accessToken: String
 
     /// The OAuth 2.0 refresh token for obtaining new access tokens.
+    /// Unused for `.s3`.
     public var refreshToken: String?
 
-    /// The remote folder path where files will be uploaded.
+    /// The remote folder path where files will be uploaded. For `.s3`
+    /// this is the object-key prefix (e.g. `"videos/"`) rather than a
+    /// literal folder — S3 has no real directory hierarchy, but the same
+    /// field serves both purposes.
     public var remotePath: String
 
     /// A user-facing label for this configuration (e.g., "Work Dropbox").
     public var label: String
+
+    /// AWS **Secret Access Key** — `.s3` only. Like `accessToken`, this is
+    /// a secret: never written to `UserDefaults` or
+    /// `PostEncodeAction.config`, always redacted before persisting and
+    /// restored from the Keychain via `APIKeyManager` (provider `.awsS3`)
+    /// on load. `nil`/unused for the OAuth providers.
+    public var secretAccessKey: String?
+
+    /// S3 bucket name — `.s3` only. Not a secret, so (unlike
+    /// `accessToken`/`secretAccessKey`) it round-trips through
+    /// `UserDefaults` unredacted, same as `remotePath`/`label`.
+    public var bucket: String?
+
+    /// AWS region, e.g. `"us-east-1"` — `.s3` only. Not a secret. When
+    /// `nil`/empty, `S3Uploader`/`AWSV4Signer` fall back to `"us-east-1"`.
+    public var region: String?
+
+    /// Optional custom endpoint for S3-compatible providers (Backblaze B2,
+    /// DigitalOcean Spaces, MinIO, Cloudflare R2, ...) — `.s3` only. Not a
+    /// secret. `nil` means "real AWS S3".
+    public var endpoint: String?
 
     /// Creates a new cloud storage configuration.
     ///
     /// - Parameters:
     ///   - id: Stable identifier (defaults to a fresh `UUID()`).
     ///   - provider: The cloud storage provider.
-    ///   - accessToken: The OAuth 2.0 access token.
-    ///   - refreshToken: An optional refresh token.
-    ///   - remotePath: The remote folder path for uploads.
+    ///   - accessToken: The OAuth 2.0 access token, or (for `.s3`) the AWS
+    ///     Access Key ID.
+    ///   - refreshToken: An optional refresh token. Unused for `.s3`.
+    ///   - remotePath: The remote folder path for uploads, or (for `.s3`)
+    ///     the object-key prefix.
     ///   - label: A user-facing label for this configuration.
+    ///   - secretAccessKey: AWS Secret Access Key — `.s3` only.
+    ///   - bucket: S3 bucket name — `.s3` only.
+    ///   - region: AWS region — `.s3` only; defaults to `"us-east-1"` when
+    ///     `nil`.
+    ///   - endpoint: Optional S3-compatible custom endpoint — `.s3` only.
     public init(
         id: UUID = UUID(),
         provider: CloudStorageProvider,
         accessToken: String,
         refreshToken: String? = nil,
         remotePath: String,
-        label: String
+        label: String,
+        secretAccessKey: String? = nil,
+        bucket: String? = nil,
+        region: String? = nil,
+        endpoint: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -84,6 +150,10 @@ public struct CloudStorageConfig: Codable, Sendable {
         self.refreshToken = refreshToken
         self.remotePath = remotePath
         self.label = label
+        self.secretAccessKey = secretAccessKey
+        self.bucket = bucket
+        self.region = region
+        self.endpoint = endpoint
     }
 }
 
@@ -471,11 +541,19 @@ public struct CloudStorageUploader: Sendable {
     /// - Parameters:
     ///   - provider: The cloud storage provider.
     ///   - clientId: The OAuth 2.0 client/application ID.
-    /// - Returns: The authorisation URL to open in the browser.
+    /// - Returns: The authorisation URL to open in the browser, or `nil`
+    ///   for a provider that doesn't use OAuth (`.s3` — see
+    ///   `CloudStorageProvider.usesOAuth`). `CloudStorageView` only calls
+    ///   this from its "Authorise" button, which is only shown when
+    ///   `provider.usesOAuth`, so a real caller never actually hits the
+    ///   `nil` case — it exists so this function is honest rather than
+    ///   force-unwrapping or fabricating a URL that goes nowhere.
     public static func authURL(
         provider: CloudStorageProvider,
         clientId: String
-    ) -> URL {
+    ) -> URL? {
+        guard provider.usesOAuth else { return nil }
+
         let redirectURI = "meedyaconverter://oauth/callback"
         let encodedRedirect = redirectURI.addingPercentEncoding(
             withAllowedCharacters: .urlQueryAllowed
@@ -507,11 +585,15 @@ public struct CloudStorageUploader: Sendable {
                 + "&redirect_uri=\(encodedRedirect)"
                 + "&scope=https://www.googleapis.com/auth/drive.file"
                 + "&access_type=offline"
+
+        case .s3:
+            // Unreachable — the `guard provider.usesOAuth` above already
+            // returned `nil` for `.s3`. Kept only so this switch stays
+            // exhaustive as cases are added.
+            return nil
         }
 
-        // Force-unwrap is safe because the URL strings above are well-formed.
-        // swiftlint:disable:next force_unwrapping
-        return URL(string: urlString)!
+        return URL(string: urlString)
     }
 }
 
@@ -563,26 +645,49 @@ public enum CloudStorageProfileStore {
             return []
         }
 
-        return profiles.map { profile in
-            guard profile.accessToken.isEmpty else { return profile }
+        return profiles.map { hydrateSecrets(for: $0, apiKeyManager: apiKeyManager) }
+    }
 
-            let candidates = apiKeyManager.keys(for: apiKeyProvider(for: profile.provider))
-            guard let stored = candidates.first(where: { ($0.label ?? "") == profile.label }) ?? candidates.first,
-                  let token = stored.accessToken, !token.isEmpty else {
-                // No matching Keychain entry (deleted out of band, or
-                // never saved) — return the profile as-is. Callers
-                // should treat an empty accessToken as "credential
-                // unavailable" rather than assume it will authenticate,
-                // exactly as `SFTPProfileStore.loadProfiles()` treats an
-                // unrecoverable password.
-                return profile
-            }
+    /// Restores a single profile's secret field(s) from the Keychain.
+    ///
+    /// Branches on provider because S3's secret shape is different from
+    /// the OAuth providers': S3 has TWO Keychain-resident secrets (the
+    /// access key ID, stored in `StoredAPIKey.apiKey`, and the secret
+    /// access key, stored in `StoredAPIKey.secretKey` — the exact same
+    /// `(apiKey, secretKey)` pair `S3Uploader.loadCredential` reads), while
+    /// the OAuth providers have one (`StoredAPIKey.accessToken`, plus an
+    /// optional `refreshToken`) and use `StoredAPIKey.apiKey` for the
+    /// OAuth Client ID instead.
+    private static func hydrateSecrets(
+        for profile: CloudStorageConfig,
+        apiKeyManager: APIKeyManager
+    ) -> CloudStorageConfig {
+        guard profile.accessToken.isEmpty else { return profile }
 
+        let candidates = apiKeyManager.keys(for: apiKeyProvider(for: profile.provider))
+        guard let stored = candidates.first(where: { ($0.label ?? "") == profile.label }) ?? candidates.first else {
+            // No matching Keychain entry (deleted out of band, or never
+            // saved) — return the profile as-is. Callers should treat an
+            // empty accessToken as "credential unavailable" rather than
+            // assume it will authenticate, exactly as
+            // `SFTPProfileStore.loadProfiles()` treats an unrecoverable
+            // password.
+            return profile
+        }
+
+        if profile.provider == .s3 {
+            guard !stored.apiKey.isEmpty else { return profile }
             var copy = profile
-            copy.accessToken = token
-            copy.refreshToken = stored.refreshToken
+            copy.accessToken = stored.apiKey
+            copy.secretAccessKey = stored.secretKey
             return copy
         }
+
+        guard let token = stored.accessToken, !token.isEmpty else { return profile }
+        var copy = profile
+        copy.accessToken = token
+        copy.refreshToken = stored.refreshToken
+        return copy
     }
 
     /// Looks up a single saved configuration by its stable `id`.
@@ -610,6 +715,7 @@ public enum CloudStorageProfileStore {
         case .dropbox: return .dropbox
         case .onedrive: return .oneDrive
         case .googleDrive: return .googleDrive
+        case .s3: return .awsS3
         }
     }
 }

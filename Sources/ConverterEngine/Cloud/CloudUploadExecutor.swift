@@ -10,8 +10,9 @@ import Foundation
 // MARK: - CloudUploadExecutor
 
 /// Executes cloud-storage upload `URLRequest`s built by
-/// `CloudStorageUploader` (Dropbox / Google Drive / OneDrive) and reports
-/// the real, verified outcome.
+/// `CloudStorageUploader` (Dropbox / Google Drive / OneDrive) and
+/// `S3Uploader` (S3 — roadmap #7, re #459/#162) and reports the real,
+/// verified outcome.
 ///
 /// Before this type existed, every "upload" in this codebase stopped at
 /// building a `URLRequest` — nothing in `ConverterEngine` actually sent
@@ -33,7 +34,12 @@ import Foundation
 ///   (`uploadInDropboxSessionChunks`) — required (not optional) once a
 ///   file exceeds `DropboxUploader.singleUploadMaxBytes` (150 MB) or
 ///   `GoogleDriveUploader.simpleUploadMaxBytes` (5 MB), same as it
-///   already was for OneDrive's 4 MB simple-upload limit.
+///   already was for OneDrive's 4 MB simple-upload limit. S3 gets its own
+///   real multipart protocol (`uploadS3Multipart`) — AWS's
+///   `CreateMultipartUpload`/`UploadPart`/`CompleteMultipartUpload`/
+///   `AbortMultipartUpload`, not a `Content-Range`/cursor scheme —
+///   required above `S3Uploader.shouldUseMultipart(fileSize:)`'s 100 MB
+///   threshold.
 /// - Only a genuine `2xx` HTTP status is treated as success — except
 ///   Google Drive's resumable-upload chunks, where a non-final chunk's
 ///   documented, real success response is `308 Resume Incomplete`
@@ -624,6 +630,201 @@ public struct CloudUploadExecutor: @unchecked Sendable {
         )
     }
 
+    // MARK: - S3 multipart upload (roadmap #7, re #459/#162)
+
+    /// Uploads a file too large (or simply too risky) for `uploadToS3`'s
+    /// single signed `PUT` via AWS's real multipart upload API:
+    /// `CreateMultipartUpload` → sequential per-part signed `UploadPart`
+    /// `PUT`s (each independently signed via `AWSV4Signer`, through
+    /// `S3Uploader.buildUploadPartRequest`) → `CompleteMultipartUpload`
+    /// with an XML body listing every part's `PartNumber`+`ETag`
+    /// (`S3Uploader.buildCompleteMultipartXML`). Structurally mirrors
+    /// `uploadInDropboxSessionChunks`/`uploadInGoogleDriveResumableChunks`
+    /// above: file-size guard → create/initiate request → `FileHandle`
+    /// chunk loop with per-chunk `executeWithRetry` → final-response
+    /// parse — the AWS-specific difference is that each part's `ETag` (a
+    /// real, server-issued response HEADER, not a body field) has to be
+    /// collected across the whole loop to build the `Complete` request's
+    /// body at the end, rather than only the loop's last response
+    /// mattering.
+    ///
+    /// This is the multipart flow `S3Uploader.swift`'s previous
+    /// `// TODO(#459)` on `buildSignedUploadRequest` referred to as "not
+    /// yet wired end-to-end" — `uploadToCloudStorage`'s `.s3` branch now
+    /// routes here whenever `S3Uploader.shouldUseMultipart(fileSize:)`
+    /// says so (real on-disk size > 100 MB), which also covers S3's
+    /// mandatory case (`uploadToS3`'s single-`PUT` 5 GiB hard limit) since
+    /// 5 GiB is always > 100 MB.
+    ///
+    /// **Cleanup on failure**: once `CreateMultipartUpload` has genuinely
+    /// succeeded (a real `UploadId` exists server-side), ANY subsequent
+    /// failure — a part that exhausts its retries, an unreadable file
+    /// chunk, or `CompleteMultipartUpload` itself failing — triggers a
+    /// best-effort `AbortMultipartUpload` before the original error is
+    /// re-thrown. The abort's own outcome is deliberately never allowed to
+    /// mask the real failure: this method does not inspect the abort
+    /// call's response or retry it — if the abort itself also fails
+    /// (network down, expired credentials, whatever), that failure is
+    /// silently discarded and the caller still sees the ORIGINAL error
+    /// that triggered the abort, never a fabricated one about the
+    /// cleanup step. A failed abort can still leave an incomplete upload
+    /// accumulating storage charges on the bucket — AWS's own recommended
+    /// mitigation for that residual risk is a bucket lifecycle rule that
+    /// expires incomplete multipart uploads after N days, which is a
+    /// bucket-configuration concern outside this client's control.
+    ///
+    /// - Parameters:
+    ///   - fileURL: The local file to upload.
+    ///   - credential: AWS/S3 credential (access key, secret, bucket,
+    ///     region, optional custom endpoint).
+    ///   - objectKey: The S3 object key (remote path).
+    ///   - contentType: MIME type override. Defaults to
+    ///     `UploadConfig.contentType(for:)` when omitted.
+    ///   - metadata: Custom `x-amz-meta-*` metadata, attached to the
+    ///     `CreateMultipartUpload` request — S3 applies object metadata at
+    ///     initiate time, not per-part.
+    ///   - partSize: Bytes per part. Defaults to
+    ///     `S3Uploader.defaultMultipartPartSize` (8 MiB); clamped up to
+    ///     `S3Uploader.minimumMultipartPartSize` (5 MiB) if given smaller,
+    ///     since S3 rejects any non-final part below that (a caller could
+    ///     otherwise pass e.g. `0` and get an S3-side rejection instead of
+    ///     an obviously-wrong local value).
+    ///   - progress: Optional callback invoked after each part completes,
+    ///     with real, server-acknowledged progress (each part's ETag is a
+    ///     genuine S3 response header, never guessed).
+    /// - Returns: An `UploadResult` built from `CompleteMultipartUpload`'s
+    ///   real response (`Location`/`ETag`).
+    /// - Throws: `UploadError` describing the real failure — including
+    ///   `.transport` if `CreateMultipartUpload`'s response has no
+    ///   `UploadId`, a part response has no `ETag`, or the local file
+    ///   cannot be read.
+    public func uploadS3Multipart(
+        fileURL: URL,
+        credential: CloudCredential,
+        objectKey: String,
+        contentType: String? = nil,
+        metadata: [String: String] = [:],
+        partSize: Int64 = S3Uploader.defaultMultipartPartSize,
+        progress: (@Sendable (UploadProgress) -> Void)? = nil
+    ) async throws -> UploadResult {
+        let start = Date()
+        guard let totalBytes = Self.fileSize(at: fileURL), totalBytes > 0 else {
+            throw UploadError.transport("Could not determine the size of \(fileURL.lastPathComponent).")
+        }
+
+        let effectivePartSize = max(partSize, S3Uploader.minimumMultipartPartSize)
+        let resolvedContentType = contentType ?? UploadConfig.contentType(for: fileURL.lastPathComponent)
+
+        guard let initiateRequest = S3Uploader.buildInitiateMultipartRequest(
+            credential: credential,
+            objectKey: objectKey,
+            contentType: resolvedContentType,
+            metadata: metadata
+        ) else {
+            throw UploadError.transport(
+                "Could not build the S3 CreateMultipartUpload request — check that the access key, "
+                    + "secret key, bucket, and object key are all configured."
+            )
+        }
+
+        let (initiateData, _) = try await executeWithRetry {
+            try await self.session.data(for: initiateRequest)
+        }
+        guard let uploadId = S3Uploader.parseUploadId(from: initiateData) else {
+            throw UploadError.transport(
+                "The S3 CreateMultipartUpload response did not include an 'UploadId'."
+            )
+        }
+
+        // From here on, a real UploadId exists server-side — any failure
+        // below must abort it (best-effort) before re-throwing. See this
+        // method's doc comment for why the abort's own outcome never masks
+        // the original error.
+        do {
+            let handle: FileHandle
+            do {
+                handle = try FileHandle(forReadingFrom: fileURL)
+            } catch {
+                throw UploadError.transport("Could not open \(fileURL.lastPathComponent) for reading: \(error.localizedDescription)")
+            }
+            defer { try? handle.close() }
+
+            var offset: Int64 = 0
+            var partNumber = 1
+            var parts: [S3Uploader.MultipartPart] = []
+
+            while offset < totalBytes {
+                let thisChunkSize = Int(min(effectivePartSize, totalBytes - offset))
+                let chunk: Data
+                do {
+                    guard let read = try handle.read(upToCount: thisChunkSize), !read.isEmpty else {
+                        throw UploadError.transport(
+                            "Unexpected end of file while reading part \(partNumber) at offset \(offset)."
+                        )
+                    }
+                    chunk = read
+                } catch let err as UploadError {
+                    throw err
+                } catch {
+                    throw UploadError.transport("Could not read part \(partNumber) at offset \(offset): \(error.localizedDescription)")
+                }
+
+                guard let partRequest = S3Uploader.buildUploadPartRequest(
+                    credential: credential,
+                    objectKey: objectKey,
+                    uploadId: uploadId,
+                    partNumber: partNumber,
+                    contentLength: Int64(chunk.count)
+                ) else {
+                    throw UploadError.transport("Could not build the S3 UploadPart request for part \(partNumber).")
+                }
+
+                let (_, partResponse) = try await executeWithRetry {
+                    try await self.session.upload(for: partRequest, from: chunk)
+                }
+                guard let eTag = partResponse.value(forHTTPHeaderField: "ETag"), !eTag.isEmpty else {
+                    throw UploadError.transport("S3 did not return an ETag header for part \(partNumber).")
+                }
+
+                parts.append(S3Uploader.MultipartPart(partNumber: partNumber, eTag: eTag))
+                offset += Int64(chunk.count)
+                partNumber += 1
+                progress?(UploadProgress(bytesUploaded: offset, totalBytes: totalBytes))
+            }
+
+            guard let completeRequest = S3Uploader.buildCompleteMultipartRequest(
+                credential: credential,
+                objectKey: objectKey,
+                uploadId: uploadId,
+                parts: parts
+            ) else {
+                throw UploadError.transport("Could not build the S3 CompleteMultipartUpload request.")
+            }
+
+            let (completeData, _) = try await executeWithRetry {
+                try await self.session.data(for: completeRequest)
+            }
+
+            let ids = S3Uploader.parseCompleteMultipartResult(from: completeData)
+            return UploadResult(
+                remoteURL: ids.remoteURL,
+                fileId: ids.fileId,
+                fileSize: totalBytes,
+                uploadDuration: Date().timeIntervalSince(start),
+                verified: false
+            )
+        } catch {
+            if let abortRequest = S3Uploader.buildAbortMultipartRequest(
+                credential: credential,
+                objectKey: objectKey,
+                uploadId: uploadId
+            ) {
+                _ = try? await self.session.data(for: abortRequest)
+            }
+            throw error
+        }
+    }
+
     // MARK: - Retry core
 
     /// Runs `attempt` up to `retryPolicy.maxAttempts` times, retrying on
@@ -753,9 +954,9 @@ extension CloudUploadExecutor {
 
     /// Uploads `fileURL` to the destination described by `config`,
     /// automatically choosing the right provider request-builder and —
-    /// for Dropbox, Google Drive, and OneDrive — the small-file
-    /// single-request path vs. the chunked upload-session path based on
-    /// the real on-disk file size:
+    /// for Dropbox, Google Drive, OneDrive, and S3 — the small-file
+    /// single-request path vs. the chunked/multipart path based on the
+    /// real on-disk file size:
     /// - Dropbox: chunked above `DropboxUploader.singleUploadMaxBytes`
     ///   (150 MB) — the `/2/files/upload` endpoint's real hard limit.
     /// - Google Drive: chunked above `GoogleDriveUploader
@@ -763,6 +964,11 @@ extension CloudUploadExecutor {
     ///   documented for small files only.
     /// - OneDrive: chunked above `OneDriveUploader.simpleUploadMaxBytes`
     ///   (4 MB) — unchanged from before roadmap item #2.
+    /// - S3: multipart (`uploadS3Multipart`) above
+    ///   `S3Uploader.shouldUseMultipart(fileSize:)`'s 100 MB threshold —
+    ///   S3's single-`PUT` endpoint (`uploadToS3`) has a hard 5 GiB limit,
+    ///   so anything that could plausibly approach it needs to already be
+    ///   on the multipart path well before then (roadmap #7, re #459).
     ///
     /// Shared by `CloudStorageView.performUpload()` (Issue #459) and
     /// `PostEncodeActionChain.uploadViaCloud(action:outputURL:)` (Issue
@@ -779,8 +985,9 @@ extension CloudUploadExecutor {
     ///     `upload(fileURL:request:progress:parseSuccess:)` for its
     ///     threading contract.
     /// - Returns: The real `UploadResult`.
-    /// - Throws: `UploadError` if the request could not be built or the
-    ///   real transfer failed.
+    /// - Throws: `UploadError` if the request could not be built (for
+    ///   `.s3`, this includes a missing access key ID, secret access key,
+    ///   or bucket) or the real transfer failed.
     public func uploadToCloudStorage(
         fileURL: URL,
         config: CloudStorageConfig,
@@ -858,7 +1065,62 @@ extension CloudUploadExecutor {
                 throw UploadError.transport("Could not build the OneDrive upload request.")
             }
             return try await upload(fileURL: fileURL, request: request, progress: progress)
+
+        case .s3:
+            guard !config.accessToken.isEmpty,
+                  let secretAccessKey = config.secretAccessKey, !secretAccessKey.isEmpty,
+                  let bucket = config.bucket, !bucket.isEmpty else {
+                throw UploadError.transport(
+                    "S3 upload requires an access key ID, secret access key, and bucket — "
+                        + "configure these in Cloud Storage settings."
+                )
+            }
+
+            let credential = CloudCredential(
+                provider: .awsS3,
+                apiKey: config.accessToken,
+                secret: secretAccessKey,
+                endpoint: config.endpoint,
+                region: config.region,
+                bucket: bucket
+            )
+            let objectKey = Self.s3ObjectKey(remotePath: config.remotePath, fileName: fileName)
+            let fileSize = Self.fileSize(at: fileURL)
+
+            if let fileSize, S3Uploader.shouldUseMultipart(fileSize: fileSize) {
+                return try await uploadS3Multipart(
+                    fileURL: fileURL,
+                    credential: credential,
+                    objectKey: objectKey,
+                    progress: progress
+                )
+            }
+
+            return try await uploadToS3(
+                fileURL: fileURL,
+                credential: credential,
+                objectKey: objectKey,
+                progress: progress
+            )
         }
+    }
+
+    /// Joins an S3 key prefix (`CloudStorageConfig.remotePath`) with a file
+    /// name into an S3 object key, stripping any leading/trailing `/` from
+    /// the prefix first — S3 object keys conventionally have no leading
+    /// slash (unlike the folder paths `buildDropboxUploadRequest` etc.
+    /// join the same way), and `S3Uploader.buildSignedUploadRequest` adds
+    /// the one leading slash the request's URL path needs on its own.
+    ///
+    /// - Parameters:
+    ///   - remotePath: The configured prefix, e.g. `"videos"`, `"/videos/"`,
+    ///     or `""` (root).
+    ///   - fileName: The local file's last path component.
+    /// - Returns: The object key, e.g. `"videos/movie.mp4"` (or just
+    ///   `"movie.mp4"` for an empty/root prefix).
+    private static func s3ObjectKey(remotePath: String, fileName: String) -> String {
+        let trimmedPrefix = remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return trimmedPrefix.isEmpty ? fileName : "\(trimmedPrefix)/\(fileName)"
     }
 }
 

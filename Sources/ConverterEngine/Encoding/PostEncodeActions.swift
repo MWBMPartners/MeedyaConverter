@@ -41,14 +41,14 @@ public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     case uploadSFTP
 
     /// Upload the output file to a saved cloud storage configuration
-    /// (Dropbox / Google Drive / OneDrive), using a profile saved in
-    /// `CloudStorageView` and looked up through
-    /// `CloudStorageProfileStore` (Issue #459 — mirrors the
+    /// (Dropbox / Google Drive / OneDrive / S3 — S3 added roadmap #7, re
+    /// #459/#162), using a profile saved in `CloudStorageView` and looked
+    /// up through `CloudStorageProfileStore` (Issue #459 — mirrors the
     /// `.uploadSFTP` wiring shipped for Issue #450). See
-    /// `PostEncodeAction.config` for the expected key. S3/YouTube/Vimeo
-    /// and full OAuth PKCE remain out of scope for this action; see
-    /// `CloudUploadExecutor`'s doc comment for what token-based
-    /// providers it actually executes.
+    /// `PostEncodeAction.config` for the expected key. YouTube/Vimeo and
+    /// full OAuth PKCE remain out of scope for this action; see
+    /// `CloudUploadExecutor`'s doc comment for what providers it
+    /// actually executes.
     case uploadCloud
 
     /// Send a macOS notification with a custom message.
@@ -456,22 +456,23 @@ public struct PostEncodeActionChain: Codable, Sendable {
     }
 
     /// Upload the encoded output file to a saved cloud storage
-    /// configuration (Dropbox / Google Drive / OneDrive), executing the
-    /// transfer for real via `CloudUploadExecutor` (Issue #459).
+    /// configuration (Dropbox / Google Drive / OneDrive / S3 — S3 added
+    /// roadmap #7, re #459/#162), executing the transfer for real via
+    /// `CloudUploadExecutor` (Issue #459).
     ///
     /// Reuses the same plumbing end to end that `CloudStorageView`
     /// uses, mirroring `uploadViaSFTP` above (Issue #450):
     /// - `action.config["cloudProfileID"]` resolves to a configuration
     ///   through `CloudStorageProfileStore.profile(withID:)`, which
     ///   reads the same `UserDefaults` blob `CloudStorageView` writes
-    ///   and restores the access/refresh token from the Keychain via
+    ///   and restores the secret credential(s) from the Keychain via
     ///   `APIKeyManager` — no credential is ever stored inside
     ///   `PostEncodeAction.config`.
     /// - `CloudUploadExecutor.uploadToCloudStorage(fileURL:config:)`
-    ///   picks the matching `CloudStorageUploader` request builder
-    ///   (Dropbox / Google Drive / OneDrive, including OneDrive's
-    ///   chunked upload-session path for files over 4 MB) and performs
-    ///   the real, authenticated transfer.
+    ///   picks the matching request builder (Dropbox / Google Drive /
+    ///   OneDrive, including OneDrive's chunked upload-session path for
+    ///   files over 4 MB; or S3, including its multipart path for files
+    ///   over 100 MB) and performs the real, authenticated transfer.
     ///
     /// Unlike `uploadViaSFTP`'s `scp` invocation, the executor's work is
     /// genuinely `async` (no blocking `Process.waitUntilExit()`), so no
@@ -493,13 +494,32 @@ public struct PostEncodeActionChain: Codable, Sendable {
             throw ActionError.missingConfig(key: "cloudProfileID", actionName: action.name)
         }
 
-        guard !profile.accessToken.isEmpty else {
-            throw ActionError.uploadFailed(
-                actionName: action.name,
-                message: "No access token is saved for \(profile.provider.rawValue). "
-                    + "Paste an OAuth token in Cloud Storage settings and save the "
-                    + "configuration first."
-            )
+        // S3 (roadmap #7, re #459/#162) validates a different credential
+        // shape than the OAuth providers — access key ID + secret access
+        // key + bucket, none of which is an "access token" in the OAuth
+        // sense, even though `accessToken` is the field that carries the
+        // access key ID (see `CloudStorageConfig.accessToken`'s doc
+        // comment).
+        if profile.provider == .s3 {
+            guard !profile.accessToken.isEmpty,
+                  !(profile.secretAccessKey ?? "").isEmpty,
+                  !(profile.bucket ?? "").isEmpty else {
+                throw ActionError.uploadFailed(
+                    actionName: action.name,
+                    message: "S3 credentials are incomplete for \"\(profile.label)\". Add the access "
+                        + "key ID, secret access key, and bucket in Cloud Storage settings and save "
+                        + "the configuration first."
+                )
+            }
+        } else {
+            guard !profile.accessToken.isEmpty else {
+                throw ActionError.uploadFailed(
+                    actionName: action.name,
+                    message: "No access token is saved for \(profile.provider.rawValue). "
+                        + "Paste an OAuth token in Cloud Storage settings and save the "
+                        + "configuration first."
+                )
+            }
         }
 
         let executor = CloudUploadExecutor()

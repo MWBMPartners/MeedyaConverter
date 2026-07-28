@@ -25,11 +25,19 @@ import Foundation
 /// MinIO, and Cloudflare R2 that support virtual-hosted-style
 /// requests, via `CloudCredential.endpoint`.
 ///
-/// Multipart upload (required by S3 for objects over 5 GiB) is not yet
-/// wired end-to-end — `buildInitiateMultipartURL`/`buildUploadPartURL`/
-/// `calculatePartCount`/`shouldUseMultipart` below exist for that but
-/// nothing drives them through a full initiate → parts → complete flow
-/// yet. See `// TODO(#459)` on `buildSignedUploadRequest`.
+/// Multipart upload (required by S3 for objects over 5 GiB, recommended
+/// above 100 MB) is wired end-to-end as of roadmap #7 (re #459/#162):
+/// `CloudUploadExecutor.uploadS3Multipart(fileURL:credential:objectKey:...)`
+/// drives a real `CreateMultipartUpload` → per-part signed `UploadPart` →
+/// `CompleteMultipartUpload` flow (with `AbortMultipartUpload` on
+/// failure), using the `buildInitiateMultipartRequest`/
+/// `buildUploadPartRequest`/`buildCompleteMultipartRequest`/
+/// `buildAbortMultipartRequest` builders below (all signed via
+/// `AWSV4Signer`, same as `buildSignedUploadRequest`) plus
+/// `buildCompleteMultipartXML`/`parseUploadId`/
+/// `parseCompleteMultipartResult` for the request/response bodies.
+/// `CloudUploadExecutor.uploadToCloudStorage`'s `.s3` branch routes to it
+/// automatically once `shouldUseMultipart(fileSize:)` says so.
 ///
 /// Phase 12.2
 public struct S3Uploader: Sendable {
@@ -127,13 +135,27 @@ public struct S3Uploader: Sendable {
 
     /// Determine if multipart upload should be used.
     ///
-    /// S3 recommends multipart for files > 100 MB and requires it for > 5 GB.
+    /// S3 recommends multipart for files > 100 MB and requires it for > 5 GiB
+    /// (`uploadToS3`'s single-`PUT` hard limit) — this one threshold covers
+    /// both, since 5 GiB is always > 100 MB. `CloudUploadExecutor
+    /// .uploadToCloudStorage`'s `.s3` branch calls this to decide between
+    /// `uploadToS3` and `uploadS3Multipart`.
     ///
     /// - Parameter fileSize: File size in bytes.
     /// - Returns: `true` if multipart upload should be used.
     public static func shouldUseMultipart(fileSize: Int64) -> Bool {
         return fileSize > 100 * 1024 * 1024 // 100 MB
     }
+
+    /// AWS's minimum size for every multipart part except the last one —
+    /// S3 rejects a smaller non-final part with `EntityTooSmall`. See
+    /// https://docs.aws.amazon.com/AmazonS3/latest/API/mpUploadUploadPart.html
+    public static let minimumMultipartPartSize: Int64 = 5 * 1024 * 1024 // 5 MiB
+
+    /// Default per-part size for `CloudUploadExecutor.uploadS3Multipart` —
+    /// comfortably above `minimumMultipartPartSize` while keeping each
+    /// part's in-memory chunk modest.
+    public static let defaultMultipartPartSize: Int64 = 8 * 1024 * 1024 // 8 MiB
 
     /// Validate an S3 credential for upload readiness.
     ///
@@ -179,13 +201,12 @@ extension S3Uploader {
     /// `https://<bucket>.s3.<region>.amazonaws.com/<objectKey>`.
     ///
     /// Single-`PUT` only — this matches S3's own 5 GiB single-request
-    /// limit.
-    /// // TODO(#459): multipart upload for files > 5 GiB — initiate →
-    /// per-part signed PUTs → complete, using
-    /// `calculatePartCount`/`shouldUseMultipart` (above) to decide
-    /// when to switch over. `buildInitiateMultipartURL`/
-    /// `buildUploadPartURL` (above) already build the right URLs; they
-    /// just are not yet driven through a full signed multipart flow.
+    /// limit. For anything `shouldUseMultipart(fileSize:)` flags (over
+    /// 100 MB, mandatory over 5 GiB), use
+    /// `CloudUploadExecutor.uploadS3Multipart` instead — see this file's
+    /// overview doc comment and the multipart request builders
+    /// (`buildInitiateMultipartRequest` etc.) further down in this
+    /// extension.
     ///
     /// Uses `AWSV4Signer.unsignedPayload` (`"UNSIGNED-PAYLOAD"`) for
     /// `x-amz-content-sha256` rather than hashing the file up front:
@@ -307,6 +328,394 @@ extension S3Uploader {
         return request
     }
 
+    // MARK: - Multipart upload (roadmap #7, re #459/#162)
+
+    /// One completed part of a multipart upload — the `PartNumber` and the
+    /// real `ETag` S3 returned for it in the `UploadPart` response header
+    /// (never guessed). Fed into `buildCompleteMultipartXML`/
+    /// `buildCompleteMultipartRequest` to build the `CompleteMultipartUpload`
+    /// body.
+    public struct MultipartPart: Sendable, Equatable {
+        public let partNumber: Int
+        public let eTag: String
+
+        public init(partNumber: Int, eTag: String) {
+            self.partNumber = partNumber
+            self.eTag = eTag
+        }
+    }
+
+    /// Builds a signed `CreateMultipartUpload` (`POST .../<key>?uploads`)
+    /// request — the first step of the multipart flow, which returns an
+    /// `UploadId` (parse with `parseUploadId(from:)`) that every
+    /// subsequent `UploadPart`/`CompleteMultipartUpload`/
+    /// `AbortMultipartUpload` request must carry.
+    ///
+    /// The request body is empty, so — unlike `buildSignedUploadRequest`'s
+    /// streamed-file `PUT`, which uses `AWSV4Signer.unsignedPayload` to
+    /// avoid a redundant hash pass over a multi-gigabyte file —
+    /// `x-amz-content-sha256` here is the REAL SHA-256 of the (empty)
+    /// body: there is nothing expensive to avoid hashing, and a real hash
+    /// is strictly more verifiable than the `UNSIGNED-PAYLOAD` sentinel.
+    /// S3 sets object metadata (`x-amz-meta-*`, `Content-Type`) at
+    /// initiate time, not per-part, so `contentType`/`metadata` are
+    /// attached here rather than on each `UploadPart` request.
+    ///
+    /// The query string (`?uploads=`, with the trailing `=` SigV4's
+    /// canonicalization rule requires for a valueless parameter) is built
+    /// via `AWSV4Signer.canonicalQueryString(queryItems:)` — the SAME
+    /// public function `sign(...)` uses internally to canonicalize the
+    /// query for the signature — so the literal query string in the
+    /// request's `URL` and the one folded into the signature can never
+    /// diverge, mirroring how `buildSignedUploadRequest` reuses
+    /// `AWSV4Signer.canonicalURI(path:)` for the same reason.
+    ///
+    /// - Parameters:
+    ///   - credential: AWS/S3 credential.
+    ///   - objectKey: The S3 object key.
+    ///   - contentType: MIME type of the object being uploaded.
+    ///   - metadata: Custom metadata, sent as `x-amz-meta-*` headers.
+    ///   - date: Request timestamp. Defaults to `Date()`.
+    /// - Returns: A signed `URLRequest`, or `nil` if the credential is
+    ///   missing the access key, secret key, or bucket, `objectKey` is
+    ///   empty, or a valid `URL` could not be constructed.
+    public static func buildInitiateMultipartRequest(
+        credential: CloudCredential,
+        objectKey: String,
+        contentType: String,
+        metadata: [String: String] = [:],
+        date: Date = Date()
+    ) -> URLRequest? {
+        guard let accessKeyID = credential.apiKey, !accessKeyID.isEmpty,
+              let secretAccessKey = credential.secret, !secretAccessKey.isEmpty,
+              let bucket = credential.bucket, !bucket.isEmpty,
+              !objectKey.isEmpty else {
+            return nil
+        }
+
+        let host = signingHost(credential: credential, bucket: bucket)
+        let rawPath = objectKey.hasPrefix("/") ? objectKey : "/\(objectKey)"
+        let encodedPath = AWSV4Signer.canonicalURI(path: rawPath)
+        let queryItems = [URLQueryItem(name: "uploads", value: "")]
+        let canonicalQuery = AWSV4Signer.canonicalQueryString(queryItems: queryItems)
+        guard let url = URL(string: "https://\(host)\(encodedPath)?\(canonicalQuery)") else { return nil }
+
+        let region = credential.region ?? "us-east-1"
+        let amzDate = AWSV4Signer.amzDate(from: date)
+        let payloadHash = AWSV4Signer.sha256Hex(data: Data())
+
+        let signedHeaderSet: [String: String] = [
+            "host": host,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+        ]
+
+        let result = AWSV4Signer.sign(
+            method: "POST",
+            path: rawPath,
+            queryItems: queryItems,
+            headers: signedHeaderSet,
+            payloadHash: payloadHash,
+            date: date,
+            region: region,
+            service: "s3",
+            credentials: AWSV4Signer.Credentials(accessKeyID: accessKeyID, secretAccessKey: secretAccessKey)
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(host, forHTTPHeaderField: "Host")
+        request.setValue(amzDate, forHTTPHeaderField: "x-amz-date")
+        request.setValue(payloadHash, forHTTPHeaderField: "x-amz-content-sha256")
+        request.setValue(result.authorizationHeader, forHTTPHeaderField: "Authorization")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        for (key, value) in metadata {
+            request.setValue(value, forHTTPHeaderField: "x-amz-meta-\(key)")
+        }
+
+        return request
+    }
+
+    /// Builds a signed `UploadPart`
+    /// (`PUT .../<key>?partNumber=<N>&uploadId=<id>`) request for one part
+    /// of a multipart upload.
+    ///
+    /// Uses `AWSV4Signer.unsignedPayload` for `x-amz-content-sha256`, same
+    /// rationale as `buildSignedUploadRequest`'s file `PUT`: the caller
+    /// (`CloudUploadExecutor.uploadS3Multipart`) streams the part's bytes
+    /// via `URLSession.upload(for:from:)` from an already-in-memory `Data`
+    /// chunk it read once off disk — hashing here would mean iterating
+    /// those same bytes a second time for no security benefit S3 asks for
+    /// on this path.
+    ///
+    /// - Parameters:
+    ///   - credential: AWS/S3 credential.
+    ///   - objectKey: The S3 object key.
+    ///   - uploadId: The `UploadId` from `CreateMultipartUpload`'s
+    ///     response (`parseUploadId(from:)`).
+    ///   - partNumber: 1-based part number. S3 requires 1...10,000.
+    ///   - contentLength: The part's byte count, sent as `Content-Length`
+    ///     (not signed — see `buildSignedUploadRequest`'s doc comment for
+    ///     why `Content-Length` is never part of `SignedHeaders`).
+    ///   - date: Request timestamp. Defaults to `Date()`.
+    /// - Returns: A signed `URLRequest` (caller attaches the part's bytes
+    ///   as the body), or `nil` if the credential is incomplete,
+    ///   `objectKey`/`uploadId` is empty, or `partNumber` is not positive.
+    public static func buildUploadPartRequest(
+        credential: CloudCredential,
+        objectKey: String,
+        uploadId: String,
+        partNumber: Int,
+        contentLength: Int64,
+        date: Date = Date()
+    ) -> URLRequest? {
+        guard let accessKeyID = credential.apiKey, !accessKeyID.isEmpty,
+              let secretAccessKey = credential.secret, !secretAccessKey.isEmpty,
+              let bucket = credential.bucket, !bucket.isEmpty,
+              !objectKey.isEmpty, !uploadId.isEmpty, partNumber > 0 else {
+            return nil
+        }
+
+        let host = signingHost(credential: credential, bucket: bucket)
+        let rawPath = objectKey.hasPrefix("/") ? objectKey : "/\(objectKey)"
+        let encodedPath = AWSV4Signer.canonicalURI(path: rawPath)
+        let queryItems = [
+            URLQueryItem(name: "partNumber", value: "\(partNumber)"),
+            URLQueryItem(name: "uploadId", value: uploadId),
+        ]
+        let canonicalQuery = AWSV4Signer.canonicalQueryString(queryItems: queryItems)
+        guard let url = URL(string: "https://\(host)\(encodedPath)?\(canonicalQuery)") else { return nil }
+
+        let region = credential.region ?? "us-east-1"
+        let amzDate = AWSV4Signer.amzDate(from: date)
+        let payloadHash = AWSV4Signer.unsignedPayload
+
+        let signedHeaderSet: [String: String] = [
+            "host": host,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+        ]
+
+        let result = AWSV4Signer.sign(
+            method: "PUT",
+            path: rawPath,
+            queryItems: queryItems,
+            headers: signedHeaderSet,
+            payloadHash: payloadHash,
+            date: date,
+            region: region,
+            service: "s3",
+            credentials: AWSV4Signer.Credentials(accessKeyID: accessKeyID, secretAccessKey: secretAccessKey)
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(host, forHTTPHeaderField: "Host")
+        request.setValue(amzDate, forHTTPHeaderField: "x-amz-date")
+        request.setValue(payloadHash, forHTTPHeaderField: "x-amz-content-sha256")
+        request.setValue(result.authorizationHeader, forHTTPHeaderField: "Authorization")
+        request.setValue("\(contentLength)", forHTTPHeaderField: "Content-Length")
+
+        return request
+    }
+
+    /// Builds the `CompleteMultipartUpload` XML request body: one
+    /// `<Part>` per entry in `parts`, sorted by `partNumber` ascending —
+    /// S3 documents the parts list as required to be in ascending
+    /// `PartNumber` order, so this sorts defensively rather than trusting
+    /// the caller's array order (`CloudUploadExecutor.uploadS3Multipart`
+    /// already appends in order, but a direct caller of this function
+    /// should not have to also get that right).
+    ///
+    /// `eTag` is emitted verbatim, quotes included — S3 always returns
+    /// `ETag` response headers already wrapped in `"..."`, and
+    /// `CompleteMultipartUpload`'s `<ETag>` element is documented to
+    /// expect that same quoted form back, not a re-quoted or unquoted
+    /// variant.
+    ///
+    /// - Parameter parts: Every part's number and real ETag.
+    /// - Returns: The UTF-8 XML body.
+    public static func buildCompleteMultipartXML(parts: [MultipartPart]) -> Data {
+        var xml = "<CompleteMultipartUpload>"
+        for part in parts.sorted(by: { $0.partNumber < $1.partNumber }) {
+            xml += "<Part><PartNumber>\(part.partNumber)</PartNumber><ETag>\(part.eTag)</ETag></Part>"
+        }
+        xml += "</CompleteMultipartUpload>"
+        return Data(xml.utf8)
+    }
+
+    /// Builds a signed `CompleteMultipartUpload`
+    /// (`POST .../<key>?uploadId=<id>`) request, committing every
+    /// previously-uploaded part into the final object.
+    ///
+    /// The body is small (a handful of bytes per part) and already fully
+    /// in memory (`buildCompleteMultipartXML`'s output), so —
+    /// unlike the streamed-file `PUT` and the per-part `PUT`, both of
+    /// which use `AWSV4Signer.unsignedPayload` — `x-amz-content-sha256`
+    /// here is the real SHA-256 of the actual body: there is no large
+    /// stream to avoid double-reading.
+    ///
+    /// - Parameters:
+    ///   - credential: AWS/S3 credential.
+    ///   - objectKey: The S3 object key.
+    ///   - uploadId: The `UploadId` from `CreateMultipartUpload`'s
+    ///     response.
+    ///   - parts: Every part's number and real ETag.
+    ///   - date: Request timestamp. Defaults to `Date()`.
+    /// - Returns: A signed `URLRequest` with the XML body already
+    ///   attached, or `nil` if the credential is incomplete,
+    ///   `objectKey`/`uploadId` is empty, or `parts` is empty.
+    public static func buildCompleteMultipartRequest(
+        credential: CloudCredential,
+        objectKey: String,
+        uploadId: String,
+        parts: [MultipartPart],
+        date: Date = Date()
+    ) -> URLRequest? {
+        guard let accessKeyID = credential.apiKey, !accessKeyID.isEmpty,
+              let secretAccessKey = credential.secret, !secretAccessKey.isEmpty,
+              let bucket = credential.bucket, !bucket.isEmpty,
+              !objectKey.isEmpty, !uploadId.isEmpty, !parts.isEmpty else {
+            return nil
+        }
+
+        let host = signingHost(credential: credential, bucket: bucket)
+        let rawPath = objectKey.hasPrefix("/") ? objectKey : "/\(objectKey)"
+        let encodedPath = AWSV4Signer.canonicalURI(path: rawPath)
+        let queryItems = [URLQueryItem(name: "uploadId", value: uploadId)]
+        let canonicalQuery = AWSV4Signer.canonicalQueryString(queryItems: queryItems)
+        guard let url = URL(string: "https://\(host)\(encodedPath)?\(canonicalQuery)") else { return nil }
+
+        let body = buildCompleteMultipartXML(parts: parts)
+        let region = credential.region ?? "us-east-1"
+        let amzDate = AWSV4Signer.amzDate(from: date)
+        let payloadHash = AWSV4Signer.sha256Hex(data: body)
+
+        let signedHeaderSet: [String: String] = [
+            "host": host,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+        ]
+
+        let result = AWSV4Signer.sign(
+            method: "POST",
+            path: rawPath,
+            queryItems: queryItems,
+            headers: signedHeaderSet,
+            payloadHash: payloadHash,
+            date: date,
+            region: region,
+            service: "s3",
+            credentials: AWSV4Signer.Credentials(accessKeyID: accessKeyID, secretAccessKey: secretAccessKey)
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(host, forHTTPHeaderField: "Host")
+        request.setValue(amzDate, forHTTPHeaderField: "x-amz-date")
+        request.setValue(payloadHash, forHTTPHeaderField: "x-amz-content-sha256")
+        request.setValue(result.authorizationHeader, forHTTPHeaderField: "Authorization")
+        request.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+        request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
+        request.httpBody = body
+
+        return request
+    }
+
+    /// Builds a signed `AbortMultipartUpload`
+    /// (`DELETE .../<key>?uploadId=<id>`) request.
+    ///
+    /// `CloudUploadExecutor.uploadS3Multipart` calls this as best-effort
+    /// cleanup after any failure once a real `UploadId` exists — see that
+    /// method's doc comment for why the abort's own outcome never masks
+    /// the original error that triggered it.
+    ///
+    /// - Parameters:
+    ///   - credential: AWS/S3 credential.
+    ///   - objectKey: The S3 object key.
+    ///   - uploadId: The `UploadId` to abort.
+    ///   - date: Request timestamp. Defaults to `Date()`.
+    /// - Returns: A signed `URLRequest`, or `nil` if the credential is
+    ///   incomplete or `objectKey`/`uploadId` is empty.
+    public static func buildAbortMultipartRequest(
+        credential: CloudCredential,
+        objectKey: String,
+        uploadId: String,
+        date: Date = Date()
+    ) -> URLRequest? {
+        guard let accessKeyID = credential.apiKey, !accessKeyID.isEmpty,
+              let secretAccessKey = credential.secret, !secretAccessKey.isEmpty,
+              let bucket = credential.bucket, !bucket.isEmpty,
+              !objectKey.isEmpty, !uploadId.isEmpty else {
+            return nil
+        }
+
+        let host = signingHost(credential: credential, bucket: bucket)
+        let rawPath = objectKey.hasPrefix("/") ? objectKey : "/\(objectKey)"
+        let encodedPath = AWSV4Signer.canonicalURI(path: rawPath)
+        let queryItems = [URLQueryItem(name: "uploadId", value: uploadId)]
+        let canonicalQuery = AWSV4Signer.canonicalQueryString(queryItems: queryItems)
+        guard let url = URL(string: "https://\(host)\(encodedPath)?\(canonicalQuery)") else { return nil }
+
+        let region = credential.region ?? "us-east-1"
+        let amzDate = AWSV4Signer.amzDate(from: date)
+        let payloadHash = AWSV4Signer.sha256Hex(data: Data())
+
+        let signedHeaderSet: [String: String] = [
+            "host": host,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+        ]
+
+        let result = AWSV4Signer.sign(
+            method: "DELETE",
+            path: rawPath,
+            queryItems: queryItems,
+            headers: signedHeaderSet,
+            payloadHash: payloadHash,
+            date: date,
+            region: region,
+            service: "s3",
+            credentials: AWSV4Signer.Credentials(accessKeyID: accessKeyID, secretAccessKey: secretAccessKey)
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(host, forHTTPHeaderField: "Host")
+        request.setValue(amzDate, forHTTPHeaderField: "x-amz-date")
+        request.setValue(payloadHash, forHTTPHeaderField: "x-amz-content-sha256")
+        request.setValue(result.authorizationHeader, forHTTPHeaderField: "Authorization")
+
+        return request
+    }
+
+    /// Extracts the `<UploadId>` element from a `CreateMultipartUpload`
+    /// XML response.
+    ///
+    /// - Parameter data: The real response body.
+    /// - Returns: The upload ID, or `nil` if the XML could not be parsed
+    ///   or contained no `UploadId` element.
+    public static func parseUploadId(from data: Data) -> String? {
+        S3XMLElementExtractor.firstValue(of: "UploadId", in: data)
+    }
+
+    /// Extracts the `Location`/`ETag` elements from a
+    /// `CompleteMultipartUpload` XML response, mirroring the
+    /// `(remoteURL, fileId)` shape `parseGraphIdentifiers`/
+    /// `parseDropboxIdentifiers`/`parseGoogleDriveIdentifiers` return in
+    /// `CloudUploadExecutor.swift` for the other providers' final
+    /// responses.
+    ///
+    /// - Parameter data: The real response body.
+    /// - Returns: `(Location, ETag)` — either may be `nil` if the XML
+    ///   could not be parsed or omitted that element (never guessed).
+    public static func parseCompleteMultipartResult(from data: Data) -> (remoteURL: String?, fileId: String?) {
+        (
+            S3XMLElementExtractor.firstValue(of: "Location", in: data),
+            S3XMLElementExtractor.firstValue(of: "ETag", in: data)
+        )
+    }
+
     /// Loads AWS S3 access key ID + secret access key from the system
     /// Keychain via `APIKeyManager` (provider `.awsS3`) and combines
     /// them with the given bucket/region/endpoint into a
@@ -415,6 +824,77 @@ extension CloudUploadExecutor {
         }
 
         return try await upload(fileURL: fileURL, request: request, progress: progress)
+    }
+}
+
+// MARK: - S3XMLElementExtractor
+
+/// Extracts the text content of a named XML element from an S3 XML
+/// response body, via Foundation's `XMLParser` rather than hand-rolled
+/// substring/regex matching — S3's multipart-upload responses
+/// (`CreateMultipartUpload`'s `<UploadId>`, `CompleteMultipartUpload`'s
+/// `<Location>`/`<ETag>`) are simple, but a real parser is still more
+/// robust against whitespace/attribute/encoding variations a genuine (or
+/// S3-compatible third-party) server might emit than a string search
+/// would be.
+///
+/// `XMLParser.parse()` is synchronous and single-threaded — every
+/// delegate callback below runs on the same thread that calls `parse()`,
+/// so there is no concurrency here for Swift 6 to reason about: this type
+/// is created, used, and discarded entirely within one synchronous call
+/// to `firstValue(of:in:)`, never crossing an isolation boundary.
+private enum S3XMLElementExtractor {
+
+    /// Parses `data` as XML and returns the text content of the first
+    /// `elementName` element encountered, or `nil` if the XML could not
+    /// be parsed or contained no such element.
+    static func firstValue(of elementName: String, in data: Data) -> String? {
+        let collector = ElementTextCollector(targetElement: elementName)
+        let parser = XMLParser(data: data)
+        parser.delegate = collector
+        guard parser.parse() else { return nil }
+        return collector.values.first
+    }
+
+    /// Collects the text content of every element named `targetElement`,
+    /// in document order.
+    private final class ElementTextCollector: NSObject, XMLParserDelegate {
+        private let targetElement: String
+        private var isInsideTarget = false
+        private var buffer = ""
+        private(set) var values: [String] = []
+
+        init(targetElement: String) {
+            self.targetElement = targetElement
+        }
+
+        func parser(
+            _ parser: XMLParser,
+            didStartElement elementName: String,
+            namespaceURI: String?,
+            qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            guard elementName == targetElement else { return }
+            isInsideTarget = true
+            buffer = ""
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            guard isInsideTarget else { return }
+            buffer += string
+        }
+
+        func parser(
+            _ parser: XMLParser,
+            didEndElement elementName: String,
+            namespaceURI: String?,
+            qualifiedName qName: String?
+        ) {
+            guard elementName == targetElement, isInsideTarget else { return }
+            values.append(buffer)
+            isInsideTarget = false
+        }
     }
 }
 

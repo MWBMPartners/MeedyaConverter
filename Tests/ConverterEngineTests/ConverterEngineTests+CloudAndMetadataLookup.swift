@@ -143,6 +143,102 @@ extension ConverterEngineTests {
         XCTAssertEqual(headers["x-amz-meta-title"], "Test Video")
     }
 
+    // -----------------------------------------------------------------
+    // MARK: - Roadmap #7 — S3 as a real CloudStorageProvider (re #459/#162)
+    // -----------------------------------------------------------------
+
+    /// `.s3` must be a real, selectable `CloudStorageProvider` case —
+    /// this is the whole point of roadmap #7 ("give S3 a real user
+    /// surface"): before this, `CloudStorageProvider` had no `.s3` case
+    /// at all, so a user could never pick it in `CloudStorageView`.
+    func test_cloudStorageProvider_s3IsSelectable() {
+        XCTAssertTrue(CloudStorageProvider.allCases.contains(.s3))
+        XCTAssertEqual(CloudStorageProvider.allCases.count, 4)
+    }
+
+    /// S3 authenticates with a static AWS access key/secret pair, not
+    /// OAuth — `usesOAuth` must say so, and every other provider must
+    /// still say `true` (regression guard against flipping the wrong
+    /// case).
+    func test_cloudStorageProvider_usesOAuth() {
+        XCTAssertFalse(CloudStorageProvider.s3.usesOAuth)
+        XCTAssertTrue(CloudStorageProvider.dropbox.usesOAuth)
+        XCTAssertTrue(CloudStorageProvider.onedrive.usesOAuth)
+        XCTAssertTrue(CloudStorageProvider.googleDrive.usesOAuth)
+    }
+
+    /// `authURL` has no real OAuth endpoint to build for `.s3` — it must
+    /// honestly return `nil` rather than fabricate a URL that goes
+    /// nowhere.
+    func test_cloudStorageUploader_authURL_s3ReturnsNil() {
+        XCTAssertNil(CloudStorageUploader.authURL(provider: .s3, clientId: "unused"))
+        XCTAssertNotNil(CloudStorageUploader.authURL(provider: .dropbox, clientId: "client-id"))
+    }
+
+    /// `CloudStorageProfileStore.apiKeyProvider(for:)` must route `.s3` to
+    /// the Keychain-side `.awsS3` provider — the same one
+    /// `S3Uploader.loadCredential` reads — so a saved S3 profile's
+    /// credentials are actually findable in the Keychain.
+    func test_cloudStorageProfileStore_apiKeyProvider_s3MapsToAWSS3() {
+        XCTAssertEqual(CloudStorageProfileStore.apiKeyProvider(for: .s3), .awsS3)
+        XCTAssertEqual(CloudStorageProfileStore.apiKeyProvider(for: .dropbox), .dropbox)
+        XCTAssertEqual(CloudStorageProfileStore.apiKeyProvider(for: .onedrive), .oneDrive)
+        XCTAssertEqual(CloudStorageProfileStore.apiKeyProvider(for: .googleDrive), .googleDrive)
+    }
+
+    /// `CloudStorageConfig`'s S3-specific fields (`secretAccessKey`/
+    /// `bucket`/`region`/`endpoint`) must round-trip through `Codable` —
+    /// this is the exact shape `UserDefaults` persistence
+    /// (`CloudStorageView.persistConfigs()`) depends on.
+    func test_cloudStorageConfig_s3Fields_codableRoundTrip() throws {
+        let original = CloudStorageConfig(
+            provider: .s3,
+            accessToken: "AKIDEXAMPLE",
+            remotePath: "videos",
+            label: "My Bucket",
+            secretAccessKey: "wJalrXUtnFEMI/K7MDENG",
+            bucket: "my-bucket",
+            region: "eu-west-1",
+            endpoint: "https://s3.us-west-002.backblazeb2.com"
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(CloudStorageConfig.self, from: data)
+
+        XCTAssertEqual(decoded.provider, .s3)
+        XCTAssertEqual(decoded.accessToken, "AKIDEXAMPLE")
+        XCTAssertEqual(decoded.secretAccessKey, "wJalrXUtnFEMI/K7MDENG")
+        XCTAssertEqual(decoded.bucket, "my-bucket")
+        XCTAssertEqual(decoded.region, "eu-west-1")
+        XCTAssertEqual(decoded.endpoint, "https://s3.us-west-002.backblazeb2.com")
+    }
+
+    /// A `CloudStorageConfig` built the old way (no S3 fields at all —
+    /// exactly what every pre-roadmap-#7 saved Dropbox/OneDrive/Google
+    /// Drive configuration on a real user's disk looks like) must still
+    /// decode cleanly, with the new fields defaulting to `nil` — this is
+    /// the backward-compatibility guarantee that makes the new fields
+    /// additive rather than a breaking migration.
+    func test_cloudStorageConfig_decodesLegacyJSONWithoutS3Fields() throws {
+        let legacyJSON = """
+        {
+            "id": "\(UUID().uuidString)",
+            "provider": "dropbox",
+            "accessToken": "",
+            "remotePath": "/Videos",
+            "label": "Work Dropbox"
+        }
+        """
+        let decoded = try JSONDecoder().decode(CloudStorageConfig.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(decoded.provider, .dropbox)
+        XCTAssertEqual(decoded.remotePath, "/Videos")
+        XCTAssertNil(decoded.secretAccessKey)
+        XCTAssertNil(decoded.bucket)
+        XCTAssertNil(decoded.region)
+        XCTAssertNil(decoded.endpoint)
+    }
+
     /// Verifies SFTP SCP arguments.
     func test_sftpUploader_scpArguments() {
         let config = SFTPServerConfig(
