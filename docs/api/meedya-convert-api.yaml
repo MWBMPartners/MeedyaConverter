@@ -17,7 +17,39 @@
 #   500 = exit 1 (general error)
 #   502 = exit 4 (encoding failed / FFmpeg error)
 #
-# Updated: 2026-04-05
+# Accuracy notes (read before relying on this document):
+#   - Every parameter, enum, default, and schema below was checked directly
+#     against Sources/meedya-convert/**/*.swift and the ConverterEngine
+#     types they reference (VideoCodec, AudioCodec, ContainerFormat,
+#     EncodingProfile, MediaFile, MediaStream, StreamingVariant,
+#     EncodingJobConfig) as of the "Updated" date below. Several `@Option`
+#     help strings in the CLI source list only a handful of *example*
+#     values (e.g. "--video-codec (h264, h265, av1, prores, vp9, copy)")
+#     but do not actually constrain input — ArgumentParser stores these as
+#     plain strings, and the underlying `RawRepresentable` enum in
+#     ConverterEngine decides what is actually accepted. Where the two
+#     disagree, this document follows the code, not the CLI's own --help
+#     text, and calls out the discrepancy explicitly.
+#   - JSON emitted via `JSONEncoder` (probe --format json, profiles
+#     --json/--show/--export) uses Swift's synthesised `Encodable`
+#     conformance: `Optional` properties that are `nil` are OMITTED from
+#     the object entirely (not encoded as `null`). Treat every field not
+#     marked `required` below as "may be absent", not "may be null".
+#   - JSON consumed via `JSONDecoder` (batch --job-file, --ladder-file,
+#     profiles --import, validate --profile-file/--manifest) uses
+#     Swift's synthesised `Decodable` conformance: a stored property's
+#     Swift-side default value (e.g. `audioChannels: Int = 2` in an
+#     `init`) does NOT make that key optional in the JSON — only
+#     properties whose *type* is `Optional` may be omitted. This trips up
+#     hand-written job/ladder files; the `required` lists below reflect
+#     the real decode requirements, not the friendlier `init` defaults.
+#
+# Updated: 2026-07-28 — re-verified against Sources/meedya-convert/** and
+# Sources/ConverterEngine/** on branch wip/alpha-consolidation. The CLI
+# command surface (6 subcommands, ~30 encode options) was unchanged since
+# the previous pass on 2026-04-06, but several parameter enums, the
+# batch/ladder-file JSON schemas, and the probe/profile JSON output
+# schemas were substantively wrong — see the notes above and inline below.
 # ============================================================================
 
 openapi: 3.1.0
@@ -40,6 +72,38 @@ info:
     **Global flags:**
     - `--version` — Print the version string and exit.
     - `--help` / `-h` — Print usage information and exit.
+
+    **Known CLI quirks (verified against source, not just --help text):**
+    - `encode --video-codec <value>` and `encode --audio-codec <value>`
+      accept a `VideoCodec` / `AudioCodec` raw value (see the enums under
+      `components/schemas`), NOT the 5-6 example values shown in the
+      CLI's own `--help` output, and there is no `copy` codec value —
+      passthrough/remux is a separate boolean flag
+      (`--video-passthrough` / `--audio-passthrough`).
+    - If the string passed to `--video-codec` / `--audio-codec` does not
+      match any enum raw value, `EncodeCommand` does not error — it
+      silently sets the profile's codec to `nil`. `FFmpegArgumentBuilder`
+      then emits `-vn` (video disabled) or `-an` (audio disabled) for
+      that stream. A typo in `--video-codec` therefore produces an
+      **audio-only** output file with no error message.
+    - Selecting a `VideoCodec` that has no working FFmpeg software
+      encoder (`h266`, `av2`, `cineform`, `vc1`, `mv_hevc`, `mv_h264` —
+      i.e. `isEncoderStable == false`) does not fail either: the builder
+      falls back to `libx264` (H.264) silently when not using hardware
+      encoding.
+    - `encode --tonemap-algorithm` is validated against
+      `FFmpegArgumentBuilder.ToneMapAlgorithm`, whose cases are `hable`,
+      `reinhard`, `mobius`, `bt2390`, `clip` — but `EncodeCommand`'s own
+      `--help` text advertises `linear` as a valid value. `linear` does
+      not match any case, so passing it silently falls back to the
+      default (`hable`) with no warning.
+    - `encode --crf` and `encode --audio-channels` are NOT range/value
+      checked by `encode` itself — any integer is accepted and passed
+      through. Only `meedya-convert validate` flags an out-of-range CRF
+      (outside 0-63) as a warning.
+    - `encode --container` and `manifest`'s codec options accept any
+      `ContainerFormat` / `VideoCodec` / `AudioCodec` raw value, not just
+      the short example lists in their `--help` text.
   contact:
     name: MWBM Partners Ltd
     url: https://github.com/MWBMPartners/MeedyaConverter
@@ -75,7 +139,16 @@ paths:
 
         If `--output` is omitted, the output file is placed in the same
         directory as the input with a `_converted` suffix and an extension
-        matching the selected profile or container.
+        matching the selected profile or container. The generated filename
+        component is passed through `PathSanitizer` (#432 / F-002).
+
+        `--profile` is resolved first against the 24 built-in profiles
+        (`EncodingProfile.builtInProfiles`), then against the user's saved
+        profile store (`~/Library/Application Support/MeedyaConverter/Profiles/user_profiles.json`
+        on macOS) by case-insensitive name match. Any of the video/audio/
+        container flags below then override individual fields of whichever
+        profile was resolved (or of `EncodingProfile.quickConvert` if
+        `--profile` was omitted).
 
         **Exit codes:** 0 (success), 4 (encoding failed), 5 (output write error).
       tags:
@@ -85,7 +158,7 @@ paths:
         - name: --input / -i
           in: query
           required: true
-          description: Path to the input media file. The file must exist.
+          description: Path to the input media file. The file must exist (checked in `validate()` before `run()`).
           schema:
             type: string
 
@@ -93,7 +166,7 @@ paths:
         - name: --output / -o
           in: query
           required: false
-          description: Path to the output file. Defaults to input directory with profile-based extension and `_converted` suffix.
+          description: "Path to the output file. Defaults to input directory with profile-based extension and `_converted` suffix (e.g. `movie_converted.mkv`)."
           schema:
             type: string
 
@@ -101,7 +174,7 @@ paths:
         - name: --profile / -p
           in: query
           required: false
-          description: Name or ID of a built-in or custom encoding profile to use. Profile settings can be overridden by subsequent flags.
+          description: Name or ID of a built-in or user-saved encoding profile to use, matched case-insensitively. Profile settings can be overridden by subsequent flags. Defaults to the "Quick Convert" built-in profile when omitted.
           schema:
             type: string
 
@@ -109,24 +182,27 @@ paths:
         - name: --video-codec
           in: query
           required: false
-          description: "Video codec for re-encoding. Values: h264, h265, av1, prores, vp9, copy."
+          description: |
+            Video codec for re-encoding. Any `VideoCodec` raw value is
+            accepted (see `#/components/schemas/VideoCodec`) — the CLI's
+            own `--help` text only lists 6 examples including a
+            non-existent `copy` value. An unrecognised value results in
+            the video stream being disabled (`-vn`), not an error. Use
+            `--video-passthrough` for stream copy, not a codec value.
           schema:
-            type: string
-            enum: [h264, h265, av1, prores, vp9, copy]
+            $ref: '#/components/schemas/VideoCodec'
 
         - name: --crf
           in: query
           required: false
-          description: "Constant Rate Factor (quality). Lower values produce higher quality and larger files. Range depends on codec: H.264/H.265 0-51, AV1 0-63."
+          description: "Constant Rate Factor (quality). Lower values produce higher quality and larger files. NOT range-checked by `encode` itself — any integer is accepted and forwarded to FFmpeg as-is. `meedya-convert validate` separately warns if the value is outside 0-63."
           schema:
             type: integer
-            minimum: 0
-            maximum: 63
 
         - name: --video-bitrate
           in: query
           required: false
-          description: "Target video bitrate. Accepts suffixes: k (kilobits), M (megabits). Examples: 5000k, 10M."
+          description: "Target video bitrate. Accepts suffixes: k (kilobits), M (megabits), or a plain integer (bits/sec). Examples: 5000k, 10M."
           schema:
             type: string
             examples:
@@ -136,15 +212,29 @@ paths:
         - name: --preset
           in: query
           required: false
-          description: "Encoder speed/quality preset. Slower presets yield better compression."
+          description: |
+            Encoder speed/quality preset, passed through unvalidated to
+            the selected encoder via `-preset`. There is no fixed enum in
+            the code — valid values depend entirely on which encoder
+            `--video-codec` selects: libx264/libx265 accept
+            `ultrafast`..`veryslow`; SVT-AV1 (`libsvtav1`, used for
+            `av1`) accepts a numeric string `0`-`13` (see the built-in
+            `Web Next-Gen` profile, which uses `"6"`); `prores_ks`
+            accepts quality-tier names like `proxy`, `lt`, `hq`, `4444`.
+            The CLI's own `--help` text lists only
+            `ultrafast, fast, medium, slow, veryslow` as examples.
           schema:
             type: string
-            enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
+            examples:
+              - "medium"
+              - "veryslow"
+              - "6"
+              - "hq"
 
         - name: --resolution
           in: query
           required: false
-          description: "Output resolution as WIDTHxHEIGHT. Example: 1920x1080, 3840x2160."
+          description: "Output resolution as WIDTHxHEIGHT. Example: 1920x1080, 3840x2160. Parsed case-insensitively; a malformed value is silently ignored (resolution left unchanged) rather than raising an error."
           schema:
             type: string
             pattern: "^\\d+x\\d+$"
@@ -155,7 +245,7 @@ paths:
         - name: --video-passthrough
           in: query
           required: false
-          description: Copy the video stream without re-encoding (passthrough/remux). Cannot be combined with --video-codec.
+          description: Copy the video stream without re-encoding (passthrough/remux). Rejected by `validate()` if combined with `--video-codec`.
           schema:
             type: boolean
             default: false
@@ -164,10 +254,15 @@ paths:
         - name: --audio-codec
           in: query
           required: false
-          description: "Audio codec for re-encoding. Values: aac, ac3, eac3, flac, opus, copy."
+          description: |
+            Audio codec for re-encoding. Any `AudioCodec` raw value is
+            accepted (see `#/components/schemas/AudioCodec`) — the CLI's
+            own `--help` text only lists 6 examples including a
+            non-existent `copy` value. An unrecognised value results in
+            the audio stream being disabled (`-an`), not an error. Use
+            `--audio-passthrough` for stream copy, not a codec value.
           schema:
-            type: string
-            enum: [aac, ac3, eac3, flac, opus, copy]
+            $ref: '#/components/schemas/AudioCodec'
 
         - name: --audio-bitrate
           in: query
@@ -182,15 +277,14 @@ paths:
         - name: --audio-channels
           in: query
           required: false
-          description: "Audio channel count. 1=mono, 2=stereo, 6=5.1 surround, 8=7.1 surround."
+          description: "Audio channel count. NOT range/value-checked by `encode` itself — any integer is accepted and forwarded as `-ac`. The CLI's `--help` text suggests 1/2/6/8 as examples (mono/stereo/5.1/7.1) but does not enforce them."
           schema:
             type: integer
-            enum: [1, 2, 6, 8]
 
         - name: --audio-passthrough
           in: query
           required: false
-          description: Copy the audio stream without re-encoding. Cannot be combined with --audio-codec.
+          description: Copy the audio stream without re-encoding. Rejected by `validate()` if combined with `--audio-codec`.
           schema:
             type: boolean
             default: false
@@ -207,7 +301,7 @@ paths:
         - name: --no-subtitles
           in: query
           required: false
-          description: Exclude all subtitle streams from the output.
+          description: "Exclude all subtitle streams from the output. Implemented by setting `subtitlePassthrough = false`; combining this with `--subtitle-passthrough` is not rejected — whichever flag's override runs last in `applyOverrides` wins (`--no-subtitles` is applied after `--subtitle-passthrough`, so together they resolve to no subtitles)."
           schema:
             type: boolean
             default: false
@@ -216,16 +310,15 @@ paths:
         - name: --container
           in: query
           required: false
-          description: "Output container format. Overrides profile default."
+          description: "Output container format. Accepts any `ContainerFormat` raw value (see `#/components/schemas/ContainerFormat`) OR a bare file extension resolved via `ContainerFormat.from(fileExtension:)` (e.g. `mpg`, `mpeg`, `vob`, `mts`, `m2ts`, `aif`, `ogv`). Overrides the profile's default container. The CLI's `--help` text lists only 5 examples."
           schema:
-            type: string
-            enum: [mkv, mp4, webm, mov, ts]
+            $ref: '#/components/schemas/ContainerFormat'
 
         # -- HDR Options --
         - name: --tonemap
           in: query
           required: false
-          description: Enable HDR-to-SDR tone mapping. Mutually exclusive with --pq-to-hlg.
+          description: Enable HDR-to-SDR tone mapping. Rejected by `validate()` if combined with `--pq-to-hlg`.
           schema:
             type: boolean
             default: false
@@ -233,16 +326,21 @@ paths:
         - name: --tonemap-algorithm
           in: query
           required: false
-          description: "Tone mapping algorithm to use when --tonemap is enabled."
+          description: |
+            Tone mapping algorithm used when `--tonemap` is enabled.
+            Validated against `FFmpegArgumentBuilder.ToneMapAlgorithm`
+            (`hable`, `reinhard`, `mobius`, `bt2390`, `clip`). The CLI's
+            own `--help` text advertises `linear` instead of `clip` —
+            passing `linear` does not match any case and silently falls
+            back to the default, `hable`.
           schema:
-            type: string
-            enum: [hable, reinhard, mobius, bt2390, linear]
+            $ref: '#/components/schemas/ToneMapAlgorithm'
             default: hable
 
         - name: --pq-to-hlg
           in: query
           required: false
-          description: Convert PQ (HDR10) transfer function to HLG. Mutually exclusive with --tonemap.
+          description: Convert PQ (HDR10) transfer function to HLG. Rejected by `validate()` if combined with `--tonemap`.
           schema:
             type: boolean
             default: false
@@ -259,7 +357,7 @@ paths:
         - name: --no-copy-metadata
           in: query
           required: false
-          description: Do not copy source metadata (tags, titles) to the output file.
+          description: "Do not copy source metadata (tags, titles) to the output file. Implemented by appending `-map_metadata -1` to the job's extra FFmpeg arguments."
           schema:
             type: boolean
             default: false
@@ -267,7 +365,7 @@ paths:
         - name: --no-copy-chapters
           in: query
           required: false
-          description: Do not copy chapter markers to the output file.
+          description: "Do not copy chapter markers to the output file. Implemented by appending `-map_chapters -1` to the job's extra FFmpeg arguments."
           schema:
             type: boolean
             default: false
@@ -306,7 +404,7 @@ paths:
         - name: --hardware
           in: query
           required: false
-          description: Use hardware encoder if available (VideoToolbox on macOS, NVENC on NVIDIA, QSV on Intel).
+          description: "Use hardware encoder if available. On macOS, applies only to codecs where `VideoCodec.supportsVideoToolbox` is true (h264, h265, prores, mv_hevc, av1 on Apple M3+); other codecs fall back to software encoding regardless of this flag."
           schema:
             type: boolean
             default: false
@@ -323,7 +421,7 @@ paths:
         - name: --json
           in: query
           required: false
-          description: Output progress updates and final result as JSON to stderr/stdout.
+          description: "Emit progress as one-line JSON objects (`{\"progress\":<0-100>}`) to stderr during encoding, and the final `EncodeResult` as pretty-printed JSON to stdout on completion. Has no effect when `--quiet` is also set (no progress is printed either way)."
           schema:
             type: boolean
             default: false
@@ -331,14 +429,14 @@ paths:
         - name: --yes / -y
           in: query
           required: false
-          description: Overwrite the output file without prompting if it already exists.
+          description: Overwrite the output file without prompting if it already exists. Without this flag, `encode` exits with code 5 if the output path already exists (there is no interactive prompt — the CLI never blocks on stdin here).
           schema:
             type: boolean
             default: false
 
       responses:
         "200":
-          description: "Exit 0 — Encoding completed successfully."
+          description: "Exit 0 — Encoding completed successfully. `EncodeResult` JSON is only printed to stdout when `--json` was passed; otherwise a human-readable summary line is printed to stderr."
           content:
             application/json:
               schema:
@@ -346,7 +444,7 @@ paths:
         "502":
           description: "Exit 4 — Encoding failed (FFmpeg error)."
         "409":
-          description: "Exit 5 — Output write error (file exists, permissions, disk full)."
+          description: "Exit 5 — Output write error (file exists without --yes, permissions, disk full)."
 
   # --------------------------------------------------------------------------
   # probe — Inspect a media file
@@ -388,7 +486,7 @@ paths:
         - name: --streams-only
           in: query
           required: false
-          description: Show only stream information (skip file-level details and metadata).
+          description: "Show only stream information (skip file-level details and metadata). Text output only — has no effect on `--format json`, which always emits the full `MediaFile` object."
           schema:
             type: boolean
             default: false
@@ -396,7 +494,7 @@ paths:
         - name: --hdr
           in: query
           required: false
-          description: Show detailed HDR metadata (colour primaries, transfer characteristics, MaxCLL, MaxFALL, mastering display).
+          description: "Show detailed HDR metadata (colour primaries, transfer characteristics, MaxCLL, MaxFALL, mastering display) per video stream. Text output only — `--format json` always includes `colourProperties` when present regardless of this flag."
           schema:
             type: boolean
             default: false
@@ -433,6 +531,13 @@ paths:
                                 [--platform <name>] [--json]
         ```
 
+        Precedence when multiple selection flags are given: `--export`
+        wins over `--import`, which wins over `--validate`, which wins
+        over `--show`; `--list` (or no flags) only runs if none of the
+        others are set. `--platform` only has an effect together with
+        `--validate`; combined with any other flag it is silently
+        ignored.
+
         **Exit codes:** 0 (success), 2 (profile not found / invalid arguments).
       tags:
         - Profiles
@@ -440,7 +545,7 @@ paths:
         - name: --list
           in: query
           required: false
-          description: List all available encoding profiles (default action).
+          description: List all available encoding profiles (default action; this flag is not actually read by `run()` — omitting all other selection flags does the same thing).
           schema:
             type: boolean
             default: false
@@ -448,14 +553,14 @@ paths:
         - name: --show
           in: query
           required: false
-          description: Show detailed settings of a named profile.
+          description: Show detailed settings of a named built-in profile (case-insensitive match against `EncodingProfile.builtInProfiles` only — user-saved profiles are not searched).
           schema:
             type: string
 
         - name: --export
           in: query
           required: false
-          description: Export a named profile to JSON. Outputs to stdout unless --export-file is set.
+          description: Export a named built-in profile to JSON (`EncodingProfile`, pretty-printed with sorted keys). Outputs to stdout unless `--export-file` is set.
           schema:
             type: string
 
@@ -469,23 +574,23 @@ paths:
         - name: --import
           in: query
           required: false
-          description: Import a profile from a JSON file.
+          description: "Import a profile from a JSON file (decoded as `EncodingProfile` — see `#/components/schemas/EncodingProfile` for the full set of required keys). The imported profile is assigned a new UUID, forced to `category: custom` and `isBuiltIn: false`, and persisted to the user profile store."
           schema:
             type: string
 
         - name: --validate
           in: query
           required: false
-          description: Validate a named profile for codec/container compatibility issues.
+          description: Validate a named built-in profile for codec/container compatibility issues (searches `EncodingProfile.builtInProfiles` only, not user-saved profiles).
           schema:
             type: string
 
         - name: --platform
           in: query
           required: false
-          description: "Target platform for compatibility check during validation. Values: macOS, iOS, tvOS, windows, android, chromecast, webBrowser, plex, jellyfin, roku, fireTV."
+          description: "Target platform for compatibility check during validation, only used together with `--validate`."
           schema:
-            type: string
+            $ref: '#/components/schemas/Platform'
 
         - name: --json
           in: query
@@ -513,20 +618,21 @@ paths:
 
         1. **Directory mode** (`--dir`): Scan a directory for media files
            matching specified extensions and encode them all with a named
-           profile. Requires `--profile`.
+           profile (resolved the same way as `encode --profile`: built-in
+           profiles first, then the user profile store). Requires `--profile`.
 
-        2. **Job file mode** (`--job-file`): Load a JSON array of
-           `EncodingJobConfig` objects and encode each one.
+        2. **Job file mode** (`--job-file`): Load a JSON array of full
+           `EncodingJobConfig` objects (see
+           `#/components/schemas/EncodingJobConfig` — this is NOT a
+           simplified input/output pair, every non-optional field of the
+           real job struct is required) and encode each one. `--profile`,
+           `--extension`, and `--recursive` have no effect in this mode.
 
-        The two modes are mutually exclusive.
+        The two modes are mutually exclusive (enforced by `validate()`).
 
-        **Usage:**
-        ```
-        meedya-convert batch --dir <path> --profile <name> [--output <dir>] [options]
-        meedya-convert batch --job-file <path> [options]
-        ```
-
-        **Exit codes:** 0 (all succeeded), 4 (one or more jobs failed).
+        **Exit codes:** 0 (all succeeded), 4 (one or more jobs failed —
+        directory mode only; job-file mode logs failures per-job to
+        stderr but always exits 0).
       tags:
         - Batch
       parameters:
@@ -540,28 +646,28 @@ paths:
         - name: --job-file
           in: query
           required: false
-          description: Path to a JSON file describing batch encoding jobs. Mutually exclusive with --dir.
+          description: Path to a JSON file containing an array of `EncodingJobConfig` objects. Mutually exclusive with --dir.
           schema:
             type: string
 
         - name: --profile / -p
           in: query
           required: false
-          description: Encoding profile name. Required when using --dir.
+          description: Encoding profile name. Required when using --dir; ignored with --job-file.
           schema:
             type: string
 
         - name: --output / -o
           in: query
           required: false
-          description: "Output directory for encoded files. Defaults to an `encoded/` subdirectory inside the input directory."
+          description: "Output directory for encoded files (--dir mode only). Defaults to an `encoded/` subdirectory inside the input directory."
           schema:
             type: string
 
         - name: --extension
           in: query
           required: false
-          description: "Comma-separated list of file extensions to include when scanning a directory. Defaults to: mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg."
+          description: "Comma-separated list of file extensions to include when scanning a directory (--dir mode only). Defaults to: mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg."
           schema:
             type: string
             default: "mkv,mp4,avi,mov,webm,ts,m4v,flv,wmv,mpg"
@@ -585,7 +691,7 @@ paths:
         - name: --json
           in: query
           required: false
-          description: Output results as JSON.
+          description: "Output a `BatchResult` summary as JSON (--dir mode only — job-file mode never emits a JSON summary, this flag only suppresses the per-file `Progress: NN%` text line in that mode)."
           schema:
             type: boolean
             default: false
@@ -593,7 +699,7 @@ paths:
         - name: --yes / -y
           in: query
           required: false
-          description: Overwrite existing output files without prompting.
+          description: Overwrite existing output files without prompting (--dir mode only; job-file mode has no overwrite check).
           schema:
             type: boolean
             default: false
@@ -606,7 +712,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/BatchResult'
         "502":
-          description: "Exit 4 — One or more jobs failed."
+          description: "Exit 4 — One or more jobs failed (--dir mode only)."
 
   # --------------------------------------------------------------------------
   # manifest — Generate adaptive streaming manifests (HLS/DASH/CMAF)
@@ -625,7 +731,9 @@ paths:
         meedya-convert manifest --input <path> --output <dir> [--format hls|dash|cmaf] [options]
         ```
 
-        **Exit codes:** 0 (success), 1 (general error), 2 (invalid arguments).
+        **Exit codes:** 0 (success), 1 (general error, e.g. FFmpeg
+        unavailable), 2 (invalid `--format` value; `validate()` rejects
+        anything other than hls/dash/cmaf before FFmpeg is even located).
       tags:
         - Streaming
       parameters:
@@ -646,7 +754,7 @@ paths:
         - name: --format / -f
           in: query
           required: false
-          description: "Manifest format. CMAF produces both HLS and DASH manifests."
+          description: "Manifest format. CMAF produces both HLS and DASH manifests. Validated (rejects anything else with exit code 2)."
           schema:
             type: string
             enum: [hls, dash, cmaf]
@@ -655,28 +763,34 @@ paths:
         - name: --video-codec
           in: query
           required: false
-          description: Video codec for all variants.
+          description: "Video codec for all variants. Resolved as `VideoCodec(rawValue:) ?? .h264` — NOT restricted to h264/h265/av1 as the flag's `--help` text implies; any `VideoCodec` raw value is accepted, and an unrecognised value silently falls back to `h264` (no error, unlike `encode`'s equivalent flag which disables the stream instead)."
           schema:
             type: string
-            enum: [h264, h265, av1]
             default: h264
+            examples:
+              - h264
+              - h265
+              - av1
 
         - name: --audio-codec
           in: query
           required: false
-          description: Audio codec for all variants.
+          description: "Audio codec for all variants. Resolved as `AudioCodec(rawValue:) ?? .aacLC` — any `AudioCodec` raw value is accepted; an unrecognised value silently falls back to `aac`."
           schema:
             type: string
-            enum: [aac, ac3, eac3, opus]
             default: aac
+            examples:
+              - aac
+              - ac3
+              - eac3
+              - opus
 
         - name: --preset
           in: query
           required: false
-          description: Encoder speed/quality preset.
+          description: "Encoder speed/quality preset, passed through unvalidated to `-preset` (same caveats as `encode --preset` — meaning depends on the resolved video codec's encoder)."
           schema:
             type: string
-            enum: [ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow]
             default: medium
 
         - name: --segment-duration
@@ -691,7 +805,7 @@ paths:
         - name: --keyframe-interval
           in: query
           required: false
-          description: Keyframe interval in seconds for GOP alignment.
+          description: "Keyframe interval in seconds for GOP alignment. The generator assumes a fixed 30fps when converting to a GOP frame count (`Int(keyframeInterval * 30)`) regardless of the source's actual frame rate."
           schema:
             type: number
             format: double
@@ -700,16 +814,27 @@ paths:
         - name: --variants
           in: query
           required: false
-          description: "Variant ladder preset: default (1080p and below) or 4k/uhd (includes 2160p)."
+          description: |
+            Variant ladder preset. Only two values change behaviour:
+            `4k` or `uhd` (case-insensitive) select
+            `StreamingVariant.uhdrLadder` (4 variants up to 2160p); every
+            other string — including the default `default`, and including
+            typos — falls through to `StreamingVariant.defaultLadder` (4
+            variants up to 1080p). There is no `custom` value in the
+            code; to use a custom ladder, pass `--ladder-file` instead,
+            which overrides `--variants` entirely.
           schema:
             type: string
-            enum: [default, 4k, uhd]
             default: default
+            examples:
+              - default
+              - 4k
+              - uhd
 
         - name: --ladder-file
           in: query
           required: false
-          description: Path to a JSON file defining a custom variant ladder (array of StreamingVariant objects). Overrides --variants.
+          description: Path to a JSON file defining a custom variant ladder (array of `StreamingVariant` objects — see `#/components/schemas/StreamingVariant` for the full set of required keys). Overrides --variants.
           schema:
             type: string
 
@@ -724,14 +849,14 @@ paths:
         - name: --pixel-format
           in: query
           required: false
-          description: "Pixel format for output. Example: yuv420p, yuv420p10le."
+          description: "Pixel format for output, passed through unvalidated to `-pix_fmt`. Example: yuv420p, yuv420p10le."
           schema:
             type: string
 
         - name: --hardware
           in: query
           required: false
-          description: Use hardware encoder if available.
+          description: "Use hardware encoder if available. Only `h264` and `h265` get a VideoToolbox encoder name substituted (`h264_videotoolbox` / `hevc_videotoolbox`); every other codec silently continues to use its software encoder even with this flag set."
           schema:
             type: boolean
             default: false
@@ -739,7 +864,7 @@ paths:
         - name: --dry-run
           in: query
           required: false
-          description: Show the FFmpeg commands that would be executed without running them.
+          description: Show the FFmpeg commands that would be executed (printed to stdout) without running them.
           schema:
             type: boolean
             default: false
@@ -755,7 +880,7 @@ paths:
         - name: --json
           in: query
           required: false
-          description: Output result as JSON.
+          description: Output the final `ManifestResult` as JSON to stdout on completion.
           schema:
             type: boolean
             default: false
@@ -763,7 +888,7 @@ paths:
         - name: --yes / -y
           in: query
           required: false
-          description: Overwrite existing output without prompting.
+          description: "Accepted for CLI parity with encode/batch, but `manifest` never checks for an existing output directory before writing into it — this flag currently has no effect on `manifest`'s behaviour."
           schema:
             type: boolean
             default: false
@@ -778,7 +903,7 @@ paths:
         "500":
           description: "Exit 1 — General error (e.g., FFmpeg not available)."
         "400":
-          description: "Exit 2 — Invalid arguments (bad format, missing input)."
+          description: "Exit 2 — Invalid arguments (bad --format value)."
 
   # --------------------------------------------------------------------------
   # validate — Validate profiles, manifests, and platform compatibility
@@ -799,7 +924,9 @@ paths:
         meedya-convert validate --manifest <path> [--json]
         ```
 
-        At least one of `--profile`, `--profile-file`, or `--manifest` is required.
+        All three of `--profile`, `--profile-file`, and `--manifest` may
+        be combined in one invocation — results from each are concatenated
+        into a single warnings/errors list. At least one is required.
 
         **Exit codes:** 0 (valid), 6 (errors found or warnings with --strict).
       tags:
@@ -808,31 +935,30 @@ paths:
         - name: --profile
           in: query
           required: false
-          description: Validate a named built-in encoding profile.
+          description: Validate a named built-in encoding profile (searches `EncodingProfile.builtInProfiles` only, not user-saved profiles).
           schema:
             type: string
 
         - name: --profile-file
           in: query
           required: false
-          description: Validate an encoding profile from a JSON file on disk.
+          description: "Validate an encoding profile from a JSON file on disk, decoded as `EncodingProfile` (see `#/components/schemas/EncodingProfile` for required keys)."
           schema:
             type: string
 
         - name: --manifest
           in: query
           required: false
-          description: Validate a manifest configuration JSON file (checks variant ladder, bitrate ordering, codec compatibility).
+          description: "Validate a manifest configuration JSON file, decoded as `ManifestConfig` (see `#/components/schemas/ManifestConfig`). Checks variant ladder validity via `ManifestGenerator.validate(config:)`, plus additional checks: duplicate resolutions, more than 10 variants, and bitrate ordering not matching resolution ordering."
           schema:
             type: string
 
         - name: --platform
           in: query
           required: false
-          description: "Target platform for compatibility check. Validates codec and container support for the specified platform."
+          description: "Target platform for compatibility check. Only applies to `--profile` / `--profile-file`, not `--manifest`."
           schema:
-            type: string
-            enum: [macOS, iOS, tvOS, windows, android, chromecast, webBrowser, plex, jellyfin, roku, fireTV]
+            $ref: '#/components/schemas/Platform'
 
         - name: --json
           in: query
@@ -866,10 +992,10 @@ paths:
 components:
   schemas:
 
-    # -- Encode result (--json output) --
+    # -- Encode result (--json output, JSONSerialization dictionary) --
     EncodeResult:
       type: object
-      description: JSON output produced by `encode --json` upon successful completion.
+      description: "JSON output produced by `encode --json` upon successful completion, printed to stdout. Built as a plain `[String: Any]` dictionary (not a synthesised `Encodable`), so all five keys are always present."
       properties:
         status:
           type: string
@@ -888,10 +1014,10 @@ components:
           type: string
           description: Name of the encoding profile used.
 
-    # -- Batch result (--json output) --
+    # -- Batch result (--json output, --dir mode only) --
     BatchResult:
       type: object
-      description: JSON summary produced by `batch --json` after all jobs complete.
+      description: JSON summary produced by `batch --dir ... --json` after all jobs complete. NOT produced by `--job-file` mode.
       properties:
         total:
           type: integer
@@ -904,7 +1030,7 @@ components:
           description: Number of files that failed to encode.
         skipped:
           type: integer
-          description: Number of files skipped (output already exists).
+          description: Number of files skipped (output already exists, --yes not set).
 
     # -- Manifest result (--json output) --
     ManifestResult:
@@ -950,114 +1076,268 @@ components:
     # -- Probe output (--format json) --
     MediaFile:
       type: object
-      description: Full media file information returned by `probe --format json`. Serialised from the engine's MediaFile model.
+      description: |
+        Media file information returned by `probe --format json`.
+        Serialised by Swift's synthesised `Encodable` conformance for
+        `MediaFile` — ONLY the struct's stored properties are emitted;
+        computed convenience properties such as `fileName`,
+        `fileSizeString`, `durationString`, `hasHDR`, `hasDolbyVision`,
+        `hasPQ`, `hasHLG`, `videoStreams`/`audioStreams`/`subtitleStreams`,
+        and `summaryString` do NOT appear in the JSON at all (derive them
+        client-side from `fileURL`, `fileSize`, `duration`, and `streams`).
+        `id` is a random UUID assigned at probe time, not stable across
+        repeated probes of the same file.
+      required:
+        - id
+        - fileURL
+        - streams
+        - metadata
+        - chapters
       properties:
-        fileName:
+        id:
           type: string
+          format: uuid
         fileURL:
           type: string
           format: uri
-        fileSizeString:
-          type:
-            - string
-            - "null"
-        durationString:
-          type:
-            - string
-            - "null"
-        overallBitrate:
-          type:
-            - integer
-            - "null"
-          description: Overall bitrate in bits per second.
+          description: "file:// URL of the probed path."
+        fileSize:
+          type: integer
+          description: File size in bytes (UInt64). Absent if unknown.
         containerFormat:
-          type:
-            - string
-            - "null"
-        hasHDR:
-          type: boolean
-        hasDolbyVision:
-          type: boolean
-        hasPQ:
-          type: boolean
-        hasHLG:
-          type: boolean
-        chapters:
-          type: array
-          items:
-            type: object
+          $ref: '#/components/schemas/ContainerFormat'
+        containerFormatName:
+          type: string
+          description: "Raw container name as reported by ffprobe (e.g. \"matroska,webm\"). Absent if unknown."
         streams:
           type: array
           items:
             $ref: '#/components/schemas/MediaStream'
+        duration:
+          type: number
+          format: double
+          description: Total duration in seconds. Absent if unknown.
+        overallBitrate:
+          type: integer
+          description: Overall bitrate in bits per second. Absent if unknown.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: File-level metadata tags (title, artist, date, etc.). Always present, may be an empty object.
+        chapters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chapter'
+          description: Always present, may be an empty array.
+        probedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp (encoder uses `.iso8601` date strategy). Absent unless the caller set it explicitly.
+        probeVersions:
+          type: object
+          additionalProperties:
+            type: string
+          description: Probe tool version fingerprint, used for cache invalidation. Absent unless set.
+
+    MediaStream:
+      type: object
+      description: |
+        A single stream (video, audio, subtitle, or data), as serialised
+        by Swift's synthesised `Encodable` conformance. Computed
+        convenience properties (`resolutionString`, `isLosslessAudio`,
+        `isSpatialAudio`, `summaryString`) do NOT appear in the JSON —
+        derive `resolutionString` client-side from `width`/`height`.
+        The field is named `streamType`, not `codecType`.
+      required:
+        - id
+        - streamIndex
+        - streamType
+        - isDefault
+        - isForced
+        - isEnabled
+        - hdrFormats
+        - isStereo3D
+      properties:
+        id:
+          type: string
+          format: uuid
+        streamIndex:
+          type: integer
+          description: 0-based index within the source file.
+        streamType:
+          type: string
+          enum: [video, audio, subtitle, data, attachment, unknown]
+        codecName:
+          type: string
+          description: Short codec name as reported by the probe tool. Absent if unknown.
+        codecLongName:
+          type: string
+          description: Long/descriptive codec name. Absent if unknown.
+        bitrate:
+          type: integer
+          description: Stream bitrate in bits per second. Absent if unknown or VBR without an average.
+        duration:
+          type: number
+          format: double
+          description: Stream duration in seconds (may differ from file duration). Absent if unknown.
+        language:
+          type: string
+          description: BCP 47 language code. Absent if unknown.
+        title:
+          type: string
+          description: User-facing stream label. Absent if unset.
+        isDefault:
+          type: boolean
+        isForced:
+          type: boolean
+        isEnabled:
+          type: boolean
+        width:
+          type: integer
+          description: Video width in pixels. Video streams only.
+        height:
+          type: integer
+          description: Video height in pixels. Video streams only.
+        frameRate:
+          type: number
+          format: double
+          description: Frames per second. Video streams only.
+        pixelAspectRatio:
+          type: string
+        displayAspectRatio:
+          type: string
+        hdrFormats:
+          type: array
+          items:
+            $ref: '#/components/schemas/HDRFormat'
+          description: Always present (possibly empty); NOT a single value.
+        colourProperties:
+          $ref: '#/components/schemas/ColourProperties'
+        dolbyVisionProfile:
+          type: string
+          description: "e.g. \"dvhe.08.06\" for Profile 8, Level 6. Absent if not Dolby Vision."
+        isStereo3D:
+          type: boolean
+        videoCodec:
+          $ref: '#/components/schemas/VideoCodec'
+        sampleRate:
+          type: integer
+          description: Audio sample rate in Hz. Audio streams only.
+        channelLayout:
+          $ref: '#/components/schemas/ChannelLayout'
+          description: Audio streams only — an OBJECT (`{channelCount, layoutName}`), not a bare string.
+        audioBitDepth:
+          type: integer
+        matrixEncoding:
+          $ref: '#/components/schemas/MatrixEncoding'
+        audioCodec:
+          $ref: '#/components/schemas/AudioCodec'
+        suiteCoreCodecDescriptor:
+          $ref: '#/components/schemas/SuiteCoreCodecDescriptor'
+        subtitleFormat:
+          $ref: '#/components/schemas/SubtitleFormat'
+
+    ColourProperties:
+      type: object
+      description: Colour space / transfer function properties of a video stream. All fields optional (absent when unknown).
+      properties:
+        primaries:
+          type: string
+        transferCharacteristics:
+          type: string
+        matrixCoefficients:
+          type: string
+        bitDepth:
+          type: integer
+        chromaSubsampling:
+          type: string
+        maxCLL:
+          type: integer
+          description: Maximum Content Light Level in nits.
+        maxFALL:
+          type: integer
+          description: Maximum Frame-Average Light Level in nits.
+        masteringDisplayMaxLuminance:
+          type: integer
+        masteringDisplayMinLuminance:
+          type: integer
+
+    ChannelLayout:
+      type: object
+      required: [channelCount]
+      properties:
+        channelCount:
+          type: integer
+        layoutName:
+          type: string
+          description: "FFmpeg channel layout string, e.g. \"stereo\", \"5.1\", \"5.1(side)\". Absent if unknown."
+
+    Chapter:
+      type: object
+      required: [id, number, startTime, endTime, metadata]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          description: 1-based chapter number.
+        title:
+          type: string
+        startTime:
+          type: number
+          format: double
+        endTime:
+          type: number
+          format: double
         metadata:
           type: object
           additionalProperties:
             type: string
 
-    MediaStream:
+    SuiteCoreCodecDescriptor:
       type: object
-      description: A single media stream (video, audio, or subtitle).
+      description: "Lossless/spatial classification for an audio stream, sourced from SuiteCoreCodecClassifier (#372). Absent for non-audio streams or when no classification was made."
+      required: [identifier, displayName, isLossless, isSpatial]
       properties:
-        streamIndex:
-          type: integer
-        codecName:
-          type:
-            - string
-            - "null"
-        codecType:
+        identifier:
           type: string
-          enum: [video, audio, subtitle]
-        resolutionString:
-          type:
-            - string
-            - "null"
-        frameRate:
-          type:
-            - number
-            - "null"
-        bitrate:
-          type:
-            - integer
-            - "null"
+        displayName:
+          type: string
+        isLossless:
+          type: boolean
+        isSpatial:
+          type: boolean
         channelLayout:
-          type:
-            - string
-            - "null"
-        sampleRate:
-          type:
-            - integer
-            - "null"
-        language:
-          type:
-            - string
-            - "null"
-        title:
-          type:
-            - string
-            - "null"
-        isDefault:
-          type: boolean
-        isForced:
-          type: boolean
-        hdrFormats:
-          type: array
-          items:
-            type: string
+          type: string
 
-    # -- Streaming variant (for ladder-file) --
+    # -- Streaming variant (for --ladder-file) --
     StreamingVariant:
       type: object
-      description: A single variant in an adaptive streaming ladder. Used in --ladder-file JSON arrays.
+      description: |
+        A single variant in an adaptive streaming ladder, used in
+        `manifest --ladder-file` JSON arrays. Because Swift's synthesised
+        `Decodable` conformance does not treat `init`-level default
+        values as optional, ALL EIGHT fields below are required keys in
+        a hand-written ladder file — including `videoMaxBitrate` and
+        `videoBufferSize` (easy to omit by mistake) and `audioBitrate`/
+        `audioChannels` (which have `init` defaults of 128000/2 that only
+        apply when constructing the struct in Swift code, not when
+        decoding JSON).
       required:
         - label
         - width
         - height
         - videoBitrate
+        - videoMaxBitrate
+        - videoBufferSize
+        - audioBitrate
+        - audioChannels
       properties:
         label:
           type: string
-          description: "Human-readable label (e.g., '1080p', '720p')."
+          description: "Human-readable label (e.g., '1080p', '720p'). Also used as the variant subdirectory suffix."
         width:
           type: integer
           description: Output width in pixels.
@@ -1067,49 +1347,453 @@ components:
         videoBitrate:
           type: integer
           description: Target video bitrate in bits per second.
+        videoMaxBitrate:
+          type: integer
+          description: Maximum video bitrate in bits per second (CVBR `-maxrate`). Required — `ManifestGenerator.validate` flags this variant if it is lower than `videoBitrate`.
+        videoBufferSize:
+          type: integer
+          description: VBV buffer size in bits (CVBR `-bufsize`).
         audioBitrate:
           type: integer
           description: Target audio bitrate in bits per second.
+        audioChannels:
+          type: integer
+          description: Audio channel count.
+
+    # -- Manifest config (for validate --manifest) --
+    ManifestConfig:
+      type: object
+      description: "Full configuration decoded from `validate --manifest <file>`. `inputURL`/`outputDirectory` are file:// URLs, not plain path strings."
+      required:
+        - inputURL
+        - outputDirectory
+        - format
+        - videoCodec
+        - audioCodec
+        - preset
+        - keyframeInterval
+        - segmentDuration
+        - variants
+        - preserveHDR
+        - useHardwareEncoding
+      properties:
+        inputURL:
+          type: string
+          format: uri
+        outputDirectory:
+          type: string
+          format: uri
+        format:
+          type: string
+          enum: [hls, dash, cmaf]
+        videoCodec:
+          $ref: '#/components/schemas/VideoCodec'
+        audioCodec:
+          $ref: '#/components/schemas/AudioCodec'
+        preset:
+          type: string
+        keyframeInterval:
+          type: number
+          format: double
+        segmentDuration:
+          type: number
+          format: double
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/StreamingVariant'
+        preserveHDR:
+          type: boolean
+        pixelFormat:
+          type: string
+        useHardwareEncoding:
+          type: boolean
+
+    # -- Encoding profile (profiles --show/--export/--import --json; nested in EncodingJobConfig) --
+    EncodingProfile:
+      type: object
+      description: |
+        A reusable encoding preset. Serialised/deserialised via Swift's
+        synthesised `Codable` conformance — the `required` list below is
+        the set of non-`Optional`-typed stored properties, which MUST be
+        present when importing a profile via `profiles --import` or
+        `validate --profile-file` even though many of them have friendly
+        defaults in the Swift `init` (those defaults only apply when
+        constructing the struct from code, not from JSON).
+      required:
+        - id
+        - name
+        - description
+        - category
+        - isBuiltIn
+        - videoPassthrough
+        - useHardwareEncoding
+        - encodingPasses
+        - preserveHDR
+        - toneMapToSDR
+        - convertPQToHLG
+        - useHlgTools
+        - convertPQToDVHLG
+        - audioPassthrough
+        - applyPeakLimiter
+        - subtitlePassthrough
+        - containerFormat
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [quick_start, streaming, disc, archival, custom]
+        isBuiltIn:
+          type: boolean
+        videoCodec:
+          $ref: '#/components/schemas/VideoCodec'
+        videoPassthrough:
+          type: boolean
+        videoCRF:
+          type: integer
+        videoQP:
+          type: integer
+          description: Used instead of CRF for hardware encoders.
+        videoBitrate:
+          type: integer
+        videoMaxBitrate:
+          type: integer
+        videoPreset:
+          type: string
+        videoTune:
+          type: string
+        outputWidth:
+          type: integer
+        outputHeight:
+          type: integer
+        outputFrameRate:
+          type: number
+          format: double
+        pixelFormat:
+          type: string
+        useHardwareEncoding:
+          type: boolean
+        encodingPasses:
+          type: integer
+        preserveHDR:
+          type: boolean
+        toneMapToSDR:
+          type: boolean
+        toneMapAlgorithm:
+          type: string
+          description: "Free-form string field on the profile. Only resolved into an actual tone-map algorithm if it matches `FFmpegArgumentBuilder.ToneMapAlgorithm`'s raw values (hable, reinhard, mobius, bt2390, clip); otherwise ignored."
+        convertPQToHLG:
+          type: boolean
+        useHlgTools:
+          type: boolean
+        toneMapPeakNits:
+          type: number
+          format: double
+        toneMapDesaturation:
+          type: number
+          format: double
+        convertPQToDVHLG:
+          type: boolean
+        displayAspectRatio:
+          type: string
+        audioCodec:
+          $ref: '#/components/schemas/AudioCodec'
+        audioPassthrough:
+          type: boolean
+        audioBitrate:
+          type: integer
+        audioSampleRate:
+          type: integer
+        audioChannels:
+          type: integer
+        loudnessNormalization:
+          type: string
+        applyPeakLimiter:
+          type: boolean
+        subtitlePassthrough:
+          type: boolean
+        subtitleTonemap:
+          type: object
+          description: HDR subtitle tone-mapping config (#369/#396). Not settable from any CLI flag — present only in profiles authored via the GUI.
+        perStreamSettings:
+          type: object
+          description: Per-stream codec/bitrate overrides (#41). Not settable from any CLI flag.
+        containerFormat:
+          $ref: '#/components/schemas/ContainerFormat'
+        keyframeIntervalSeconds:
+          type: number
+          format: double
+        videoBufferSize:
+          type: integer
 
     # -- Batch job file schema --
     EncodingJobConfig:
       type: object
       description: |
-        A single encoding job definition used in batch --job-file JSON arrays.
-        Each object defines an input/output pair and encoding parameters.
+        A single encoding job definition used in `batch --job-file` JSON
+        arrays. This is the CLI/engine's full internal job struct, not a
+        simplified input/output pair — Swift's synthesised `Decodable`
+        conformance requires every non-`Optional` stored property to be
+        present. `batch --job-file` uses a plain `JSONDecoder()` with NO
+        custom date strategy, so `createdAt` must be a raw number
+        (seconds since 2001-01-01, `timeIntervalSinceReferenceDate`), NOT
+        an ISO 8601 string — unlike `probe --format json`'s output, which
+        does use `.iso8601`. For a hand-written job file, set
+        `outputMetadata: {}`, `streamMetadata: {}`, `extraArguments: []`,
+        `subtitleStreamActions: []`, and `priority: 0` to satisfy the
+        decoder without meaningfully affecting the job.
       required:
+        - id
         - inputURL
         - outputURL
+        - profile
+        - mapAllStreams
+        - outputMetadata
+        - streamMetadata
+        - extraArguments
+        - subtitleStreamActions
+        - createdAt
+        - priority
       properties:
+        id:
+          type: string
+          format: uuid
         inputURL:
           type: string
-          description: Absolute path to the input media file.
+          format: uri
+          description: "file:// URL to the input media file (a plain path string will fail to decode as a URL)."
         outputURL:
           type: string
-          description: Absolute path to the output file.
+          format: uri
         profile:
-          type: object
-          description: Full EncodingProfile object (or reference by name).
+          $ref: '#/components/schemas/EncodingProfile'
         videoStreamIndex:
-          type:
-            - integer
-            - "null"
+          type: integer
         audioStreamIndex:
-          type:
-            - integer
-            - "null"
+          type: integer
         subtitleStreamIndex:
-          type:
-            - integer
-            - "null"
+          type: integer
         mapAllStreams:
           type: boolean
-          default: false
+        outputMetadata:
+          type: object
+          additionalProperties:
+            type: string
+        streamMetadata:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+        videoFilterChain:
+          type: string
+        audioFilterChain:
+          type: string
         extraArguments:
           type: array
           items:
             type: string
           description: Additional raw FFmpeg arguments appended to the command.
+        hdrMasteringDisplay:
+          type: string
+        hdrMaxCLL:
+          type: integer
+        hdrMaxFALL:
+          type: integer
+        hdrMasteringDisplayMaxLuminance:
+          type: integer
+        hdrMasteringDisplayMinLuminance:
+          type: integer
+        hdrTransferFunction:
+          type: string
+          enum: [pq, hlg]
+        subtitleStreamActions:
+          type: array
+          items:
+            type: object
+            description: "`{streamIndex: Int, action: \"passthrough\"|\"drop\"|{\"replaceWith\": \"<file:// URL>\"}}`. Populated internally by the encoding engine; pass `[]` in hand-written job files."
+        createdAt:
+          type: number
+          format: double
+          description: Seconds since the Swift reference date (2001-01-01T00:00:00Z) — see the schema-level description note about the job-file decoder's date strategy.
+        priority:
+          type: integer
+          description: Queue ordering priority (higher = processed first). Only meaningful for GUI-driven `EncodingQueue`; `batch --job-file` processes jobs strictly in array order and ignores this field.
+
+    # -- Reusable enums, verified against ConverterEngine source --
+    VideoCodec:
+      type: string
+      description: "Full `VideoCodec` raw-value list (Sources/ConverterEngine/Models/VideoCodec.swift). There is no `copy` case — passthrough is `--video-passthrough`, a separate flag."
+      enum:
+        - h264
+        - h265
+        - h266
+        - mv_hevc
+        - mv_h264
+        - vp8
+        - vp9
+        - av1
+        - av2
+        - prores
+        - dnxhr
+        - cineform
+        - mpeg2
+        - mpeg4
+        - theora
+        - vc1
+        - ffv1
+        - jpeg2000
+
+    AudioCodec:
+      type: string
+      description: "Full `AudioCodec` raw-value list (Sources/ConverterEngine/Models/AudioCodec.swift). There is no `copy` case — passthrough is `--audio-passthrough`, a separate flag."
+      enum:
+        - aac
+        - he_aac
+        - he_aac_v2
+        - xhe_aac
+        - ac3
+        - eac3
+        - truehd
+        - ac4
+        - dts
+        - dts_hd
+        - dts_x
+        - pcm
+        - mp3
+        - mp2
+        - flac
+        - alac
+        - opus
+        - vorbis
+        - speex
+        - dsd
+        - wavpack
+        - mqa
+        - musepack
+        - ape
+        - tta
+        - wma
+        - atrac
+        - dolby_mat
+        - iamf
+        - mpeg_h_3d
+        - 360ra
+        - asaf
+        - ambisonics
+        - auro_3d
+        - nhk_22_2
+        - ac4_ajoc
+        - mp3_surround
+        - imax_enhanced
+
+    ContainerFormat:
+      type: string
+      description: "Full `ContainerFormat` raw-value list (Sources/ConverterEngine/Models/ContainerFormat.swift)."
+      enum:
+        - mp4
+        - m4v
+        - m4a
+        - m4b
+        - m4p
+        - mkv
+        - mka
+        - mks
+        - mk3d
+        - mov
+        - webm
+        - ts
+        - mpg
+        - mxf
+        - avi
+        - flv
+        - 3gp
+        - 3g2
+        - ogg
+        - ogm
+        - hls
+        - dash
+        - aiff
+        - caf
+        - w64
+        - rf64
+        - dcp
+
+    ToneMapAlgorithm:
+      type: string
+      description: "`FFmpegArgumentBuilder.ToneMapAlgorithm` — the enum that actually governs `encode --tonemap-algorithm`. Note this differs from the similarly-named enum in ColorSpaceConverter.swift, which has `linear` instead of `clip`; the CLI flag uses THIS one."
+      enum:
+        - hable
+        - reinhard
+        - mobius
+        - bt2390
+        - clip
+
+    Platform:
+      type: string
+      description: "`PlatformFormatPolicy.Platform` raw-value list."
+      enum:
+        - macOS
+        - iOS
+        - tvOS
+        - windows
+        - android
+        - chromecast
+        - webBrowser
+        - plex
+        - jellyfin
+        - roku
+        - fireTV
+
+    HDRFormat:
+      type: string
+      enum:
+        - hdr10
+        - "hdr10+"
+        - dolby_vision
+        - dolby_vision_hdr10
+        - hlg
+        - pq
+        - sdr
+
+    SubtitleFormat:
+      type: string
+      enum:
+        - srt
+        - ttml
+        - vtt
+        - ssa
+        - sami
+        - lrc
+        - cc608
+        - cc708
+        - dvb_sub
+        - pgs
+        - vob_sub
+        - ebu_stl
+        - scc
+        - mcc
+        - teletext
+
+    MatrixEncoding:
+      type: string
+      enum:
+        - dolby_surround
+        - prologic_ii
+        - prologic_iix
+        - dolby_ex
+        - dolby_surround_upmixer
+        - dts_es
+        - dts_neo6
+        - dts_neural_x
+        - circle_surround
+        - mpeg_surround
 
     # -- Exit codes --
     ExitCodes:
