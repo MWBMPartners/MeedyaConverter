@@ -194,6 +194,55 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         return candidate
     }
 
+    // MARK: - Overwrite-Aware Resolution (Issue #7 completeness audit)
+
+    /// Resolve the output URL, honouring the caller's "overwrite existing
+    /// output files" preference.
+    ///
+    /// When `overwriteExisting` is `false` (the default, and the app's
+    /// existing behaviour prior to this method existing), delegates to
+    /// ``resolveWithCollisionHandling(sourceFile:profile:outputDirectory:fileExtension:date:)``
+    /// so an existing file at the resolved path is never silently
+    /// clobbered — a numeric suffix (`_1`, `_2`, ...) is appended instead.
+    ///
+    /// When `overwriteExisting` is `true`, returns the plain resolved path
+    /// with no collision suffixing at all, even if a file already exists
+    /// there — the caller (FFmpeg, invoked with `-y`) is expected to
+    /// overwrite it in place.
+    ///
+    /// - Parameters:
+    ///   - sourceFile: The source media file.
+    ///   - profile: The encoding profile.
+    ///   - outputDirectory: The output directory to check for collisions.
+    ///   - fileExtension: The file extension to append.
+    ///   - overwriteExisting: Whether existing output files may be
+    ///     overwritten in place rather than auto-renamed.
+    ///   - date: The date to use for template resolution.
+    /// - Returns: The resolved output URL.
+    public func resolveOutputURL(
+        sourceFile: MediaFile,
+        profile: EncodingProfile,
+        outputDirectory: URL,
+        fileExtension: String,
+        overwriteExisting: Bool,
+        date: Date = Date()
+    ) -> URL {
+        guard overwriteExisting else {
+            return resolveWithCollisionHandling(
+                sourceFile: sourceFile,
+                profile: profile,
+                outputDirectory: outputDirectory,
+                fileExtension: fileExtension,
+                date: date
+            )
+        }
+
+        let baseName = resolve(sourceFile: sourceFile, profile: profile, date: date)
+        return outputDirectory
+            .appendingPathComponent(baseName)
+            .appendingPathExtension(fileExtension)
+    }
+
     // MARK: - Helpers
 
     /// Remove characters that are invalid in macOS/APFS filenames.

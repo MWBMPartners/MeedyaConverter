@@ -735,16 +735,25 @@ final class AppViewModel {
         // Log PQ → HLG conversion status (Issue #254)
         logPQToHLGStatus()
 
-        // Determine output URL using filename template (Issue #272)
+        // Determine output URL using filename template (Issue #272),
+        // honouring the "Overwrite existing output files" setting
+        // (SettingsView.overwriteExisting — previously persisted but
+        // never read). `false` (the default) keeps the pre-existing
+        // auto-rename-on-collision behaviour via
+        // `resolveWithCollisionHandling`; `true` reuses the resolved path
+        // even if a file is already there, which FFmpeg (invoked with
+        // `-y` for every job) then overwrites in place.
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory
         let outputExtension = selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
         let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
         let template = FilenameTemplate(template: templateString)
-        let outputURL = template.resolveWithCollisionHandling(
+        let overwriteExisting = UserDefaults.standard.bool(forKey: "overwriteExisting")
+        let outputURL = template.resolveOutputURL(
             sourceFile: file,
             profile: selectedProfile,
             outputDirectory: outputDir,
-            fileExtension: outputExtension
+            fileExtension: outputExtension,
+            overwriteExisting: overwriteExisting
         )
 
         // Apply auto-crop filter if enabled and a crop was detected
@@ -1052,6 +1061,16 @@ final class AppViewModel {
                 // matching the wording exactly.
                 if UserDefaults.standard.bool(forKey: "mediaServerAutoScan") {
                     triggerMediaServerAutoScan()
+                }
+
+                // Delete source file after successful encode, if enabled
+                // (SettingsView.deleteSourceAfterEncode — previously
+                // persisted but never read). Deliberately last in this
+                // success block: every other completion action above has
+                // already had its chance to read `jobState.config` before
+                // anything gets deleted.
+                if UserDefaults.standard.bool(forKey: "deleteSourceAfterEncode") {
+                    deleteSourceFileIfSafe(job: jobState.config)
                 }
 
             } catch {
@@ -1402,6 +1421,59 @@ final class AppViewModel {
             return Int64(size)
         }
         return nil
+    }
+
+    /// Delete the source file for a completed job, if — and only if — it
+    /// is safe to do so (SettingsView.deleteSourceAfterEncode, Issue #7
+    /// completeness audit).
+    ///
+    /// This is a data-destructive operation, so it is deliberately
+    /// conservative:
+    ///   - Only ever called from the `.completed` success path in
+    ///     `startQueue()` — never on failure or cancellation (those hit
+    ///     the `catch` block, which never calls this).
+    ///   - The output file must exist and be non-empty, so a crashed or
+    ///     truncated encode never takes the source down with it.
+    ///   - Input and output paths must differ, in case an
+    ///     `overwriteExisting` configuration ever made them identical.
+    /// Deletion failures are logged, never thrown — this is best-effort
+    /// clean-up, not something that should ever fail an already-completed
+    /// job.
+    ///
+    /// - Parameter job: The completed job's configuration.
+    private func deleteSourceFileIfSafe(job: EncodingJobConfig) {
+        guard job.inputURL.path != job.outputURL.path else {
+            appendLog(
+                .warning,
+                "Skipped deleting source: input and output paths are identical (\(job.inputURL.path))",
+                category: .encoding, jobID: job.id
+            )
+            return
+        }
+
+        guard let outputSize = fileSizeInBytes(atPath: job.outputURL.path), outputSize > 0 else {
+            appendLog(
+                .warning,
+                "Skipped deleting source: output file missing or empty at \(job.outputURL.path)",
+                category: .encoding, jobID: job.id
+            )
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: job.inputURL)
+            appendLog(
+                .info,
+                "Deleted source file after successful encode: \(job.inputURL.lastPathComponent)",
+                category: .encoding, jobID: job.id
+            )
+        } catch {
+            appendLog(
+                .warning,
+                "Failed to delete source file \(job.inputURL.lastPathComponent): \(error.localizedDescription)",
+                category: .encoding, jobID: job.id
+            )
+        }
     }
 
     /// Format a time interval as a human-readable duration.
