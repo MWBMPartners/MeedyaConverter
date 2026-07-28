@@ -776,7 +776,9 @@ final class AppViewModel {
                 fileSize: fileSizeInBytes(atPath: jobState.config.inputURL.path),
                 duration: nil,
                 videoCodec: jobState.config.profile.videoCodec?.rawValue,
-                audioCodec: jobState.config.profile.audioCodec?.rawValue
+                audioCodec: jobState.config.profile.audioCodec?.rawValue,
+                profileName: jobState.config.profile.name,
+                containerFormat: jobState.config.profile.containerFormat.fileExtensions.first ?? "mkv"
             )
 
             do {
@@ -874,6 +876,11 @@ final class AppViewModel {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
                 jobState.completedAt = Date()
+
+                // Persist failed-job statistics so the Dashboard success rate is real (Issue #284).
+                statsCollector.markFailed()
+                let failedStatistics = statsCollector.currentStatistics
+                await Task.detached { EncodingStatisticsStore().addStatistics(failedStatistics) }.value
 
                 // Track encode failure (Issue #183)
                 analytics.track(.encodeFailed)

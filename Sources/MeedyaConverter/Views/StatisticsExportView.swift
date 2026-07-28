@@ -17,16 +17,17 @@ import ConverterEngine
 /// Provides controls for:
 /// - Selecting the export format (CSV or JSON).
 /// - Filtering by date range (start and end dates).
-/// - Choosing which columns to include in the CSV export.
 /// - Previewing the export output before saving.
 /// - Exporting via an NSSavePanel.
 ///
+/// Reads from `EncodingStatisticsStore` — the single source of truth for
+/// encoding statistics (Issue #284, re #363) — rather than fabricating
+/// empty data. No column picker: `EncodingStatisticsStore.exportAsCSV()`/
+/// `exportAsJSON()` always emit the full, real per-job record (see
+/// `EncodingStatistics.csvHeader`/`csvRow`).
+///
 /// Phase 15 — Export Encoding Statistics to CSV (Issue #363)
 struct StatisticsExportView: View {
-
-    // MARK: - Environment
-
-    @Environment(AppViewModel.self) private var viewModel
 
     // MARK: - Types
 
@@ -52,14 +53,19 @@ struct StatisticsExportView: View {
     /// The end date for the export range filter.
     @State private var endDate: Date = Date()
 
-    /// The set of columns selected for CSV export.
-    @State private var selectedColumns: Set<ExportColumn> = Set(ExportColumn.allCases)
-
     /// Whether the preview section is expanded.
     @State private var showPreview: Bool = false
 
     /// Status message after export attempt.
     @State private var statusMessage: String?
+
+    /// Persisted history of completed encoding job statistics, backing the
+    /// export below. Real, already-tested component
+    /// (`EncodingStatisticsStore` in `ConverterEngine`) — reads its JSON
+    /// history from disk in its initializer, the same way
+    /// `EncodingGraphsView` seeds its `@State` directly from a fresh
+    /// instance (Issue #284, re #363).
+    @State private var statisticsStore = EncodingStatisticsStore()
 
     // MARK: - Body
 
@@ -98,35 +104,6 @@ struct StatisticsExportView: View {
             }
 
             // -----------------------------------------------------------------
-            // Column Selection (CSV only)
-            // -----------------------------------------------------------------
-            if exportFormat == .csv {
-                Section("Columns") {
-                    ForEach(ExportColumn.allCases) { column in
-                        Toggle(column.displayName, isOn: Binding(
-                            get: { selectedColumns.contains(column) },
-                            set: { isOn in
-                                if isOn {
-                                    selectedColumns.insert(column)
-                                } else {
-                                    selectedColumns.remove(column)
-                                }
-                            }
-                        ))
-                    }
-
-                    HStack {
-                        Button("Select All") {
-                            selectedColumns = Set(ExportColumn.allCases)
-                        }
-                        Button("Deselect All") {
-                            selectedColumns.removeAll()
-                        }
-                    }
-                }
-            }
-
-            // -----------------------------------------------------------------
             // Preview
             // -----------------------------------------------------------------
             Section("Preview") {
@@ -152,7 +129,7 @@ struct StatisticsExportView: View {
                     Spacer()
                     Button("Export \(exportFormat.rawValue)...", action: exportData)
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(exportFormat == .csv && selectedColumns.isEmpty)
+                        .disabled(statisticsStore.allStatistics.isEmpty)
                     Spacer()
                 }
 
@@ -166,28 +143,37 @@ struct StatisticsExportView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Export Statistics")
+        .onAppear {
+            // Reload from disk each time this view appears so a job
+            // completed since the store was last constructed shows up.
+            // `EncodingStatisticsStore` only reads its history file inside
+            // `init()`, so a fresh instance is how a re-read happens. Kept
+            // off the main actor via `Task.detached`, mirroring
+            // `EncodingGraphsView.onAppear`.
+            Task {
+                statisticsStore = await Task.detached {
+                    EncodingStatisticsStore()
+                }.value
+            }
+        }
     }
 
     // MARK: - Computed Properties
 
     /// Generates preview content based on the current export configuration.
     private var previewContent: String {
-        let stats = EncodingStats()
-        let history: [EncodeHistoryEntry] = []
-
         switch exportFormat {
         case .csv:
-            let columns = ExportColumn.allCases.filter { selectedColumns.contains($0) }
-            return StatisticsExporter.exportAsCSV(
-                stats: stats,
-                history: history,
-                columns: columns,
+            let data = statisticsStore.exportAsCSV(
                 startDate: filterByDate ? startDate : nil,
                 endDate: filterByDate ? endDate : nil
             )
+            return String(data: data, encoding: .utf8) ?? ""
         case .json:
-            if let data = try? StatisticsExporter.exportAsJSON(stats: stats),
-               let string = String(data: data, encoding: .utf8) {
+            if let data = try? statisticsStore.exportAsJSON(
+                startDate: filterByDate ? startDate : nil,
+                endDate: filterByDate ? endDate : nil
+            ), let string = String(data: data, encoding: .utf8) {
                 return string
             }
             return "{ }"
@@ -213,26 +199,21 @@ struct StatisticsExportView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            let stats = EncodingStats()
-            let history: [EncodeHistoryEntry] = []
-
-            let content: String
+            let data: Data
             switch exportFormat {
             case .csv:
-                let columns = ExportColumn.allCases.filter { selectedColumns.contains($0) }
-                content = StatisticsExporter.exportAsCSV(
-                    stats: stats,
-                    history: history,
-                    columns: columns,
+                data = statisticsStore.exportAsCSV(
                     startDate: filterByDate ? startDate : nil,
                     endDate: filterByDate ? endDate : nil
                 )
             case .json:
-                let data = try StatisticsExporter.exportAsJSON(stats: stats)
-                content = String(data: data, encoding: .utf8) ?? "{ }"
+                data = try statisticsStore.exportAsJSON(
+                    startDate: filterByDate ? startDate : nil,
+                    endDate: filterByDate ? endDate : nil
+                )
             }
 
-            try content.write(to: url, atomically: true, encoding: .utf8)
+            try data.write(to: url, options: .atomic)
             statusMessage = "Exported to \(url.lastPathComponent)"
         } catch {
             statusMessage = "Error: \(error.localizedDescription)"

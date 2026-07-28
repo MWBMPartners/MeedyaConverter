@@ -16,7 +16,9 @@
 //   - Container format distribution bar chart.
 //   - "Reset Statistics" button with confirmation alert.
 //
-// The view reads from `StatisticsTracker.shared` and refreshes on appear.
+// The view derives its stats via `EncodingStats(aggregating:)` from
+// `EncodingStatisticsStore` — the single source of truth for encoding
+// statistics (Issue #284) — and refreshes on appear.
 //
 // Phase 11 — Dashboard View (Issue #284)
 // ---------------------------------------------------------------------------
@@ -38,9 +40,6 @@ struct DashboardView: View {
 
     /// Whether the reset confirmation alert is shown.
     @State private var showResetConfirmation = false
-
-    /// The statistics tracker instance.
-    private let tracker = StatisticsTracker.shared
 
     // MARK: - Body
 
@@ -229,8 +228,10 @@ struct DashboardView: View {
             ) {
                 Button("Cancel", role: .cancel) {}
                 Button("Reset", role: .destructive) {
-                    tracker.resetStats()
-                    refreshStats()
+                    Task {
+                        await Task.detached { EncodingStatisticsStore().clearHistory() }.value
+                        refreshStats()
+                    }
                 }
             } message: {
                 Text("This will permanently delete all encoding statistics. This action cannot be undone.")
@@ -240,9 +241,16 @@ struct DashboardView: View {
 
     // MARK: - Helpers
 
-    /// Refreshes the stats snapshot from the tracker.
+    /// Refreshes the stats snapshot by re-reading and aggregating the
+    /// per-job history from `EncodingStatisticsStore` (Issue #284). The
+    /// store's JSON decode runs off the main actor via `Task.detached`,
+    /// mirroring `EncodingGraphsView.onAppear`'s handling of the same store.
     private func refreshStats() {
-        stats = tracker.currentStats()
+        Task {
+            stats = await Task.detached {
+                EncodingStats(aggregating: EncodingStatisticsStore().allStatistics)
+            }.value
+        }
     }
 
     /// Wraps chart content in a titled card.
