@@ -28,6 +28,7 @@ struct OutputSettingsView: View {
     @State private var showPerStreamSettings = false
     @State private var showNormalizationSettings = false
     @State private var showFFmpegPreview = false
+    @State private var showQualityPreview = false
 
     // MARK: - AppStorage (Issue #272)
 
@@ -69,6 +70,12 @@ struct OutputSettingsView: View {
         .sheet(isPresented: $showFFmpegPreview) {
             FFmpegPreviewView()
         }
+        .sheet(isPresented: $showQualityPreview) {
+            if let file = viewModel.selectedFile {
+                QualityPreviewView(sourceFile: file, profile: viewModel.selectedProfile)
+                    .frame(minWidth: 900, minHeight: 600)
+            }
+        }
         .sheet(isPresented: Binding(
             get: { viewModel.showPipelineEditor },
             set: { viewModel.showPipelineEditor = $0 }
@@ -93,6 +100,14 @@ struct OutputSettingsView: View {
             Section("Encoding Profile") {
                 profilePicker
                 profileDescription
+                if let file = viewModel.selectedFile {
+                    ProfileSuggestionView(
+                        sourceFile: file,
+                        profiles: viewModel.engine.profileStore.profiles,
+                        onSelectProfile: { profile in viewModel.selectedProfile = profile }
+                    )
+                    .id(file.id)   // REQUIRED: resets the view's @State suggestions/hasComputed when the file changes
+                }
                 Button("Manage Profiles...") {
                     showProfileManager = true
                 }
@@ -202,6 +217,11 @@ struct OutputSettingsView: View {
                     }
                     .disabled(viewModel.selectedFile == nil)
                     .accessibilityLabel("Preview the FFmpeg command that will be generated")
+                    Button("Quality Preview...") {
+                        showQualityPreview = true
+                    }
+                    .disabled(viewModel.selectedFile == nil)
+                    .accessibilityLabel("Preview quality comparison between source and encoded output")
                     Button("Edit Stream Metadata...") {
                         showStreamMetadataEditor = true
                     }
