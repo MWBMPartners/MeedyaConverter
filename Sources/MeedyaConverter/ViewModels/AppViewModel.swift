@@ -1001,7 +1001,8 @@ final class AppViewModel {
                     settingKey: "notifyOnCompletion"
                 )
 
-                let outputSizeLabel = fileSizeInBytes(atPath: jobState.config.outputURL.path)
+                let outputSizeBytes = fileSizeInBytes(atPath: jobState.config.outputURL.path)
+                let outputSizeLabel = outputSizeBytes
                     .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown"
                 sendCompletionEmail(
                     settingKey: "emailOnComplete",
@@ -1010,6 +1011,16 @@ final class AppViewModel {
                     duration: elapsed,
                     outputSize: outputSizeLabel,
                     success: true
+                )
+
+                sendWebhookNotification(
+                    settingKey: "webhookOnComplete",
+                    event: "encode_complete",
+                    status: "success",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    durationSeconds: jobState.elapsedTime ?? 0,
+                    outputSizeBytes: outputSizeBytes ?? 0
                 )
 
             } catch {
@@ -1043,6 +1054,17 @@ final class AppViewModel {
                     success: false,
                     errorMessage: error.localizedDescription
                 )
+
+                sendWebhookNotification(
+                    settingKey: "webhookOnFailure",
+                    event: "encode_failed",
+                    status: "failure",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    durationSeconds: jobState.elapsedTime ?? 0,
+                    outputSizeBytes: 0,
+                    errorMessage: error.localizedDescription
+                )
             }
 
             // Deactivate system-level progress indicators (Issue #182)
@@ -1062,6 +1084,20 @@ final class AppViewModel {
             title: "Queue Finished",
             body: summary,
             settingKey: "notifyOnQueueFinished"
+        )
+
+        // Queue-finished webhook leg (Issue #296). There is no single
+        // "job" for a whole-queue event, so `WebhookJobInfo.fileName`
+        // carries the summary text and `status` reflects whether any job
+        // failed, rather than always claiming success.
+        sendWebhookNotification(
+            settingKey: "webhookOnQueueFinished",
+            event: "queue_complete",
+            status: engine.queue.failedCount == 0 ? "success" : "failure",
+            fileName: "Encoding Queue: \(summary)",
+            profile: "-",
+            durationSeconds: 0,
+            outputSizeBytes: 0
         )
     }
 
@@ -1178,6 +1214,53 @@ final class AppViewModel {
                 // Completion emails are a convenience, not load-bearing —
                 // dropped silently here, same as `sendNotification` never
                 // surfacing `UNUserNotificationCenter` errors.
+            }
+        }
+    }
+
+    // MARK: - Webhook Notifications (Issue #296)
+
+    /// Send a webhook notification if the corresponding trigger event is
+    /// enabled and a valid webhook configuration is persisted.
+    ///
+    /// `webhookOnComplete` / `webhookOnFailure` / `webhookOnQueueFinished`
+    /// (`WebhookSettingsView`'s trigger toggles) previously had zero
+    /// consumers — the only production `WebhookSender.send` call was the
+    /// settings view's own Test button. This is the wiring, mirroring
+    /// `sendCompletionEmail` immediately above: config loading happens
+    /// here on the `@MainActor`, and the network request runs in an
+    /// unstructured `Task { }` — not `Task.detached`, unlike the email
+    /// path's blocking `curl` subprocess above, `WebhookSender.send` is
+    /// already a non-blocking `async` `URLSession` call, so there's no
+    /// thread to free up by detaching — so a slow or retrying webhook
+    /// (`WebhookConfig.retryDelaySeconds`) never blocks the queue loop.
+    /// Failures are logged, never thrown or surfaced as a job failure.
+    private func sendWebhookNotification(
+        settingKey: String,
+        event: String,
+        status: String,
+        fileName: String,
+        profile: String,
+        durationSeconds: Double,
+        outputSizeBytes: Int64,
+        errorMessage: String? = nil
+    ) {
+        guard UserDefaults.standard.bool(forKey: settingKey) else { return }
+        guard let config = WebhookSettingsView.loadWebhookConfig() else { return }
+
+        let job = WebhookJobInfo(
+            fileName: fileName,
+            profile: profile,
+            durationSeconds: durationSeconds,
+            outputSizeBytes: outputSizeBytes
+        )
+        let payload = WebhookPayload.now(event: event, job: job, status: status, errorMessage: errorMessage)
+
+        Task { [weak self] in
+            do {
+                try await WebhookSender.send(payload: payload, config: config)
+            } catch {
+                self?.appendLog(.warning, "Webhook delivery failed: \(error.localizedDescription)", category: .general)
             }
         }
     }
