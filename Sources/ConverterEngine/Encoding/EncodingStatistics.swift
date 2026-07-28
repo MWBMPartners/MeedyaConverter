@@ -69,6 +69,20 @@ public struct EncodingStatistics: Codable, Sendable {
     public var resolution: String?
     public var encodingPasses: Int
 
+    /// The encoding profile name used for this job (e.g. "Web Standard").
+    /// `nil` for legacy records written before this field existed.
+    public var profileName: String?
+
+    /// The output container format used for this job (e.g. "mkv", "mp4").
+    /// `nil` for legacy records written before this field existed.
+    public var containerFormat: String?
+
+    /// Whether this job completed successfully. `nil` for legacy records —
+    /// `EncodingStatisticsCollector.markComplete()` was the only path that
+    /// ever wrote a record before `markFailed()` existed, so a `nil` value
+    /// here should be treated as a success.
+    public var succeeded: Bool?
+
     public init(
         jobID: UUID,
         jobName: String,
@@ -210,6 +224,7 @@ public struct EncodingStatistics: Codable, Sendable {
         "compression_ratio", "space_savings_percent", "average_speed_factor",
         "video_codec", "audio_codec", "resolution",
         "encoding_passes", "data_point_count",
+        "profile", "container", "succeeded",
     ].joined(separator: ",")
 
     /// A single CSV row summarising this job's statistics, in the same
@@ -243,6 +258,9 @@ public struct EncodingStatistics: Codable, Sendable {
             Self.csvEscape(resolution ?? ""),
             String(encodingPasses),
             String(dataPoints.count),
+            Self.csvEscape(profileName ?? ""),
+            Self.csvEscape(containerFormat ?? ""),
+            succeeded.map { $0 ? "true" : "false" } ?? "",
         ]
         return fields.joined(separator: ",")
     }
@@ -331,7 +349,9 @@ public final class EncodingStatisticsCollector: @unchecked Sendable {
         duration: TimeInterval?,
         videoCodec: String? = nil,
         audioCodec: String? = nil,
-        resolution: String? = nil
+        resolution: String? = nil,
+        profileName: String? = nil,
+        containerFormat: String? = nil
     ) {
         lock.lock()
         statistics.inputFileSize = fileSize
@@ -339,6 +359,8 @@ public final class EncodingStatisticsCollector: @unchecked Sendable {
         statistics.videoCodec = videoCodec
         statistics.audioCodec = audioCodec
         statistics.resolution = resolution
+        statistics.profileName = profileName
+        statistics.containerFormat = containerFormat
         lock.unlock()
     }
 
@@ -349,10 +371,21 @@ public final class EncodingStatisticsCollector: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Mark encoding as complete.
+    /// Mark encoding as complete (successfully).
     public func markComplete() {
         lock.lock()
         statistics.endTime = Date()
+        statistics.succeeded = true
+        lock.unlock()
+    }
+
+    /// Mark encoding as failed. Persisting this snapshot lets the Dashboard
+    /// report a real success rate instead of only ever seeing successes
+    /// (Issue #284).
+    public func markFailed() {
+        lock.lock()
+        statistics.endTime = Date()
+        statistics.succeeded = false
         lock.unlock()
     }
 
@@ -441,10 +474,13 @@ public final class EncodingStatisticsStore: @unchecked Sendable {
         return history.first { $0.jobID == jobID }
     }
 
-    /// Export all statistics as JSON.
-    public func exportAsJSON() throws -> Data {
+    /// Export statistics as JSON, optionally restricted to jobs whose
+    /// `startTime` falls within `[startDate, endDate]` (either bound may be
+    /// omitted). Defaults to the full, unfiltered history so existing
+    /// no-argument callers keep compiling.
+    public func exportAsJSON(startDate: Date? = nil, endDate: Date? = nil) throws -> Data {
         lock.lock()
-        let current = history
+        let current = filteredHistory(startDate: startDate, endDate: endDate)
         lock.unlock()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -452,24 +488,40 @@ public final class EncodingStatisticsStore: @unchecked Sendable {
         return try encoder.encode(current)
     }
 
-    /// Export all statistics as CSV — one row per completed job,
-    /// summarising the same aggregate fields `EncodingGraphsView`'s stat
-    /// cards already display (average/peak FPS, average/peak bitrate,
-    /// compression ratio, space savings, duration). See
-    /// `EncodingStatistics.csvHeader`/`csvRow` (Issue #363) for the pure,
-    /// independently-testable formatting; this method only adds the file
-    /// I/O-adjacent bit (reading `history` under the lock) that
-    /// `exportAsJSON` above also does. Same row order as `exportAsJSON`
-    /// (chronological, oldest first) — never throws, since CSV formatting
-    /// here is pure string building with no encoder that can fail.
-    public func exportAsCSV() -> Data {
+    /// Export statistics as CSV — one row per completed job, optionally
+    /// restricted to jobs whose `startTime` falls within
+    /// `[startDate, endDate]` (either bound may be omitted). Summarises the
+    /// same aggregate fields `EncodingGraphsView`'s stat cards already
+    /// display (average/peak FPS, average/peak bitrate, compression ratio,
+    /// space savings, duration). See `EncodingStatistics.csvHeader`/`csvRow`
+    /// (Issue #363) for the pure, independently-testable formatting; this
+    /// method only adds the file I/O-adjacent bit (reading `history` under
+    /// the lock) that `exportAsJSON` above also does. Same row order as
+    /// `exportAsJSON` (chronological, oldest first) — never throws, since
+    /// CSV formatting here is pure string building with no encoder that can
+    /// fail. Defaults to the full, unfiltered history so existing
+    /// no-argument callers (e.g. `EncodingGraphsView.exportCSV`) keep
+    /// compiling.
+    public func exportAsCSV(startDate: Date? = nil, endDate: Date? = nil) -> Data {
         lock.lock()
-        let current = history
+        let current = filteredHistory(startDate: startDate, endDate: endDate)
         lock.unlock()
 
         var lines = [EncodingStatistics.csvHeader]
         lines.append(contentsOf: current.map(\.csvRow))
         return Data(lines.joined(separator: "\n").utf8)
+    }
+
+    /// Filters `history` to jobs whose `startTime` falls within
+    /// `[startDate, endDate]`. Must be called with `lock` already held.
+    /// Preserves `history`'s existing order (chronological, oldest first).
+    private func filteredHistory(startDate: Date?, endDate: Date?) -> [EncodingStatistics] {
+        guard startDate != nil || endDate != nil else { return history }
+        return history.filter { job in
+            if let startDate, job.startTime < startDate { return false }
+            if let endDate, job.startTime > endDate { return false }
+            return true
+        }
     }
 
     /// Clear all stored statistics.

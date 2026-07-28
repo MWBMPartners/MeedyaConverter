@@ -196,4 +196,66 @@ final class EncodingStatisticsCSVExportTests: XCTestCase {
         XCTAssertTrue(lines[1].contains("first.mov"))
         XCTAssertTrue(lines[2].contains("second.mov"))
     }
+
+    // MARK: - Date-Window Export (Issue #284, re #363)
+
+    /// A store seeded with three jobs whose `startTime` is 2 days ago,
+    /// 1 day ago, and now — used by the date-window tests below to assert
+    /// that only the job(s) inside `[startDate, endDate]` are returned.
+    private func makeStoreWithThreeJobsAcrossDays() -> EncodingStatisticsStore {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("csv-export-window-tests-\(UUID().uuidString)")
+        let store = EncodingStatisticsStore(directory: tempDir)
+
+        let now = Date()
+        let twoDaysAgo = Calendar.current.date(byAdding: .day, value: -2, to: now)!
+        let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+
+        store.addStatistics(EncodingStatistics(jobID: UUID(), jobName: "two-days-ago.mov", startTime: twoDaysAgo))
+        store.addStatistics(EncodingStatistics(jobID: UUID(), jobName: "one-day-ago.mov", startTime: oneDayAgo))
+        store.addStatistics(EncodingStatistics(jobID: UUID(), jobName: "now.mov", startTime: now))
+
+        return store
+    }
+
+    func test_store_exportAsCSV_dateWindow_returnsHeaderPlusExactlyOneRow() throws {
+        let store = makeStoreWithThreeJobsAcrossDays()
+        let now = Date()
+        let windowStart = Calendar.current.date(byAdding: .hour, value: -12, to: now)! // excludes the -1d and -2d jobs
+
+        let csv = try XCTUnwrap(String(data: store.exportAsCSV(startDate: windowStart, endDate: now), encoding: .utf8))
+        let lines = csv.split(separator: "\n", omittingEmptySubsequences: false)
+
+        XCTAssertEqual(lines.count, 2) // header + exactly 1 row
+        XCTAssertEqual(String(lines[0]), EncodingStatistics.csvHeader)
+        XCTAssertTrue(lines[1].contains("now.mov"))
+    }
+
+    func test_store_exportAsJSON_dateWindow_decodesToExactlyOneElement() throws {
+        let store = makeStoreWithThreeJobsAcrossDays()
+        let now = Date()
+        let windowStart = Calendar.current.date(byAdding: .hour, value: -12, to: now)!
+
+        let data = try store.exportAsJSON(startDate: windowStart, endDate: now)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([EncodingStatistics].self, from: data)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded.first?.jobName, "now.mov")
+    }
+
+    func test_store_exportAsCSVAndJSON_noArgCalls_stillReturnFullUnfilteredHistory() throws {
+        let store = makeStoreWithThreeJobsAcrossDays()
+
+        let csv = try XCTUnwrap(String(data: store.exportAsCSV(), encoding: .utf8))
+        let csvLines = csv.split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertEqual(csvLines.count, 4) // header + 3 job rows, unfiltered
+
+        let jsonData = try store.exportAsJSON()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([EncodingStatistics].self, from: jsonData)
+        XCTAssertEqual(decoded.count, 3)
+    }
 }

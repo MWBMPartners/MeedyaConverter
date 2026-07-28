@@ -200,4 +200,92 @@ final class EncodingStatisticsStoreTests: XCTestCase {
             0
         )
     }
+
+    // MARK: - EncodingStatisticsCollector.markComplete() / markFailed() (Issue #284)
+
+    func test_collector_markComplete_setsSucceededTrue() {
+        let collector = EncodingStatisticsCollector(jobID: UUID(), jobName: "ok.mov")
+        collector.markComplete()
+
+        let stats = collector.currentStatistics
+        XCTAssertNotNil(stats.endTime)
+        XCTAssertEqual(stats.succeeded, true)
+    }
+
+    func test_collector_markFailed_setsEndTimeAndSucceededFalse() {
+        let collector = EncodingStatisticsCollector(jobID: UUID(), jobName: "failed.mov")
+        collector.markFailed()
+
+        let stats = collector.currentStatistics
+        XCTAssertNotNil(stats.endTime)
+        XCTAssertEqual(stats.succeeded, false)
+    }
+
+    // MARK: - New Field Round Trip (Issue #284, re #363)
+
+    func test_addStatistics_roundTripsTheThreeNewFieldsThroughANewStoreInstance() throws {
+        let jobID = UUID()
+        var stats = EncodingStatistics(jobID: jobID, jobName: "tagged.mkv")
+        stats.profileName = "Web Standard"
+        stats.containerFormat = "mkv"
+        stats.succeeded = false
+        stats.endTime = Date()
+
+        let writer = EncodingStatisticsStore(directory: tempDir)
+        writer.addStatistics(stats)
+
+        let reader = EncodingStatisticsStore(directory: tempDir)
+        let loaded = try XCTUnwrap(reader.statistics(forJob: jobID))
+
+        XCTAssertEqual(loaded.profileName, "Web Standard")
+        XCTAssertEqual(loaded.containerFormat, "mkv")
+        XCTAssertEqual(loaded.succeeded, false)
+    }
+
+    // MARK: - Legacy Decode Pin (Issue #284, re #363)
+
+    func test_store_decodesLegacyHistoryFileMissingTheThreeNewFields_asNilRatherThanFailing() throws {
+        // Hand-written history file in the exact shape written before
+        // `profileName`/`containerFormat`/`succeeded` existed — no trace of
+        // those three keys. A `Codable` synthesized from `Optional` stored
+        // properties must still decode this via `decodeIfPresent`, leaving
+        // the new fields `nil` (interpreted as "legacy, treat as success"
+        // by `EncodingStats.init(aggregating:)`) instead of failing to
+        // decode the whole history file.
+        let jobID = UUID()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let startTime = formatter.string(from: Date(timeIntervalSince1970: 1_700_000_000))
+        let endTime = formatter.string(from: Date(timeIntervalSince1970: 1_700_000_120))
+
+        let legacyJSON = """
+        [
+          {
+            "jobID": "\(jobID.uuidString)",
+            "jobName": "legacy.mov",
+            "startTime": "\(startTime)",
+            "endTime": "\(endTime)",
+            "dataPoints": [],
+            "encodingPasses": 1,
+            "inputFileSize": 1000000,
+            "outputFileSize": 400000,
+            "videoCodec": "h264",
+            "audioCodec": "aac"
+          }
+        ]
+        """
+
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let historyURL = tempDir.appendingPathComponent("encoding_history.json")
+        try legacyJSON.data(using: .utf8)!.write(to: historyURL)
+
+        let store = EncodingStatisticsStore(directory: tempDir)
+        let loaded = try XCTUnwrap(store.statistics(forJob: jobID))
+
+        XCTAssertEqual(loaded.jobName, "legacy.mov")
+        XCTAssertEqual(loaded.inputFileSize, 1_000_000)
+        XCTAssertNil(loaded.profileName)
+        XCTAssertNil(loaded.containerFormat)
+        XCTAssertNil(loaded.succeeded)
+    }
 }

@@ -12,10 +12,11 @@
 //
 //   - `EncodingStats`: A value type that accumulates totals across all
 //     encoding jobs (counts, bytes, durations, codec/profile/container usage).
-//   - `StatisticsTracker`: A thread-safe, JSON-persisted singleton that
-//     records each completed encode and exposes the running totals.
-//
-// Storage: ~/Library/Application Support/MeedyaConverter/statistics.json
+//   - `EncodingStats.init(aggregating:)`: Derives those totals from the
+//     per-job history persisted by `EncodingStatisticsStore` — the single
+//     source of truth for encoding statistics (Issue #284, re #363). There
+//     is no separate tracker or storage file for aggregate stats; they are
+//     always computed on demand from `EncodingStatisticsStore.allStatistics`.
 //
 // Phase 11 — Dashboard Statistics (Issue #284)
 // ---------------------------------------------------------------------------
@@ -26,9 +27,10 @@ import Foundation
 
 /// Aggregate encoding statistics accumulated across all encoding jobs.
 ///
-/// Persisted as JSON by `StatisticsTracker` and displayed in the
-/// `DashboardView`. All properties are `Codable` and `Sendable` for
-/// safe cross-isolation transfer.
+/// Derived on demand via `init(aggregating:)` from the per-job history
+/// persisted by `EncodingStatisticsStore` — the single source of truth —
+/// and displayed in the `DashboardView`. All properties are `Codable` and
+/// `Sendable` for safe cross-isolation transfer.
 public struct EncodingStats: Codable, Sendable {
 
     // MARK: - Counters
@@ -106,154 +108,27 @@ public struct EncodingStats: Codable, Sendable {
     }
 }
 
-// MARK: - StatisticsTracker
+// MARK: - EncodingStats + Aggregation (Issue #284)
 
-/// Thread-safe tracker that persists aggregate encoding statistics to disk.
-///
-/// Uses `NSLock` for synchronisation and writes to
-/// `~/Library/Application Support/MeedyaConverter/statistics.json`.
-///
-/// Usage:
-/// ```swift
-/// let tracker = StatisticsTracker.shared
-/// tracker.recordEncode(
-///     codec: "H.265 / HEVC",
-///     container: "mkv",
-///     profile: "Web Standard",
-///     inputSize: 4_000_000_000,
-///     outputSize: 1_200_000_000,
-///     duration: 342.5,
-///     success: true
-/// )
-/// let stats = tracker.currentStats()
-/// ```
-///
-/// Phase 11 — Dashboard Statistics (Issue #284)
-public final class StatisticsTracker: @unchecked Sendable {
-
-    // MARK: - Shared Instance
-
-    /// The shared singleton tracker.
-    public static let shared = StatisticsTracker()
-
-    // MARK: - Properties
-
-    /// The running aggregate statistics.
-    private var stats: EncodingStats
-
-    /// Serial lock for thread-safe read/write access.
-    private let lock = NSLock()
-
-    /// File URL where the JSON statistics file is persisted.
-    private let storageURL: URL
-
-    // MARK: - Initialiser
-
-    /// Creates a tracker backed by the given storage directory.
-    ///
-    /// - Parameter storageDirectory: The directory for the statistics JSON
-    ///   file. Defaults to `~/Library/Application Support/MeedyaConverter/`.
-    public init(storageDirectory: URL? = nil) {
-        let baseDir = storageDirectory
-            ?? FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first!.appendingPathComponent("MeedyaConverter")
-        self.storageURL = baseDir.appendingPathComponent("statistics.json")
-        self.stats = EncodingStats()
-        loadStats()
-    }
-
-    // MARK: - Public API
-
-    /// Record the result of a completed encoding job.
-    ///
-    /// - Parameters:
-    ///   - codec: The display name of the video codec used (e.g. "H.265 / HEVC").
-    ///   - container: The output container format (e.g. "mkv", "mp4").
-    ///   - profile: The encoding profile name used.
-    ///   - inputSize: Size of the source file in bytes.
-    ///   - outputSize: Size of the encoded output file in bytes.
-    ///   - duration: Wall-clock encoding duration in seconds.
-    ///   - success: Whether the encode completed successfully.
-    public func recordEncode(
-        codec: String,
-        container: String,
-        profile: String,
-        inputSize: Int64,
-        outputSize: Int64,
-        duration: TimeInterval,
-        success: Bool
-    ) {
-        lock.lock()
-        stats.totalEncodes += 1
-        if success {
-            stats.successfulEncodes += 1
-        } else {
-            stats.failedEncodes += 1
-        }
-        stats.totalEncodingTime += duration
-        stats.totalInputBytes += inputSize
-        stats.totalOutputBytes += outputSize
-        stats.codecUsage[codec, default: 0] += 1
-        stats.profileUsage[profile, default: 0] += 1
-        stats.containerUsage[container, default: 0] += 1
-        lock.unlock()
-
-        saveStats()
-    }
-
-    /// Returns a snapshot of the current aggregate statistics.
-    public func currentStats() -> EncodingStats {
-        lock.lock()
-        defer { lock.unlock() }
-        return stats
-    }
-
-    /// Resets all statistics to zero and deletes the persisted file.
-    public func resetStats() {
-        lock.lock()
-        stats = EncodingStats()
-        lock.unlock()
-
-        try? FileManager.default.removeItem(at: storageURL)
-    }
-
-    // MARK: - Persistence
-
-    /// Loads statistics from disk. Called once during initialisation.
-    private func loadStats() {
-        guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
-        do {
-            let data = try Data(contentsOf: storageURL)
-            let decoder = JSONDecoder()
-            let loaded = try decoder.decode(EncodingStats.self, from: data)
-            lock.lock()
-            stats = loaded
-            lock.unlock()
-        } catch {
-            // Corrupt file — start fresh
-        }
-    }
-
-    /// Writes the current statistics to disk atomically.
-    private func saveStats() {
-        lock.lock()
-        let snapshot = stats
-        lock.unlock()
-
-        do {
-            let dir = storageURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: dir,
-                withIntermediateDirectories: true
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(snapshot)
-            try data.write(to: storageURL, options: .atomic)
-        } catch {
-            // Persistence failure is non-fatal
+extension EncodingStats {
+    /// Derives dashboard aggregates from the per-job history persisted by
+    /// EncodingStatisticsStore — the single source of truth (Issue #284).
+    public init(aggregating history: [EncodingStatistics]) {
+        self.init()
+        for job in history {
+            totalEncodes += 1
+            let ok = job.succeeded ?? true   // legacy records were success-only
+            if ok {
+                successfulEncodes += 1
+                totalInputBytes += job.inputFileSize ?? 0
+                totalOutputBytes += job.outputFileSize ?? 0
+            } else {
+                failedEncodes += 1
+            }
+            totalEncodingTime += job.totalEncodingDuration ?? 0
+            if let codec = job.videoCodec { codecUsage[codec, default: 0] += 1 }
+            if let profile = job.profileName { profileUsage[profile, default: 0] += 1 }
+            if let container = job.containerFormat { containerUsage[container, default: 0] += 1 }
         }
     }
 }
