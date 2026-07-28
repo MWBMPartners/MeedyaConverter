@@ -40,6 +40,19 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
     case acoustID = "acoustid"
     case meedyaDB = "meedya_db"
 
+    // Internal MWBM services
+    /// MWBM `intAppsAPI` — remote feature flags + update channels
+    /// (roadmap #4/#5). Field mapping onto `StoredAPIKey` is documented
+    /// on `IntAppsAPICredentialLoader.loadFromKeychain(apiKeyManager:)`
+    /// in `Services/IntAppsAPIClient.swift`: `apiKey` → `X-API-Key`,
+    /// `secretKey` → `X-App-ID`, `label` → `app_slug`, `refreshToken` →
+    /// `User-Agent` prefix. There is no dedicated Keychain-entry UI for
+    /// this provider yet (unlike `CloudStorageView`'s "add key" flow) —
+    /// a maintainer provisions it via `APIKeyManager.storeKey(_:)`
+    /// directly, or via the `MEEDYACONVERTER_INTAPPSAPI_*` environment
+    /// variables for local development.
+    case intAppsAPI = "int_apps_api"
+
     /// Display name.
     public var displayName: String {
         switch self {
@@ -61,6 +74,7 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
         case .openSubtitles: return "OpenSubtitles"
         case .acoustID: return "AcoustID"
         case .meedyaDB: return "MeedyaDB"
+        case .intAppsAPI: return "MWBM intAppsAPI"
         }
     }
 
@@ -73,6 +87,8 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
         case .tmdb, .tvdb, .omdb, .discogs, .fanArtTV,
              .openSubtitles, .acoustID, .meedyaDB:
             return .metadata
+        case .intAppsAPI:
+            return .internalServices
         }
     }
 
@@ -109,12 +125,17 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
 public enum APIKeyCategory: String, Codable, Sendable, CaseIterable {
     case cloudStorage = "cloud_storage"
     case metadata = "metadata"
+    /// Internal MWBM Partners services (e.g. intAppsAPI) — not a
+    /// user-facing cloud/metadata provider, so kept as its own category
+    /// rather than overloading `cloudStorage`/`metadata`.
+    case internalServices = "internal_services"
 
     /// Display name.
     public var displayName: String {
         switch self {
         case .cloudStorage: return "Cloud Storage & Delivery"
         case .metadata: return "Metadata Providers"
+        case .internalServices: return "Internal Services"
         }
     }
 }
@@ -200,6 +221,12 @@ public struct StoredAPIKey: Codable, Sendable {
             return secretKey != nil && !(secretKey?.isEmpty ?? true)
         case .googleDrive, .dropbox, .oneDrive:
             return accessToken != nil && !(accessToken?.isEmpty ?? true)
+        case .intAppsAPI:
+            // `secretKey` carries the app's `X-App-ID` UUID and `label`
+            // carries the `app_slug` — both required for a usable
+            // credential set. See `IntAppsAPICredentialLoader`.
+            return secretKey != nil && !(secretKey?.isEmpty ?? true)
+                && label != nil && !(label?.isEmpty ?? true)
         default:
             return true
         }
