@@ -271,10 +271,9 @@ struct WatchFolderView: View {
                         // to discard every detection: `{ _ in }`, with a
                         // comment claiming an "app coordinator" that never
                         // existed). Hop to the main actor before touching
-                        // `viewModel`, the same shape
+                        // `viewModel`, the same shape used elsewhere for
                         // `DropHandler.extractURLs`'s completion handler
-                        // is consumed with elsewhere (e.g. `ContentView`'s
-                        // drop handling).
+                        // (e.g. `ContentView`'s drop handling).
                         monitor.start(config: config) { detectedURL in
                             Task { @MainActor in
                                 viewModel.enqueueWatchFolderFile(detectedURL, config: config)
