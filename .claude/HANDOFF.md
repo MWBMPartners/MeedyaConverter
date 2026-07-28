@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-07-28 · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
+**Last updated:** 2026-07-28 (roadmap #7, #14) · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
 
@@ -386,6 +386,83 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
   - Next queued: #7 (S3 UI surface + multipart >5 GiB), #13 (ScriptingBridge 60s semaphore — needs an
     `NSScriptCommand` refactor), #14 (concurrency audit remainder), #16 (cloud-provider triage — needs
     human input), #12 (accessibility pass).
+- **[done 2026-07-28]** Roadmap items #7, #14, on `wip/alpha-consolidation`.
+
+  **#7 — S3 real user surface + multipart (re #459, re #162).** Before this, `AWSV4Signer` +
+  `S3Uploader.buildSignedUploadRequest` + `CloudUploadExecutor.uploadToS3` were unit-tested but had
+  ZERO production callers — `CloudStorageProvider` had no `.s3` case, so a user could never actually
+  pick S3 in the UI. Now user-reachable end to end:
+  - `CloudStorageProvider` gained a `.s3` case, handled in every exhaustive switch it touches
+    (`CloudStorageUploader.authURL` — now returns `URL?`, `nil` for `.s3`, rather than
+    force-unwrapping; `CloudStorageProfileStore.apiKeyProvider(for:)` → `.awsS3`;
+    `CloudUploadExecutor.uploadToCloudStorage`; `CloudStorageView`'s `providerIcon`/
+    `providerDisplayName`). New `CloudStorageProvider.usesOAuth` flag (`false` only for `.s3`) gates
+    which credential form `CloudStorageView.authSection` shows.
+  - **Config/credential path** — `CloudStorageConfig` gained `secretAccessKey`/`bucket`/`region`/
+    `endpoint` (all optional, `Codable`-backward-compatible with every pre-existing saved
+    Dropbox/OneDrive/Google-Drive profile on disk — confirmed by a legacy-JSON decode test).
+    `accessToken` does double duty as the AWS Access Key ID for `.s3` (documented on the field) so the
+    existing "secret lives in `@State`, redacted before `UserDefaults`, restored from the Keychain"
+    machinery needed no new chokepoint. Secrets go through the SAME `APIKeyManager` (provider
+    `.awsS3`) every other provider already uses — access key ID → `StoredAPIKey.apiKey`, secret
+    access key → `StoredAPIKey.secretKey` (the exact pair `S3Uploader.loadCredential` already read) —
+    never `UserDefaults`, never `PostEncodeAction.config` (only the `cloudProfileID` reference, exactly
+    like every other provider). `CloudStorageView` gets an S3-specific "AWS Credentials" section
+    (Access Key ID / Secret Access Key (`SecureField`) / Bucket / Region / optional custom Endpoint)
+    in place of the OAuth form.
+  - **Multipart status: fully implemented, not stubbed**, gated behind `S3Uploader
+    .shouldUseMultipart(fileSize:)`'s existing 100 MB threshold (which also covers the mandatory
+    >5 GiB case, since 5 GiB > 100 MB). New `CloudUploadExecutor.uploadS3Multipart` drives a real
+    `CreateMultipartUpload` → per-part signed `UploadPart` PUTs (each independently signed via
+    `AWSV4Signer`, mirroring `uploadInDropboxSessionChunks`/`uploadInGoogleDriveResumableChunks`) →
+    `CompleteMultipartUpload` with a real XML body (`PartNumber`+`ETag` per part, built by new
+    `S3Uploader.buildCompleteMultipartXML`) → `AbortMultipartUpload` as best-effort cleanup on ANY
+    failure once a real `UploadId` exists — the abort's own outcome never masks the original error
+    (verified by a dedicated test). New `S3XMLElementExtractor` (a minimal `XMLParser`-based helper,
+    not regex/substring matching) parses `UploadId`/`Location`/`ETag` out of S3's XML responses.
+  - **Tests** (`Tests/ConverterEngineTests/S3MultipartUploadTests.swift`, new file, ~20 tests, plus 6
+    more appended to `ConverterEngineTests+CloudAndMetadataLookup.swift`): small-file → single signed
+    PUT (exactly one request); missing-credential-fields → throws before sending anything; large file
+    (sparse-file trick) → routes to `CreateMultipartUpload` (fails fast on a mocked 403, no parts
+    attempted); full multipart sequence with correct sequential `partNumber`s + shared `uploadId` and
+    a byte-exact `CompleteMultipartUpload` XML body built from the real per-part `ETag` response
+    headers; mid-part failure → `AbortMultipartUpload` called with the right `uploadId`, original
+    `.httpError` never masked; `CreateMultipartUpload` failure → no abort attempted (no real
+    `UploadId` to abort); every new request builder's method/URL/query/headers and
+    nil-on-incomplete-credential behaviour; `CloudStorageProvider`/`CloudStorageProfileStore`/
+    `CloudStorageConfig` unit tests (`usesOAuth`, `authURL` nil, `apiKeyProvider` mapping, `Codable`
+    round trip, legacy-JSON backward compatibility).
+  - Compile-uncertain for CI (no local macOS build available): the `XMLParserDelegate` method
+    signatures on `S3XMLElementExtractor.ElementTextCollector` (verified by inspection against
+    Foundation's documented overlay signatures, not by compiling); the `AWSV4Signer
+    .canonicalQueryString(queryItems:)` reuse for both the literal request `URL` and the SigV4
+    signature in the four new multipart request builders (same pattern `buildSignedUploadRequest`
+    already uses for `canonicalURI(path:)`, but not independently compiled here); and
+    `CloudStorageView`'s new `authSection`/credentials-form `@ViewBuilder` branching compiling as a
+    single `some View` return type across the `if selectedProvider.usesOAuth { ... } else { ... }`
+    split.
+
+  **#14 — Swift 6 concurrency audit remainder (re #451).** Re-checked every `Task.detached`/
+  `nonisolated(unsafe)` site in `BurnSettingsView`, `QualityMetricsView`, `TeamProfileView`,
+  `CloudSyncView`, and `PostEncodeActions` against the genuine bug class (a `@MainActor` class `self`
+  captured into `Task.detached` and mutated back via `MainActor.run`). Per-file finding — **all five
+  were already correct-as-is; zero behaviour/scheduling changes made**, only doc comments recording
+  the re-audit (so a future pass doesn't have to redo this analysis):
+
+  | File | Sites checked | Verdict | Why |
+  |---|---|---|---|
+  | `BurnSettingsView` | `detectDrives()`, `startBurn()`, `eraseDisc()`, `ejectDisc()` | correct-as-is | First 3 already fixed by the #451 pass (`9deee21`): plain `Task {}` inherits the `View`'s main-actor isolation, inner `Task.detached` is `Sendable`-only capture/return, never `self`. `ejectDisc()` is a bare `Task.detached` capturing no `self`/state at all. |
+  | `QualityMetricsView` (`QualityMetricsViewModel`, `@MainActor` class) | `runAnalysis()`'s 2 `Task.detached` blocks; `nonisolated(unsafe) analysisTask`/`currentController` | correct-as-is | `runAnalysis()` uses plain `Task { [weak self] }` (already fixed for #434, `2d8cde3`); only `locateFFmpeg()`/`probeLibvmafAvailable` are detached, `Sendable`-only. The `nonisolated(unsafe)` vars are the documented deinit-cancellation exception (mirrors `StoreManager.transactionListenerTask`), not the bug class. |
+  | `TeamProfileView` | `pushProfiles()`, `pullProfiles()` | correct-as-is | Already fixed by #451 (`5f9f2d6`) — identical shape to `BurnSettingsView`. |
+  | `CloudSyncView` | `performUpload()`, `performDownload()` | correct-as-is | `async` methods invoked via plain `Task { await ... }` from the view (main-actor isolated); only `CloudProfileSync`'s blocking I/O is detached, `Sendable`-only capture. |
+  | `PostEncodeActions` (`PostEncodeActionChain`, a plain `Sendable` struct — not a `@MainActor` class) | `uploadViaSFTP`'s and `sendMacOSNotification`'s `Task.detached` | correct-as-is | No main-actor state to race on in the first place; `uploadViaSFTP`'s detached block is `Sendable`-only capture/return, `sendMacOSNotification`'s is bare fire-and-forget with no capture at all. |
+
+  Out of scope per the task brief: the `ScriptingBridge` 60s semaphore (needs an `NSScriptCommand`
+  refactor — tracked separately as roadmap #13).
+
+  - Next queued: #13 (`ScriptingBridge` `NSScriptCommand` refactor), #16 (cloud-provider triage — needs
+    human input), #12 (accessibility pass), then the closing phase (issue sweep, docs/OpenAPI refresh,
+    new proposals).
 
 ## Decisions / blockers needing the user
 
