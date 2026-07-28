@@ -440,12 +440,29 @@ final class AppViewModel {
         // Track app launch (no-op if analytics is disabled)
         analytics.track(.appLaunch)
 
-        // Wire up the encoding scheduler callback (Issue #279)
+        // Wire up the encoding scheduler callback (Issue #279, re #279).
+        //
+        // Previously this only called `addJob(config)` and logged
+        // "Scheduled job started" — but nothing ever called `startQueue()`,
+        // so a scheduled job just sat in `.queued` state until a human
+        // happened to open Queue and press Start. `nextPendingJob()` picks
+        // up newly-added jobs automatically once the queue loop is
+        // running, so if the queue is already going we only need to
+        // enqueue; otherwise we start it — mirroring the
+        // `Task { await viewModel.startQueue() }` pattern
+        // `JobQueueView`'s Start Queue button already uses. The log
+        // message is made truthful either way instead of always claiming
+        // "started".
         scheduler.onJobReady = { [weak self] config in
             guard let self else { return }
             Task { @MainActor in
                 self.engine.queue.addJob(config)
-                self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
+                if self.isQueueRunning {
+                    self.appendLog(.info, "Scheduled job added to running queue: \(config.inputURL.lastPathComponent)")
+                } else {
+                    self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
+                    await self.startQueue()
+                }
             }
         }
     }
