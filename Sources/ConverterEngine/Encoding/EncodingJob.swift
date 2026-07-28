@@ -390,6 +390,22 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// A lock-protected snapshot of all jobs currently in the queue.
+    ///
+    /// Every existing UI call site (`JobQueueView`, `QueueOptimizerView`, etc.)
+    /// reads the raw `jobs` property directly — safe there only because those
+    /// reads and the mutating queue methods above are all serialised onto the
+    /// `@MainActor`. `APIServer` (Issue #355) reads the queue from its own
+    /// background dispatch queue, genuinely concurrently with `@MainActor`
+    /// mutations, so it needs a read that actually takes `lock` rather than
+    /// the unsynchronised property getter. Added for that caller; existing
+    /// call sites are unaffected and unchanged.
+    public func jobsSnapshot() -> [EncodingJobState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return jobs
+    }
+
     // MARK: - Statistics
 
     /// Number of jobs currently queued (waiting to be processed).

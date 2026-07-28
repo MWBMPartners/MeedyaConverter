@@ -190,6 +190,14 @@ public struct APIRequestLogEntry: Identifiable, Sendable {
 /// All endpoints require a valid bearer token in the `Authorization`
 /// header. The API key is configurable at server startup.
 ///
+/// ## Honesty status (Issue #355)
+///
+/// `GET /profiles`, `GET /status`, `GET /queue`, and `POST /encode` are
+/// backed by a real, injected `EncodingEngine` — no fabricated data.
+/// `POST /probe` calls the real `EncodingEngine.probe(url:)`, but honestly
+/// reports failure (rather than calling `configure()` itself) if the
+/// injected engine hasn't been configured yet — see `handleProbe` for why.
+///
 /// Phase 12 — REST API Server Mode (Issue #355)
 public final class APIServer: @unchecked Sendable {
 
@@ -202,6 +210,13 @@ public final class APIServer: @unchecked Sendable {
     /// Requests without a matching `Authorization: Bearer <key>` header
     /// are rejected with HTTP 401.
     public let apiKey: String
+
+    /// The encoding engine backing `/encode`, `/probe`, `/queue`, and
+    /// `/profiles`. Injected so a caller can share the app's live engine
+    /// (its real `profileStore`/`queue`); defaults to a fresh, standalone
+    /// `EncodingEngine()` so existing construction sites (e.g.
+    /// `APIServerView`) keep compiling without change.
+    private let engine: EncodingEngine
 
     // MARK: - State
 
@@ -219,6 +234,11 @@ public final class APIServer: @unchecked Sendable {
     /// The NWListener powering the TCP server.
     private var listener: NWListener?
 
+    /// Timestamp captured when `start()` successfully begins listening.
+    /// Backs the real `uptime` figure reported by `GET /status`. `nil`
+    /// while the server has never been started (or after `stop()`).
+    private var startTime: Date?
+
     /// Dispatch queue for network operations.
     private let networkQueue = DispatchQueue(
         label: "com.mwbm.meedyaconverter.apiserver",
@@ -235,9 +255,13 @@ public final class APIServer: @unchecked Sendable {
     /// - Parameters:
     ///   - port: TCP port to listen on (default 8484).
     ///   - apiKey: Bearer token for request authentication.
-    public init(port: UInt16 = 8484, apiKey: String) {
+    ///   - engine: The encoding engine to serve real data from. Defaults to
+    ///     a new, standalone `EncodingEngine()` — pass the app's shared
+    ///     engine instance to expose its real profiles/queue instead.
+    public init(port: UInt16 = 8484, apiKey: String, engine: EncodingEngine = EncodingEngine()) {
         self.port = port
         self.apiKey = apiKey
+        self.engine = engine
     }
 
     // MARK: - Lifecycle
@@ -280,6 +304,7 @@ public final class APIServer: @unchecked Sendable {
 
             nwListener.start(queue: networkQueue)
             listener = nwListener
+            startTime = Date()
         } catch {
             throw APIServerError.failedToStart(port: port, underlying: error)
         }
@@ -293,6 +318,7 @@ public final class APIServer: @unchecked Sendable {
         listener?.cancel()
         listener = nil
         isRunning = false
+        startTime = nil
     }
 
     // MARK: - Connection Handling
@@ -315,28 +341,40 @@ public final class APIServer: @unchecked Sendable {
                 return
             }
 
-            let startTime = Date()
+            let receivedAt = Date()
             let request = self.parseHTTPRequest(data)
-            let response = self.routeRequest(request)
-            let durationMs = Date().timeIntervalSince(startTime) * 1000
 
-            // Log the request
-            let logEntry = APIRequestLogEntry(
-                method: request.method.rawValue,
-                path: request.path,
-                statusCode: response.statusCode,
-                durationMs: durationMs
-            )
-            self.appendLogEntry(logEntry)
+            // `routeRequest` is `async` because `POST /probe` calls the real,
+            // `async throws` `EncodingEngine.probe(url:)` (Issue #355). A
+            // plain `Task` bridges that into this synchronous Network.framework
+            // completion handler — `self` is captured, not `self`-in-a-detached-
+            // task, because `APIServer` isn't `@MainActor`-isolated and is
+            // itself `Sendable`, so this is the same low-risk "hop into async
+            // work, then reply" pattern as elsewhere in the codebase, not a
+            // blocking semaphore bridge (see the ScriptingBridge item, #451,
+            // for why that pattern is avoided here).
+            Task {
+                let response = await self.routeRequest(request)
+                let durationMs = Date().timeIntervalSince(receivedAt) * 1000
 
-            // Send the HTTP response
-            let responseData = self.buildHTTPResponse(response)
-            connection.send(
-                content: responseData,
-                completion: .contentProcessed { _ in
-                    connection.cancel()
-                }
-            )
+                // Log the request
+                let logEntry = APIRequestLogEntry(
+                    method: request.method.rawValue,
+                    path: request.path,
+                    statusCode: response.statusCode,
+                    durationMs: durationMs
+                )
+                self.appendLogEntry(logEntry)
+
+                // Send the HTTP response
+                let responseData = self.buildHTTPResponse(response)
+                connection.send(
+                    content: responseData,
+                    completion: .contentProcessed { _ in
+                        connection.cancel()
+                    }
+                )
+            }
         }
     }
 
@@ -399,8 +437,9 @@ public final class APIServer: @unchecked Sendable {
     /// Routes an incoming request to the appropriate handler.
     ///
     /// Checks bearer-token authentication before dispatching to
-    /// endpoint-specific logic.
-    private func routeRequest(_ request: APIRequest) -> APIResponse {
+    /// endpoint-specific logic. `async` solely because `handleProbe` needs
+    /// to `await` the real `EncodingEngine.probe(url:)`.
+    func routeRequest(_ request: APIRequest) async -> APIResponse {
         // CORS preflight
         if request.method == .options {
             return APIResponse(statusCode: 204)
@@ -419,7 +458,7 @@ public final class APIServer: @unchecked Sendable {
         case (.post, "/encode"):
             return handleEncode(request)
         case (.post, "/probe"):
-            return handleProbe(request)
+            return await handleProbe(request)
         case (.get, "/status"):
             return handleStatus(request)
         case (.get, "/queue"):
@@ -458,17 +497,28 @@ public final class APIServer: @unchecked Sendable {
 
     // MARK: - Endpoint Handlers
 
-    /// POST /encode — Submit an encoding job.
+    /// POST /encode — Submit an encoding job to the real `engine.queue`.
     ///
     /// Expected JSON body:
     /// ```json
     /// {
     ///   "input": "/path/to/source.mov",
     ///   "output": "/path/to/output.mp4",
-    ///   "profile": "broadcast-h264"
+    ///   "profile": "Web Standard"
     /// }
     /// ```
-    private func handleEncode(_ request: APIRequest) -> APIResponse {
+    ///
+    /// This genuinely calls `EncodingQueue.addJob`, so the returned `jobId`
+    /// is the real job's ID and it appears in `GET /queue` and (if the
+    /// injected engine is the app's live one) the Job Queue UI. It is
+    /// honest about one limit, surfaced in the response's `note` field:
+    /// actual encoding only starts once something drives the queue (today
+    /// that's only `AppViewModel.startQueue()` on the `@MainActor`, which
+    /// `ConverterEngine` — where `APIServer` lives — has no reference to
+    /// and must not reach into). This mirrors the desktop app's own
+    /// "Add to Queue" button, which also just queues until the user
+    /// presses "Start Queue" — `/encode` is not claiming more than that.
+    func handleEncode(_ request: APIRequest) -> APIResponse {
         guard let body = request.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let input = json["input"] as? String,
@@ -482,28 +532,72 @@ public final class APIServer: @unchecked Sendable {
             )
         }
 
-        let profileName = json["profile"] as? String ?? "default"
-        let jobId = UUID().uuidString
+        guard FileManager.default.fileExists(atPath: input) else {
+            return APIResponse(
+                statusCode: 400,
+                json: [
+                    "error": "Bad Request",
+                    "message": "Input file not found: \(input)",
+                ]
+            )
+        }
+
+        let profile: EncodingProfile
+        if let profileName = json["profile"] as? String {
+            guard let matched = engine.profileStore.profile(named: profileName) else {
+                return APIResponse(
+                    statusCode: 400,
+                    json: [
+                        "error": "Bad Request",
+                        "message": "Unknown profile: \(profileName). See GET /profiles.",
+                    ]
+                )
+            }
+            profile = matched
+        } else {
+            profile = .webStandard
+        }
+
+        let config = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: input),
+            outputURL: URL(fileURLWithPath: output),
+            profile: profile
+        )
+        let jobState = engine.queue.addJob(config)
 
         return APIResponse(
             statusCode: 202,
             json: [
-                "jobId": jobId,
+                "jobId": jobState.config.id.uuidString,
                 "status": "queued",
                 "input": input,
                 "output": output,
-                "profile": profileName,
+                "profile": profile.name,
+                "note": "Added to the encoding queue. Encoding begins once the app's queue runner is started (same as manually queuing a job in the UI) — this endpoint does not start it.",
             ]
         )
     }
 
-    /// POST /probe — Probe a media file for metadata and stream info.
+    /// POST /probe — Probe a media file using the real `EncodingEngine`.
     ///
     /// Expected JSON body:
     /// ```json
     /// { "path": "/path/to/media.mov" }
     /// ```
-    private func handleProbe(_ request: APIRequest) -> APIResponse {
+    ///
+    /// Calls the real, `async` `EncodingEngine.probe(url:)` (FFprobe under
+    /// the hood) rather than `configure()`-ing the engine itself: the
+    /// injected engine may be a fresh, standalone instance (the
+    /// `APIServer` default) or, once a caller wires it up, the app's live
+    /// `@MainActor`-driven one — and `EncodingEngine.ffmpegInfo`/
+    /// `ffprobeInfo` are plain, unsynchronised `var`s that `configure()`
+    /// writes to. Calling `configure()` here as well as from
+    /// `AppViewModel.startQueue()` would be a genuine concurrent-write race
+    /// on those two properties, which is exactly the kind of cross-actor
+    /// risk this task was told not to take on blind. So: if the engine
+    /// hasn't been configured yet by whoever owns it, this honestly reports
+    /// that instead of guessing.
+    func handleProbe(_ request: APIRequest) async -> APIResponse {
         guard let body = request.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let path = json["path"] as? String else {
@@ -516,79 +610,115 @@ public final class APIServer: @unchecked Sendable {
             )
         }
 
-        let fileExists = FileManager.default.fileExists(atPath: path)
+        guard FileManager.default.fileExists(atPath: path) else {
+            return APIResponse(
+                statusCode: 404,
+                json: [
+                    "path": path,
+                    "exists": false,
+                    "status": "file_not_found",
+                ]
+            )
+        }
 
-        return APIResponse(
-            statusCode: fileExists ? 200 : 404,
-            json: [
-                "path": path,
-                "exists": fileExists,
-                "status": fileExists ? "ready" : "file_not_found",
-            ]
-        )
+        do {
+            let mediaFile = try await engine.probe(url: URL(fileURLWithPath: path))
+            return APIResponse(
+                statusCode: 200,
+                json: [
+                    "path": path,
+                    "exists": true,
+                    "status": "ready",
+                    "durationSeconds": mediaFile.duration ?? 0,
+                    "container": mediaFile.containerFormatName ?? "",
+                    "videoStreamCount": mediaFile.videoStreams.count,
+                    "audioStreamCount": mediaFile.audioStreams.count,
+                    "subtitleStreamCount": mediaFile.subtitleStreams.count,
+                    "hasHDR": mediaFile.hasHDR,
+                ]
+            )
+        } catch {
+            // Real failure from the real prober (e.g. the engine hasn't been
+            // configured, or FFprobe rejected the file) — never fabricated.
+            return APIResponse(
+                statusCode: 503,
+                json: [
+                    "path": path,
+                    "exists": true,
+                    "status": "probe_failed",
+                    "message": error.localizedDescription,
+                ]
+            )
+        }
     }
 
-    /// GET /status — Returns server status and basic system information.
-    private func handleStatus(_ request: APIRequest) -> APIResponse {
-        APIResponse(
+    /// GET /status — Returns real server status and version information.
+    func handleStatus(_ request: APIRequest) -> APIResponse {
+        lock.lock()
+        let uptimeSeconds = startTime.map { Date().timeIntervalSince($0) } ?? 0
+        lock.unlock()
+
+        return APIResponse(
             statusCode: 200,
             json: [
                 "server": "MeedyaConverter API",
-                "version": "1.0.0",
+                "version": AppInfo.Version.displayString,
                 "status": "running",
                 "port": Int(port),
-                "uptime": "active",
+                "uptimeSeconds": uptimeSeconds,
             ]
         )
     }
 
-    /// GET /queue — Lists the current encoding queue.
-    private func handleQueue(_ request: APIRequest) -> APIResponse {
-        APIResponse(
-            statusCode: 200,
-            json: [
-                "jobs": [] as [Any],
-                "totalJobs": 0,
-                "activeJobs": 0,
-                "pendingJobs": 0,
-            ]
-        )
-    }
+    /// GET /queue — Lists the real encoding queue (`engine.queue`).
+    func handleQueue(_ request: APIRequest) -> APIResponse {
+        let jobs = engine.queue.jobsSnapshot()
 
-    /// GET /profiles — Lists available encoding profiles.
-    private func handleProfiles(_ request: APIRequest) -> APIResponse {
-        let builtInProfiles: [[String: Any]] = [
+        let jobsJSON: [[String: Any]] = jobs.map { job in
             [
-                "name": "default",
-                "description": "H.264 AAC MP4 — general purpose",
-                "videoCodec": "libx264",
-                "audioCodec": "aac",
-            ],
-            [
-                "name": "broadcast-h264",
-                "description": "Broadcast-quality H.264 at high bitrate",
-                "videoCodec": "libx264",
-                "audioCodec": "aac",
-            ],
-            [
-                "name": "hevc-hdr",
-                "description": "HEVC with HDR metadata passthrough",
-                "videoCodec": "libx265",
-                "audioCodec": "aac",
-            ],
-            [
-                "name": "prores-422",
-                "description": "Apple ProRes 422 for editing",
-                "videoCodec": "prores_ks",
-                "audioCodec": "pcm_s24le",
-            ],
-        ]
+                "jobId": job.config.id.uuidString,
+                "input": job.config.inputURL.path,
+                "output": job.config.outputURL.path,
+                "profile": job.config.profile.name,
+                "status": job.status.rawValue,
+                "progress": job.progress,
+            ]
+        }
 
         return APIResponse(
             statusCode: 200,
             json: [
-                "profiles": builtInProfiles,
-                "count": builtInProfiles.count,
+                "jobs": jobsJSON,
+                "totalJobs": jobs.count,
+                "activeJobs": jobs.filter { $0.status == .encoding }.count,
+                "pendingJobs": jobs.filter { $0.status == .queued }.count,
+            ]
+        )
+    }
+
+    /// GET /profiles — Lists the real encoding profiles from
+    /// `engine.profileStore` (built-in + any user-created ones), replacing
+    /// the four hardcoded, unrelated placeholder profiles this endpoint
+    /// used to return.
+    func handleProfiles(_ request: APIRequest) -> APIResponse {
+        let profilesJSON: [[String: Any]] = engine.profileStore.allProfiles().map { profile in
+            [
+                "id": profile.id.uuidString,
+                "name": profile.name,
+                "description": profile.description,
+                "category": profile.category.rawValue,
+                "isBuiltIn": profile.isBuiltIn,
+                "videoCodec": profile.videoCodec?.rawValue ?? "",
+                "audioCodec": profile.audioCodec?.rawValue ?? "",
+                "containerFormat": profile.containerFormat.rawValue,
+            ]
+        }
+
+        return APIResponse(
+            statusCode: 200,
+            json: [
+                "profiles": profilesJSON,
+                "count": profilesJSON.count,
             ]
         )
     }
@@ -607,6 +737,7 @@ public final class APIServer: @unchecked Sendable {
         case 401: statusText = "Unauthorized"
         case 404: statusText = "Not Found"
         case 500: statusText = "Internal Server Error"
+        case 503: statusText = "Service Unavailable"
         default:  statusText = "Unknown"
         }
 

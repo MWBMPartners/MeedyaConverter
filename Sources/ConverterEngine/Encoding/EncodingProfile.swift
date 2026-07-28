@@ -953,6 +953,21 @@ public final class EncodingProfileStore: @unchecked Sendable {
         return profiles.filter { $0.category == category }
     }
 
+    /// A lock-protected snapshot of every profile (built-in + user-created).
+    ///
+    /// Existing UI call sites (`CloudSyncView`, `TeamProfileView`, etc.) read
+    /// the raw `profiles` property directly — safe there only because those
+    /// reads and the mutating methods above are all serialised onto the
+    /// `@MainActor`. `APIServer` (Issue #355, `GET /profiles`) reads the store
+    /// from its own background dispatch queue, genuinely concurrently with
+    /// `@MainActor` mutations, so it needs a read that actually takes `lock`.
+    /// Added for that caller; existing call sites are unaffected.
+    public func allProfiles() -> [EncodingProfile] {
+        lock.lock()
+        defer { lock.unlock() }
+        return profiles
+    }
+
     // MARK: - Import/Export
 
     /// Export a profile to JSON data for sharing.
