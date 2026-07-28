@@ -193,7 +193,7 @@ struct EmailSettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Email Notifications")
         .onAppear {
-            smtpPassword = loadPasswordFromKeychain()
+            smtpPassword = Self.loadPasswordFromKeychain()
             passwordLoaded = true
         }
     }
