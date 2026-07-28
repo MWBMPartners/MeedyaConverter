@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-07-22 · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
+**Last updated:** 2026-07-28 · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
 
@@ -113,9 +113,32 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
   **PR #461 merged.** #449 closed.
 - **[PR #462 — CI re-running on fix `e4ac19d`]** Bundle 3 (#448 remainder) — DualDynamicHDR executor (#370),
   `EncodingStatisticsCollector` pipeline (#284), CSV export (#363), AnimatedImage (#321). Closes those 4 on merge.
-- **[remaining]** Bundle 4 (Slate #343, MetadataTag #320, Comparison #329 + spot-checks), Bundle 5 (QC #445),
-  Bundle 6 (test coverage), Bundle 7 (issue hygiene). **NEW finding:** separate fabricated stats-export surface
-  (`StatisticsExportView`/`DashboardView`/`StatisticsTracker`) — needs a persistent store + its own issue.
+- **[done 2026-07-28]** Roadmap item #3 — statistics unification (#284, #363), on `wip/alpha-consolidation`.
+  `EncodingStatisticsStore` (the real per-job pipeline fed from `AppViewModel.startQueue()`) is now the ONE
+  source of truth for both the Dashboard and the CSV/JSON export view — no more parallel, always-zero
+  `StatisticsTracker` singleton. Changes:
+  - `EncodingStatistics` gained three optional fields (`profileName`, `containerFormat`, `succeeded`;
+    `nil` = legacy, treated as success) plus matching CSV columns; `EncodingStatisticsCollector` gained
+    `markFailed()` so the failure path (previously statistics-silent) now persists too.
+  - `EncodingStatisticsStore.exportAsJSON`/`exportAsCSV` gained optional `startDate`/`endDate` filtering.
+  - `EncodingStats.init(aggregating:)` (in `AggregateStatistics.swift`) derives Dashboard aggregates from
+    `EncodingStatisticsStore.allStatistics` on demand — replacing `StatisticsTracker` entirely (**deleted**,
+    it persisted its own `statistics.json` but its only write path, `recordEncode`, had zero callers, so the
+    Dashboard always read zeros).
+  - `DashboardView` and `StatisticsExportView` now both read live from `EncodingStatisticsStore`.
+    `StatisticsExportView` no longer builds `EncodingStats()`/`history: []` inline and reports fake export
+    success — it writes the store's real CSV/JSON bytes. Its column-picker UI was removed (the store's
+    export always emits the full real record) along with its unused `AppViewModel` environment dependency.
+  - `Sources/ConverterEngine/Utilities/StatisticsExporter.swift` (`StatisticsExporter` + `ExportColumn`)
+    **deleted** — sole consumer was `StatisticsExportView`, zero test references.
+    `ETAPredictor`/`EncodeHistoryEntry` (separate file, separate concern) kept as-is, tracked by #470.
+  - New/extended tests: `EncodingStatsAggregationTests.swift` (new), `EncodingStatisticsStoreTests.swift`
+    (`markFailed`/`markComplete`, new-field round trip, legacy-decode pin), `EncodingStatisticsCSVExportTests.swift`
+    (date-window CSV/JSON export). No data migration needed — `statistics.json` could only ever have been
+    written by the zero-caller `recordEncode`, so there was nothing real to migrate.
+- **[next]** Bundle 4 / roadmap item #1 — expose the 10 safe orphaned views (spot-check first), then
+  roadmap item #2 — chunked Dropbox/GDrive uploads. Also still open: Bundle 4 remainder (Slate #343,
+  MetadataTag #320, Comparison #329), Bundle 5 (QC #445), Bundle 6 (test coverage), Bundle 7 (issue hygiene).
 
 ## Decisions / blockers needing the user
 
