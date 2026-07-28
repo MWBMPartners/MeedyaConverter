@@ -436,6 +436,121 @@ final class CloudUploadExecutorTests: XCTestCase {
         XCTAssertTrue(bodyString.contains("conflictBehavior"))
     }
 
+    // MARK: - (d) Provider request-builder correctness: Dropbox/Google Drive
+    // upload-session builders (roadmap item #2 / Issue #459)
+
+    func test_dropboxSessionStartRequestBuilder_methodURLHeaders() throws {
+        let config = CloudStorageConfig(
+            provider: .dropbox,
+            accessToken: "dbx_tok",
+            remotePath: "/Videos",
+            label: "Work Dropbox"
+        )
+        let request = try XCTUnwrap(
+            CloudStorageUploader.buildDropboxSessionStartRequest(config: config)
+        )
+
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, DropboxUploader.sessionStartURL)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer dbx_tok")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
+
+        let apiArgString = try XCTUnwrap(request.value(forHTTPHeaderField: "Dropbox-API-Arg"))
+        let apiArgData = try XCTUnwrap(apiArgString.data(using: .utf8))
+        let apiArg = try XCTUnwrap(try JSONSerialization.jsonObject(with: apiArgData) as? [String: Any])
+        XCTAssertEqual(apiArg["close"] as? Bool, false)
+    }
+
+    func test_dropboxSessionAppendRequestBuilder_methodURLCursor() throws {
+        let config = CloudStorageConfig(
+            provider: .dropbox,
+            accessToken: "dbx_tok",
+            remotePath: "/Videos",
+            label: "Work Dropbox"
+        )
+        let request = try XCTUnwrap(
+            CloudStorageUploader.buildDropboxSessionAppendRequest(sessionId: "sess1", offset: 40960, config: config)
+        )
+
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, DropboxUploader.sessionAppendURL)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer dbx_tok")
+
+        let apiArgString = try XCTUnwrap(request.value(forHTTPHeaderField: "Dropbox-API-Arg"))
+        let apiArgData = try XCTUnwrap(apiArgString.data(using: .utf8))
+        let apiArg = try XCTUnwrap(try JSONSerialization.jsonObject(with: apiArgData) as? [String: Any])
+        let cursor = try XCTUnwrap(apiArg["cursor"] as? [String: Any])
+        XCTAssertEqual(cursor["session_id"] as? String, "sess1")
+        XCTAssertEqual(cursor["offset"] as? Int64, 40960)
+        XCTAssertEqual(apiArg["close"] as? Bool, false)
+    }
+
+    func test_dropboxSessionFinishRequestBuilder_methodURLCommit() throws {
+        let config = CloudStorageConfig(
+            provider: .dropbox,
+            accessToken: "dbx_tok",
+            remotePath: "/Videos",
+            label: "Work Dropbox"
+        )
+        let request = try XCTUnwrap(
+            CloudStorageUploader.buildDropboxSessionFinishRequest(
+                sessionId: "sess1",
+                offset: 102400,
+                filePath: "movie.mp4",
+                config: config
+            )
+        )
+
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, DropboxUploader.sessionFinishURL)
+
+        // Decode as JSON rather than substring-matching — see the
+        // `test_dropboxRequestBuilder_methodURLHeaders` comment above on
+        // why: `JSONSerialization` escapes "/" as "\/".
+        let apiArgString = try XCTUnwrap(request.value(forHTTPHeaderField: "Dropbox-API-Arg"))
+        let apiArgData = try XCTUnwrap(apiArgString.data(using: .utf8))
+        let apiArg = try XCTUnwrap(try JSONSerialization.jsonObject(with: apiArgData) as? [String: Any])
+        let cursor = try XCTUnwrap(apiArg["cursor"] as? [String: Any])
+        XCTAssertEqual(cursor["session_id"] as? String, "sess1")
+        XCTAssertEqual(cursor["offset"] as? Int64, 102400)
+        let commit = try XCTUnwrap(apiArg["commit"] as? [String: Any])
+        XCTAssertEqual(commit["path"] as? String, "/Videos/movie.mp4")
+        // Must match the simple-upload path's mode ("overwrite"), NOT the
+        // "add" mode the existing unused
+        // `DropboxUploader.buildSessionFinishHeaders` hardcodes.
+        XCTAssertEqual(commit["mode"] as? String, "overwrite")
+        XCTAssertEqual(commit["autorename"] as? Bool, true)
+    }
+
+    func test_googleDriveResumableInitRequestBuilder_methodURLHeadersBody() throws {
+        let config = CloudStorageConfig(
+            provider: .googleDrive,
+            accessToken: "ya29.tok",
+            remotePath: "/",
+            label: "Personal Drive"
+        )
+        let request = try XCTUnwrap(
+            CloudStorageUploader.buildGoogleDriveResumableInitRequest(
+                filePath: "movie.mp4",
+                fileSize: 12_345_678,
+                config: config
+            )
+        )
+
+        XCTAssertEqual(request.httpMethod, "POST")
+        let urlString = try XCTUnwrap(request.url?.absoluteString)
+        XCTAssertTrue(urlString.contains("googleapis.com/upload/drive/v3/files"))
+        XCTAssertTrue(urlString.contains("uploadType=resumable"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer ya29.tok")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json; charset=UTF-8")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Upload-Content-Type"), "application/octet-stream")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Upload-Content-Length"), "12345678")
+
+        let bodyData = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        XCTAssertEqual(body["name"] as? String, "movie.mp4")
+    }
+
     // MARK: - uploadToCloudStorage: OneDrive size-based routing
 
     func test_uploadToCloudStorage_oneDrive_smallFile_usesSimpleContentUpload() async throws {
