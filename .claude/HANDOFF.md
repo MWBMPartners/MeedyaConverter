@@ -180,9 +180,57 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
     properties and cross-checked against the same `@Environment` + `let`-params pattern already
     proven by `StreamMetadataEditorView(mediaFile:)` elsewhere in `OutputSettingsView.swift`; and the
     `Task.detached` `Sendable`-capture shape in `sendCompletionEmail`.
-- **[next]** Roadmap item #2 — chunked Dropbox/GDrive uploads. Also still open: Bundle 4 remainder
-  (Slate #343, MetadataTag #320, Comparison #329), Bundle 5 (QC #445), Bundle 6 (test coverage),
-  Bundle 7 (issue hygiene).
+- **[done 2026-07-28]** Roadmap item #2 — chunked/resumable Dropbox + Google Drive uploads (re #459),
+  on `wip/alpha-consolidation`. `CloudUploadExecutor.uploadToCloudStorage` previously sent Dropbox and
+  Google Drive as ONE whole-file request — Dropbox's `/2/files/upload` caps at 150 MB
+  (`DropboxUploader.singleUploadMaxBytes`) and Google Drive's `uploadType=media` is documented for
+  small files only (`GoogleDriveUploader.simpleUploadMaxBytes`, 5 MB) — so real media output routinely
+  failed the upload feature outright. Mirrors the existing OneDrive `uploadInSessionChunks` shape
+  (create/start request → `FileHandle` chunk loop → per-chunk `executeWithRetry` → final-response
+  parse), reusing the previously-unused `DropboxUploader`/`GoogleDriveUploader` URL and size/chunk-size
+  constants in `CloudProviders.swift`. Changes:
+  - New builders in `CloudStorageUploader.swift` — `buildDropboxSessionStartRequest`,
+    `buildDropboxSessionAppendRequest`, `buildDropboxSessionFinishRequest`,
+    `buildGoogleDriveResumableInitRequest` — all via `JSONSerialization`, NOT the existing unused
+    `DropboxUploader.buildSessionStartHeaders`/`buildSessionFinishHeaders` or
+    `GoogleDriveUploader.buildUploadMetadata` (left untouched as existing public API): those build JSON
+    by string interpolation (breaks on a filename containing a `"`), and `buildSessionFinishHeaders`
+    hardcoded `"mode":"add"` where the simple upload path uses `"overwrite"` — the new
+    `buildDropboxSessionFinishRequest` matches the simple path's `"overwrite"`.
+  - `CloudUploadExecutor.executeWithRetry` gained a private `additionalSuccessStatusCodes: Set<Int> = []`
+    parameter (existing call sites unaffected) — required because Google Drive's resumable-upload
+    protocol answers **`308 Resume Incomplete`** for every non-final chunk as its real, documented
+    success response, not `2xx`. New `uploadInDropboxSessionChunks(fileURL:config:chunkSize:progress:)`
+    and `uploadInGoogleDriveResumableChunks(fileURL:initiateRequest:chunkSize:progress:)` on
+    `CloudUploadExecutor`; `uploadToCloudStorage` now routes Dropbox above 150 MB and Google Drive above
+    5 MB into these, mirroring the existing OneDrive (4 MB) branch — both existing callers
+    (`CloudStorageView.performUpload`, `PostEncodeActions.uploadViaCloud`) needed no changes since
+    routing is centralised there.
+  - The 308-accept-set is scoped to non-final chunks ONLY: the final chunk always uses the plain
+    `executeWithRetry` (no additional success codes), so a 308 on the final chunk — meaning the server
+    is still missing bytes — fails honestly as `.httpError(308, …)` rather than ever being read as
+    success.
+  - **Known limitation (Dropbox), same semantics already accepted for the OneDrive path**: a chunk-level
+    retry re-sends the identical cursor offset (the append request is built once, before `offset`
+    advances, and reused verbatim across retry attempts). If the original request actually succeeded
+    server-side and only its response was lost, the retried append lands at an offset the server has
+    already moved past, and Dropbox answers `409 incorrect_offset` — surfaced honestly as
+    `.httpError(409, …)`, never silently absorbed or retried into a fabricated success. A caller hitting
+    this must restart the whole upload.
+  - New tests: `Tests/ConverterEngineTests/CloudChunkedUploadTests.swift` (9 scenarios — small-file
+    routing for both providers, large-file session/resumable routing, session-start / initiate
+    failure-fast paths, append-offset and finish-cursor correctness, mid-chunk-retry same-offset
+    pinning, the 308 non-final-vs-final accept-set boundary) plus 4 new request-builder tests appended
+    to `CloudUploadExecutorTests.swift`'s existing "(d) Provider request-builder correctness" section.
+  - Compile-uncertain for CI (no local macOS build available): the nested-heterogeneous-dictionary
+    `Dropbox-API-Arg` JSON bodies (`cursor`/`commit`) are built as separate, explicitly-typed
+    `[String: Any]` `let`s before assembly, specifically to sidestep Swift's "heterogeneous collection
+    literal could only be inferred to '[String : Any]'" diagnostic on an inline nested literal; and the
+    `HTTPURLResponse.value(forHTTPHeaderField:)` read of the Google Drive initiate response's `Location`
+    header, which depends on `MockURLProtocol`/`URLSession` correctly propagating response headers
+    through the mocked `URLProtocol` loading system in the new tests.
+  - Next queued: roadmap item #9 (`PostEncodeActionChain` tests), then item #10 (ScriptingBridge 60s
+    semaphore, deferred from #451).
 
 ## Decisions / blockers needing the user
 
