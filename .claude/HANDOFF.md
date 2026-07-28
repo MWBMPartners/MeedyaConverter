@@ -5,7 +5,23 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-07-21 · **`main` @ `d2e84c4`** · VERSION 0.1.0
+**Last updated:** 2026-07-22 · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
+
+> **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
+
+## ⚠️ Read this first — branch model (as of 2026-07-22)
+
+- **`wip/alpha-consolidation`** is THE single work-in-progress branch. All work commits here.
+  It will eventually be merged into **`alpha`** via ONE pull request (deliberately **no PR stacking**).
+- `main` = trunk, contains all completed work. `alpha`/`beta` = live pre-release channel branches
+  wired to `.github/workflows/beta-alpha.yml` (**never delete; a push to them mints a public pre-release**).
+- **Consolidated + verified obsolete (2026-07-22):** `claude/branch-audit-consolidate-g87lr4`,
+  `autopilot/2026-06-30-clean`, `consolidate/autopilot-2026-07-18`. Content-level verification confirmed
+  zero loss (audit doc cherry-picked byte-identical; the two autopilot branches are strict ancestors of main).
+  **Deletion is pending a manual step** — this environment's git proxy refuses ref deletions and the GitHub
+  MCP has no delete-branch tool, so they must be deleted in the GitHub UI.
+- **Forecast for the eventual `wip/alpha-consolidation` → `alpha` PR:** exactly 2 conflicts, both resolve
+  **wip-side**: `.github/workflows/dependency-review.yml` and `.github/workflows/lint.yml`.
 
 ---
 
