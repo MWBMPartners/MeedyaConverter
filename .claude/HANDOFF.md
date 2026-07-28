@@ -231,6 +231,78 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
     through the mocked `URLProtocol` loading system in the new tests.
   - Next queued: roadmap item #9 (`PostEncodeActionChain` tests), then item #10 (ScriptingBridge 60s
     semaphore, deferred from #451).
+- **[done 2026-07-28]** Roadmap items #9, #10, #8 (engine-layer batch), on `wip/alpha-consolidation`.
+  **Numbering note**: the "item #10" description in the previous log entry above (ScriptingBridge 60s
+  semaphore) turned out to be superseded — the actual task brief for #10 in this batch was "wire or
+  descope FTP/rsync (re #174)"; the ScriptingBridge semaphore item is not yet scheduled (added to the
+  queue below).
+  - **#9 — `PostEncodeActionChain` test coverage (re #450).** Was at ZERO tests. New
+    `Tests/ConverterEngineTests/PostEncodeActionsTests.swift`: `ActionError.errorDescription` for all 4
+    cases; missing-`sftpProfileID`/`cloudProfileID` config resolution throws a real
+    `ActionError.missingConfig` through the public `execute(inputURL:outputURL:success:)` API (never
+    silently succeeds); chain ordering/skip/error-aggregation (disabled actions skipped, `runOnFailure`
+    respected on both success and failure, first error surfaces even when a later action also fails);
+    `substituteVariables` placeholder substitution; `PostEncodeActionType`/`PostEncodeAction`/
+    `PostEncodeActionChain` Codable round trips. **One seam added, `@testable`-only**:
+    `PostEncodeActionChain.execute(inputURL:outputURL:success:actionExecutor:)` — an internal overload
+    the public 3-arg `execute` always calls with `actionExecutor: nil`, so production behaviour is
+    unchanged; it lets tests inject a fake per-action dispatch instead of spawning real
+    `scp`/`curl`/`osascript`/`zsh` processes or hitting the network. Also bumped
+    `substituteVariables(in:inputURL:outputURL:profile:status:)` from `private` to internal (still
+    unreachable outside the module without `@testable`) so its pure string-substitution logic has a
+    direct test instead of only being observable through a real shell/notification process.
+    **Correction to the task brief**: `execute`'s real, documented behaviour is "continue past a failing
+    action, surface the first error" — NOT abort-on-first-failure as the brief assumed. Tests pin the
+    real behaviour (`test_execute_runsEveryEnabledActionInOrder_andDoesNotAbortOnFailure`) rather than
+    asserting the assumed one; production runtime behaviour was left untouched (changing it wasn't asked
+    for and the brief itself says "WITHOUT changing public behaviour").
+  - **#10 — FTP/rsync (re #174): DESCOPED, not wired.** `SFTPUploader.buildFTPUploadArguments`/
+    `writeFTPCredentialsConfig`/`buildRsyncArguments` are real, correct, already-tested argument
+    builders that are simply never called from any execution path — only `scp` (via
+    `upload(localPath:config:)`) runs. Evaluated wiring them in: `SFTPServerConfig` (the one config type
+    `PostEncodeActionChain`/`SFTPSettingsView`/`SFTPProfileStore` all share) has **no transfer-protocol
+    selector field**, so dispatching between scp/rsync/ftp per profile requires adding one — which
+    ripples into both the `Codable` migration story (mirroring the `id` field's backward-compatible
+    decode) and `SFTPSettingsView`'s form, neither of which this no-local-build session could validate
+    end to end. `FTPServerConfig` compounds this: it's a structurally different type with no `id`, no
+    profile-store persistence, and no UI path to ever construct one. Chose the honest minimum per the
+    task brief's own explicit fallback: added a type-level "Execution status" doc comment on
+    `SFTPUploader` plus a `// TODO(#174)` on each of the three unwired builders, so nothing looks
+    functional that isn't. Added 2 new tests strengthening `buildRsyncArguments`' auth-branch coverage
+    (`.keyFile` escaping, `.password` `BatchMode=no`) in
+    `ConverterEngineTests+CloudAndMetadataLookup.swift`, next to the pre-existing scp/rsync/FTP
+    argument-building tests (which already covered the basics).
+  - **#8 — two more QC detectors (re #445).** Implemented `corruptFrames` and `levelCompliance` for
+    real in `QualityChecker.swift`, keeping its pure/process-free architecture: new
+    `buildCorruptFrameDetectionArgs(inputPath:)` (`ffmpeg -v error -i <input> -f null -`) +
+    `parseCorruptFrameOutput(_:)` (one `.failed` `QCResult` per non-blank `-v error` stderr line, a
+    single `.passed` result when stderr is empty); new `buildLevelComplianceArgs(inputPath:)` (delegates
+    to the existing, tested `LoudnessReporter.buildAnalysisArguments(inputPath:)` byte-for-byte) +
+    `parseLevelComplianceOutput(_:standard:)` (thin adapter over the existing, tested
+    `LoudnessReporter.parseAnalysisOutput`/`checkCompliance` — real EBU R128/ebur128 pass/fail, never a
+    second loudness-math implementation) + a `normalizationStandard(forLoudnessStandard:)` helper
+    mapping `QCProfile.loudnessStandard`'s free-form label to a `NormalizationStandard` (defaults to
+    `.ebur128`). `runAllChecks` now skips both checks (added to the same "requires FFmpeg, resolved by
+    the caller" `continue` case as `blackFrames`/`silenceDetection`) instead of returning
+    `.notImplemented` for them. Wired real execution into `QualityCheckView.runQualityChecks()` with two
+    new blocks mirroring the existing black-frame/silence `FFmpegProcessController` flow exactly (same
+    cancellation handling, same error-message chaining). `audioSync` and `formatConformance` stay
+    `.notImplemented` — `audioSync` is genuinely gated on #421/#422. New
+    `Tests/ConverterEngineTests/QualityCheckerTests.swift` (QualityChecker had zero prior coverage):
+    arg-builder assertions, parser tests against representative `-v error` decode-error lines
+    (hand-written — no `ffmpeg`/corrupt-fixture available in this environment to capture a real one) and
+    real `loudnorm` JSON shapes (compliant/non-compliant/unparsable), the
+    `normalizationStandard(forLoudnessStandard:)` mapping, and `runAllChecks` regression guards for both
+    the newly-real checks (now omitted, not stubbed) and the still-stub checks (still `.notImplemented`).
+  - Compile-uncertain for CI (no local macOS build available): the `PostEncodeActionChain` seam overload
+    resolves correctly against the public 3-arg `execute` (labelled-parameter overload, verified by
+    inspection, not by compiling); `QualityCheckView`'s two new `FFmpegProcessController` blocks follow
+    the exact structural shape of the pre-existing black-frame/silence blocks in the same function, so
+    risk is low but unverified locally.
+  - Next queued: #6 (APIServer honesty), #11 (email-on-completion — already wired per the #348 log entry
+    above, needs verification not implementation), #7 (S3 UI surface + multipart >5 GiB), #15, #13, #14,
+    #16, #12 (none of these have been scoped/read yet this session), plus the still-unscheduled
+    ScriptingBridge 60s semaphore fix deferred from #451 (previously mislabelled "#10" above).
 
 ## Decisions / blockers needing the user
 
