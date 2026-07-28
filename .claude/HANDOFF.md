@@ -303,6 +303,89 @@ media for E2E (rc soak), G-015 SHA-pin timing, gate-ledger #419–#427, release 
     above, needs verification not implementation), #7 (S3 UI surface + multipart >5 GiB), #15, #13, #14,
     #16, #12 (none of these have been scoped/read yet this session), plus the still-unscheduled
     ScriptingBridge 60s semaphore fix deferred from #451 (previously mislabelled "#10" above).
+- **[done 2026-07-28]** Roadmap items #6, #11, #15, on `wip/alpha-consolidation`.
+
+  **#6 — Make `APIServer` honest (re #355).** Added `EncodingEngine` initialiser injection
+  (`APIServer(port:apiKey:engine:)`, default `EncodingEngine()` so `APIServerView` keeps compiling) and a
+  `startTime: Date?` captured in `start()` (cleared in `stop()`). Per-endpoint outcome:
+  | Endpoint | Before | Now | Notes |
+  |---|---|---|---|
+  | `GET /profiles` | 4 hardcoded fake profiles | **REAL** — `engine.profileStore.allProfiles()` (built-in + user-created) | New lock-protected `EncodingProfileStore.allProfiles()`; existing unsynchronised `profiles` property read left alone for its `@MainActor`-only UI call sites |
+  | `GET /status` | hardcoded `"1.0.0"` / `"active"` | **REAL** — `AppInfo.Version.displayString` / `uptimeSeconds` computed from `startTime` | |
+  | `GET /queue` | always empty | **REAL** — `engine.queue.jobsSnapshot()` | New lock-protected `EncodingQueue.jobsSnapshot()`, same rationale as `allProfiles()` |
+  | `POST /encode` | invented `jobId`, never enqueued | **REAL** — validates input exists + profile resolves, then genuinely calls `engine.queue.addJob(_:)`; `jobId` in the response is the real job's UUID | Honestly disclosed via a `note` field: encoding only starts once something drives the queue (today only `AppViewModel.startQueue()` on `@MainActor`, which `ConverterEngine` has no reference to and must not reach into) — this mirrors the GUI's own "Add to Queue" vs "Start Queue" split, not a new limitation |
+  | `POST /probe` | `FileManager.fileExists()` only | **REAL** — calls `try await engine.probe(url:)` (real FFprobe) | Deliberately does **not** call `engine.configure()` itself: `EncodingEngine.ffmpegInfo`/`ffprobeInfo` are unsynchronised `var`s that `configure()` writes to, and `AppViewModel.startQueue()` already calls `configure()` on `@MainActor` — having `APIServer` call it too from its own background dispatch queue would be a genuine concurrent-write race, exactly the cross-actor risk this task said not to take on blind. If the engine hasn't been configured by whoever owns it, this returns `503` with the real error instead of guessing. No endpoint needed a `501` — all five got a real (or honestly-failing) implementation |
+
+  `routeRequest`/`handleConnection` became `async` (bridged via a plain `Task` in the `NWConnection` receive
+  callback, not a blocking semaphore — see the #13 ScriptingBridge item below for why that pattern is
+  avoided) solely so `POST /probe` can `await` the real probe. The five handler methods + `routeRequest`
+  moved from `private` to `internal` (still not `public`) purely so `@testable import` can reach them for
+  tests, mirroring the `PostEncodeActionChain.actionExecutor` precedent. New
+  `Tests/ConverterEngineTests/APIServerTests.swift` (20 tests): JSON-shape assertions for all five
+  endpoints against a real injected `EncodingEngine`, `routeRequest` auth/routing (401/404/204), and
+  regression pins against the old fake values (`"1.0.0"`, the four fake profile names, always-empty queue).
+  Deliberately never calls `profileStore.addProfile`/`deleteProfile` in tests — `EncodingEngine` has no
+  injection point for a temp `EncodingProfileStore` directory, so that would persist a write to the real
+  test-runner's `~/Library/Application Support/MeedyaConverter/Profiles/`; read-only assertions against the
+  always-present built-ins are used instead. `APIServerView`/`APIServerViewModel` gained a matching
+  `engine: EncodingEngine = EncodingEngine()` init parameter (still unused by anything — the view has no
+  navigation entry) so a future caller can hand it `AppViewModel.engine` and get the real, shared
+  profiles/queue instead of a disconnected standalone engine. **`APIServerView` is now honest end-to-end
+  and could be exposed in navigation — not done here, per the task brief, tracked separately.**
+
+  **#11 — Verify the email-on-completion wiring (re #348): already correct, nothing changed.** Read
+  `AppViewModel.sendCompletionEmail`/`EmailSettingsView` end-to-end: `emailOnComplete`/`emailOnFailure`
+  are read via `UserDefaults.standard.bool(forKey:)` using the exact same string keys
+  `EmailSettingsView`'s `@AppStorage("emailOnComplete")`/`@AppStorage("emailOnFailure")` toggles write;
+  `loadSMTPConfig()` reads the same `UserDefaults` keys as its own `@AppStorage` SMTP fields
+  (`emailSMTPHost`/`Port`/`Username`/`UseTLS`/`emailFromAddress`/`emailToAddresses`), plus the password via
+  `loadPasswordFromKeychain()`, which shares the exact `keychainService`
+  (`"Ltd.MWBMpartners.MeedyaConverter.smtp"`) / `keychainAccount` (`"smtpPassword"`) constants
+  `savePasswordToKeychain()` writes with — one Keychain item, read and written by the same two `static`
+  constants. A missing/incomplete config makes `loadSMTPConfig()` return `nil`, which
+  `sendCompletionEmail` guards on and returns early: no crash, no fabricated "sent" message (nothing logs
+  or displays a success indicator for the email path at all — silent-but-safe, matching
+  `sendNotification`'s existing fire-and-forget style; the `curl` `Process` failure path is caught and
+  dropped the same way). No mismatch found. Added
+  `Tests/ConverterEngineTests/EmailNotifierTests.swift` (13 tests, `import ConverterEngine`, no
+  `@testable` — the tested surface is fully `public`) covering the parts of the feature that actually live
+  in `ConverterEngine` and are therefore testable: MIME header/boundary construction, `curl` argument
+  construction (scheme selection, one `--mail-rcpt` per recipient, credentials, stdin-piped upload — a
+  regression guard confirms the raw email body is never interpolated into argv), and
+  `formatJobCompletionEmail`'s HTML (including that file names / error messages are HTML-escaped). The
+  `AppViewModel`/`EmailSettingsView` wiring itself has no reachable test target — `MeedyaConvertTests`
+  depends on `ConverterEngine`, not the `MeedyaConverter` executable target, because Swift forbids
+  importing a module containing `@main` into a test target — so that half was verified by inspection only.
+
+  **#15 — `MediaEncryption`: DELETED (re #451-style cleanup), not streamed.** Grepped for every symbol it
+  defines (`MediaEncryption`, `EncryptionConfig`, `EncryptionMode`, `EncryptionError`, `encryptFile`,
+  `buildHLSEncryptionArguments`, `buildKeyInfoFile`) across `Sources/` and `Tests/`: zero references
+  anywhere outside the file itself, confirming the task brief's "ZERO callers" claim. It's also a genuine
+  duplicate: `Sources/ConverterEngine/FFmpeg/StreamingEnhancements.swift` already has a separate, unrelated
+  `HLSEncryption` type covering the same ground (AES-128 key generation, `-hls_key_info_file` key-info-file
+  construction) — also with no production call site, but at least exercised by one existing test
+  (`HLSEncryption.generateKey()` in `ConverterEngineTests+Manifest.swift`), unlike `MediaEncryption` which
+  had none. Deleted `Sources/ConverterEngine/Utilities/MediaEncryption.swift` outright rather than
+  rewriting its `Data(contentsOf:)` full-file-read to stream — there is nothing calling it to preserve,
+  and `HLSEncryption` is the type any future HLS-encryption work should extend instead of resurrecting a
+  second, parallel implementation. `EncryptionError` had no naming collision with `HLSEncryptionError`, so
+  no follow-on renames were needed elsewhere.
+
+  **Compile-uncertain for CI (no local macOS build available):** `routeRequest`/`handleProbe` becoming
+  `async` and being driven from a plain (non-detached) `Task` inside the `NWConnection.receive` completion
+  closure — this assumes `NWConnection` is `Sendable`-compatible for capture in a `@Sendable` `Task`
+  closure in this SDK, which the pre-existing code already implied by capturing `connection` in the
+  nested `.contentProcessed` completion closure, but wasn't independently verified by compiling;
+  `APIServerTests.test_handleStatus_afterStart_reportsRealPositiveUptime` binds a real loopback
+  `NWListener` on port 58484 during `swift test --parallel` — the first test in the suite to open an
+  actual socket (existing tests only construct/mock, never bind); and the `EncodingProfile`/`AudioCodec`/
+  `VideoCodec`/`ContainerFormat` rawValue literals asserted in `APIServerTests` (`"h264"`, `"aac"`,
+  `"mp4"`) and profile names (`"Web Standard"`, `"ProRes HQ"`) were checked by reading
+  `EncodingProfile.swift`/`AudioCodec.swift`/`VideoCodec.swift`/`ContainerFormat.swift` directly, not by
+  compiling.
+  - Next queued: #7 (S3 UI surface + multipart >5 GiB), #13 (ScriptingBridge 60s semaphore — needs an
+    `NSScriptCommand` refactor), #14 (concurrency audit remainder), #16 (cloud-provider triage — needs
+    human input), #12 (accessibility pass).
 
 ## Decisions / blockers needing the user
 
