@@ -1326,7 +1326,7 @@ final class AppViewModel {
         )
         let payload = WebhookPayload.now(event: event, job: job, status: status, errorMessage: errorMessage)
 
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             do {
                 try await WebhookSender.send(payload: payload, config: config)
             } catch {
@@ -1352,7 +1352,7 @@ final class AppViewModel {
     private func triggerMediaServerAutoScan() {
         guard let config = MediaServerSettingsView.loadMediaServerConfig() else { return }
 
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             do {
                 try await MediaServerIntegration.triggerLibraryScan(config: config)
                 self?.appendLog(.info, "Media server library scan triggered.", category: .encoding)
