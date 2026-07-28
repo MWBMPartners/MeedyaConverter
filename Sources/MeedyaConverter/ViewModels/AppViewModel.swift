@@ -1023,6 +1023,14 @@ final class AppViewModel {
                     outputSizeBytes: outputSizeBytes ?? 0
                 )
 
+                // Media server auto-scan (Issue #295 / #203). The setting's
+                // own label is "Auto-scan after successful encode" (not
+                // "at queue end"), so this fires per successful job here,
+                // matching the wording exactly.
+                if UserDefaults.standard.bool(forKey: "mediaServerAutoScan") {
+                    triggerMediaServerAutoScan()
+                }
+
             } catch {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
@@ -1281,6 +1289,33 @@ final class AppViewModel {
                 try await WebhookSender.send(payload: payload, config: config)
             } catch {
                 self?.appendLog(.warning, "Webhook delivery failed: \(error.localizedDescription)", category: .general)
+            }
+        }
+    }
+
+    // MARK: - Media Server Auto-Scan (Issue #295 / #203)
+
+    /// Trigger a media-server library scan after a successful encode, if
+    /// a usable server configuration is persisted.
+    ///
+    /// `mediaServerAutoScan` (`MediaServerSettingsView`'s toggle) had no
+    /// reader — this is the wiring, called from the per-job success path
+    /// in `startQueue()`. Fires the same
+    /// `MediaServerIntegration.triggerLibraryScan` call the settings
+    /// view's manual "Trigger Library Scan Now" button uses. Fire-and-
+    /// forget in an unstructured `Task { }` (network call, non-blocking —
+    /// same reasoning as `sendWebhookNotification` above): failures are
+    /// logged, never surfaced as an error on the (already-succeeded)
+    /// encoding job.
+    private func triggerMediaServerAutoScan() {
+        guard let config = MediaServerSettingsView.loadMediaServerConfig() else { return }
+
+        Task { [weak self] in
+            do {
+                try await MediaServerIntegration.triggerLibraryScan(config: config)
+                self?.appendLog(.info, "Media server library scan triggered.", category: .encoding)
+            } catch {
+                self?.appendLog(.warning, "Media server auto-scan failed: \(error.localizedDescription)", category: .encoding)
             }
         }
     }
