@@ -1086,6 +1086,26 @@ final class AppViewModel {
             settingKey: "notifyOnQueueFinished"
         )
 
+        // Queue-finished email (Issue #348). `emailOnQueueFinished`
+        // (EmailSettingsView's third trigger toggle, alongside
+        // emailOnComplete/emailOnFailure which are already wired above)
+        // had no reader. Reuses the same job-completion email template as
+        // the per-job paths: there is no single "job" for a whole-queue
+        // event, so the summary counts stand in for profile/size, and
+        // `success` reflects whether any job actually failed rather than
+        // always claiming success.
+        sendCompletionEmail(
+            settingKey: "emailOnQueueFinished",
+            fileName: "Encoding Queue",
+            profile: summary,
+            duration: "—",
+            outputSize: "—",
+            success: engine.queue.failedCount == 0,
+            errorMessage: engine.queue.failedCount > 0
+                ? "\(engine.queue.failedCount) job(s) failed — see the Queue view for details."
+                : nil
+        )
+
         // Queue-finished webhook leg (Issue #296). There is no single
         // "job" for a whole-queue event, so `WebhookJobInfo.fileName`
         // carries the summary text and `status` reflects whether any job
