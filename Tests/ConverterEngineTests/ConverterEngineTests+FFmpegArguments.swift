@@ -1062,4 +1062,103 @@ extension ConverterEngineTests {
         XCTAssertEqual(HDRTransferFunction.hlg.rawValue, "hlg")
     }
 
+    // -----------------------------------------------------------------
+    // MARK: - Metadata / ID-tag passthrough (#478)
+    // -----------------------------------------------------------------
+    //
+    // ELI5: converting a file must not throw away its ID stickers (ISRC, UPC,
+    // MusicBrainz IDs, ISWC …). These tests check the ffmpeg command we build
+    // says "copy every tag" by default, and only strips when the user asks.
+    //
+    // Why: #478 (the cross-repo media-ID program) makes tag preservation the
+    // load-bearing correctness property for MeedyaConverter — a converted file
+    // must keep the identifiers a downstream MeedyaManager/iHymns lookup relies
+    // on. At the argv level the guarantee is that a DEFAULT encode emits
+    // `-map_metadata 0`, which copies the ENTIRE global metadata dictionary
+    // (every tag family, including unknown/ID tags) from input 0 — i.e.
+    // copy-all, not drop-unknown (see `FFmpegArgumentBuilder.build()` ~line 385
+    // and `MetadataPassthroughMode.copyAll`). `--no-copy-metadata` appends a
+    // trailing `-map_metadata -1`; ffmpeg honours the LAST occurrence, so the
+    // opt-out still strips while the default stays copy-all.
+    //
+    // A byte-level round-trip (tag a real file → encode → re-probe) needs
+    // ffmpeg + tagged fixtures and is intentionally left to integration/CI;
+    // `build()` is pure and needs no ffmpeg, so these argv guards run in unit
+    // CI and are the mechanism that locks the property.
+
+    /// #478 helper — the first index `i` where `args[i] == a && args[i+1] == b`
+    /// (i.e. an ffmpeg flag/value pair appears consecutively), else `nil`.
+    private func indexOfArgPair(_ args: [String], _ a: String, _ b: String) -> Int? {
+        guard args.count >= 2 else { return nil }
+        for i in 0...(args.count - 2) where args[i] == a && args[i + 1] == b {
+            return i
+        }
+        return nil
+    }
+
+    /// #478: the default encode copies ALL source metadata (`-map_metadata 0`)
+    /// and chapters (`-map_chapters 0`), so ISRC / UPC / MusicBrainz / ISWC and
+    /// every other identifier tag survive a plain convert — and it must NOT
+    /// strip. This is the core correctness property of #478.
+    func test_argumentBuilder_metadata_copyAllByDefault_preservesIdTags() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        // `copySourceMetadata` defaults to true — deliberately NOT set here, so
+        // this pins the DEFAULT behaviour.
+
+        let args = builder.build()
+        XCTAssertNotNil(
+            indexOfArgPair(args, "-map_metadata", "0"),
+            "Default encode must copy all source metadata (-map_metadata 0) so "
+            + "external/catalogue ID tags (ISRC/UPC/MB/ISWC) are preserved (#478)")
+        XCTAssertNotNil(
+            indexOfArgPair(args, "-map_chapters", "0"),
+            "Default encode must copy chapters (-map_chapters 0) (#478)")
+        XCTAssertNil(
+            indexOfArgPair(args, "-map_metadata", "-1"),
+            "Default encode must NOT strip metadata (#478)")
+    }
+
+    /// #478: opting out (`copySourceMetadata = false`) drops the copy-all
+    /// mapping — the negative control proving the default above is load-bearing
+    /// rather than unconditionally present.
+    func test_argumentBuilder_metadata_disabledOmitsCopyAll() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        builder.copySourceMetadata = false
+
+        let args = builder.build()
+        XCTAssertNil(
+            indexOfArgPair(args, "-map_metadata", "0"),
+            "With copySourceMetadata=false the builder must not emit "
+            + "-map_metadata 0 (#478)")
+    }
+
+    /// #478: the CLI `--no-copy-metadata` path appends `-map_metadata -1` to
+    /// `extraArguments`, which `build()` emits AFTER the default
+    /// `-map_metadata 0`. ffmpeg honours the LAST occurrence, so the opt-out
+    /// genuinely strips — and, conversely, when the flag is absent the copy-all
+    /// default stands (see the copy-all test above).
+    func test_argumentBuilder_metadata_noCopyFlagStripsViaLastWins() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mkv")
+        // Mirror EncodeCommand's --no-copy-metadata wiring.
+        builder.extraArguments = ["-map_metadata", "-1"]
+
+        let args = builder.build()
+        let copyIdx = indexOfArgPair(args, "-map_metadata", "0")
+        let stripIdx = indexOfArgPair(args, "-map_metadata", "-1")
+        XCTAssertNotNil(copyIdx, "default copy-all still emitted (#478)")
+        XCTAssertNotNil(stripIdx, "--no-copy-metadata must add -map_metadata -1 (#478)")
+        if let copyIdx, let stripIdx {
+            XCTAssertLessThan(
+                copyIdx, stripIdx,
+                "The strip (-map_metadata -1) must come AFTER the copy-all "
+                + "(-map_metadata 0) so ffmpeg's last-wins precedence strips (#478)")
+        }
+    }
+
 }

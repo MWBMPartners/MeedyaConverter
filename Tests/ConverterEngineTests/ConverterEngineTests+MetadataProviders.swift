@@ -332,6 +332,34 @@ extension ConverterEngineTests {
         XCTAssertTrue(args.contains("-1"))
     }
 
+    /// #478: value-exact guard for the copy-all mode. The two tests above use
+    /// `contains(...)`, which is positional-blind — a copyAll that regressed to
+    /// `["-map_metadata", "-1", …, "0"]` (i.e. actually stripping) would still
+    /// satisfy `contains("-map_metadata")` && `contains("0")`. Asserting the
+    /// EXACT array (`-map_metadata 0`, value "0" immediately after the flag)
+    /// kills that wrong-but-green case. `-map_metadata 0` is the mode that
+    /// preserves every external/catalogue ID tag family (ISRC/UPC/MB/ISWC).
+    func test_metadataPassthroughBuilder_copyAll_isExactlyMapMetadataZero() {
+        let args = MetadataPassthroughBuilder.buildMetadataArguments(
+            config: MetadataPassthroughConfig(mode: .copyAll)
+        )
+        XCTAssertEqual(
+            args, ["-map_metadata", "0"],
+            "copyAll must be exactly -map_metadata 0 (copies all tag families, #478)")
+    }
+
+    /// #478: value-exact guard for the strip mode — must be exactly
+    /// `-map_metadata -1`, so a strip cannot silently regress to `0` (copy-all)
+    /// and stay green.
+    func test_metadataPassthroughBuilder_strip_isExactlyMapMetadataMinusOne() {
+        let args = MetadataPassthroughBuilder.buildMetadataArguments(
+            config: MetadataPassthroughConfig(mode: .strip)
+        )
+        XCTAssertEqual(
+            args, ["-map_metadata", "-1"],
+            "strip must be exactly -map_metadata -1 (#478)")
+    }
+
     /// Verifies custom metadata strip arguments.
     func test_metadataPassthroughBuilder_custom() {
         let config = MetadataPassthroughConfig(

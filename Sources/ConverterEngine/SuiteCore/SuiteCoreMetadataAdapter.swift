@@ -12,6 +12,19 @@
 //
 // GitHub Issue #371 — Integrate MeedyaSuite-core metadata providers via
 // Swift bindings.
+//
+// #478 (cross-repo media-ID program) — TRACKING NOTE, no code yet:
+// the shared external/catalogue identifier vocabulary (MeedyaSuite-core's
+// `identifier_types` registry + the `#[non_exhaustive] CommonTag` — see
+// MeedyaSuite-core#65) is intended to reach MeedyaConverter through THIS
+// adapter once the core Swift bindings land (scaffold: MeedyaSuite-core#28),
+// exposed under the existing `SUITE_CORE=1` build path. Until those bindings
+// ship, do NOT add a MeedyaConverter-local identifier model / enum — that
+// would be throwaway work the bindings replace. MeedyaConverter needs no new
+// identifier modelling in the meantime; its correctness obligation for the
+// program is tag *passthrough* (that a conversion preserves the ID tag
+// families), covered by the #478 argv guards in
+// ConverterEngineTests+FFmpegArguments.swift.
 // ============================================================================
 
 import Foundation
