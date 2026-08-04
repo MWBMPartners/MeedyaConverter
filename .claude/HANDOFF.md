@@ -99,12 +99,19 @@ to `wip/alpha-consolidation`.
 - [x] **Agent B DONE (`8da5c9f`/`bb9e818`):** #482 team-push real PUT (stop faking success; conflictedProfiles
       r25 still open), #483 BitrateHeatmap real ImageRenderer export. Verified. Issues updated.
 - [~] **CI:** HEAD `3ee5072` (B+A) Build & Test in progress. Prior batches all green.
-- [~] **In-flight (parallel, disjoint):** Agent C = #489 CLI profiles/validate resolve against store + #490
-      ManifestCommand inert opts (--hdr/codec-typos/custom preset). Agent D = #467 MetadataTagEditorView Write-Tags
-      execution + #292 NormalizationSettings measureLevels real ffmpeg. (No-commit; orchestrator reviews+commits+CI-gates.)
-- [ ] **NEXT impl (ranked):** #355 API server entry (`serve`) → #469 conditional rules → #488 bg-removal save panel
-      → #491 profile share-link URL route → then app-service/orphan sweep **pending decision #1**. **PAUSE for #468.**
-      Then: OpenAPI/Swagger reconciliation + final docs/in-app help + CHANGELOG (reflect ALL session fixes).
+- [x] **Agent C DONE (`3fe0538`/`54e530d`):** #489 CLI profiles/validate resolve against store; #490 ManifestCommand
+      rejects --hdr / unknown codecs / custom-without-ladder. Verified. Issues updated.
+- [x] **Agent D DONE (`0f1dc0f`/`8183a83`):** #467 MetadataTagEditorView real Write-Tags execution; #292
+      NormalizationSettings measureLevels real ffmpeg. Verified. Issues updated.
+- [~] **In-flight:** Agent E = #469 conditional rules apply-at-enqueue + surface view, #488 bg-removal save panel.
+- [ ] **NEXT (after E + green):** OpenAPI/Swagger reconciliation (CLI spec: #466/#484/#489/#490 changes) + final
+      docs/in-app help + CHANGELOG reflecting ALL session fixes. Then wrap-up summary.
+
+### DECISIONS PENDING USER (present, don't block)
+1. **Orphan-sweep** (rows 28-59, ~6,000 zero-caller lines) — delete pure-dead duplicates + fix false "live" comments; keep issue-tracked stubs. Need OK on deletions.
+2. **#468 resumable jobs** — delete vs honest-minimal.
+3. **#355 API server `serve` subcommand** — DEFERRED: exposes a network-bound local HTTP server; wants sign-off.
+4. **#491 `meedyaconverter://profile/` URL import route** — DEFERRED: accepts external import URLs (mild surface); wants sign-off.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
