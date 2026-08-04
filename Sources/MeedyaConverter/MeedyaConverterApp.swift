@@ -53,6 +53,12 @@ struct MeedyaConverterApp: App {
     /// The shared application view model.
     @State private var appViewModel = AppViewModel()
 
+    /// Opens app windows (e.g. the Help window) via SwiftUI's native
+    /// window-opening action. Replaces a dead `meedyaconverter://help`
+    /// URL-scheme round-trip that had no `onOpenURL` handler to catch it
+    /// (Issue #481).
+    @Environment(\.openWindow) private var openWindow
+
     /// User's preferred appearance mode (persisted).
     @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
@@ -183,9 +189,7 @@ struct MeedyaConverterApp: App {
     // -----------------------------------------------------------------
 
     private func openHelpWindow() {
-        if let url = URL(string: "meedyaconverter://help") {
-            NSWorkspace.shared.open(url)
-        }
+        openWindow(id: "help")
     }
 
     // -----------------------------------------------------------------
