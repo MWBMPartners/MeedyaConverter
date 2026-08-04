@@ -276,11 +276,17 @@ struct TeamProfileView: View {
     /// implicitly main-actor isolated. A plain `Task { }` here therefore
     /// inherits that isolation, so `@State` mutations below are direct
     /// property writes rather than `MainActor.run` hops, and `self` never
-    /// crosses an isolation boundary. Only the genuinely blocking call —
-    /// `TeamProfileManager.pushProfiles(_:to:)`, which performs synchronous
-    /// file/network I/O — is pulled into a `Task.detached` that captures
-    /// and returns only `Sendable` values (`profiles`, `repository`) and
-    /// never touches `self`.
+    /// crosses an isolation boundary. `TeamProfileManager.pushProfiles(_:to:)`
+    /// — whose `.iCloudSharedFolder`/`.gitRepository` cases still perform
+    /// genuinely blocking synchronous file I/O, and whose `.httpServer`
+    /// case now really awaits the PUT via `URLSession` (Issue #482) — is
+    /// pulled into a `Task.detached` that captures and returns only
+    /// `Sendable` values (`profiles`, `repository`) and never touches
+    /// `self`. Only on genuine success (the `do` block completing without
+    /// throwing, meaning the HTTP push got a 2xx or the file write
+    /// succeeded) are `lastSyncDate`/`statusMessage` updated to report
+    /// success; any thrown error — including a non-2xx HTTP response — is
+    /// surfaced via `statusMessage`/`isError` in the `catch` below instead.
     private func pushProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -293,7 +299,7 @@ struct TeamProfileView: View {
             do {
                 try await Task.detached {
                     let mgr = TeamProfileManager(repository: repository)
-                    try mgr.pushProfiles(profiles, to: repository)
+                    try await mgr.pushProfiles(profiles, to: repository)
                 }.value
                 lastSyncDate = Date()
                 statusMessage = "Pushed \(profiles.count) profiles successfully."
