@@ -33,14 +33,25 @@ to `wip/alpha-consolidation`.
 - [x] Applied per-issue GitHub updates (17 comments) from the register — evidence-cited, honest that
       DONE items stay open until #472 merges.
 - [x] Refreshed `.claude/project_brief.md` (branch, 98 issues, honesty status).
-- [~] Thorough docs sweep (README/PROJECT_STATUS/CHANGELOG/FEATURES honesty reconciliation + OpenAPI).
-      **Sonnet docs-honesty agent RUNNING** (edits .md only). OpenAPI reconciliation still owed by me.
+- [x] Thorough docs sweep — README/PROJECT_STATUS/CHANGELOG/FEATURES reconciled to the honest map
+      (commit `f0bee18`). Docs agent grep-found NEW reachable-but-inert defects: **SceneDetectorView
+      never launches Process (#288)**, **PipelineEditorView has no onSave / PipelineExecutor 0 callers
+      (#278)** — commented on both. Also confirmed dead: thumbnail sprites, HLS AES-128/DRM, AccurateRip,
+      multi-stream selector, encoding reports, ColourSpaceConverter. **OpenAPI reconciliation still owed**
+      (do at end after code settles).
 - [x] Presented ranked new-work proposals → **user chose "Whole ranked set #1–12", in ranked order,
       autonomously, per-task commits + per-issue updates. PAUSE on #12 (resumable-jobs delete-vs-minimal).**
-- [~] Implementing new work. Created **#481** (Help menu no-op bug). **Sonnet impl agent RUNNING** for the
-      4 quick wins: #466 CLI codec honesty, #448 QueueOptimizer apply, #474 SmartCrop apply, #481 Help menu.
-      (Agent does NOT commit — orchestrator reviews diff, commits per-task, pushes, updates each issue.)
-      Remaining after quick wins: #475, #467, #277, #355, #470, #469, #477, then PAUSE for #468.
+- [x] **Quick wins #1–4 DONE + pushed** (all diffs reviewed for compile+runtime correctness):
+      `ef2d8ca` #466 CLI codec/container honesty (copy→passthrough, reject unknown) ·
+      `4e99dcf` #448 QueueOptimizer.reorder applied to live queue ·
+      `685ff8e` #474 SmartCrop Apply-to-Job → pendingManualCropFilter merged at enqueue ·
+      `a770ea3` #481 Help menu → openWindow(id:"help"). Issues #466/#448/#474/#481 updated.
+- [~] **CI:** batch pushed to `wip/alpha-consolidation` (HEAD `a770ea3`); **monitor PR #472 checks**
+      (Build & Test macOS + CodeQL + pin hygiene) → confirm green before scaling to M-tier.
+- [ ] **NEXT (M-tier, ranked):** #475 dead settings keys → #467 metadata tag write → #277 post-encode
+      hooks persist+invoke → #355 API server entry (`serve` subcommand) → #470 ETAPredictor →
+      #469 conditional rules → #477 orphaned app-service sweep. **Then PAUSE for #468** (user decision).
+      Consider also #288 (scene detection execute) + #278 (pipeline execute) surfaced this session.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
