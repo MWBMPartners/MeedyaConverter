@@ -32,10 +32,9 @@ import Foundation
 /// ```
 ///
 /// Existing call sites that launch `Foundation.Process` directly
-/// (CropDetector, HardwareEncoderDetector, AIUpscaler, ProResToVector-
-/// Converter, PQToHLGPipeline, ImageConverter, FFmpegProbe, the GUI
-/// views, etc.) CONTINUE TO WORK without migration. They will be
-/// moved over to the factory one file at a time in follow-up cycles,
+/// (CropDetector, HardwareEncoderDetector, AIUpscaler, ImageConverter,
+/// FFmpegProbe, the GUI views, etc.) CONTINUE TO WORK without migration.
+/// They will be moved over to the factory one file at a time in follow-up cycles,
 /// so each migration is bisectable and the App Store build can be
 /// incrementally enabled file-by-file.
 public enum FFmpegBackendFactory {

@@ -50,7 +50,6 @@ import Foundation
 // As of the scaffold cycle that introduces this file, the existing
 // call sites in `FFmpeg/CropDetector.swift`,
 // `FFmpeg/HardwareEncoderDetector.swift`, `FFmpeg/AIUpscaler.swift`,
-// `FFmpeg/ProResToVectorConverter.swift`, `FFmpeg/PQToHLGPipeline.swift`,
 // `FFmpeg/ImageConverter.swift`, `FFmpeg/FFmpegProbe.swift`,
 // `Encoding/PostEncodeActions.swift`, and the GUI views
 // (`EmailSettingsView`, `ImageConversionView`, `BurnSettingsView`,

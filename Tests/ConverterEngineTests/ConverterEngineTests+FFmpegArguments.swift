@@ -965,48 +965,6 @@ extension ConverterEngineTests {
         XCTAssertFalse(mono.canUpmix) // Mono should not offer upmix
     }
 
-    // -----------------------------------------------------------------
-    // MARK: - ColourSpaceConverter Tests
-    // -----------------------------------------------------------------
-
-    /// Verifies colour space filter generation.
-    func test_colourSpaceConverter_buildFilter() {
-        let filter = ColourSpaceConverter.buildFilter(from: .bt601, to: .bt709)
-        XCTAssertNotNil(filter)
-        XCTAssertTrue(filter!.contains("zscale"))
-        XCTAssertTrue(filter!.contains("bt709"))
-    }
-
-    /// Verifies no filter generated for same colour space.
-    func test_colourSpaceConverter_sameColourSpace() {
-        let filter = ColourSpaceConverter.buildFilter(from: .bt709, to: .bt709)
-        XCTAssertNil(filter, "Should return nil when source == target")
-    }
-
-    /// Verifies signalling arguments.
-    func test_colourSpaceConverter_signalling() {
-        let args = ColourSpaceConverter.buildSignallingArguments(for: .bt2020)
-        let argStr = args.joined(separator: " ")
-        XCTAssertTrue(argStr.contains("-color_primaries bt2020"))
-        XCTAssertTrue(argStr.contains("-colorspace bt2020nc"))
-    }
-
-    /// Verifies recommended colour space for HDR.
-    func test_colourSpaceConverter_recommendation() {
-        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h265, isHDR: true), .bt2020)
-        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h264, isHDR: false), .bt709)
-        XCTAssertEqual(ColourSpaceConverter.recommendedColourSpace(for: .h264, isHDR: true), .bt709) // H.264 doesn't support HDR
-    }
-
-    /// Verifies ColourSpace properties.
-    func test_colourSpace_properties() {
-        XCTAssertTrue(ColourSpace.bt2020.isWideGamut)
-        XCTAssertTrue(ColourSpace.dciP3.isWideGamut)
-        XCTAssertFalse(ColourSpace.bt709.isWideGamut)
-        XCTAssertFalse(ColourSpace.bt601.isWideGamut)
-    }
-
-    // -----------------------------------------------------------------
     // MARK: - PlatformFormatPolicy Tests
     // -----------------------------------------------------------------
 
@@ -1076,9 +1034,9 @@ extension ConverterEngineTests {
     // on. At the argv level the guarantee is that a DEFAULT encode emits
     // `-map_metadata 0`, which copies the ENTIRE global metadata dictionary
     // (every tag family, including unknown/ID tags) from input 0 — i.e.
-    // copy-all, not drop-unknown (see `FFmpegArgumentBuilder.build()` ~line 385
-    // and `MetadataPassthroughMode.copyAll`). `--no-copy-metadata` appends a
-    // trailing `-map_metadata -1`; ffmpeg honours the LAST occurrence, so the
+    // copy-all, not drop-unknown (see `FFmpegArgumentBuilder.build()` ~line 385).
+    // `--no-copy-metadata` appends a trailing `-map_metadata -1`; ffmpeg
+    // honours the LAST occurrence, so the
     // opt-out still strips while the default stays copy-all.
     //
     // A byte-level round-trip (tag a real file → encode → re-probe) needs

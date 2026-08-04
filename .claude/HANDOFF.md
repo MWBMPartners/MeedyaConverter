@@ -118,9 +118,23 @@ to `wip/alpha-consolidation`.
       #350, #338, #257, #323, #285.
 
 ### DECISIONS — USER DECIDED 2026-08-04, NOW IMPLEMENTING (4 agents dispatched)
-1. **Orphan-sweep** → **DELETE** pure-dead + fix false "live" comments (keep issue-tracked stubs). Fable
-   delete-list analysis RUNNING (`aa4ca7d…`, evidence-backed; resolves the ColorSpaceConverter US/British
-   contradiction). **Orchestrator re-verifies zero-callers + dangling refs before executing any deletion.**
+1. **Orphan-sweep** → IN PROGRESS. Fable delete-list DONE (verified; both ColorSpace spellings + their chains
+   are production-dead). Orchestrator independently grep-confirmed. Execution in CI-gated batches:
+   - **Batch 1 DONE+pushed (`af83104`):** deleted AudioMixer.swift, ClosedCaptionHandler.swift, SubtitleOCR.swift
+     (0 refs in Sources AND Tests — no test trims needed).
+   - **Batch 2 RUNNING (Sonnet):** delete ~14 clearly-dead whole files (SubtitleConverter, Extended*×4,
+     EncodingReport, MediaInfoIntegration, MetadataPassthrough, MetadataTagger, MultiStreamSelector,
+     SmartCropIntegration, HDRPolicyEngine, ColourSpaceConverter, PQToHLGPipeline) + trim their mixed-scope
+     test sections + fix 3 false "live" comments (FFmpegBackend/Factory, RasterVectorConverter). Orchestrator
+     re-greps deleted type names = 0 in Sources+Tests before pushing; CI-gate.
+   - **EXCLUDED for safety (kept + documented for a future pass):** `ColorSpaceConverter.swift` (US — its
+     ToneMapAlgorithm name-collides with the live nested `FFmpegArgumentBuilder.ToneMapAlgorithm`),
+     `Backend/EncodingBackend.swift` (EncodingJob name-collision risk), `Models/FeatureGate.swift` + the
+     `EncodingEngine.featureGate` removal (Feature/ProductTier collision + engine edits), and the surgical
+     in-live-file cuts (generateDolbyVisionRPU, AudioProcessor ReplayGain branch, MediaServerConfigStore,
+     MiniPlayerView, StorageAnalyzer.estimateSavings). All are harmless dead code; removing them is deferred
+     to avoid a blind build break. **KEEP per issue-tracking:** ExtendedCloudProviders (#163-173/#459),
+     RasterVectorConverter (#473, comment fixed), AudioProcessor two-pass measurement branch (#292).
 2. **#468 resumable** → **HONEST-MINIMAL** (checkpoint on cancel/fail, surface view, relabel Resume→Re-queue).
    Sonnet RUNNING (`a4863e…`). Files: AppViewModel/ResumableJobsView/ContentView/SidebarView.
 3. **#355 API serve** → **ADD** `meedya-convert serve` subcommand. Sonnet RUNNING (`a44800…`). New ServeCommand.swift + MeedyaConvert.swift.

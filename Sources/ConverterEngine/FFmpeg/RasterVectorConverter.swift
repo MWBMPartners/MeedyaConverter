@@ -12,9 +12,10 @@
 //
 // The public surface here is intentionally "pure plumbing": configuration
 // value types, argument builders for each external tool, and enums covering
-// the supported formats and tracing modes. Execution glue lives in
-// `ImageConverter` (the FFmpeg-backed entry point) and is called by the CLI
-// and SwiftUI app when the user requests an SVG output.
+// the supported formats and tracing modes. No executor wires this up to a
+// running `potrace`/`autotrace`/`vtracer`/`librsvg` process yet — `ImageConverter`
+// (the FFmpeg-backed entry point) has no SVG/vector call sites. Kept for the
+// planned #473 work that will add the missing executor and wire it in.
 //
 // GitHub Issue #376 — Raster ↔ Vector image conversion with transparency &
 // metadata support.
