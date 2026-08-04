@@ -93,12 +93,18 @@ to `wip/alpha-consolidation`.
       was silently broken too); #484 batch --job-file non-zero exit on failure; #485 per-stream subtitle overrides
       (new FFmpegArgumentBuilder hook); #487 subtitleTonemap preserved on profile import (+new test). Issues updated.
       All symbols verified vs real code (CaseIterable, ExitCodes.encodingFailed, SubtitleStreamOverride, .dolbyVision).
-- [~] **In-flight (parallel, disjoint):** Agent A = #277 post-encode hooks persist+invoke + honor watch-folder
-      postAction, #275 outputMode/OutputPathResolver. Agent B = #482 team-push real send (stop faking success),
-      #483 BitrateHeatmap real export. (Both no-commit; orchestrator reviews+commits per-issue, CI-gates.)
-- [ ] **NEXT impl (ranked):** #467 metadata tag write → #292 measureLevels → #355 API server entry (`serve`) →
-      #469 conditional rules → #488/#489/#490/#491 (CLI/manifest/share-link/bg-removal) → then app-service/orphan
-      sweep **pending decision #1**. **PAUSE for #468.** Then: OpenAPI/Swagger + final docs/in-app help + CHANGELOG.
+- [x] **Agent A DONE (`3ee5072`):** #277 post-encode hooks (persist chain + invoke on completion + watchFolder
+      postAction via side table; failure-path runOnFailure left out, noted), #275 outputMode (OutputPathResolver
+      .resolveOutputDirectory extracted + used in enqueue). Verified vs real APIs. Issues updated.
+- [x] **Agent B DONE (`8da5c9f`/`bb9e818`):** #482 team-push real PUT (stop faking success; conflictedProfiles
+      r25 still open), #483 BitrateHeatmap real ImageRenderer export. Verified. Issues updated.
+- [~] **CI:** HEAD `3ee5072` (B+A) Build & Test in progress. Prior batches all green.
+- [~] **In-flight (parallel, disjoint):** Agent C = #489 CLI profiles/validate resolve against store + #490
+      ManifestCommand inert opts (--hdr/codec-typos/custom preset). Agent D = #467 MetadataTagEditorView Write-Tags
+      execution + #292 NormalizationSettings measureLevels real ffmpeg. (No-commit; orchestrator reviews+commits+CI-gates.)
+- [ ] **NEXT impl (ranked):** #355 API server entry (`serve`) → #469 conditional rules → #488 bg-removal save panel
+      → #491 profile share-link URL route → then app-service/orphan sweep **pending decision #1**. **PAUSE for #468.**
+      Then: OpenAPI/Swagger reconciliation + final docs/in-app help + CHANGELOG (reflect ALL session fixes).
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
