@@ -117,11 +117,15 @@ to `wip/alpha-consolidation`.
       #288, #278, #446, #482(r25 conflicts UI), #329, #333, #340, #353, #286, #331, #281, #241, #324, #352,
       #350, #338, #257, #323, #285.
 
-### DECISIONS PENDING USER (present, don't block)
-1. **Orphan-sweep** (rows 28-59, ~6,000 zero-caller lines) — delete pure-dead duplicates + fix false "live" comments; keep issue-tracked stubs. Need OK on deletions.
-2. **#468 resumable jobs** — delete vs honest-minimal.
-3. **#355 API server `serve` subcommand** — DEFERRED: exposes a network-bound local HTTP server; wants sign-off.
-4. **#491 `meedyaconverter://profile/` URL import route** — DEFERRED: accepts external import URLs (mild surface); wants sign-off.
+### DECISIONS — USER DECIDED 2026-08-04, NOW IMPLEMENTING (4 agents dispatched)
+1. **Orphan-sweep** → **DELETE** pure-dead + fix false "live" comments (keep issue-tracked stubs). Fable
+   delete-list analysis RUNNING (`aa4ca7d…`, evidence-backed; resolves the ColorSpaceConverter US/British
+   contradiction). **Orchestrator re-verifies zero-callers + dangling refs before executing any deletion.**
+2. **#468 resumable** → **HONEST-MINIMAL** (checkpoint on cancel/fail, surface view, relabel Resume→Re-queue).
+   Sonnet RUNNING (`a4863e…`). Files: AppViewModel/ResumableJobsView/ContentView/SidebarView.
+3. **#355 API serve** → **ADD** `meedya-convert serve` subcommand. Sonnet RUNNING (`a44800…`). New ServeCommand.swift + MeedyaConvert.swift.
+4. **#491 share links** → **WIRE** `meedyaconverter://profile/` onOpenURL import route. Sonnet RUNNING (`a14770…`). MeedyaConverterApp/URLSchemeHandler.
+   (Each: orchestrator reviews diff → commit → push → CI-gate → update issue. Then final docs/CHANGELOG top-up + wrap-up.)
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
