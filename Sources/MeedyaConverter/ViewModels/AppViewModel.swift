@@ -435,13 +435,52 @@ final class AppViewModel {
     /// instance to be picked up.
     let recentFilesManager = RecentFilesManager()
 
+    // MARK: - ETA Prediction (Issue #470)
+
+    /// History-weighted ETA predictor for the encoding queue. Persists
+    /// completed-encode history to disk (Application Support) and is
+    /// `@unchecked Sendable` with its own internal `NSLock`, so it is
+    /// safe to call from anywhere — here it is only ever touched from
+    /// this `@MainActor` view model, in `startQueue()`.
+    let etaPredictor = ETAPredictor()
+
     // MARK: - Initialiser
 
     init() {
-        self.engine = EncodingEngine()
+        // Custom FFmpeg/FFprobe binary paths (#475 —
+        // `SettingsView.PathSettingsTab`'s "FFmpeg Path"/"FFprobe Path"
+        // fields were persisted but never read). `EncodingEngine` already
+        // threads these straight through to `FFmpegBundleManager`, which
+        // tries the override before falling back to its bundled/Homebrew/
+        // PATH search order (see `FFmpegBundleManager.locateFFmpeg()`) —
+        // the only missing piece was passing them in here. An empty
+        // string (the fields' unset default, shown as an "Auto-detect"
+        // placeholder) means "no override", not a literal empty path.
+        let customFFmpegPath = UserDefaults.standard.string(forKey: "customFFmpegPath")
+        let customFFprobePath = UserDefaults.standard.string(forKey: "customFFprobePath")
+        let engine = EncodingEngine(
+            ffmpegPath: (customFFmpegPath?.isEmpty == false) ? customFFmpegPath : nil,
+            ffprobePath: (customFFprobePath?.isEmpty == false) ? customFFprobePath : nil
+        )
+        self.engine = engine
         self.updateChecker = AppUpdateChecker()
         self.storeManager = StoreManager()
-        self.selectedProfile = .webStandard
+
+        // Default profile (#475 — `SettingsView.EncodingSettingsTab`'s
+        // "Default Profile" picker was persisted but never read, so every
+        // launch silently reset back to Web Standard). Read via
+        // `UserDefaults` directly rather than `@AppStorage` since this is
+        // a non-View init; resolved against the local `engine` (not
+        // `self.engine`, per the two-phase-init note on `featureGate`
+        // below) so a stale or unrecognised name never crashes — it just
+        // falls back to Web Standard exactly like the old hardcoded default.
+        if let storedProfileName = UserDefaults.standard.string(forKey: "defaultProfileName"),
+           !storedProfileName.isEmpty,
+           let resolvedProfile = engine.profileStore.profile(named: storedProfileName) {
+            self.selectedProfile = resolvedProfile
+        } else {
+            self.selectedProfile = .webStandard
+        }
 
         // Remote feature gate (#5): seed synchronously from whatever is
         // already cached (persisted cache or the compiled-in default) so
@@ -967,12 +1006,40 @@ final class AppViewModel {
                         jobState.currentBitrate = progressInfo.bitrate
                         jobState.currentFrame = progressInfo.frame
 
-                        // Calculate ETA from speed and remaining fraction
+                        // Calculate ETA (Issue #470). Default to the naive
+                        // linear extrapolation from observed progress
+                        // (unchanged formula — this is also the fallback
+                        // for a cold `ETAPredictor` with no matching
+                        // history), then supersede it with
+                        // `ETAPredictor.predictETA`'s history-weighted
+                        // estimate whenever it has matching data for this
+                        // codec/preset/resolution/hw-accel combination.
+                        // `progressInfo.currentTime` and `fraction` are
+                        // both derived by FFmpegProcessController from the
+                        // same known source duration, so `currentTime /
+                        // fraction` recovers that duration exactly —
+                        // stashed on `jobState` so the completion branch
+                        // below can feed it back into `recordEncode`.
                         if let fraction = progressInfo.fractionComplete, fraction > 0,
                            let startedAt = jobState.startedAt {
                             let elapsed = Date().timeIntervalSince(startedAt)
                             let totalEstimated = elapsed / fraction
                             jobState.eta = totalEstimated - elapsed
+
+                            if let currentTime = progressInfo.currentTime, currentTime > 0 {
+                                let inputDuration = currentTime / fraction
+                                jobState.lastKnownInputDuration = inputDuration
+
+                                if let prediction = self?.etaPredictor.predictETA(
+                                    codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                                    preset: jobState.config.profile.videoPreset ?? "default",
+                                    resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                                    inputDuration: inputDuration,
+                                    hwAccel: jobState.config.profile.useHardwareEncoding
+                                ) {
+                                    jobState.eta = max(0, prediction.estimate - elapsed)
+                                }
+                            }
                         }
 
                         // Update system-level activity indicators (Issue #182)
@@ -1015,6 +1082,27 @@ final class AppViewModel {
                 let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
                 appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
                           category: .encoding, jobID: jobState.config.id)
+
+                // Record this encode for ETAPredictor (Issue #470) so
+                // future jobs with a similar codec/preset/resolution/
+                // hw-accel combination get a history-weighted estimate
+                // instead of only the naive in-job linear one.
+                // `lastKnownInputDuration` is only set once a progress
+                // tick reports a `currentTime`; a job that fails before
+                // its first tick (or one FFmpeg reports no progress for)
+                // simply isn't recorded, same as it wouldn't have had a
+                // meaningful speed factor anyway.
+                if let inputDuration = jobState.lastKnownInputDuration,
+                   let encodeDuration = jobState.elapsedTime, encodeDuration > 0 {
+                    etaPredictor.recordEncode(EncodeHistoryEntry(
+                        codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                        preset: jobState.config.profile.videoPreset ?? "default",
+                        resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                        inputDuration: inputDuration,
+                        encodeDuration: encodeDuration,
+                        hardwareAccelerated: jobState.config.profile.useHardwareEncoding
+                    ))
+                }
 
                 // Finalise and persist this job's statistics (Issue #284).
                 // `EncodingStatisticsStore` reads/writes its JSON history
@@ -1503,6 +1591,24 @@ final class AppViewModel {
         } else {
             return String(format: "%d:%02d", minutes, seconds)
         }
+    }
+
+    /// Formats a profile's output resolution as an `ETAPredictor` matching
+    /// key (e.g. "1920x1080") — Issue #470. Falls back to "source" when
+    /// the profile doesn't override resolution (`outputWidth`/
+    /// `outputHeight` nil means "match source"). This label only needs to
+    /// be *consistent* between the `recordEncode` and `predictETA` call
+    /// sites in `startQueue()`, not pixel-exact, since it is just one of
+    /// several fields `ETAPredictor` matches history entries on.
+    ///
+    /// `static` (rather than an instance method) so it can be called from
+    /// inside the `[weak self]` progress closure in `startQueue()` without
+    /// needing a second, separate `self` unwrap.
+    private static func etaResolutionLabel(for profile: EncodingProfile) -> String {
+        guard let width = profile.outputWidth, let height = profile.outputHeight else {
+            return "source"
+        }
+        return "\(width)x\(height)"
     }
 }
 

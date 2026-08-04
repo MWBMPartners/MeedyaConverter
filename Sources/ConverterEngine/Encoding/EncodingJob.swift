@@ -233,6 +233,15 @@ public final class EncodingJobState: ObservableObject, @unchecked Sendable {
     /// Current frame being processed.
     @Published public var currentFrame: Int?
 
+    /// Best available estimate of the source media's duration in seconds
+    /// (Issue #470), derived from FFmpeg's own `currentTime /
+    /// fractionComplete` progress ratio as it becomes available. Not
+    /// `@Published` — it's an internal bookkeeping value for
+    /// `AppViewModel.startQueue()`'s `ETAPredictor` wiring, not something
+    /// the UI binds to directly. `nil` until the first progress tick with
+    /// a known `currentTime` arrives.
+    public var lastKnownInputDuration: TimeInterval?
+
     /// Error message if the job failed.
     @Published public var errorMessage: String?
 
