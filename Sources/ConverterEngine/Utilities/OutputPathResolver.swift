@@ -46,6 +46,69 @@ public struct OutputPathResolver: Sendable {
 
     // MARK: - Resolution
 
+    /// Resolve the output *directory* a file should land in, according to
+    /// the output mode — without deciding its filename.
+    ///
+    /// Extracted from ``resolveOutputPath(inputURL:baseInputDir:outputDir:mode:template:)``
+    /// (Issue #275) so callers that need mode-aware directory placement
+    /// composed with their own filename resolution — e.g.
+    /// `AppViewModel.enqueueSelectedFile()`'s `FilenameTemplate`-based
+    /// naming, which must stay intact rather than being replaced by this
+    /// resolver's own `inputURL.lastPathComponent`-based naming — can
+    /// reuse the identical directory logic without duplicating it.
+    ///
+    /// `.custom` has no directory-only meaning of its own (it is purely
+    /// template-driven — see `resolveOutputPath`'s `.custom` case), so it
+    /// is treated identically to `.flatten` here: the plain `outputDir`.
+    ///
+    /// - Parameters:
+    ///   - inputURL: The source media file URL.
+    ///   - baseInputDir: The root input directory for mirror mode. When
+    ///     `nil`, or when `inputURL` doesn't live under it, falls back to
+    ///     `outputDir` unchanged (flatten behaviour).
+    ///   - outputDir: The destination output directory.
+    ///   - mode: The output organisation mode.
+    /// - Returns: The directory the output file should be placed in.
+    ///   For `.mirror`, creates any intermediate directories under
+    ///   `outputDir` as needed.
+    public static func resolveOutputDirectory(
+        inputURL: URL,
+        baseInputDir: URL?,
+        outputDir: URL,
+        mode: OutputMode
+    ) -> URL {
+        guard mode == .mirror, let baseDir = baseInputDir else {
+            return outputDir
+        }
+
+        // Calculate the relative path from the base input directory
+        let inputDirPath = inputURL.deletingLastPathComponent().path
+        let basePath = baseDir.path
+
+        guard inputDirPath.hasPrefix(basePath) else {
+            // Input is not under the base directory — fall back to flatten
+            return outputDir
+        }
+
+        var relativePath = String(inputDirPath.dropFirst(basePath.count))
+        // Remove leading separator if present
+        if relativePath.hasPrefix("/") {
+            relativePath = String(relativePath.dropFirst())
+        }
+
+        guard !relativePath.isEmpty else { return outputDir }
+
+        let targetDir = outputDir.appendingPathComponent(relativePath)
+
+        // Create intermediate directories as needed
+        try? FileManager.default.createDirectory(
+            at: targetDir,
+            withIntermediateDirectories: true
+        )
+
+        return targetDir
+    }
+
     /// Resolve the output file path for a given input.
     ///
     /// - Parameters:
@@ -71,47 +134,13 @@ public struct OutputPathResolver: Sendable {
         let fileName = PathSanitizer.sanitizeFilenameComponent(inputURL.lastPathComponent)
 
         switch mode {
-        case .flatten:
-            let candidate = outputDir.appendingPathComponent(fileName)
-            return resolveCollision(candidate)
-
-        case .mirror:
-            guard let baseDir = baseInputDir else {
-                // No base directory — fall back to flatten
-                let candidate = outputDir.appendingPathComponent(fileName)
-                return resolveCollision(candidate)
-            }
-
-            // Calculate the relative path from the base input directory
-            let inputDirPath = inputURL.deletingLastPathComponent().path
-            let basePath = baseDir.path
-
-            let relativePath: String
-            if inputDirPath.hasPrefix(basePath) {
-                var rel = String(inputDirPath.dropFirst(basePath.count))
-                // Remove leading separator if present
-                if rel.hasPrefix("/") {
-                    rel = String(rel.dropFirst())
-                }
-                relativePath = rel
-            } else {
-                // Input is not under the base directory — fall back to flatten
-                relativePath = ""
-            }
-
-            let targetDir: URL
-            if relativePath.isEmpty {
-                targetDir = outputDir
-            } else {
-                targetDir = outputDir.appendingPathComponent(relativePath)
-            }
-
-            // Create intermediate directories as needed
-            try? FileManager.default.createDirectory(
-                at: targetDir,
-                withIntermediateDirectories: true
+        case .flatten, .mirror:
+            let targetDir = resolveOutputDirectory(
+                inputURL: inputURL,
+                baseInputDir: baseInputDir,
+                outputDir: outputDir,
+                mode: mode
             )
-
             let candidate = targetDir.appendingPathComponent(fileName)
             return resolveCollision(candidate)
 

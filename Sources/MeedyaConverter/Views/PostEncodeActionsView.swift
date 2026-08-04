@@ -100,6 +100,53 @@ struct PostEncodeActionsView: View {
                 onAdd: { addAction(type: selectedType) }
             )
         }
+        .onAppear {
+            actionChain = Self.loadPersistedChain()
+        }
+        .onChange(of: actionChainSnapshot) {
+            persistChain()
+        }
+    }
+
+    // MARK: - Persistence (Issue #277)
+
+    /// `UserDefaults` key under which the JSON-encoded action chain
+    /// lives. Not `private` so `AppViewModel`'s job-completion path
+    /// (Issue #277) can decode the same blob via `loadPersistedChain()`
+    /// below without a live view instance — mirrors
+    /// `EmailSettingsView.loadSMTPConfig()` /
+    /// `WebhookSettingsView.loadWebhookConfig()`'s static-load idiom.
+    static let userDefaultsKey = "postEncodeActionChain"
+
+    /// Load the persisted action chain, independent of this view being
+    /// on screen. Returns an empty chain (no actions) when nothing has
+    /// been saved yet or the stored JSON fails to decode, mirroring this
+    /// view's own `@State` default.
+    static func loadPersistedChain() -> PostEncodeActionChain {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+              let chain = try? JSONDecoder().decode(PostEncodeActionChain.self, from: data) else {
+            return PostEncodeActionChain()
+        }
+        return chain
+    }
+
+    /// Persist the current action chain to `UserDefaults` as JSON.
+    private func persistChain() {
+        guard let data = try? JSONEncoder().encode(actionChain) else { return }
+        UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+    }
+
+    /// A JSON-encoded snapshot of `actionChain`, recomputed on every body
+    /// evaluation.
+    ///
+    /// `PostEncodeActionChain` / `PostEncodeAction` are `Codable` but not
+    /// `Equatable` (see `PostEncodeActions.swift`), so `.onChange` can't
+    /// track `actionChain` directly. Comparing its encoded bytes instead
+    /// (`Data` is `Equatable`) catches every add / remove / reorder /
+    /// in-place row edit (toggles, name, config fields) without adding a
+    /// new conformance to that read-only-ideally engine type.
+    private var actionChainSnapshot: Data {
+        (try? JSONEncoder().encode(actionChain)) ?? Data()
     }
 
     // MARK: - Actions

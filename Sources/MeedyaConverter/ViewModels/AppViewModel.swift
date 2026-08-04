@@ -793,7 +793,25 @@ final class AppViewModel {
         // `resolveWithCollisionHandling`; `true` reuses the resolved path
         // even if a file is already there, which FFmpeg (invoked with
         // `-y` for every job) then overwrites in place.
+        //
+        // Issue #275: `outputMode` (bound to the "Folder Structure"
+        // picker in `OutputSettingsView`) previously had zero readers,
+        // so "Mirror source folder structure" silently produced flat
+        // output. `OutputPathResolver.resolveOutputDirectory` now picks
+        // the actual destination *directory* according to `outputMode`
+        // — composed with, not replacing, the `FilenameTemplate`-based
+        // naming/overwrite logic below, which still owns the filename.
+        // For `.flatten` (the default) and `.custom` (template-only;
+        // see `OutputPathResolver`'s doc comment) it returns
+        // `outputDir` unchanged, so behaviour for every mode except
+        // `.mirror` is exactly what it was before this call existed.
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory
+        let resolvedOutputDir = OutputPathResolver.resolveOutputDirectory(
+            inputURL: file.fileURL,
+            baseInputDir: outputMode == .mirror ? commonSourceDirectory() : nil,
+            outputDir: outputDir,
+            mode: outputMode
+        )
         let outputExtension = selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
         let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
         let template = FilenameTemplate(template: templateString)
@@ -801,7 +819,7 @@ final class AppViewModel {
         let outputURL = template.resolveOutputURL(
             sourceFile: file,
             profile: selectedProfile,
-            outputDirectory: outputDir,
+            outputDirectory: resolvedOutputDir,
             fileExtension: outputExtension,
             overwriteExisting: overwriteExisting
         )
@@ -836,6 +854,53 @@ final class AppViewModel {
 
         // Switch to queue view
         selectedNavItem = .queue
+    }
+
+    /// The deepest common ancestor directory across every currently
+    /// imported source file, used as `OutputPathResolver`'s
+    /// `baseInputDir` for `.mirror` mode (Issue #275).
+    ///
+    /// The app imports individual files one at a time (no folder-tree
+    /// import, no stored "project root" — see `importFiles(_:)`), so
+    /// there is no authoritative root to mirror against. The common
+    /// ancestor of everything in `sourceFiles` is the closest available
+    /// proxy: files picked from sibling subfolders (e.g.
+    /// `.../ProjectA/clip1.mov`, `.../ProjectB/clip2.mov`) end up
+    /// mirrored under `ProjectA/`, `ProjectB/` in the output directory —
+    /// which is what "Mirror source folder structure" promises. When
+    /// only one file is imported, its own parent directory IS the
+    /// common ancestor, so `OutputPathResolver` computes an empty
+    /// relative path and mirror mode is equivalent to flatten for that
+    /// file — there is no sub-structure to preserve for a single file
+    /// considered in isolation.
+    ///
+    /// - Returns: The common ancestor directory URL, or `nil` if no
+    ///   source files are imported.
+    private func commonSourceDirectory() -> URL? {
+        let directories = sourceFiles.map { $0.fileURL.deletingLastPathComponent() }
+        guard let first = directories.first else { return nil }
+        guard directories.count > 1 else { return first }
+
+        var commonComponents = first.pathComponents
+        for directory in directories.dropFirst() {
+            let components = directory.pathComponents
+            var matched = 0
+            while matched < commonComponents.count,
+                  matched < components.count,
+                  commonComponents[matched] == components[matched] {
+                matched += 1
+            }
+            if matched < commonComponents.count {
+                commonComponents.removeLast(commonComponents.count - matched)
+            }
+            if commonComponents.isEmpty { return nil }
+        }
+
+        var result = URL(fileURLWithPath: commonComponents[0])
+        for component in commonComponents.dropFirst() {
+            result.appendPathComponent(component)
+        }
+        return result
     }
 
     // MARK: - Watch Folder Auto-Encoding (Issue #268)
@@ -901,6 +966,12 @@ final class AppViewModel {
 
         let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: profile)
         engine.queue.addJob(jobConfig)
+
+        // Record the watch-folder association so `startQueue()`'s
+        // completion handler can apply `config.postAction` once this
+        // job finishes (Issue #277).
+        watchFolderJobs[jobConfig.id] = config
+
         appendLog(
             .info,
             "Watch folder \"\(config.name)\" queued: \(url.lastPathComponent) with profile \"\(profile.name)\"",
@@ -914,6 +985,20 @@ final class AppViewModel {
             Task { await startQueue() }
         }
     }
+
+    /// Maps the ID of an `EncodingJobConfig` that originated from a watch
+    /// folder to the `WatchFolderConfig` that enqueued it (Issue #277).
+    ///
+    /// `EncodingJobConfig` itself carries no notion of "came from a watch
+    /// folder" — it's a widely-shared model used by every enqueue path
+    /// (`enqueueSelectedFile()`, multi-output, batch rename, etc.), so
+    /// widening it for this one caller would be a much broader change
+    /// than this fix needs. This side table is populated by
+    /// `enqueueWatchFolderFile(_:config:)` and consulted (then cleared)
+    /// by `startQueue()`'s completion handler, which needs the original
+    /// `WatchFolderConfig.postAction` to know whether to move or delete
+    /// the source file after a successful encode.
+    private var watchFolderJobs: [UUID: WatchFolderConfig] = [:]
 
     // MARK: - Queue Processing
 
@@ -1168,6 +1253,64 @@ final class AppViewModel {
                     triggerMediaServerAutoScan()
                 }
 
+                // Post-encode action hooks (Issue #277). The chain engine
+                // itself (`PostEncodeActionChain.execute`) is real —
+                // scp/cloud/scripts/trash/notify all genuinely execute —
+                // but `PostEncodeActionsView` previously only invoked it
+                // from its own dry-run Test button, never from a real
+                // job. Loaded fresh from `UserDefaults` on every
+                // completion (mirrors `sendCompletionEmail`'s /
+                // `sendWebhookNotification`'s own config-loading pattern
+                // above), so an edit made mid-queue in Settings takes
+                // effect starting with the very next job.
+                let postEncodeChain = PostEncodeActionsView.loadPersistedChain()
+                if postEncodeChain.actions.contains(where: \.isEnabled) {
+                    let inputURL = jobState.config.inputURL
+                    let outputURL = jobState.config.outputURL
+
+                    // `PostEncodeActionChain` is a plain `Sendable`
+                    // struct with no `@MainActor` state to race on (see
+                    // its own concurrency doc comment in
+                    // PostEncodeActions.swift), and `execute` already
+                    // hops to `@MainActor` itself internally only where
+                    // it must (`.openInFinder`/`.sendNotification`) —
+                    // everything else, including `.runShellScript`'s
+                    // blocking `Process.waitUntilExit()`, runs off the
+                    // main actor by design. Mirroring `sendCompletionEmail`'s
+                    // `Task.detached` above, this captures only
+                    // `Sendable` values (`postEncodeChain`, the two
+                    // `URL`s) — deliberately NOT `[weak self]`: unlike
+                    // `sendWebhookNotification`'s non-detached
+                    // `Task { @MainActor [weak self] in }`, sending a
+                    // `@MainActor`-isolated `self` into a genuinely
+                    // detached, non-isolated context is the exact
+                    // "sending 'self' risks data races" Swift 6 error
+                    // `StoreManager.listenForTransactions()` already hit
+                    // and documents. Failures are silently dropped here,
+                    // same as `sendCompletionEmail`'s own fire-and-forget
+                    // behaviour — never surfaced as a job failure, since
+                    // the encode itself already succeeded.
+                    Task.detached {
+                        try? await postEncodeChain.execute(
+                            inputURL: inputURL,
+                            outputURL: outputURL,
+                            success: true
+                        )
+                    }
+                }
+
+                // Watch-folder post-action (Issue #277).
+                // `WatchFolderConfig.postAction` (the move/delete-after-
+                // encode picker in `WatchFolderView`) was persisted but
+                // never read back. `watchFolderJobs` only has an entry
+                // for jobs enqueued via `enqueueWatchFolderFile(_:config:)`
+                // — every other job (manual enqueue, multi-output, etc.)
+                // leaves this a no-op. `removeValue` both looks up and
+                // clears the association so it never leaks.
+                if let watchFolderConfig = watchFolderJobs.removeValue(forKey: jobState.config.id) {
+                    applyWatchFolderPostAction(watchFolderConfig, sourceURL: jobState.config.inputURL)
+                }
+
                 // Delete source file after successful encode, if enabled
                 // (SettingsView.deleteSourceAfterEncode — previously
                 // persisted but never read). Deliberately last in this
@@ -1182,6 +1325,15 @@ final class AppViewModel {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
                 jobState.completedAt = Date()
+
+                // Clear any watch-folder association without applying its
+                // `postAction` (Issue #277) — `PostProcessingAction` only
+                // ever fires after a *successful* encode (see its own doc
+                // comment); a failed job's source file should stay put
+                // for the user to retry or inspect. Still removed here so
+                // the side table never leaks an entry for a job that will
+                // never reach the success path.
+                watchFolderJobs.removeValue(forKey: jobState.config.id)
 
                 // Persist failed-job statistics so the Dashboard success rate is real (Issue #284).
                 statsCollector.markFailed()
@@ -1578,6 +1730,68 @@ final class AppViewModel {
                 "Failed to delete source file \(job.inputURL.lastPathComponent): \(error.localizedDescription)",
                 category: .encoding, jobID: job.id
             )
+        }
+    }
+
+    /// Apply a watch folder's configured `postAction` to a source file
+    /// after its encode completes successfully (Issue #277).
+    ///
+    /// `WatchFolderConfig.postAction` (`WatchFolderView`'s picker) was
+    /// persisted but had no reader — this is the wiring, called from
+    /// `startQueue()`'s success path only, for jobs `watchFolderJobs`
+    /// identifies as having come from a watch folder. Best-effort: a
+    /// failure is logged, never thrown — the encode itself already
+    /// succeeded, so a clean-up failure shouldn't retroactively mark it
+    /// otherwise.
+    ///
+    /// - Parameters:
+    ///   - config: The watch folder configuration that produced this job.
+    ///   - sourceURL: The source file to move, delete, or leave in place.
+    private func applyWatchFolderPostAction(_ config: WatchFolderConfig, sourceURL: URL) {
+        switch config.postAction {
+        case .leaveInPlace:
+            break
+
+        case .deleteSource:
+            do {
+                try FileManager.default.removeItem(at: sourceURL)
+                appendLog(
+                    .info,
+                    "Watch folder \"\(config.name)\": deleted source \(sourceURL.lastPathComponent) after encode.",
+                    category: .encoding
+                )
+            } catch {
+                appendLog(
+                    .warning,
+                    "Watch folder \"\(config.name)\": failed to delete source \(sourceURL.lastPathComponent) — \(error.localizedDescription)",
+                    category: .encoding
+                )
+            }
+
+        case .moveToCompleted:
+            // Sibling to the `output` subfolder `effectiveOutputPath`
+            // defaults to when `outputPath` isn't set — "a completed
+            // subfolder" per `PostProcessingAction.moveToCompleted`'s
+            // own doc comment, so it lives under the watched directory
+            // itself rather than under the (possibly quite different)
+            // output directory.
+            let completedDir = URL(fileURLWithPath: config.watchPath).appendingPathComponent("completed")
+            let destination = completedDir.appendingPathComponent(sourceURL.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: completedDir, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: sourceURL, to: destination)
+                appendLog(
+                    .info,
+                    "Watch folder \"\(config.name)\": moved source \(sourceURL.lastPathComponent) to completed/.",
+                    category: .encoding
+                )
+            } catch {
+                appendLog(
+                    .warning,
+                    "Watch folder \"\(config.name)\": failed to move source \(sourceURL.lastPathComponent) to completed/ — \(error.localizedDescription)",
+                    category: .encoding
+                )
+            }
         }
     }
 
