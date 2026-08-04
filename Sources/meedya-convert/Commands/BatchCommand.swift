@@ -185,6 +185,8 @@ struct BatchCommand: AsyncParsableCommand {
         let engine = EncodingEngine()
         try engine.configure()
 
+        var failed = 0
+
         for (index, job) in jobs.enumerated() {
             if !quiet {
                 printStderr("[\(index + 1)/\(jobs.count)] \(job.inputURL.lastPathComponent) → \(job.outputURL.lastPathComponent)")
@@ -200,7 +202,12 @@ struct BatchCommand: AsyncParsableCommand {
                 if !quiet { printStderr("") }
             } catch {
                 printStderr("\n  Failed: \(error.localizedDescription)")
+                failed += 1
             }
+        }
+
+        if failed > 0 {
+            throw ExitCode(ExitCodes.encodingFailed.rawValue)
         }
     }
 
