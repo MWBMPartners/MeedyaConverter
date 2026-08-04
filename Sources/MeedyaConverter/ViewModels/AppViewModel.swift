@@ -88,6 +88,10 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Multi-output encoding — one source to many outputs.
     case multiOutput = "Multi-Output"
 
+    /// Conditional encoding rules — auto-select a profile based on
+    /// source file properties. Phase 11 (Issue #276).
+    case conditionalRules = "Conditional Rules"
+
     /// Dual dynamic HDR conversion (Dolby Vision + HDR10+).
     case dualDynamicHDR = "Dual Dynamic HDR"
 
@@ -176,6 +180,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "link"
         case .watermark:         return "text.below.photo"
         case .multiOutput:       return "arrow.triangle.branch"
+        case .conditionalRules:  return "switch.2"
         case .dualDynamicHDR:    return "sparkles.tv"
         case .filterGraph:       return "flowchart"
         case .edlEditor:         return "list.clipboard"
@@ -223,6 +228,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "Join media files together"
         case .watermark:         return "Add watermark overlay"
         case .multiOutput:       return "Encode to multiple outputs"
+        case .conditionalRules:  return "Manage conditional encoding rules"
         case .dualDynamicHDR:    return "Convert dual dynamic HDR formats"
         case .filterGraph:       return "Edit FFmpeg filter graph"
         case .edlEditor:         return "Edit decision list editor"
@@ -812,13 +818,38 @@ final class AppViewModel {
             outputDir: outputDir,
             mode: outputMode
         )
-        let outputExtension = selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
+
+        // Apply conditional encoding rules (Issue #469): rules were
+        // persisted by `ConditionalRulesView` (same "conditionalRules"
+        // UserDefaults JSON blob, decoded identically here) but never
+        // evaluated anywhere in the encode path. `RuleEngine.evaluateRules`
+        // returns the `EncodingProfile` of the first enabled rule (in
+        // priority order) whose conditions all match `file`, or `nil` if
+        // none match. A match overrides the profile used for *this job
+        // only* — `selectedProfile` itself (and the Output Settings picker
+        // bound to it) is left untouched, so this cannot surprise the user
+        // by silently changing their manual selection for the next file.
+        // No rules persisted / none enabled / none matching all fall
+        // through to `selectedProfile` unchanged, exactly as before this
+        // feature existed.
+        var effectiveProfile = selectedProfile
+        if let rulesData = UserDefaults.standard.data(forKey: "conditionalRules"),
+           let rules = try? JSONDecoder().decode([ConditionalRule].self, from: rulesData),
+           !rules.isEmpty,
+           let matchedProfile = RuleEngine.evaluateRules(
+               rules, for: file, profileStore: engine.profileStore
+           ) {
+            effectiveProfile = matchedProfile
+            appendLog(.info, "Conditional rule matched: using profile \"\(matchedProfile.name)\"", category: .encoding)
+        }
+
+        let outputExtension = effectiveProfile.containerFormat.fileExtensions.first ?? "mkv"
         let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
         let template = FilenameTemplate(template: templateString)
         let overwriteExisting = UserDefaults.standard.bool(forKey: "overwriteExisting")
         let outputURL = template.resolveOutputURL(
             sourceFile: file,
-            profile: selectedProfile,
+            profile: effectiveProfile,
             outputDirectory: resolvedOutputDir,
             fileExtension: outputExtension,
             overwriteExisting: overwriteExisting
@@ -840,7 +871,7 @@ final class AppViewModel {
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
-            profile: selectedProfile,
+            profile: effectiveProfile,
             videoStreamIndex: selectedVideoStreamIndex,
             audioStreamIndex: selectedAudioStreamIndex,
             subtitleStreamIndex: selectedSubtitleStreamIndex,
@@ -850,7 +881,7 @@ final class AppViewModel {
         )
 
         engine.queue.addJob(config)
-        appendLog(.info, "Queued: \(file.fileName) with profile \"\(selectedProfile.name)\"")
+        appendLog(.info, "Queued: \(file.fileName) with profile \"\(effectiveProfile.name)\"")
 
         // Switch to queue view
         selectedNavItem = .queue

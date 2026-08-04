@@ -124,6 +124,8 @@ struct ContentView: View {
             WatermarkView()
         case .multiOutput:
             MultiOutputView()
+        case .conditionalRules:
+            ConditionalRulesView()
         case .dualDynamicHDR:
             DualDynamicHDRView()
         case .filterGraph:

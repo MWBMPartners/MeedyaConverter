@@ -55,6 +55,7 @@ struct SidebarView: View {
                 sidebarLabel(for: .concatenation)
                 sidebarLabel(for: .watermark)
                 sidebarLabel(for: .multiOutput)
+                sidebarLabel(for: .conditionalRules)
                 sidebarLabel(for: .dualDynamicHDR)
                 sidebarLabel(for: .filterGraph)
                 sidebarLabel(for: .edlEditor)
