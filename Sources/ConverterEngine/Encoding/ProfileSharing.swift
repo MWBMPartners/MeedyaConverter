@@ -125,6 +125,7 @@ public struct ProfileSharing: Sendable {
             loudnessNormalization: profile.loudnessNormalization,
             applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
+            subtitleTonemap: profile.subtitleTonemap,
             perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,

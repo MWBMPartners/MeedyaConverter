@@ -373,6 +373,14 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
                     builder.perStreamVideoPreset[index] = preset
                 }
             }
+
+            // Apply per-stream subtitle overrides to the builder
+            for (index, subtitleOverride) in perStream.subtitleOverrides {
+                builder.perStreamSubtitleInclude[index] = subtitleOverride.include
+                if subtitleOverride.passthrough {
+                    builder.perStreamSubtitlePassthrough[index] = true
+                }
+            }
         }
 
         // Container
@@ -1019,6 +1027,7 @@ public final class EncodingProfileStore: @unchecked Sendable {
             loudnessNormalization: profile.loudnessNormalization,
             applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
+            subtitleTonemap: profile.subtitleTonemap,
             perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,

@@ -266,6 +266,21 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Per-stream video preset overrides.
     public var perStreamVideoPreset: [Int: String] = [:]
 
+    // MARK: - Per-Stream Subtitle Settings (Phase 3.5 / Issue #41)
+
+    /// Per-stream subtitle inclusion overrides, keyed by source subtitle
+    /// stream index. When an entry is `false`, that stream is explicitly
+    /// excluded from the output mapping via a negative `-map`, layered on
+    /// top of whichever mapping mode (`mapAllStreams`, `subtitlePassthrough`,
+    /// or `subtitleStreamActions`) selected it. Indices with no entry are
+    /// unaffected and simply follow the surrounding mapping mode.
+    public var perStreamSubtitleInclude: [Int: Bool] = [:]
+
+    /// Per-stream subtitle passthrough overrides, keyed by source subtitle
+    /// stream index. When `true`, forces `-c:s:<index> copy` for that
+    /// stream, mirroring `perStreamVideoPassthrough` / `perStreamAudioCodec`.
+    public var perStreamSubtitlePassthrough: [Int: Bool] = [:]
+
     // MARK: - Stream Selection
 
     /// Specific video stream index to use from source. Nil means default.
@@ -561,6 +576,24 @@ public struct FFmpegArgumentBuilder: Sendable {
             }
         }
 
+        // Per-stream subtitle exclusions (Issue #41) — appended after
+        // whichever mapping mode above selected these streams. ffmpeg
+        // applies `-map` options in order, so a later `-map -0:s:N` removes
+        // just that one stream from an earlier broader map, composing
+        // safely with `-map 0` (mapAllStreams), `0:s?`, or the explicit
+        // subtitleStreamActions/passthrough paths.
+        args.append(contentsOf: buildPerStreamSubtitleExclusionMapping())
+
+        return args
+    }
+
+    /// Build negative `-map` arguments to exclude subtitle streams whose
+    /// per-stream override explicitly turned inclusion off (Issue #41).
+    private func buildPerStreamSubtitleExclusionMapping() -> [String] {
+        var args: [String] = []
+        for (index, included) in perStreamSubtitleInclude.sorted(by: { $0.key < $1.key }) where !included {
+            args.append(contentsOf: ["-map", "-0:s:\(index)"])
+        }
         return args
     }
 
@@ -914,12 +947,27 @@ public struct FFmpegArgumentBuilder: Sendable {
             return ["-sn"]
         }
 
+        var args: [String] = []
+
+        // Per-stream subtitle passthrough overrides (Issue #41) — mirrors
+        // perStreamVideoPassthrough / perStreamAudioCodec: force
+        // `-c:s:<index> copy` for specific stream indices regardless of
+        // the global subtitle codec mode below. Skips indices explicitly
+        // excluded via `perStreamSubtitleInclude` — a codec option for a
+        // stream that was just removed from the output mapping has no
+        // matching output stream to apply to.
+        for (index, forceCopy) in perStreamSubtitlePassthrough.sorted(by: { $0.key < $1.key }) where forceCopy {
+            guard perStreamSubtitleInclude[index] != false else { continue }
+            args.append(contentsOf: ["-c:s:\(index)", "copy"])
+        }
+
         if subtitlePassthrough {
-            return ["-c:s", "copy"]
+            args.append(contentsOf: ["-c:s", "copy"])
+            return args
         }
 
         // Default: no subtitle processing (subtitles from mapping will be copied if compatible)
-        return []
+        return args
     }
 
     /// Build stream disposition arguments.
