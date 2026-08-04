@@ -5,7 +5,27 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-08-04 (project-state reconciliation sweep IN PROGRESS — see "Current session" below) · **working branch `wip/alpha-consolidation`** · HEAD `2f58fc3` · VERSION 0.1.0
+**Last updated:** 2026-08-04 · VERSION 0.1.0
+
+## 🎉 SESSION OUTCOME — MERGED & RELEASED (2026-08-04)
+
+**PR #472 (`wip/alpha-consolidation` → `alpha`) is MERGED** as merge commit **`f9943bf`** (merge commit, 280
+commits preserved). The `beta-alpha.yml` pre-release workflow (run #4) completed **success**, minting public
+pre-release **`v0.1.0-alpha.3`** (https://github.com/MWBMPartners/MeedyaConverter/releases/tag/v0.1.0-alpha.3).
+All PR CI green (Build & Test macOS, CodeQL, Dependency Review, actionlint, pin hygiene).
+
+- **24 fully-complete issues CLOSED** (landed in alpha): #459 #284 #348 #296 #268 #334 #279 #470 #486 #484 #485
+  #487 #483 #467 #292 #469 #488 #489 #490 #466 #474 #481 #355 #491.
+- **Left OPEN (genuine partials / deferred):** #448, #475, #277 (failure-path hook), #482 (r25 conflicts UI),
+  #451, #476 (rip/author), #473 (vector executor), #278 (pipeline exec), #288 (scene-detect exec), #477 (orphan
+  remainder: ColorSpaceConverter US / EncodingBackend / FeatureGate + surgical cuts + 3D/disc/DCP/app-service),
+  #468 (honest-minimal shipped; true seek-resume future), #471 (client shipped; dormant until server provisioned).
+- **⚠️ IMPORTANT for the next session:** PR #472 is MERGED and FINISHED. `wip/alpha-consolidation`'s PR must NOT
+  be reused. Any follow-up = a FRESH change: restart from `alpha` (`git fetch origin alpha && git checkout -B
+  <new-branch> origin/alpha`), do the work, open a NEW PR.
+
+---
+
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
 
