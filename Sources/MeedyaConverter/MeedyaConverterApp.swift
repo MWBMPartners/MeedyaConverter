@@ -98,6 +98,9 @@ struct MeedyaConverterApp: App {
                         .environment(appViewModel)
                         .interactiveDismissDisabled()
                 }
+                .onOpenURL { url in
+                    handleProfileShareURL(url)
+                }
         }
         .defaultSize(width: 1100, height: 700)
         .commands {
@@ -190,6 +193,46 @@ struct MeedyaConverterApp: App {
 
     private func openHelpWindow() {
         openWindow(id: "help")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Profile Share Links
+    // -----------------------------------------------------------------
+
+    /// Handles `meedyaconverter://profile/<base64url>` links opened via
+    /// the OS (Finder/Mail/Messages, or `open meedyaconverter://...` from
+    /// Terminal).
+    ///
+    /// Decodes with `ProfileSharing.importFromShareLink(_:)` — the exact
+    /// counterpart to `ProfileSharing.generateShareLink(_:)`, which mints
+    /// these links from `ProfileManagementView`'s "Copy Share Link" action
+    /// — so the producer and consumer stay in lockstep. The decoded
+    /// profile is added to the shared `EncodingProfileStore` the same way
+    /// a JSON file import is (`ProfileManagementView.importProfile`),
+    /// reusing the store's own persistence rather than writing a second
+    /// import path.
+    ///
+    /// Any URL that isn't this exact route (wrong scheme/host — including
+    /// any other current or future `meedyaconverter://` action) is
+    /// ignored silently, since `onOpenURL` receives every URL the OS
+    /// hands this app, not just profile links. A profile link that fails
+    /// to decode (corrupt/truncated/foreign payload) logs a warning
+    /// instead of crashing — profiles are plain encoding configs with no
+    /// executable content, but the URL itself is untrusted input, so it
+    /// is never imported without a successful decode.
+    private func handleProfileShareURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "meedyaconverter",
+              url.host?.lowercased() == "profile" else {
+            return
+        }
+
+        guard let profile = ProfileSharing.importFromShareLink(url.absoluteString) else {
+            appViewModel.appendLog(.warning, "Could not import profile: the share link is invalid or corrupted.")
+            return
+        }
+
+        appViewModel.engine.profileStore.addProfile(profile)
+        appViewModel.appendLog(.info, "Imported profile from share link: \(profile.name)")
     }
 
     // -----------------------------------------------------------------

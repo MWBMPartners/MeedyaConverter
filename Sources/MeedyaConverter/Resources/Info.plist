@@ -33,6 +33,22 @@
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <!-- Custom URL scheme so the OS delivers meedyaconverter://profile/<base64url>
+         share links to the app; MeedyaConverterApp's .onOpenURL imports the
+         encoded EncodingProfile via ProfileSharing.importFromShareLink (#491).
+         Without this registration Launch Services never routes the URL and the
+         handler can never fire. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Ltd.MWBMpartners.MeedyaConverter.profile</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>meedyaconverter</string>
+            </array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHumanReadableCopyright</key>
