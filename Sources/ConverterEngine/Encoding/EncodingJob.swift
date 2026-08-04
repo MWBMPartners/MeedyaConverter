@@ -195,14 +195,19 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.maxCLL = hdrMaxCLL
         builder.maxFALL = hdrMaxFALL
 
-        // Apply HLG-specific colour signalling when source is HLG
-        if hdrTransferFunction == .hlg {
-            let hlgArgs = builder.buildHLGPreservationArguments()
-            builder.extraArguments.append(contentsOf: hlgArgs)
-        }
-
         // Apply extra arguments
         builder.extraArguments = extraArguments
+
+        // Apply HDR colour signalling AFTER the job's extra arguments are set,
+        // so it survives to the final invocation. Previously this block ran
+        // BEFORE `builder.extraArguments = extraArguments`, which overwrote the
+        // appended flags — silently dropping BOTH the HLG (pre-existing) and PQ
+        // colour-signalling arguments before ffmpeg ever saw them (#486).
+        if hdrTransferFunction == .hlg {
+            builder.extraArguments.append(contentsOf: builder.buildHLGPreservationArguments())
+        } else if hdrTransferFunction == .pq {
+            builder.extraArguments.append(contentsOf: builder.buildPQPreservationArguments())
+        }
 
         return builder.build()
     }
