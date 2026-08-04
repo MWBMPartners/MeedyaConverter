@@ -52,6 +52,42 @@
 
 ### Added
 
+- **Cloud-upload execution (PR #472)** -- real, authenticated upload to S3
+  (SigV4), Dropbox, Google Drive, OneDrive (chunked/resumable), and SFTP
+  (`scp`), reachable from `CloudStorageView` and the `.uploadCloud`
+  post-encode action. YouTube/Vimeo remain disabled pending OAuth (#446).
+  Not in a tagged release yet.
+- **Unified statistics dashboard** -- `AggregateStatistics`, `DashboardView`,
+  and `StatisticsExportView` roll per-job encoding stats into an aggregate
+  view with export.
+- **Email + webhook completion notifications** -- `WebhookSender` fires on
+  job success/failure from the queue's per-job completion path in
+  `AppViewModel`.
+- **Watch-folder auto-encode** -- monitored folders now auto-enqueue new
+  files for encoding rather than only appearing in the UI.
+- **Recent files & pinned favourites** -- `RecentFilesManager` +
+  `RecentFilesView`, wired into navigation.
+- **Scheduled encoding** -- `EncodingScheduler` + `ScheduleView` let a job
+  be queued for a future start time.
+- **IntAppsAPI remote feature-flags + alpha/beta update channels** --
+  `IntAppsAPIClient` reads remote flags and update-channel selection.
+- **Overwrite-existing / delete-source-after-encode toggles** -- both now
+  read from settings and take effect at encode completion.
+- **Automatic media-server library-scan on encode completion** --
+  `AppViewModel.triggerMediaServerAutoScan()` fires
+  `MediaServerIntegration.triggerLibraryScan` from the per-job success path
+  in `startQueue()`; the `mediaServerAutoScan` toggle in
+  `MediaServerSettingsView` previously had no reader. The manual "Trigger
+  Library Scan Now" button already worked before this change.
+- **Navigation exposure of 10 previously-orphaned views** -- views that
+  existed as source files but had no sidebar/menu entry are now reachable
+  from the app.
+
+  None of the ten items above are in the released `v0.1.0-rc.3` build;
+  they land in the next alpha build. See the "Documentation" entry below
+  for the doc corrections that came out of auditing these against the
+  actual call graph.
+
 - **Metadata / ID-tag passthrough guards + SUITE_CORE bindings tracking
   (#478)** -- the cross-repo media-ID program's correctness obligation for
   MeedyaConverter is that a conversion must NOT strip a file's external /
@@ -220,6 +256,25 @@
 
 ### Documentation
 
+- **README / PROJECT_STATUS / FEATURES honesty reconciliation** -- audited
+  every user-facing feature claim in README.md, PROJECT_STATUS.md, and
+  FEATURES.md against the actual call graph (static analysis; no
+  `swift build` available in this environment). Relabelled orphaned/
+  arg-builder-only code as "Planned / scaffolded" instead of removing the
+  roadmap context, and separated real-but-unreleased branch work (cloud
+  upload execution, unified statistics, email/webhook notifications,
+  watch-folder auto-encode, recent files, scheduled encoding, IntAppsAPI,
+  orphaned-view navigation, overwrite/delete-source toggles -- see Added,
+  above) into its own "landing in the next alpha build" section so it's
+  not confused with the released `v0.1.0-rc.3`. Two previously-unflagged
+  findings surfaced during the audit: the Scene Detection view builds
+  FFmpeg arguments but never launches FFmpeg (logs "requested" and
+  returns -- #288, same class of bug #433-#435 fixed elsewhere but this
+  one wasn't caught at the time), and AccurateRip verification has no real
+  caller (`AudioCDReader` has zero instantiation sites). Also reworded
+  unverifiable specifics (exact test counts) to "full suite, verified in
+  CI" rather than restating stale numbers, and corrected the open-issue
+  count to 98 (verified).
 - **New Direct-distribution release runbook**
   (`docs/distribution/direct-release.md`) documenting the actual
   `release.yml` flow end-to-end: pre-flight checklist, cutting an rc/GA
@@ -249,8 +304,8 @@
   output-size warning, sourced from `RasterVectorConverter.swift`,
   `ProResToVectorConverter.swift`, and the corresponding SwiftUI views (#429).
 - **`PROJECT_STATUS.md`, `Project_Plan.md`, and `DEV_NOTES.md` refreshed**
-  to post-autopilot reality: verified test count (1053, all green, 0
-  compiler warnings), the F-001..F-012 security findings register status,
+  to post-autopilot reality: full test suite green in CI with 0 compiler
+  warnings, the F-001..F-012 security findings register status,
   the universal/first-party FFmpeg supply chain, and the `v0.1.0-rc.4`
   (soak) -> `v0.1.0` GA release posture. Removed a stale "CLI: Phase 6"
   platform-strategy row in `Project_Plan.md` (the CLI shipped in Phase 4)

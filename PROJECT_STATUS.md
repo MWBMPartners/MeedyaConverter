@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-07-18
+> **Last Updated:** 2026-08-04
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -14,19 +14,49 @@
 | ------ | ----- |
 | **Current Version** | `v0.1.0-rc.3` published (2026-05-18); `v0.1.0-rc.4` (short soak release) pending |
 | **Last Release** | `v0.1.0-rc.3` (2026-05-18) -- direct distribution DMG + CLI tarball |
-| **v0.1.0 GA scope** | **Complete.** The autopilot security + release-engineering mission reached TERMINAL: 1053 automated tests green, 0 compiler warnings, security findings F-001..F-012 closed/mitigated/risk-accepted, FFmpeg now sourced as a universal (arm64 + x86_64) binary from a first-party, SHA-256-verified mirror |
+| **v0.1.0 GA scope** | **Complete.** The autopilot security + release-engineering mission reached TERMINAL: the full test suite green in CI, 0 compiler warnings, security findings F-001..F-012 closed/mitigated/risk-accepted, FFmpeg now sourced as a universal (arm64 + x86_64) binary from a first-party, SHA-256-verified mirror |
 | **Current Phase** | Phase 16 -- Polish and Distribution (ongoing); GA release engineering |
 | **Next Target** | Cut `v0.1.0-rc.4` for a short soak, then tag `v0.1.0` GA -- Direct distribution only (signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised CLI tarball, via GitHub Releases). App Store Lite is explicitly deferred (#392) |
 | **Active Work** | rc.4 soak validation and GA tag prep. Full 19-phase roadmap (Phases 10-18: optical disc, Windows/Linux, image conversion, etc.) continues post-GA per [Project_Plan.md](Project_Plan.md) -- v0.1.0 GA is a release milestone, not "everything in the plan is done" |
 
 ---
 
+## Recent milestones (2026-07-22 to 2026-08-04 -- `wip/alpha-consolidation`)
+
+- **Cloud-upload execution landed (PR #472)** -- real, authenticated upload
+  to S3 (SigV4), Dropbox, Google Drive, OneDrive (chunked/resumable), and
+  SFTP (`scp`). YouTube/Vimeo remain disabled pending OAuth (#446). Not yet
+  in a tagged release.
+- **Post-encode / completion automation wired** -- unified statistics
+  dashboard, email + webhook completion notifications, watch-folder
+  auto-encode, recent files & pinned favourites, scheduled encoding,
+  IntAppsAPI remote feature-flags + alpha/beta update channels, and
+  overwrite-existing / delete-source-after-encode toggles. Ten previously
+  orphaned views were also wired into app navigation. All of this is real
+  code on this branch, none of it is in the released `v0.1.0-rc.3` build.
+- **Docs honesty reconciliation (this pass)** -- README, this file,
+  CHANGELOG, and FEATURES.md were audited against the actual call graph
+  (static analysis; no `swift build` available in this environment).
+  Several "What's Complete" claims turned out to reference orphaned code
+  with no real caller/executor -- see the new "Planned / scaffolded" group
+  below. Two findings worth flagging explicitly: the **Scene Detection**
+  view builds FFmpeg arguments but never runs FFmpeg (it logs "requested"
+  and returns -- #288, same class of bug `LoudnessReportView`/
+  `QualityMetricsView`/`BenchmarkView` had before #433-#435 fixed them, but
+  this one was never fixed), and **AccurateRip verification** has no real
+  caller either (`AudioCDReader` has zero instantiation sites). Issue count
+  and test counts below are stated only where verifiable from this
+  environment; unverifiable specifics were reworded rather than restated.
+
+---
+
 ## Recent milestones (2026-06-30 to 2026-07-21 -- autopilot security & release-engineering mission)
 
-- **Autopilot mission reached TERMINAL** at commit `b58d676` -- 1039/1039 tests
-  green and 0 compiler warnings at that checkpoint (re-verified independently
-  in this pass at **1129** tests green as of 2026-07-21; see [CHANGELOG.md](CHANGELOG.md) for
-  the running total as new tests land).
+- **Autopilot mission reached TERMINAL** at commit `b58d676` -- the full test
+  suite green and 0 compiler warnings at that checkpoint (re-verified in CI
+  as of 2026-07-21; exact test counts are not reproduced in this document
+  since they can only be confirmed by CI, not by static review -- see
+  [CHANGELOG.md](CHANGELOG.md) for dated entries).
 - **Security findings F-001..F-010 closed or risk-accepted** across a
   red-team/blue-team/purple-team review rotation documented in
   [SECURITY.md](SECURITY.md): FFmpeg argument-construction audit (F-001),
@@ -175,7 +205,7 @@
 | 1.7 | Encoding job and queue | Complete | Job config, state tracking, priority queue management |
 | 1.7a | Temp file management | Complete | Per-job directories, cleanup, disk space monitoring |
 | 1.8/1.9 | Encoding engine | Complete | Video and audio encoding orchestration, multipass support |
-| 1.10 | Unit tests | Complete | Grew from 30 (Phase 1 baseline) to 1053 across the full suite |
+| 1.10 | Unit tests | Complete | Grew substantially from the Phase 1 baseline; full suite green (verified in CI) |
 | 1.11 | Feature gating system | Complete | ProductTier, Feature, FeatureGateProtocol |
 
 ---
@@ -237,7 +267,7 @@
 - Project plan with 19 phases (0-18), release gates, feature gating, and 215+ tasks
 - Full documentation suite: README, Project Plan, Project Status, Changelog, 9 help docs, 10 wiki pages, OpenAPI spec
 - Architecture: ConverterEngine (library) + meedya-convert (CLI) + MeedyaConverter (SwiftUI app)
-- SPM package with 3 targets -- builds and tests pass (1053 tests green, 0 compiler warnings)
+- SPM package with 3 targets -- builds and the full test suite passes (verified in CI, 0 compiler warnings)
 - Hybrid encoding engine (FFmpeg subprocess + AVFoundation/FFmpegKit)
 - Dual update strategy (Sparkle 2 direct + Apple-managed App Store)
 - Three-tier file access for App Store sandbox
@@ -257,7 +287,7 @@
 - Temp file management with per-job directories and disk monitoring
 - Encoding engine orchestrating full video/audio conversion pipeline
 - Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings, Vector Conversion, ProRes to Vector
+- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings, Vector Conversion, ProRes to Vector -- **note:** the view existing and being reachable does not mean its backend is wired; see "Planned / scaffolded" below for the ones that aren't (pipeline editor, conditional rules, Vector Conversion, and ProRes to Vector among them)
 - Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
 - HDR-to-SDR tone mapping with auto-trigger for incompatible settings
 - PQ-to-HLG conversion, PQ-to-DV Profile 8.4, Dolby Vision RPU pipeline
@@ -265,18 +295,16 @@
 - Container-codec compatibility matrix with validation and UI warnings
 - Automatic black bar crop detection, hardware encoder detection
 - In-app help system, settings view, profile management
-- AccurateRip verification engine and audio disc fidelity module
 - CLI tool with 6 subcommands: encode, probe, profiles, batch, manifest, validate
 - Licensing module: EntitlementGating, ProductCatalog, StoreManager, RevenueCat, LicenseKeyValidator
-- Encoding pipelines, conditional rules, post-encode actions, encoding checkpoints
-- Watch folder monitoring, scene detection, content analysis
-- Audio normalization presets, surround upmixer, audio fingerprinting
-- Metadata lookup and auto-tagging
-- Cloud upload providers (12+), media server notifications
-- Quality metrics (VMAF/SSIM), encoding reports
-- AI upscaler, forensic watermark, DCP generator, image converter
-- Colour space converter, stereo 3D converter, TrueHD MP4 muxer, VVC encoder
-- Speech-to-text engine, multi-stream selector, streaming enhancements
+- Quality metrics (VMAF/SSIM/PSNR) and encode benchmarking, both wired to real FFmpeg execution (#433-#435)
+- Image converter
+- Audio loudness normalisation (EBU R128) wired to real FFmpeg execution (#433)
+- Post-encode webhook notifications and manual media-server library-scan
+  trigger (Plex/Jellyfin/Emby -- real `URLSession` calls from Settings);
+  automatic media-server scan and cloud-upload post-encode actions are
+  real on `wip/alpha-consolidation` but **not yet in a tagged release**
+  (see "Landing in the next alpha build" below)
 - MeedyaSuite-core integration scaffolding: Swift Package dependency
   (feature-flagged via `SUITE_CORE=1`), bridge + adapters for metadata
   and codec classification, and 12+ additional providers available
@@ -284,17 +312,102 @@
 - Subtitle tone-mapping via quietvoid/subtitle_tonemap, wired end-to-end
   through the encoding pipeline via `SubtitleTonemapPipeline` (#369, #413)
 - Render-farm submission subsystem: agent registry, chunked upload with
-  per-chunk SHA-256, progress AsyncStream, pluggable transport, Settings UI (#346)
-- Raster ↔ vector image conversion with 30+ raster formats,
-  SVG 1.1/2.0 output, 4 tracing modes, 6 editability presets, and a
-  Vector Conversion Tools-sidebar view (#376, #402)
-- ProRes alpha → animated SVG conversion with 4444 / 4444 XQ / 4444 HDR
-  variants, rational-accurate frame rates, SMIL/CSS/hybrid assembly, and
-  a ProRes to Vector Tools-sidebar view (#377, #404) -- see
-  `Sources/MeedyaConverter/Resources/Help/vector-conversion.md`
+  per-chunk SHA-256, progress AsyncStream, pluggable transport, Settings UI
+  (#346) -- transport implementations (SSH/TLS), Bonjour discovery, and the
+  agent binary remain outstanding, #346 stays open
 - App Store Connect metadata suite under `metadata/` and submission
   runbook at `docs/distribution/app-store-submission.md` (#178) -- App
   Store Lite ship itself remains explicitly deferred per #392
+
+---
+
+## Landing in the next alpha build
+
+Implemented and real on `wip/alpha-consolidation` (PR #472 and follow-on
+work), but **not in the released `v0.1.0-rc.3` build** -- do not describe
+these as shipped until they land in a tagged release:
+
+- Cloud-upload execution: real, authenticated upload to S3 (SigV4),
+  Dropbox, Google Drive, OneDrive (chunked/resumable), and SFTP (`scp`).
+  YouTube/Vimeo remain disabled pending OAuth (#446)
+- Unified statistics dashboard (`AggregateStatistics`, `DashboardView`,
+  `StatisticsExportView`)
+- Email + webhook completion notifications (`WebhookSender`,
+  `NotificationActionHandler`)
+- Watch-folder auto-encode
+- Recent files & pinned favourites (`RecentFilesManager`, `RecentFilesView`)
+- Scheduled encoding (`EncodingScheduler`, `ScheduleView`)
+- IntAppsAPI remote feature-flags + alpha/beta update channels
+  (`IntAppsAPIClient`)
+- Overwrite-existing / delete-source-after-encode toggles
+- Automatic media-server library-scan trigger on encode completion
+  (the manual "Trigger Library Scan Now" button already works today; the
+  automatic on-completion trigger is the new part)
+- Navigation exposure of 10 previously-orphaned views
+
+---
+
+## Planned / scaffolded (not yet wired into the app)
+
+These have argument builders, data models, or UI, but no code path that
+actually invokes them end-to-end -- no `Process` launch, no executor, or
+the UI never calls the backend it displays. Grouped here instead of under
+"What's Complete" so the roadmap context is kept without presenting them
+as working. Verified by grepping for real callers outside each feature's
+own defining file (a live check against this repository, not a claim
+carried over from an earlier draft):
+
+- **DRM & Encryption** -- `HLSEncryption` (AES-128 HLS) and
+  `DRMPreparation` (Widevine/FairPlay/PlayReady CPIX/PSSH) are argument/
+  document builders with no caller outside their own unit tests
+- **Thumbnail Sprites** -- `ThumbnailSpriteGenerator` is exercised only by
+  a unit test; no UI or pipeline calls it
+- **Scene Detection** -- `SceneDetectorView.detectScenes()` builds FFmpeg
+  arguments via `SceneDetector.buildDetectionArguments` but never launches
+  FFmpeg; it logs "Scene detection requested... with N arguments" and
+  immediately clears the in-progress flag. No scene is ever actually
+  detected, despite the view being reachable from the Analysis Hub (#288)
+- **AccurateRip verification / audio disc fidelity** -- `AudioCDReader`
+  has zero instantiation call sites; `AccurateRipVerifier`'s API is only
+  referenced from a doc comment in `SettingsView.swift`. Falls under the
+  broader disc-ripping-is-orphaned finding below (#476)
+- **Colour space converter** -- `ColorSpaceConverter`/`ColourSpaceConverter`
+  are only called from `HDRPolicyEngine`, which itself has zero external
+  callers. The real, shipped HDR tone-mapping path runs through
+  `FFmpegArgumentBuilder.ToneMapAlgorithm` instead, a separate code path
+- **Multi-stream selector** -- `MultiStreamSelector` has no callers outside
+  its own file
+- **Encoding reports** -- `EncodingReport` has no callers outside its own
+  file (referenced only from a test)
+- **Encoding pipelines** -- `PipelineEditorView`/`EncodingPipeline`/
+  `PipelineExecutor`: the editor is presented from Output Settings with no
+  `onSave` handler wired up, and `PipelineExecutor` (the generic multi-step
+  runner) has zero callers anywhere in the app or engine
+- **Conditional rules** -- never applied at encode time (#469)
+- **Resumable jobs** -- no checkpoint writer; "resume" restarts at 0 (#468)
+- **REST API server mode** -- implemented and unit-tested, but has no
+  entry point; unreachable from the app or CLI (#355)
+- **Post-encode hook chains** -- the generic chain engine
+  (`PostEncodeActionChain`) is real but not persisted and not invoked on
+  completion; note this is distinct from the webhook/media-server-scan
+  wiring above, which calls those senders directly rather than through the
+  chain (#277)
+- **3D / Stereoscopic** -- `Stereo3DConverter`/`Video3DConverter` have zero
+  callers (#477)
+- **Media Metadata Lookup / Auto-Tagging** -- `AutoTagger` is orphaned; the
+  metadata tag editor is display-only (#467, #205)
+- **A/B Comparison** -- `ComparisonView` is orphaned (#329)
+- **AI Upscaling** -- `AIUpscaler` exists only as a comment reference
+  (#236, #477)
+- **Forensic Watermarking** -- `ForensicWatermark` is orphaned (#477)
+- **DCP generator, VVC encoder, TrueHD-MP4 muxer, HLG→Dolby Vision (dup),
+  surround upmixer, speech-to-text, audio fingerprinter, content
+  analyzer** -- all orphaned (#477)
+- **Vector conversion / ProRes→Vector** -- argument builders exist
+  (`RasterVectorConverter`, `ProResToVectorConverter`) but there is no
+  executor and no source-file flow (#473)
+- **Optical disc ripping & authoring** -- disc readers/authors are
+  orphaned; disc **burning** is real and unaffected by this (#476)
 
 ---
 
@@ -345,15 +458,15 @@
 | Metric | Count |
 | ------ | ----- |
 | Total tasks across all phases | 215+ |
-| GitHub Issues | 257+ |
-| Automated tests | 1129 (all green, 0 compiler warnings, as of 2026-07-21) |
+| GitHub Issues (open) | 98 (verified 2026-08-04) |
+| Automated tests | Full suite green, 0 compiler warnings (verified in CI; exact count not restated here -- see CHANGELOG.md for dated entries) |
 | Supported video codecs | 16 |
 | Supported audio codecs | 30+ (including spatial) |
 | Supported subtitle formats | 14+ |
 | Supported containers | 25+ |
-| Supported optical disc formats | 22 |
+| Supported optical disc formats | 22 (target scope; ripping/authoring readers are scaffolded, not wired -- burning is) |
 | Supported image formats | 20+ (future) |
-| Cloud upload providers | 12+ |
+| Cloud upload providers (execution) | 5 real on `wip/alpha-consolidation` (S3, Dropbox, Google Drive, OneDrive, SFTP), not yet released; 12+ is the target-scope count |
 | Target platforms | 3 (macOS, Windows, Linux) |
 | Wiki documentation pages | 10 |
 | Help documentation files | 9 |

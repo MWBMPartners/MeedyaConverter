@@ -24,45 +24,74 @@ prepare audio and video content for on-demand streaming and long-term
 storage. Think of it as a **modern alternative to HandBrake** — with
 significantly expanded capabilities.
 
-The macOS Direct-distribution build is **feature-complete** for the v0.1.0
-release: full SwiftUI app with 35+ views, a complete `meedya-convert` CLI,
-HDR pipelines (HDR10 / HDR10+ / HLG / Dolby Vision), HLS and MPEG-DASH
-packaging, audio normalisation, subtitle conversion, watch folders, scene
-detection, quality metrics, cloud upload to 12+ providers, and forensic
-watermarking — all driven by the cross-platform `ConverterEngine` core.
+The macOS Direct-distribution build covers the core conversion workflow for
+v0.1.0: a full SwiftUI app, a complete `meedya-convert` CLI, HDR pipelines
+(HDR10 / HDR10+ / HLG / Dolby Vision), HLS and MPEG-DASH packaging, audio
+loudness normalisation, subtitle conversion, quality metrics, and disc
+burning — all driven by the cross-platform `ConverterEngine` core. Several
+other views ship in the app as **UI-only scaffolding that isn't wired to a
+real backend yet** (see the "Planned / scaffolded" group below) — this
+README calls those out explicitly rather than listing them as working
+features.
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the comprehensive,
 phase-by-phase feature inventory; the table below is the headline list.
 
 ### ✨ Key Features
 
+#### Shipped in `v0.1.0-rc.3`
+
 | Feature | Description |
 | ------- | ----------- |
 | 🎞️ **Video/Audio/Subtitle Passthrough** | Copy streams without re-encoding — HandBrake forces re-encoding |
 | 📡 **HLS & MPEG-DASH Preparation** | Multi-bitrate adaptive streaming from a single source file |
-| 🎨 **HDR Preservation** | HDR10, HDR10+, HLG, and Dolby Vision support |
-| 🔄 **HDR10+ → Dolby Vision** | Automatic Dolby Vision creation from HDR10+ content |
-| 🎵 **Audio Normalisation** | EBU R128, ReplayGain, and peak limiting |
+| 🎨 **HDR Preservation** | HDR10, HDR10+, HLG, and Dolby Vision support, incl. HDR→SDR tone-mapping, PQ→HLG, PQ→DV Profile 8.4, and HLG→DV |
+| 🎵 **Audio Loudness Normalisation** | EBU R128 loudness analysis and compliance checking |
 | 📝 **Full Subtitle Support** | SRT, TTML, WebVTT, SSA/ASS, CC608/CC708, DVB-SUB, SAMI, LRC |
-| 🔐 **DRM & Encryption** | AES-128 encryption for HLS with key management |
-| ☁️ **Cloud Upload** | Direct upload to S3, Azure, Cloudflare Stream, and 10+ providers |
-| 🖼️ **Thumbnail Sprites** | Auto-generate preview scrubbing sprites for video players |
-| 🔏 **Forensic Watermarking** | Invisible watermark embedding for content protection |
-| 🎥 **3D / Stereoscopic** | MV-HEVC (Apple Vision Pro spatial) and MV-H264 multiview encoding |
-| 🏷️ **Media Metadata Lookup** | Auto-tag via MusicBrainz, TMDB, TVDB, IMDB, MeedyaDB, Discogs |
-| 📊 **Quality Metrics** | VMAF, SSIM, PSNR objective quality scoring |
-| 👁️ **A/B Comparison** | Side-by-side source vs encoded viewer |
-| 📂 **Watch Folders** | Monitor folders for new files, auto-encode |
-| 🔍 **Scene Detection** | Auto-chaptering from scene boundaries |
-| 🔎 **AI Upscaling** | Resolution enhancement via Real-ESRGAN |
-| 💻 **CLI Mode** | Full command-line interface for automation and scripting |
-| 💿 **Optical Disc Ripping** *(v1.1+)* | 22 disc types: Audio CD, SACD, DVD, DVD Audio, Blu-ray, UHD BD, and more |
-| 💽 **Disc Authoring & Burning** *(v1.2+)* | Create disc images and burn to physical media for all supported disc types |
-| 🖼️ **Image Conversion** *(v3.0+)* | Bulk image format conversion |
+| 📊 **Quality Metrics** | VMAF, SSIM, PSNR objective quality scoring, plus encode benchmarking |
+| ✂️ **Trim** | Real trim of the source before encode |
+| 💽 **Disc Burning** | Burn disc images to physical media via cdrecord / growisofs / hdiutil |
+| 🖼️ **Image Conversion** | Bulk image format conversion |
+| 💻 **CLI Mode** | `meedya-convert` with `encode`/`probe`/`profiles`/`batch`/`manifest`/`validate` subcommands |
 
-> Items tagged with a release marker (e.g. *(v1.1+)*) have scaffolding
-> shipped in v0.1.0 but are not yet wired through the UI. The full release
-> breakdown lives in [PROJECT_STATUS.md](PROJECT_STATUS.md).
+#### Landing in the next alpha build (implemented on the dev branch, not yet in `v0.1.0-rc.3`)
+
+| Feature | Description |
+| ------- | ----------- |
+| ☁️ **Cloud Upload (execution)** | Real upload to S3 (SigV4), Dropbox, Google Drive, OneDrive (chunked/resumable), and SFTP. YouTube/Vimeo remain disabled pending OAuth (#446) |
+| 📈 **Unified Statistics Dashboard** | Aggregate encoding statistics across jobs |
+| 📧 **Completion Notifications** | Email and webhook notifications when a job finishes |
+| 📂 **Watch Folders** | Monitor folders for new files, auto-encode |
+| 🕘 **Recent Files & Pinned Favourites** | Quick access to recently-used and pinned source files |
+| 🗓️ **Scheduled Encoding** | Queue jobs to start at a later time |
+| 🚩 **Remote Feature Flags** | IntAppsAPI-backed flags and alpha/beta update channels |
+| ♻️ **Overwrite / Delete-Source Toggles** | Overwrite existing output, delete source after a successful encode |
+
+> These are real, working code on `wip/alpha-consolidation` today, but they
+> have **not shipped in a release yet** — do not treat them as available in
+> the current `v0.1.0-rc.3` download.
+
+#### Planned / scaffolded (not yet wired into the app)
+
+The arguments/UI/data-model for these exist in the codebase, but there is
+no code path that actually invokes them end-to-end (no `Process` launch, no
+executor, or the UI never calls the backend it displays). Treat these as
+roadmap items, not working features, until their tracking issue closes.
+
+| Feature | Notes |
+| ------- | ----- |
+| 🔐 **DRM & Encryption (AES-128 HLS, Widevine/FairPlay/PlayReady)** | Argument builders exist (`HLSEncryption`, `DRMPreparation`) but nothing calls them outside their own unit tests |
+| 🖼️ **Thumbnail Sprites** | `ThumbnailSpriteGenerator` exists but is only exercised by a unit test — no UI or pipeline calls it |
+| 🔍 **Scene Detection** | The Scene Detection view builds FFmpeg arguments but never runs FFmpeg — it logs "requested" and returns; no scenes are ever actually detected (#288) |
+| 🔏 **Forensic Watermarking** | `ForensicWatermark` is orphaned (#477) |
+| 🎥 **3D / Stereoscopic (MV-HEVC / MV-H264)** | `Stereo3DConverter` / `Video3DConverter` have zero callers (#477) |
+| 🏷️ **Media Metadata Lookup / Auto-Tagging** | `AutoTagger` is orphaned; the metadata tag editor is display-only (#467, #205) |
+| 👁️ **A/B Comparison** | `ComparisonView` is orphaned (#329) |
+| 🔎 **AI Upscaling** | `AIUpscaler` exists only as a comment reference (#236, #477) |
+| 💿 **Optical Disc Ripping & Authoring** | Disc readers/authors are orphaned — disc **burning** above is the one part of this pipeline that's real (#476) |
+| 🎛️ **Vector / ProRes→Vector Conversion** | Argument builders exist; there is no executor and no source-file flow (#473) |
+
+> The full release breakdown lives in [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ---
 
@@ -166,7 +195,7 @@ SHA-256 checksum before trying again.
 | **Universal binary** | Yes — `arm64` + `x86_64` ship in the same DMG | — |
 | **RAM** | 8 GB | 16 GB for 4K SDR, **32 GB** for 4K HDR / Dolby Vision work |
 | **Free disk space** | 2 GB for the app + bundled tools | 50 GB+ scratch for 4K HDR encodes |
-| **Network** | Required only for cloud upload, metadata lookup, AI upscaling | — |
+| **Network** | Not required for local encoding; needed once cloud upload ships in a release (real on the dev branch today, see Key Features above) | — |
 
 > Intel Macs are supported by the Universal binary, but Apple Silicon is
 > significantly faster for HEVC / AV1 / VideoToolbox encodes and is the
@@ -227,7 +256,11 @@ SRT, TTML, WebVTT, SSA/ASS, SAMI, LRC (Enhanced & Walaoke), CC608, CEA-708 (EIA-
 
 Audio CD, SACD, Hybrid SACD, SHM-SACD, SHM-CD, Blu-spec CD, HDCD, DTS CD, CD-MIDI, CD+G, Mixed Mode CD, Enhanced CD (eCD/CD+), CDV, DualDisc, Video CD, Super Video CD, DVD-Video, DVD Audio, HD DVD, Blu-ray, Blu-ray 3D, Ultra HD Blu-ray
 
-> Supports physical discs, disc images (ISO, BIN/CUE, MDF/MDS, NRG, IMG), extracted disc structures (VIDEO\_TS, BDMV), and bit-for-bit disc cloning. Optical disc ripping ships in v1.1+; authoring and burning in v1.2+.
+> Format list reflects the target scope of Phases 10-11, not what's wired
+> today: **disc burning** (writing an existing image to physical media via
+> cdrecord/growisofs/hdiutil) is real and reachable now; disc **ripping**
+> and **authoring** (reading physical discs/images and building new ones)
+> remain scaffolded but orphaned — see [PROJECT_STATUS.md](PROJECT_STATUS.md) (#476).
 
 ---
 
