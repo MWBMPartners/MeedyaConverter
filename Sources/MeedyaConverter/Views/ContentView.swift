@@ -90,6 +90,8 @@ struct ContentView: View {
         // -- Monitor -------------------------------------------------------
         case .queue:
             JobQueueView()
+        case .resumableJobs:
+            ResumableJobsView()
         case .log:
             ActivityLogView()
         case .dashboard:

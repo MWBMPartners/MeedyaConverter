@@ -13,8 +13,10 @@ import ConverterEngine
 /// Displays a list of encoding jobs that were interrupted and can be resumed.
 ///
 /// Shows each resumable checkpoint with the source filename, progress at
-/// the time of interruption, and the date it was saved. Provides a "Resume"
-/// button per job and a "Clear All" button to discard all checkpoints.
+/// the time of interruption, and the date it was saved. Provides a
+/// "Re-queue" button per job — this restarts the job from the beginning,
+/// it does not seek-resume mid-file (that is not implemented yet) — and a
+/// "Clear All" button to discard all checkpoints.
 ///
 /// Can be embedded inline (e.g., in the Queue section of the sidebar)
 /// or presented as a sheet.
@@ -124,20 +126,23 @@ struct ResumableJobsView: View {
 
             Spacer()
 
-            // Resume button
+            // Re-queue button. Labelled honestly: this restarts the job
+            // from the beginning, it does not seek-resume from
+            // `checkpoint.progressFraction` — true mid-file resume is
+            // not implemented yet.
             Button {
                 resumeCheckpoint(checkpoint)
             } label: {
-                Label("Resume", systemImage: "play.fill")
+                Label("Re-queue", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-            .help("Resume encoding from \(Int(checkpoint.progressFraction * 100))%")
+            .help("Re-queue this job from the start (was \(Int(checkpoint.progressFraction * 100))% done when interrupted)")
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(checkpoint.inputURL.lastPathComponent), \(Int(checkpoint.progressFraction * 100)) percent completed")
-        .accessibilityAction(named: "Resume") {
+        .accessibilityAction(named: "Re-queue") {
             resumeCheckpoint(checkpoint)
         }
     }
@@ -150,7 +155,13 @@ struct ResumableJobsView: View {
         checkpoints = manager.listResumableCheckpoints()
     }
 
-    /// Resume an interrupted encoding job by re-enqueuing it.
+    /// Re-queue an interrupted encoding job from the start.
+    ///
+    /// This is honest-minimal resumable jobs: it builds a fresh
+    /// `EncodingJobConfig` for the same input/profile with no seek offset,
+    /// so the job re-encodes from 0% rather than continuing from
+    /// `checkpoint.progressFraction`/`checkpoint.lastGoodTimestamp`. True
+    /// mid-file resume (seeking past already-encoded content) is deferred.
     private func resumeCheckpoint(_ checkpoint: EncodingCheckpoint) {
         let outputDir = checkpoint.outputURL.deletingLastPathComponent()
         let outputExtension = checkpoint.profileSnapshot.containerFormat.fileExtensions.first ?? "mkv"
@@ -168,7 +179,7 @@ struct ResumableJobsView: View {
         )
 
         viewModel.engine.queue.addJob(config)
-        viewModel.appendLog(.info, "Resumed interrupted job: \(checkpoint.inputURL.lastPathComponent) from \(Int(checkpoint.progressFraction * 100))%")
+        viewModel.appendLog(.info, "Re-queued interrupted job from the start: \(checkpoint.inputURL.lastPathComponent) (was \(Int(checkpoint.progressFraction * 100))% done when interrupted)")
 
         // Delete the checkpoint since it has been re-enqueued
         let manager = CheckpointManager()
@@ -223,7 +234,7 @@ struct ResumableJobsBanner: View {
                     Image(systemName: "arrow.uturn.forward.circle.fill")
                         .foregroundStyle(.orange)
 
-                    Text("\(resumableCount) interrupted job\(resumableCount == 1 ? "" : "s") can be resumed")
+                    Text("\(resumableCount) interrupted job\(resumableCount == 1 ? "" : "s") can be re-queued")
                         .font(.caption)
                         .foregroundStyle(.primary)
 
@@ -239,7 +250,7 @@ struct ResumableJobsBanner: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(resumableCount) interrupted jobs available to resume")
+            .accessibilityLabel("\(resumableCount) interrupted jobs available to re-queue")
         }
     }
 }

@@ -37,6 +37,7 @@ struct SidebarView: View {
             Section("Monitor") {
                 sidebarLabel(for: .queue)
                     .badge(viewModel.engine.queue.totalCount)
+                sidebarLabel(for: .resumableJobs)
                 sidebarLabel(for: .log)
                     .badge(viewModel.logEntries.count)
                 sidebarLabel(for: .dashboard)

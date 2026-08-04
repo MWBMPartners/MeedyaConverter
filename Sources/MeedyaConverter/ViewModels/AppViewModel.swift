@@ -37,6 +37,11 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Encoding queue — job list with progress.
     case queue = "Queue"
 
+    /// Resumable jobs — interrupted (cancelled/failed) encodes that saved
+    /// a checkpoint and can be re-queued. Honest-minimal: re-queuing
+    /// restarts the job from 0%, it does not seek-resume mid-file.
+    case resumableJobs = "Resumable Jobs"
+
     /// Activity log — structured app events and FFmpeg output.
     case log = "Log"
 
@@ -164,6 +169,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .streams:           return "list.bullet.rectangle"
         case .output:            return "gearshape.2"
         case .queue:             return "list.number"
+        case .resumableJobs:     return "arrow.clockwise.circle"
         case .log:               return "text.page"
         case .dashboard:         return "chart.bar.xaxis"
         case .encodingGraphs:    return "chart.xyaxis.line"
@@ -212,6 +218,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .streams:           return "Inspect media streams"
         case .output:            return "Configure output settings"
         case .queue:             return "View encoding queue"
+        case .resumableJobs:     return "View interrupted jobs that can be re-queued"
         case .log:               return "View activity log"
         case .dashboard:         return "View encoding statistics dashboard"
         case .encodingGraphs:    return "View per-job encoding graphs"
@@ -1371,6 +1378,26 @@ final class AppViewModel {
                 let failedStatistics = statsCollector.currentStatistics
                 await Task.detached { EncodingStatisticsStore().addStatistics(failedStatistics) }.value
 
+                // Save a resume checkpoint (honest-minimal resumable jobs)
+                // so ResumableJobsView has real interrupted-job data to
+                // list. NOTE this is "honest-minimal": there is no seek-
+                // resume yet — ResumableJobsView.resumeCheckpoint(_:)
+                // re-queues the job from scratch (0%), it does not resume
+                // mid-file. `lastGoodTimestamp` is recorded here for a
+                // future true seek-resume but isn't consumed by anything
+                // yet. Best-effort like the other persistence above —
+                // failures are silently dropped rather than surfaced as a
+                // second error on top of the encode failure itself.
+                let failureCheckpoint = EncodingCheckpoint(
+                    jobId: jobState.config.id,
+                    inputURL: jobState.config.inputURL,
+                    outputURL: jobState.config.outputURL,
+                    profileSnapshot: jobState.config.profile,
+                    lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
+                    progressFraction: jobState.progress
+                )
+                try? CheckpointManager().saveCheckpoint(failureCheckpoint)
+
                 // Track encode failure (Issue #183)
                 analytics.track(.encodeFailed)
 
@@ -1487,6 +1514,24 @@ final class AppViewModel {
         activityIndicator.stopTracking()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
+
+        // Save a resume checkpoint (honest-minimal resumable jobs) — see
+        // the matching save in startQueue()'s failure branch for the
+        // "re-queues from 0, does not seek-resume" caveat. `startQueue()`'s
+        // own catch block may also fire once `engine.stopEncoding()` makes
+        // the in-flight `encode()` throw — that's fine, it just overwrites
+        // this same checkpoint file with an equivalent snapshot.
+        if let jobState = activeJobState {
+            let cancelCheckpoint = EncodingCheckpoint(
+                jobId: jobState.config.id,
+                inputURL: jobState.config.inputURL,
+                outputURL: jobState.config.outputURL,
+                profileSnapshot: jobState.config.profile,
+                lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
+                progressFraction: jobState.progress
+            )
+            try? CheckpointManager().saveCheckpoint(cancelCheckpoint)
+        }
     }
 
     // MARK: - Notifications
