@@ -34,6 +34,12 @@ struct BitrateHeatmapView: View {
     @State private var showComparison = false
     @State private var errorMessage: String?
 
+    /// Set after a failed `exportAsImage()` attempt; cleared on the next
+    /// successful export. Never set on success — a successful export
+    /// closes the save panel with no further UI, mirroring
+    /// `EncodingGraphsView.exportErrorMessage`.
+    @State private var exportErrorMessage: String?
+
     /// The in-flight analysis task, retained so it can be cancelled when
     /// the user navigates away from this view mid-analysis. Mirrors
     /// `LoudnessReportView.analysisTask` / `BenchmarkView.benchmarkTask`.
@@ -45,6 +51,10 @@ struct BitrateHeatmapView: View {
         VStack(spacing: 0) {
             // Toolbar
             toolbar
+
+            if let exportErrorMessage {
+                exportErrorBanner(message: exportErrorMessage)
+            }
 
             Divider()
 
@@ -104,6 +114,25 @@ struct BitrateHeatmapView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    /// Banner shown when `exportAsImage()` fails, mirroring
+    /// `EncodingGraphsView.exportErrorBanner(message:)`.
+    private func exportErrorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Dismiss") {
+                exportErrorMessage = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Analyzing State
@@ -490,10 +519,21 @@ struct BitrateHeatmapView: View {
         isAnalyzing = false
     }
 
-    /// Export the current heatmap as a PNG image via NSBitmapImageRep.
+    /// Export the current heatmap as a PNG image via `ImageRenderer`.
+    ///
+    /// Renders the same `drawHeatmap(context:size:analysis:)` routine used
+    /// by the on-screen `Canvas` in `heatmapContent(analysis:)` above into
+    /// an off-screen `ImageRenderer`, so the exported PNG shows the actual
+    /// heatmap rather than a flat, contentless background rectangle
+    /// (Issue #483). `drawHeatmap` only depends on the `size` its `Canvas`
+    /// hands it — it never reads `GeometryReader`'s on-screen geometry
+    /// directly — so a fixed off-screen size renders it correctly.
+    /// Failures (a `nil` render or a failed file write) are surfaced via
+    /// `exportErrorMessage` instead of being silently swallowed by
+    /// `try?`, mirroring `EncodingGraphsView.exportCSV()`.
     @MainActor
     private func exportAsImage() {
-        guard analysis != nil else { return }
+        guard let analysis else { return }
 
         let panel = NSSavePanel()
         panel.title = "Export Bitrate Heatmap"
@@ -502,36 +542,41 @@ struct BitrateHeatmapView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        // Render the heatmap to an off-screen image
-        let width = 1920
-        let height = 600
+        let exportSize = CGSize(width: 1920, height: 600)
 
-        guard let bitmapRep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else { return }
+        let renderer = ImageRenderer(content:
+            ZStack(alignment: .topLeading) {
+                Color(nsColor: .controlBackgroundColor)
 
-        NSGraphicsContext.saveGraphicsState()
-        let graphicsContext = NSGraphicsContext(bitmapImageRep: bitmapRep)
-        NSGraphicsContext.current = graphicsContext
+                Canvas { context, size in
+                    drawHeatmap(context: &context, size: size, analysis: analysis)
+                }
+                .padding(.leading, 60)
+                .padding(.bottom, 30)
+                .padding(.trailing, 16)
+                .padding(.top, 16)
+            }
+            .frame(width: exportSize.width, height: exportSize.height)
+        )
+        renderer.proposedSize = ProposedViewSize(exportSize)
+        renderer.scale = 1
 
-        // Draw background
-        NSColor.controlBackgroundColor.setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        guard let cgImage = renderer.cgImage else {
+            exportErrorMessage = "Failed to render the heatmap image for export."
+            return
+        }
 
-        NSGraphicsContext.restoreGraphicsState()
+        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+            exportErrorMessage = "Failed to encode the heatmap image as PNG."
+            return
+        }
 
-        // Save PNG data
-        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-            try? pngData.write(to: url)
+        do {
+            try pngData.write(to: url)
+            exportErrorMessage = nil
+        } catch {
+            exportErrorMessage = "Failed to export heatmap image: \(error.localizedDescription)"
         }
     }
 
