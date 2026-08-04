@@ -88,10 +88,17 @@ to `wip/alpha-consolidation`.
    (#324/#352/#350/#338/#257/#323/#285/#241/#346/#446). Needs user OK on deletions.
 2. **#468 resumable jobs** — delete-vs-honest-minimal (already flagged).
 
-- [ ] **NEXT impl (after M2 + green), ranked:** #277 post-encode hooks persist+invoke → #275 outputMode →
-      #467 metadata tag write → #292 measureLevels → #355 API server entry (`serve`) → #469 conditional rules →
-      row1 team-push → row2 heatmap-export → then app-service/orphan sweep pending decision #1. **PAUSE for #468.**
-      Then: OpenAPI/Swagger reconciliation + final docs/in-app help pass + CHANGELOG.
+- [x] **M2 engine-correctness batch DONE + pushed** (`75f2de0` #486, `aa0d66e` #484, `9b92932` #485+#487):
+      #486 PQ/HDR10 signalling **+ latent HLG-clobber bug** (extraArguments overwrite reorder — HLG preservation
+      was silently broken too); #484 batch --job-file non-zero exit on failure; #485 per-stream subtitle overrides
+      (new FFmpegArgumentBuilder hook); #487 subtitleTonemap preserved on profile import (+new test). Issues updated.
+      All symbols verified vs real code (CaseIterable, ExitCodes.encodingFailed, SubtitleStreamOverride, .dolbyVision).
+- [~] **In-flight (parallel, disjoint):** Agent A = #277 post-encode hooks persist+invoke + honor watch-folder
+      postAction, #275 outputMode/OutputPathResolver. Agent B = #482 team-push real send (stop faking success),
+      #483 BitrateHeatmap real export. (Both no-commit; orchestrator reviews+commits per-issue, CI-gates.)
+- [ ] **NEXT impl (ranked):** #467 metadata tag write → #292 measureLevels → #355 API server entry (`serve`) →
+      #469 conditional rules → #488/#489/#490/#491 (CLI/manifest/share-link/bg-removal) → then app-service/orphan
+      sweep **pending decision #1**. **PAUSE for #468.** Then: OpenAPI/Swagger + final docs/in-app help + CHANGELOG.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
