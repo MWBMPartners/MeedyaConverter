@@ -34,7 +34,13 @@ to `wip/alpha-consolidation`.
       DONE items stay open until #472 merges.
 - [x] Refreshed `.claude/project_brief.md` (branch, 98 issues, honesty status).
 - [~] Thorough docs sweep (README/PROJECT_STATUS/CHANGELOG/FEATURES honesty reconciliation + OpenAPI).
-- [ ] Present ranked new-work proposals to user (awaiting user decision on what to build next).
+      **Sonnet docs-honesty agent RUNNING** (edits .md only). OpenAPI reconciliation still owed by me.
+- [x] Presented ranked new-work proposals → **user chose "Whole ranked set #1–12", in ranked order,
+      autonomously, per-task commits + per-issue updates. PAUSE on #12 (resumable-jobs delete-vs-minimal).**
+- [~] Implementing new work. Created **#481** (Help menu no-op bug). **Sonnet impl agent RUNNING** for the
+      4 quick wins: #466 CLI codec honesty, #448 QueueOptimizer apply, #474 SmartCrop apply, #481 Help menu.
+      (Agent does NOT commit — orchestrator reviews diff, commits per-task, pushes, updates each issue.)
+      Remaining after quick wins: #475, #467, #277, #355, #470, #469, #477, then PAUSE for #468.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
