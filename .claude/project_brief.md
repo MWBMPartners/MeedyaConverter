@@ -1,22 +1,43 @@
 # MeedyaConverter — Project Brief
 
 > Saved for Claude AI context continuity across sessions.
-> Last updated: 2026-07-18
+> Last updated: 2026-08-04
+> **Live status lives in `.claude/HANDOFF.md`** — this brief is the durable overview.
 
 ## Project Summary
 
 MeedyaConverter is a cross-platform professional media conversion application by MWBM Partners Ltd. A modern HandBrake alternative with 100+ features including passthrough, adaptive streaming (HLS/MPEG-DASH), HDR preservation/tone-mapping, spatial audio, optical disc ripping/authoring, cloud upload, image conversion, video editing tools, and monetization infrastructure.
 
-## Current Status (2026-07-18)
+## Current Status (2026-08-04)
 
-**v0.1.0 GA scope is COMPLETE**; the app is feature-complete and in release engineering. Next milestone: cut **`v0.1.0-rc.4`** (short soak) → **`v0.1.0` GA**, Direct distribution only (signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised CLI tarball, via GitHub Releases). App Store Lite deferred (#392).
+The project is in an **alpha-consolidation cycle**: a single work-in-progress branch is
+accumulating "honesty fixes" (wiring up previously-dead/fabricated feature surfaces) plus the
+IntAppsAPI integration and docs, to be merged to `alpha` via **one** PR (no PR stacking).
 
-- **Autopilot mission TERMINAL** at commit `b58d676` — a security + release-engineering mission ran DISCOVER → STABILIZE → SECURE → COMPLETE → POLISH → VERIFY (26 cycles).
-- **Tests**: **1128** unit tests passing (1039 at the TERMINAL checkpoint; grew with continuous feature/test work), 0 compiler warnings.
-- **Security**: findings **F-001..F-012** all closed / mitigated / risk-accepted. **F-011** (FFmpeg supply chain) finalised — universal arm64+x86_64, sourced solely from first-party mirror `MeedyaSuite/MeedyaDL-Tools` (pinned `MDLT_TAG`), SHA256SUMS-verified fail-closed. **F-012** (probe-watchdog PID-reuse) mitigated.
-- **Release engineering**: `release.yml` builds the app universal AND generates + attaches SHA-256 checksums. Direct-release runbook at `docs/distribution/direct-release.md`.
-- **Issues**: **42 open**. #429 (standing-tasks audit) and #371 (Suite-core metadata) closed this session.
-- **Branch**: all work lives on **`autopilot/2026-06-30-clean`** — NOT merged to `main`; **no PRs** per current workflow (avoids merge-race stacking).
+- **Working branch**: **`wip/alpha-consolidation`** (HEAD `2f58fc3`). All work commits here.
+  `main` = trunk; `alpha`/`beta` = live pre-release channel branches (a push mints a public
+  pre-release — never delete). The 3 consolidated stale branches are deleted on `origin`.
+- **Gate PR**: **#472** (draft, `wip/alpha-consolidation` → `alpha`) — kept open early as the CI
+  gate since the team has no local macOS build. **All 6 checks green**: Build & Test (macOS),
+  CodeQL, Analyze Swift, Dependency Review, actionlint, GitHub Actions pin hygiene. **Do not merge
+  yet** — work ongoing.
+- **Issues**: **98 open**. The count rose from ~42 because a **completeness audit** reopened ~28
+  issues that had been closed-in-error (feature existed as code but never executed / had no caller /
+  no entry point) and filed #473–#477. A 2026-08-04 reconciliation sweep verified every changed
+  issue against the actual code (not commit titles).
+- **Implemented on the branch (closes on #472 merge)**: cloud-upload execution (#459), unified
+  statistics dashboard (#284/#363), email (#348) + webhook (#296) notifications, watch-folder
+  auto-encode (#268), recent files (#334), scheduled encoding (#279), IntAppsAPI remote flags +
+  update channels (#471), overwrite/delete-source toggles, orphaned-view navigation (#448 partial).
+- **Still genuinely open / dead-code (do NOT claim as shipped)**: 3D/MV-HEVC (`Stereo3DConverter`,
+  `Video3DConverter` — zero callers, #477), metadata tag-write (#467), disc rip/author (burn IS
+  real; readers orphaned, #476), vector conversion (no executor, #473), conditional rules (#469),
+  resumable jobs (#468), REST API (real but unreachable, #355), post-encode hooks (engine real, not
+  invoked, #277), and the dead engine/app-service clusters in #477.
+- **Security**: findings **F-001..F-012** remain closed / mitigated / risk-accepted (F-011 FFmpeg
+  supply chain universal + first-party + SHA256SUMS fail-closed; F-012 probe-watchdog mitigated).
+- **Release**: v0.1.0 GA release ritual (#428) still pending user-gated Apple secrets; Direct
+  distribution only; App Store Lite deferred (#392).
 
 ### Key work — Session 2026-07-18 (this handoff)
 
@@ -73,8 +94,15 @@ All view-layer wirings (#433/#434/#435) are engine-tested and end-to-end-proven 
 | Direct/Windows/Linux | Ltd.MWBMpartners.MeedyaConverter           |
 | App Group            | group.Ltd.MWBMpartners.MeedyaConverter     |
 
-### Remaining Open Issues (42 open)
+### Remaining Open Issues (98 open, as of 2026-08-04)
 
+- **Honesty / wiring defects (from the completeness audit — the current focus)**: #448 (orphaned
+  views + inert reachable actions), #467 (metadata tag-write), #468 (resumable jobs), #469
+  (conditional rules), #470 (ETAPredictor orphaned), #473 (vector conversion), #474 (SmartCrop
+  apply), #475 (dead settings toggles), #476 (disc rip/author entry), #477 (dead engine/app-service
+  clusters), #466 (CLI codec/container honesty), #451 (concurrency audit), #355 (REST API entry),
+  #277 (post-encode hook invocation). Several are DONE-on-branch and awaiting #472 merge (see
+  Current Status above).
 - **Release**: #428 (v0.1.0-rc.4 → GA umbrella — the active track)
 - **App Store / TestFlight compliance**: #392 (tracking) + ITMS children #386–#391, #178
 - **Feature-gap gate-ledger** (all awaiting explicit user greenlight, multi-month each): #419 OFX host, #420 OpenColorIO, #421 audio offset, #422 audio drift, #423 audio-sync corpus, #424 premium tier + Expert Mode, #425 waveform viz, #426 subtitle muxing, #427 subtitle sync via audio

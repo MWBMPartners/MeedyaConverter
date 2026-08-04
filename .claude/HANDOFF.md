@@ -27,13 +27,54 @@ to `wip/alpha-consolidation`.
 
 **Progress this session (update as you go):**
 - [x] Codified the workflow directive as repo-wide standing tasks → `.claude/standing_tasks.md`
-      new "Workflow & Processing Standing Tasks" section (W1–W9).
-- [~] Dispatched Fable-5 sequential deep-analysis agent: reconcile open issues vs current code +
-      ranked new-work proposals. (Running.)
-- [ ] Apply per-issue GitHub updates from the reconciliation register.
-- [ ] Refresh `.claude/project_brief.md` (stale — still says `autopilot/2026-06-30-clean`, 42 issues).
-- [ ] Thorough docs sweep (README/CHANGELOG/PROJECT_STATUS/etc. + help + OpenAPI).
-- [ ] Present ranked new-work proposals to user.
+      new "Workflow & Processing Standing Tasks" section (W1–W9). (commit `4a28e32`)
+- [x] Fable-5 sequential deep-analysis agent: reconciled open issues vs current code + produced
+      ranked new-work proposals. Register captured below.
+- [x] Applied per-issue GitHub updates (17 comments) from the register — evidence-cited, honest that
+      DONE items stay open until #472 merges.
+- [x] Refreshed `.claude/project_brief.md` (branch, 98 issues, honesty status).
+- [~] Thorough docs sweep (README/PROJECT_STATUS/CHANGELOG/FEATURES honesty reconciliation + OpenAPI).
+- [ ] Present ranked new-work proposals to user (awaiting user decision on what to build next).
+
+### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
+
+**DONE-ON-BRANCH (implemented + wired; closes on PR #472 merge):**
+#459 cloud-upload execution (`CloudUploadExecutor`, real URLSession legs + scp; caller
+`CloudStorageView`/`PostEncodeActions`) · #284 unified stats (`EncodingStatisticsStore` sole source,
+collector in queue loop, persists on success+fail) · #348 email (`sendCompletionEmail`→curl) · #296
+webhook (`WebhookSender` POST) · #268 watch-folder enqueue+encode · #334 recent files · #279
+scheduled encoding (`onJobReady`→`startQueue`) · #471 IntAppsAPI (dormant/fail-safe) · overwrite +
+delete-source toggles (part of #475).
+
+**PARTIAL:** #448 (many views wired; still orphaned: MetadataEditorView, ResumableJobsView,
+APIServerView, ConditionalRulesView, SlateGeneratorView, ComparisonView; still inert-but-reachable:
+QueueOptimizer.applyOptimisation fabricates success, MetadataTagEditor display-only, Concatenation no
+execute, MultiOutput display-only, Watermark config unused) · #475 (2 fixed, ~7 keys still write-only)
+· #476 (burn real+reachable; rip/author no entry) · #355 (server real+tested, no nav/CLI entry) ·
+#277 (chain engine real; not persisted, not invoked on completion, postAction ignored) · #451 (30
+`Task.detached` + 6 `nonisolated(unsafe)` sites, mostly documented-safe).
+
+**STILL-OPEN:** #467 (MetadataTagEditor never executes; MetadataEditorView orphaned) · #468 (no
+checkpoint writer; view orphaned; "resume" restarts at 0) · #469 (rules never read at encode) · #470
+(ETAPredictor 0 callers; naive inline ETA at AppViewModel:952) · #473 (no executor / no source flow) ·
+#474 (`applyCropToJob()` empty) · #466 (CLI advertises `copy`/codecs that silently fall back) · #477
+(dead clusters: 3D/Spatial, disc readers, DCP/ForensicWatermark/VVC/TrueHD/HLGToDolbyVision, AI/audio,
+ColourSpaceConverter dup, + app-service orphans HandoffManager/URLSchemeHandler/etc.).
+
+### Ranked new-work proposals (Fable, for user decision — NOT yet started)
+
+1. CLI reject unknown codec/container + support `copy` (#466) — **S**
+2. QueueOptimizer actually apply reorder (#448) — **S**
+3. SmartCrop "Apply to Job" (#474) — **S**
+4. Fix broken Help menu (Cmd+? no-op; `openHelpWindow` opens a URL scheme with no handler) — **S**
+5. Honor/remove remaining dead Settings keys (#475) — **M** (each S)
+6. Execute metadata tag writes (#467) — **M**
+7. Persist + fire post-encode hooks, honor watch-folder postAction (#277) — **M**
+8. Entry point for the real API server (#355/#448) — **S–M**
+9. Wire ETAPredictor into queue ETA (#470) — **S–M**
+10. Apply conditional rules at enqueue (#469) — **M**
+11. Resumable-jobs honesty decision: delete vs honest-minimal (#468) — **M**
+12. Orphaned app-service sweep: wire-or-delete (#477) — **M**
 
 **Note:** local clones of the 3 consolidated branches still exist on disk (harmless); their REMOTE
 counterparts are already deleted (origin has only alpha/beta/main/wip-alpha-consolidation).
