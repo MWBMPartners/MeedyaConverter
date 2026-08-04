@@ -5,9 +5,40 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-07-28 (roadmap #7, #14; completeness-audit "configured but never executed" cluster — #279, #268, #296, #348, #295/#203, #334, overwrite/delete-source-after-encode) · **working branch `wip/alpha-consolidation`** (= `main` + audit doc) · VERSION 0.1.0
+**Last updated:** 2026-08-04 (project-state reconciliation sweep IN PROGRESS — see "Current session" below) · **working branch `wip/alpha-consolidation`** · HEAD `2f58fc3` · VERSION 0.1.0
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
+
+## 🟡 Current session — 2026-08-04 (project-state reconciliation + new-work proposals + docs)
+
+**User directive (this session):** full sweep of ALL GitHub Issues (open + closed) reconciled
+against the ACTUAL codebase (no assumptions); refresh all `.claude/` memory/context + this handoff;
+propose ranked new-work for the alpha cycle; thorough docs update (`.md` + in-app help + OpenAPI +
+Swagger UI); codify the workflow directive as repo-wide standing tasks. NO PR stacking — all commits
+to `wip/alpha-consolidation`.
+
+**State at session start:**
+- Branch `wip/alpha-consolidation` @ `2f58fc3` (PR #480 metadata-passthrough merged in). Tree clean.
+- **PR #472** (draft, `wip/alpha-consolidation` → `alpha`) — ALL 6 checks GREEN: Build & Test (macOS),
+  CodeQL, Analyze Swift, Review Dependencies, actionlint, GitHub Actions pin hygiene. 244 commits,
+  mergeable_state `clean`. Still DRAFT (do not merge — work ongoing).
+- **98 open issues** (was 42 at 2026-07-18; grew because the completeness audit reopened ~28
+  closed-in-error issues + filed #473–#477).
+
+**Progress this session (update as you go):**
+- [x] Codified the workflow directive as repo-wide standing tasks → `.claude/standing_tasks.md`
+      new "Workflow & Processing Standing Tasks" section (W1–W9).
+- [~] Dispatched Fable-5 sequential deep-analysis agent: reconcile open issues vs current code +
+      ranked new-work proposals. (Running.)
+- [ ] Apply per-issue GitHub updates from the reconciliation register.
+- [ ] Refresh `.claude/project_brief.md` (stale — still says `autopilot/2026-06-30-clean`, 42 issues).
+- [ ] Thorough docs sweep (README/CHANGELOG/PROJECT_STATUS/etc. + help + OpenAPI).
+- [ ] Present ranked new-work proposals to user.
+
+**Note:** local clones of the 3 consolidated branches still exist on disk (harmless); their REMOTE
+counterparts are already deleted (origin has only alpha/beta/main/wip-alpha-consolidation).
+
+---
 
 ## ⚠️ Read this first — branch model (as of 2026-07-22)
 

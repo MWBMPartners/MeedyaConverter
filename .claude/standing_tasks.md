@@ -2,7 +2,9 @@
 
 > These tasks MUST be performed automatically after EVERY development prompt/action.
 > Saved for Claude AI context continuity.
-> Last updated: 2026-07-18
+> They are **project- and repo-wide**: they apply to ALL contributors, across ANY
+> dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
+> Last updated: 2026-08-04
 
 ## Mandatory Post-Action Tasks
 
@@ -149,3 +151,87 @@ erode when incremental ticking is impractical.
 - Explicitly call out any features that cannot meet App Store guidelines
 - Code signing and notarization ready (paid Apple Developer Programme account)
 - Dual distribution: App Store (sandboxed) + Direct (Sparkle updates)
+
+---
+
+## Workflow & Processing Standing Tasks (added 2026-08-04)
+
+> Repo-wide operating procedure. Applies to every contributor and every dev
+> environment. These are process directives; the numbered "Mandatory Post-Action
+> Tasks" above remain the per-step checklist.
+
+### W1. Project-state accuracy (GitHub Issues + Claude context)
+
+- Periodically (and whenever significant work lands) do a **full sweep of ALL
+  GitHub Issues — open AND closed** — and reconcile each against the **actual
+  codebase**, never against commit titles, PR text, or other documents. No
+  assumptions/inferences: confirm by reading the code (callers exist, the code
+  path executes, the setting is read, the UI/CLI reaches it).
+- Update all **Claude memory / context / prompt files** in `.claude/`
+  (`project_brief.md`, `standing_tasks.md`, `prompt_history.md`, `HANDOFF.md`,
+  and any others) to match reality.
+- Where a fix is implemented on the working branch but not yet merged, mark the
+  issue **"implemented on branch, closes on merge"** with an evidence comment —
+  do not close it until the change is actually released to the target branch.
+
+### W2. Keep the Handoff document current (crash-safe continuity)
+
+- Update `.claude/HANDOFF.md` **as you go**, not only at the end, so any session
+  can resume exactly where the last left off after any interruption.
+
+### W3. Deep analysis & planning → Fable 5 (sequential); implementation → Sonnet/Haiku
+
+- Perform **deep analysis and deep planning** using **sequential (never parallel)
+  Fable 5 agents**. If Fable 5 is unavailable, fall back to Opus for that run and
+  **retry Fable 5** on the next deep-analysis/planning run.
+- Carry out **implementation** with **Sonnet or Haiku**, whichever fits. Use
+  **Opus only when the implementation is genuinely complex**.
+- Philosophy: **GIRFT — Get It Right First Time.** Spend tokens/credits
+  efficiently while still producing top-quality, correct code.
+
+### W4. Use available plugins
+
+- Use `dev-team-plugins` (and other configured plugins/skills) to help perform,
+  manage, or propose any of this work where they add leverage.
+
+### W5. Steps after EACH task
+
+1. **Commit and push** the work to the single working branch that will eventually
+   target `alpha` (currently `wip/alpha-consolidation`).
+2. **Update the relevant GitHub Issue(s) individually** for that task (progress
+   comment, tick acceptance-criteria boxes, close only when truly satisfied).
+3. **Update Claude memory & context** in `.claude/`.
+4. **Update the Handoff document** so work is resumable at any point.
+
+### W6. Thorough documentation update
+
+- Keep ALL `.md` docs current (README, CHANGELOG, PROJECT_STATUS, Project_Plan,
+  DEV_NOTES, FEATURES, PROJECT, `docs/**`, help markdown).
+- Update **in-app help / guides** (`Sources/MeedyaConverter/Resources/Help/`).
+- Update **Claude memory/context** in `.claude/`.
+- If the project exposes an **API**, update the **OpenAPI/Swagger** spec
+  (`docs/api/*.yaml`).
+- If the project gains **web-based components** and a browsable **Swagger UI**
+  isn't already bundled, include one — prepared to be **hostable on shared
+  hosting (no Docker / no build step)**. (Already present at
+  `docs/api/swagger-ui/`.)
+
+### W7. Efficient / smart processing
+
+- Reorder and bundle these tasks as needed to execute efficiently, provided none
+  is dropped.
+
+### W8. Autonomy
+
+- Work through ALL queued tasks **autonomously**. Only pause when an **EXPLICIT
+  decision or action from the user** is required — state, in the simplest wording,
+  exactly what is needed and why — then **continue autonomously** with the rest of
+  the queue without waiting.
+
+### W9. No PR stacking
+
+- **Do not** open multiple stacked PRs. Commit all work to the single working
+  branch (`wip/alpha-consolidation`) which will target `alpha` via **one** PR
+  created later. This avoids PR merge-race conditions.
+- Exception already in force: MWBM-intAppsAPI changes go to that repo's
+  `feat/feature-targeting-consolidated` branch.
