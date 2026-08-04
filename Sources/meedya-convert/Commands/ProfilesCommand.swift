@@ -54,7 +54,10 @@ struct ProfilesCommand: AsyncParsableCommand {
     }
 
     private func listAllProfiles() {
-        let profiles = EncodingProfile.builtInProfiles
+        // Store profiles are built-ins + user-imported/created, already de-duplicated
+        // by construction (EncodingProfileStore seeds itself with builtInProfiles and
+        // appends persisted user profiles on top). Mirrors APIServer's GET /profiles.
+        let profiles = EncodingProfileStore().allProfiles()
 
         if jsonOutput {
             let encoder = JSONEncoder()
@@ -66,7 +69,7 @@ struct ProfilesCommand: AsyncParsableCommand {
             return
         }
 
-        print("Available Encoding Profiles (\(profiles.count) built-in):")
+        print("Available Encoding Profiles (\(profiles.count)):")
         print("")
 
         var currentCategory: String?
@@ -92,10 +95,20 @@ struct ProfilesCommand: AsyncParsableCommand {
         print("Use --show <name> for details.")
     }
 
-    private func exportProfileToFile(_ name: String) throws {
-        guard let profile = EncodingProfile.builtInProfiles.first(where: {
+    /// Resolve a profile by name against built-ins first, then the persisted
+    /// profile store — same order as `EncodeCommand.resolveProfile`, so a
+    /// profile just imported via `profiles --import` is visible here too.
+    private func resolveProfile(named name: String) -> EncodingProfile? {
+        if let profile = EncodingProfile.builtInProfiles.first(where: {
             $0.name.lowercased() == name.lowercased()
-        }) else {
+        }) {
+            return profile
+        }
+        return EncodingProfileStore().profile(named: name)
+    }
+
+    private func exportProfileToFile(_ name: String) throws {
+        guard let profile = resolveProfile(named: name) else {
             printStderr("Profile not found: \(name)")
             throw ExitCode(ExitCodes.invalidArguments.rawValue)
         }
@@ -142,9 +155,7 @@ struct ProfilesCommand: AsyncParsableCommand {
     }
 
     private func validateProfileByName(_ name: String) throws {
-        guard let profile = EncodingProfile.builtInProfiles.first(where: {
-            $0.name.lowercased() == name.lowercased()
-        }) else {
+        guard let profile = resolveProfile(named: name) else {
             printStderr("Profile not found: \(name)")
             throw ExitCode(ExitCodes.invalidArguments.rawValue)
         }
@@ -193,9 +204,7 @@ struct ProfilesCommand: AsyncParsableCommand {
     }
 
     private func showProfileDetails(_ name: String) throws {
-        guard let profile = EncodingProfile.builtInProfiles.first(where: {
-            $0.name.lowercased() == name.lowercased()
-        }) else {
+        guard let profile = resolveProfile(named: name) else {
             printStderr("Profile not found: \(name)")
             printStderr("Use --list to see available profiles.")
             throw ExitCode(ExitCodes.invalidArguments.rawValue)

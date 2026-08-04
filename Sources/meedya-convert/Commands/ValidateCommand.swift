@@ -95,9 +95,14 @@ struct ValidateCommand: AsyncParsableCommand {
         var warnings: [String] = []
         var errors: [String] = []
 
-        guard let profile = EncodingProfile.builtInProfiles.first(where: {
+        // Resolve against built-ins first, then the persisted profile store —
+        // same order as EncodeCommand.resolveProfile — so a profile imported
+        // via `profiles --import` validates correctly here too.
+        let resolvedProfile = EncodingProfile.builtInProfiles.first(where: {
             $0.name.lowercased() == name.lowercased()
-        }) else {
+        }) ?? EncodingProfileStore().profile(named: name)
+
+        guard let profile = resolvedProfile else {
             errors.append("Profile not found: \(name)")
             return (warnings, errors)
         }
