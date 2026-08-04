@@ -23,6 +23,9 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Source file import and metadata display.
     case source = "Source"
 
+    /// Media library browser — browse and import from a media library.
+    case mediaBrowser = "Media Browser"
+
     /// Stream inspector — display all streams with metadata.
     case streams = "Streams"
 
@@ -34,11 +37,22 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Encoding queue — job list with progress.
     case queue = "Queue"
 
+    /// Resumable jobs — interrupted (cancelled/failed) encodes that saved
+    /// a checkpoint and can be re-queued. Honest-minimal: re-queuing
+    /// restarts the job from 0%, it does not seek-resume mid-file.
+    case resumableJobs = "Resumable Jobs"
+
     /// Activity log — structured app events and FFmpeg output.
     case log = "Log"
 
     /// Aggregate encoding statistics dashboard.
     case dashboard = "Dashboard"
+
+    /// Per-job encoding graphs (FPS, bitrate, speed over time).
+    case encodingGraphs = "Encoding Graphs"
+
+    /// Export encoding statistics history as CSV or JSON.
+    case statisticsExport = "Statistics Export"
 
     /// Live CPU / memory / disk resource monitor.
     case resourceMonitor = "Resource Monitor"
@@ -47,6 +61,12 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     /// Image conversion — batch image format conversion.
     case images = "Images"
+
+    /// Raster → vector (SVG) conversion. Issues #376 engine / #381 / #402 UI.
+    case vectorConversion = "Vector Conversion"
+
+    /// ProRes → animated SVG conversion. Issues #377 engine / #381 / #404 UI.
+    case proresVector = "ProRes to Vector"
 
     /// Disc burning — write to physical optical media.
     case burn = "Burn"
@@ -73,6 +93,13 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Multi-output encoding — one source to many outputs.
     case multiOutput = "Multi-Output"
 
+    /// Conditional encoding rules — auto-select a profile based on
+    /// source file properties. Phase 11 (Issue #276).
+    case conditionalRules = "Conditional Rules"
+
+    /// Dual dynamic HDR conversion (Dolby Vision + HDR10+).
+    case dualDynamicHDR = "Dual Dynamic HDR"
+
     /// Visual FFmpeg filter graph editor.
     case filterGraph = "Filter Graph"
 
@@ -81,6 +108,15 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     /// Animated image (GIF / APNG / WebP) creation.
     case animatedImage = "Animated Image"
+
+    /// Smart crop — subject detection and intelligent cropping.
+    case smartCrop = "Smart Crop"
+
+    /// Background removal for images.
+    case backgroundRemoval = "Background Removal"
+
+    /// Voice isolation from audio/video sources.
+    case voiceIsolation = "Voice Isolation"
 
     /// Duplicate file finder across media library.
     case duplicateFinder = "Duplicate Finder"
@@ -129,13 +165,19 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .source:            return "doc.badge.plus"
+        case .mediaBrowser:      return "rectangle.stack.badge.play"
         case .streams:           return "list.bullet.rectangle"
         case .output:            return "gearshape.2"
         case .queue:             return "list.number"
+        case .resumableJobs:     return "arrow.clockwise.circle"
         case .log:               return "text.page"
         case .dashboard:         return "chart.bar.xaxis"
+        case .encodingGraphs:    return "chart.xyaxis.line"
+        case .statisticsExport:  return "square.and.arrow.up.on.square"
         case .resourceMonitor:   return "gauge.with.dots.needle.33percent"
         case .images:            return "photo.on.rectangle.angled"
+        case .vectorConversion:  return "scribble.variable"
+        case .proresVector:      return "film.fill"
         case .burn:              return "opticaldisc"
         case .trimEdit:          return "scissors"
         case .analyze:           return "waveform.and.magnifyingglass"
@@ -144,9 +186,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "link"
         case .watermark:         return "text.below.photo"
         case .multiOutput:       return "arrow.triangle.branch"
+        case .conditionalRules:  return "switch.2"
+        case .dualDynamicHDR:    return "sparkles.tv"
         case .filterGraph:       return "flowchart"
         case .edlEditor:         return "list.clipboard"
         case .animatedImage:     return "photo.stack"
+        case .smartCrop:         return "crop"
+        case .backgroundRemoval: return "person.and.background.dotted"
+        case .voiceIsolation:    return "waveform.badge.mic"
         case .duplicateFinder:   return "doc.on.doc"
         case .parallelEncoding:  return "cpu"
         case .queueOptimizer:    return "arrow.up.arrow.down"
@@ -167,13 +214,19 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     var accessibilityLabel: String {
         switch self {
         case .source:            return "Import source media files"
+        case .mediaBrowser:      return "Browse and import media library"
         case .streams:           return "Inspect media streams"
         case .output:            return "Configure output settings"
         case .queue:             return "View encoding queue"
+        case .resumableJobs:     return "View interrupted jobs that can be re-queued"
         case .log:               return "View activity log"
         case .dashboard:         return "View encoding statistics dashboard"
+        case .encodingGraphs:    return "View per-job encoding graphs"
+        case .statisticsExport:  return "Export encoding statistics"
         case .resourceMonitor:   return "Monitor system resources"
         case .images:            return "Convert images"
+        case .vectorConversion:  return "Convert raster images to vector SVG"
+        case .proresVector:      return "Convert ProRes 4444 video to animated SVG"
         case .burn:              return "Burn disc"
         case .trimEdit:          return "Trim and edit video"
         case .analyze:           return "Analyse media files"
@@ -182,9 +235,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .concatenation:     return "Join media files together"
         case .watermark:         return "Add watermark overlay"
         case .multiOutput:       return "Encode to multiple outputs"
+        case .conditionalRules:  return "Manage conditional encoding rules"
+        case .dualDynamicHDR:    return "Convert dual dynamic HDR formats"
         case .filterGraph:       return "Edit FFmpeg filter graph"
         case .edlEditor:         return "Edit decision list editor"
         case .animatedImage:     return "Create animated images"
+        case .smartCrop:         return "Detect subjects and crop intelligently"
+        case .backgroundRemoval: return "Remove image backgrounds"
+        case .voiceIsolation:    return "Isolate voice from audio"
         case .duplicateFinder:   return "Find duplicate media files"
         case .parallelEncoding:  return "Configure parallel encoding"
         case .queueOptimizer:    return "Optimise encoding queue"
@@ -231,6 +289,26 @@ final class AppViewModel {
 
     /// StoreKit 2 manager for in-app purchases and subscription tracking.
     let storeManager: StoreManager
+
+    // MARK: - Remote Feature Gate (Roadmap #5 / intAppsAPI)
+
+    /// Remote feature-flag provider backing the `video-upload` gate below.
+    /// Wraps intAppsAPI when credentials are configured (Keychain or
+    /// `MEEDYACONVERTER_INTAPPSAPI_*` env vars); completely dormant
+    /// otherwise — see `RemoteFeatureGateProvider`'s doc comment for the
+    /// dormancy + fail-safe contract.
+    let remoteFeatureGate: RemoteFeatureGateProvider
+
+    /// Whether the Video Upload feature (`VideoUploadView` + its sidebar
+    /// entry) is exposed, per the remote `video-upload` flag.
+    ///
+    /// Initialised synchronously in `init()` from whatever
+    /// `remoteFeatureGate` already has cached (a persisted cache from a
+    /// previous run, or the compiled-in fail-safe default of `false`) —
+    /// the sidebar renders correctly on the very first frame without
+    /// blocking launch on a network round trip.
+    /// `refreshRemoteFeatureFlags()` updates this after a fetch attempt.
+    var isVideoUploadEnabled: Bool
 
     // MARK: - Source Files
 
@@ -289,6 +367,17 @@ final class AppViewModel {
     /// Whether crop detection is currently running.
     var isDetectingCrop: Bool = false
 
+    /// A manually-computed Smart Crop filter string, set by
+    /// `SmartCropView.applyCropToJob()` (Issue #474).
+    ///
+    /// Mirrors `detectedCrop` above but comes from the standalone Smart
+    /// Crop tool rather than automatic source-file crop detection. When
+    /// present, it takes precedence over `detectedCrop`/`autoCropEnabled`
+    /// and is merged into `videoFilterChain` at enqueue exactly like the
+    /// auto-crop path, then cleared so it does not silently keep applying
+    /// to unrelated future jobs.
+    var pendingManualCropFilter: String?
+
     // MARK: - Hardware Encoding (Phase 3.10)
 
     /// Discovered hardware encoders on this system.
@@ -344,13 +433,82 @@ final class AppViewModel {
     /// Log entries for the unified activity log.
     var logEntries: [LogEntry] = []
 
+    // MARK: - Recent Files (Issue #334)
+
+    /// Tracks recently imported files for the Recent Files sidebar view.
+    ///
+    /// `RecentFilesView` holds its own separate `RecentFilesManager`
+    /// instance too — both read/write the same on-disk JSON store
+    /// (`~/Library/Application Support/MeedyaConverter/recent_files.json`),
+    /// so an entry recorded here (from `importFiles`) becomes visible the
+    /// next time the user navigates to Recent Files: `ContentView`'s
+    /// switch-based routing tears down and recreates `RecentFilesView`
+    /// (and its `@State` manager, which reloads from disk in `init()`) on
+    /// every navigation, so this doesn't need to be the same live
+    /// instance to be picked up.
+    let recentFilesManager = RecentFilesManager()
+
+    // MARK: - ETA Prediction (Issue #470)
+
+    /// History-weighted ETA predictor for the encoding queue. Persists
+    /// completed-encode history to disk (Application Support) and is
+    /// `@unchecked Sendable` with its own internal `NSLock`, so it is
+    /// safe to call from anywhere — here it is only ever touched from
+    /// this `@MainActor` view model, in `startQueue()`.
+    let etaPredictor = ETAPredictor()
+
     // MARK: - Initialiser
 
     init() {
-        self.engine = EncodingEngine()
+        // Custom FFmpeg/FFprobe binary paths (#475 —
+        // `SettingsView.PathSettingsTab`'s "FFmpeg Path"/"FFprobe Path"
+        // fields were persisted but never read). `EncodingEngine` already
+        // threads these straight through to `FFmpegBundleManager`, which
+        // tries the override before falling back to its bundled/Homebrew/
+        // PATH search order (see `FFmpegBundleManager.locateFFmpeg()`) —
+        // the only missing piece was passing them in here. An empty
+        // string (the fields' unset default, shown as an "Auto-detect"
+        // placeholder) means "no override", not a literal empty path.
+        let customFFmpegPath = UserDefaults.standard.string(forKey: "customFFmpegPath")
+        let customFFprobePath = UserDefaults.standard.string(forKey: "customFFprobePath")
+        let engine = EncodingEngine(
+            ffmpegPath: (customFFmpegPath?.isEmpty == false) ? customFFmpegPath : nil,
+            ffprobePath: (customFFprobePath?.isEmpty == false) ? customFFprobePath : nil
+        )
+        self.engine = engine
         self.updateChecker = AppUpdateChecker()
         self.storeManager = StoreManager()
-        self.selectedProfile = .webStandard
+
+        // Default profile (#475 — `SettingsView.EncodingSettingsTab`'s
+        // "Default Profile" picker was persisted but never read, so every
+        // launch silently reset back to Web Standard). Read via
+        // `UserDefaults` directly rather than `@AppStorage` since this is
+        // a non-View init; resolved against the local `engine` (not
+        // `self.engine`, per the two-phase-init note on `featureGate`
+        // below) so a stale or unrecognised name never crashes — it just
+        // falls back to Web Standard exactly like the old hardcoded default.
+        if let storedProfileName = UserDefaults.standard.string(forKey: "defaultProfileName"),
+           !storedProfileName.isEmpty,
+           let resolvedProfile = engine.profileStore.profile(named: storedProfileName) {
+            self.selectedProfile = resolvedProfile
+        } else {
+            self.selectedProfile = .webStandard
+        }
+
+        // Remote feature gate (#5): seed synchronously from whatever is
+        // already cached (persisted cache or the compiled-in default) so
+        // the sidebar/VideoUploadView render correctly on the first
+        // frame. `refreshRemoteFeatureFlags()` is kicked off later from
+        // `MeedyaConverterApp`'s `.onAppear`, alongside the StoreKit
+        // product load — see that file for the "plain Task {} inside a
+        // @MainActor SwiftUI closure" pattern this mirrors.
+        // Assigned from a local (rather than reading `self.remoteFeatureGate`
+        // back out) so this doesn't trip Swift's two-phase-init rule —
+        // `self` can't be read from until every stored property has been
+        // assigned, and this class has many more below this point.
+        let featureGate = RemoteFeatureGateProvider()
+        self.remoteFeatureGate = featureGate
+        self.isVideoUploadEnabled = featureGate.isVideoUploadEnabled
 
         // Set default output directory to user's Movies folder
         if let moviesDir = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
@@ -360,13 +518,55 @@ final class AppViewModel {
         // Track app launch (no-op if analytics is disabled)
         analytics.track(.appLaunch)
 
-        // Wire up the encoding scheduler callback (Issue #279)
+        // Wire up the encoding scheduler callback (Issue #279, re #279).
+        //
+        // Previously this only called `addJob(config)` and logged
+        // "Scheduled job started" — but nothing ever called `startQueue()`,
+        // so a scheduled job just sat in `.queued` state until a human
+        // happened to open Queue and press Start. `nextPendingJob()` picks
+        // up newly-added jobs automatically once the queue loop is
+        // running, so if the queue is already going we only need to
+        // enqueue; otherwise we start it — mirroring the
+        // `Task { await viewModel.startQueue() }` pattern
+        // `JobQueueView`'s Start Queue button already uses. The log
+        // message is made truthful either way instead of always claiming
+        // "started".
         scheduler.onJobReady = { [weak self] config in
             guard let self else { return }
             Task { @MainActor in
                 self.engine.queue.addJob(config)
-                self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
+                if self.isQueueRunning {
+                    self.appendLog(.info, "Scheduled job added to running queue: \(config.inputURL.lastPathComponent)")
+                } else {
+                    self.appendLog(.info, "Scheduled job started: \(config.inputURL.lastPathComponent)")
+                    await self.startQueue()
+                }
             }
+        }
+    }
+
+    // MARK: - Remote Feature Gate (Roadmap #5 / intAppsAPI)
+
+    /// Refreshes the `video-upload` remote flag from intAppsAPI and
+    /// updates the observable `isVideoUploadEnabled`/sidebar state.
+    ///
+    /// Safe to call unconditionally on every launch (wired from
+    /// `MeedyaConverterApp`'s `.onAppear`, alongside the StoreKit product
+    /// load) — a no-op when intAppsAPI is not configured (dormant), and
+    /// never throws or surfaces an error to the UI when the API is
+    /// unreachable (fail-safe: `remoteFeatureGate.refreshFlags()` keeps
+    /// whatever was already cached/compiled-in on failure).
+    ///
+    /// If the flag comes back disabled while the user is currently
+    /// looking at Video Upload (e.g. a maintainer flips the flag off
+    /// mid-session), navigates back to Source rather than leaving the
+    /// user stranded on a view whose sidebar entry just disappeared.
+    func refreshRemoteFeatureFlags() async {
+        await remoteFeatureGate.refreshFlags()
+        isVideoUploadEnabled = remoteFeatureGate.isVideoUploadEnabled
+
+        if !isVideoUploadEnabled && selectedNavItem == .videoUpload {
+            selectedNavItem = .source
         }
     }
 
@@ -447,6 +647,14 @@ final class AppViewModel {
                 }
 
                 appendLog(.info, "Imported: \(mediaFile.fileName) — \(mediaFile.summaryString)")
+
+                // Record in Recent Files (Issue #334). `addRecent(_:)`
+                // previously had exactly one caller — RecentFilesView's
+                // own re-import action — so the list could never actually
+                // populate from a normal import. Only recorded on a
+                // successful probe, matching the `sourceFiles.append`
+                // above.
+                recentFilesManager.addRecent(mediaFile.fileURL)
             } catch {
                 let message = "Failed to probe \(url.lastPathComponent): \(error.localizedDescription)"
                 lastError = message
@@ -590,21 +798,79 @@ final class AppViewModel {
         // Log PQ → HLG conversion status (Issue #254)
         logPQToHLGStatus()
 
-        // Determine output URL using filename template (Issue #272)
+        // Determine output URL using filename template (Issue #272),
+        // honouring the "Overwrite existing output files" setting
+        // (SettingsView.overwriteExisting — previously persisted but
+        // never read). `false` (the default) keeps the pre-existing
+        // auto-rename-on-collision behaviour via
+        // `resolveWithCollisionHandling`; `true` reuses the resolved path
+        // even if a file is already there, which FFmpeg (invoked with
+        // `-y` for every job) then overwrites in place.
+        //
+        // Issue #275: `outputMode` (bound to the "Folder Structure"
+        // picker in `OutputSettingsView`) previously had zero readers,
+        // so "Mirror source folder structure" silently produced flat
+        // output. `OutputPathResolver.resolveOutputDirectory` now picks
+        // the actual destination *directory* according to `outputMode`
+        // — composed with, not replacing, the `FilenameTemplate`-based
+        // naming/overwrite logic below, which still owns the filename.
+        // For `.flatten` (the default) and `.custom` (template-only;
+        // see `OutputPathResolver`'s doc comment) it returns
+        // `outputDir` unchanged, so behaviour for every mode except
+        // `.mirror` is exactly what it was before this call existed.
         let outputDir = outputDirectory ?? FileManager.default.temporaryDirectory
-        let outputExtension = selectedProfile.containerFormat.fileExtensions.first ?? "mkv"
-        let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
-        let template = FilenameTemplate(template: templateString)
-        let outputURL = template.resolveWithCollisionHandling(
-            sourceFile: file,
-            profile: selectedProfile,
-            outputDirectory: outputDir,
-            fileExtension: outputExtension
+        let resolvedOutputDir = OutputPathResolver.resolveOutputDirectory(
+            inputURL: file.fileURL,
+            baseInputDir: outputMode == .mirror ? commonSourceDirectory() : nil,
+            outputDir: outputDir,
+            mode: outputMode
         )
 
-        // Apply auto-crop filter if enabled and a crop was detected
+        // Apply conditional encoding rules (Issue #469): rules were
+        // persisted by `ConditionalRulesView` (same "conditionalRules"
+        // UserDefaults JSON blob, decoded identically here) but never
+        // evaluated anywhere in the encode path. `RuleEngine.evaluateRules`
+        // returns the `EncodingProfile` of the first enabled rule (in
+        // priority order) whose conditions all match `file`, or `nil` if
+        // none match. A match overrides the profile used for *this job
+        // only* — `selectedProfile` itself (and the Output Settings picker
+        // bound to it) is left untouched, so this cannot surprise the user
+        // by silently changing their manual selection for the next file.
+        // No rules persisted / none enabled / none matching all fall
+        // through to `selectedProfile` unchanged, exactly as before this
+        // feature existed.
+        var effectiveProfile = selectedProfile
+        if let rulesData = UserDefaults.standard.data(forKey: "conditionalRules"),
+           let rules = try? JSONDecoder().decode([ConditionalRule].self, from: rulesData),
+           !rules.isEmpty,
+           let matchedProfile = RuleEngine.evaluateRules(
+               rules, for: file, profileStore: engine.profileStore
+           ) {
+            effectiveProfile = matchedProfile
+            appendLog(.info, "Conditional rule matched: using profile \"\(matchedProfile.name)\"", category: .encoding)
+        }
+
+        let outputExtension = effectiveProfile.containerFormat.fileExtensions.first ?? "mkv"
+        let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
+        let template = FilenameTemplate(template: templateString)
+        let overwriteExisting = UserDefaults.standard.bool(forKey: "overwriteExisting")
+        let outputURL = template.resolveOutputURL(
+            sourceFile: file,
+            profile: effectiveProfile,
+            outputDirectory: resolvedOutputDir,
+            fileExtension: outputExtension,
+            overwriteExisting: overwriteExisting
+        )
+
+        // Apply a manually-selected Smart Crop filter (Issue #474) if one is
+        // pending, otherwise fall back to auto-crop if enabled and a crop
+        // was detected.
         var cropFilter: String? = nil
-        if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
+        if let manualCrop = pendingManualCropFilter {
+            cropFilter = manualCrop
+            appendLog(.info, "Smart Crop: applying manually selected crop (\(manualCrop))")
+            pendingManualCropFilter = nil
+        } else if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
             cropFilter = crop.recommendedCrop.filterString
             appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
         }
@@ -612,7 +878,7 @@ final class AppViewModel {
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
-            profile: selectedProfile,
+            profile: effectiveProfile,
             videoStreamIndex: selectedVideoStreamIndex,
             audioStreamIndex: selectedAudioStreamIndex,
             subtitleStreamIndex: selectedSubtitleStreamIndex,
@@ -622,11 +888,155 @@ final class AppViewModel {
         )
 
         engine.queue.addJob(config)
-        appendLog(.info, "Queued: \(file.fileName) with profile \"\(selectedProfile.name)\"")
+        appendLog(.info, "Queued: \(file.fileName) with profile \"\(effectiveProfile.name)\"")
 
         // Switch to queue view
         selectedNavItem = .queue
     }
+
+    /// The deepest common ancestor directory across every currently
+    /// imported source file, used as `OutputPathResolver`'s
+    /// `baseInputDir` for `.mirror` mode (Issue #275).
+    ///
+    /// The app imports individual files one at a time (no folder-tree
+    /// import, no stored "project root" — see `importFiles(_:)`), so
+    /// there is no authoritative root to mirror against. The common
+    /// ancestor of everything in `sourceFiles` is the closest available
+    /// proxy: files picked from sibling subfolders (e.g.
+    /// `.../ProjectA/clip1.mov`, `.../ProjectB/clip2.mov`) end up
+    /// mirrored under `ProjectA/`, `ProjectB/` in the output directory —
+    /// which is what "Mirror source folder structure" promises. When
+    /// only one file is imported, its own parent directory IS the
+    /// common ancestor, so `OutputPathResolver` computes an empty
+    /// relative path and mirror mode is equivalent to flatten for that
+    /// file — there is no sub-structure to preserve for a single file
+    /// considered in isolation.
+    ///
+    /// - Returns: The common ancestor directory URL, or `nil` if no
+    ///   source files are imported.
+    private func commonSourceDirectory() -> URL? {
+        let directories = sourceFiles.map { $0.fileURL.deletingLastPathComponent() }
+        guard let first = directories.first else { return nil }
+        guard directories.count > 1 else { return first }
+
+        var commonComponents = first.pathComponents
+        for directory in directories.dropFirst() {
+            let components = directory.pathComponents
+            var matched = 0
+            while matched < commonComponents.count,
+                  matched < components.count,
+                  commonComponents[matched] == components[matched] {
+                matched += 1
+            }
+            if matched < commonComponents.count {
+                commonComponents.removeLast(commonComponents.count - matched)
+            }
+            if commonComponents.isEmpty { return nil }
+        }
+
+        var result = URL(fileURLWithPath: commonComponents[0])
+        for component in commonComponents.dropFirst() {
+            result.appendPathComponent(component)
+        }
+        return result
+    }
+
+    // MARK: - Watch Folder Auto-Encoding (Issue #268)
+
+    /// Enqueue a file detected by a watch folder monitor and start the
+    /// queue if it isn't already running.
+    ///
+    /// `WatchFolderView` previously passed `WatchFolderMonitor.start` a
+    /// callback that discarded every detection (`{ _ in
+    /// /* Encoding trigger handled by app coordinator. */ }`) — no such
+    /// coordinator existed, so watch folders never actually encoded
+    /// anything. This is the wiring: build an `EncodingJobConfig` (same
+    /// shape `enqueueSelectedFile()` builds above) from the detected file
+    /// and the watch folder's own config, add it to the queue, then start
+    /// the queue if needed — mirroring the scheduler's `onJobReady`
+    /// wiring above.
+    ///
+    /// Uses `FileStabilityChecker.outputPath(for:config:outputExtension:)`
+    /// — the existing purpose-built helper for watch-folder output paths
+    /// (already handles the `recursive` subdirectory-mirroring case and
+    /// filename sanitisation) — rather than `FilenameTemplate`, since
+    /// building a `MediaFile` here would require an extra async probe of
+    /// every detected file before it could even be queued. Does not honour
+    /// the Source tab's `filenameTemplate`/`overwriteExisting` settings for
+    /// the same reason; watch folders have always had their own separate
+    /// output-path convention.
+    ///
+    /// - Parameters:
+    ///   - url: The detected file's URL.
+    ///   - config: The watch folder configuration that detected it.
+    func enqueueWatchFolderFile(_ url: URL, config: WatchFolderConfig) {
+        // Resolve the configured profile by name. `WatchFolderConfig`'s
+        // own default (`profileName: "webStandard"`, set by `addNewConfig()`
+        // in `WatchFolderView`) does not match any built-in profile's
+        // display name ("Web Standard") under `profileStore.profile(named:)`'s
+        // case-insensitive-exact match — so falling back to Web Standard
+        // with a warning (rather than silently dropping the file) is the
+        // common case, not just a defensive edge case.
+        let profile: EncodingProfile
+        if let resolved = engine.profileStore.profile(named: config.profileName) {
+            profile = resolved
+        } else {
+            appendLog(
+                .warning,
+                "Watch folder \"\(config.name)\": profile \"\(config.profileName)\" not found — using Web Standard.",
+                category: .encoding
+            )
+            profile = .webStandard
+        }
+
+        let outputExtension = profile.containerFormat.fileExtensions.first ?? "mp4"
+        let outputPath = FileStabilityChecker.outputPath(
+            for: url.path,
+            config: config,
+            outputExtension: outputExtension
+        )
+        let outputURL = URL(fileURLWithPath: outputPath)
+
+        try? FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: profile)
+        engine.queue.addJob(jobConfig)
+
+        // Record the watch-folder association so `startQueue()`'s
+        // completion handler can apply `config.postAction` once this
+        // job finishes (Issue #277).
+        watchFolderJobs[jobConfig.id] = config
+
+        appendLog(
+            .info,
+            "Watch folder \"\(config.name)\" queued: \(url.lastPathComponent) with profile \"\(profile.name)\"",
+            category: .encoding,
+            jobID: jobConfig.id
+        )
+
+        if isQueueRunning {
+            appendLog(.info, "Added to running queue.", category: .encoding, jobID: jobConfig.id)
+        } else {
+            Task { await startQueue() }
+        }
+    }
+
+    /// Maps the ID of an `EncodingJobConfig` that originated from a watch
+    /// folder to the `WatchFolderConfig` that enqueued it (Issue #277).
+    ///
+    /// `EncodingJobConfig` itself carries no notion of "came from a watch
+    /// folder" — it's a widely-shared model used by every enqueue path
+    /// (`enqueueSelectedFile()`, multi-output, batch rename, etc.), so
+    /// widening it for this one caller would be a much broader change
+    /// than this fix needs. This side table is populated by
+    /// `enqueueWatchFolderFile(_:config:)` and consulted (then cleared)
+    /// by `startQueue()`'s completion handler, which needs the original
+    /// `WatchFolderConfig.postAction` to know whether to move or delete
+    /// the source file after a successful encode.
+    private var watchFolderJobs: [UUID: WatchFolderConfig] = [:]
 
     // MARK: - Queue Processing
 
@@ -691,6 +1101,26 @@ final class AppViewModel {
                 analytics.track(.profileUsed, properties: ["profile": jobState.config.profile.name])
             }
 
+            // Per-job encoding statistics collector (Issue #284, re #448).
+            // EncodingStatisticsCollector already existed in ConverterEngine
+            // but was referenced nowhere in the pipeline, so
+            // EncodingGraphsView (wired in #448) was always empty. This is
+            // the insertion point: create one collector per job, feed it
+            // from the existing `progressInfo` closure below, and persist
+            // it via `EncodingStatisticsStore` on completion.
+            let statsCollector = EncodingStatisticsCollector(
+                jobID: jobState.config.id,
+                jobName: jobState.config.inputURL.lastPathComponent
+            )
+            statsCollector.setInputMetadata(
+                fileSize: fileSizeInBytes(atPath: jobState.config.inputURL.path),
+                duration: nil,
+                videoCodec: jobState.config.profile.videoCodec?.rawValue,
+                audioCodec: jobState.config.profile.audioCodec?.rawValue,
+                profileName: jobState.config.profile.name,
+                containerFormat: jobState.config.profile.containerFormat.fileExtensions.first ?? "mkv"
+            )
+
             do {
                 try await engine.encode(job: jobState.config) { progressInfo in
                     Task { @MainActor [weak self] in
@@ -699,12 +1129,40 @@ final class AppViewModel {
                         jobState.currentBitrate = progressInfo.bitrate
                         jobState.currentFrame = progressInfo.frame
 
-                        // Calculate ETA from speed and remaining fraction
+                        // Calculate ETA (Issue #470). Default to the naive
+                        // linear extrapolation from observed progress
+                        // (unchanged formula — this is also the fallback
+                        // for a cold `ETAPredictor` with no matching
+                        // history), then supersede it with
+                        // `ETAPredictor.predictETA`'s history-weighted
+                        // estimate whenever it has matching data for this
+                        // codec/preset/resolution/hw-accel combination.
+                        // `progressInfo.currentTime` and `fraction` are
+                        // both derived by FFmpegProcessController from the
+                        // same known source duration, so `currentTime /
+                        // fraction` recovers that duration exactly —
+                        // stashed on `jobState` so the completion branch
+                        // below can feed it back into `recordEncode`.
                         if let fraction = progressInfo.fractionComplete, fraction > 0,
                            let startedAt = jobState.startedAt {
                             let elapsed = Date().timeIntervalSince(startedAt)
                             let totalEstimated = elapsed / fraction
                             jobState.eta = totalEstimated - elapsed
+
+                            if let currentTime = progressInfo.currentTime, currentTime > 0 {
+                                let inputDuration = currentTime / fraction
+                                jobState.lastKnownInputDuration = inputDuration
+
+                                if let prediction = self?.etaPredictor.predictETA(
+                                    codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                                    preset: jobState.config.profile.videoPreset ?? "default",
+                                    resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                                    inputDuration: inputDuration,
+                                    hwAccel: jobState.config.profile.useHardwareEncoding
+                                ) {
+                                    jobState.eta = max(0, prediction.estimate - elapsed)
+                                }
+                            }
                         }
 
                         // Update system-level activity indicators (Issue #182)
@@ -720,6 +1178,23 @@ final class AppViewModel {
                                             category: .progress, rawOutput: raw,
                                             jobID: jobState.config.id)
                         }
+
+                        // Record a statistics data point (Issue #284).
+                        // `FFmpegProgressInfo` has no `fps` field, so it is
+                        // recovered from FFmpeg's own raw "fps=" line via
+                        // `EncodingStatisticsCollector.fps(fromRawProgressLine:)`
+                        // rather than changing `FFmpegProcessController`'s
+                        // parser. `recordProgress` self-throttles to its
+                        // configured sample interval, so calling it on
+                        // every tick here is intentional, not wasteful.
+                        statsCollector.recordProgress(
+                            fps: EncodingStatisticsCollector.fps(fromRawProgressLine: progressInfo.rawLine),
+                            bitrate: progressInfo.bitrate,
+                            encodedSeconds: progressInfo.currentTime ?? 0,
+                            frameNumber: progressInfo.frame ?? 0,
+                            outputSizeBytes: progressInfo.totalSize.map { Int64($0) },
+                            speed: progressInfo.speed
+                        )
                     }
                 }
 
@@ -730,6 +1205,44 @@ final class AppViewModel {
                 let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
                 appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
                           category: .encoding, jobID: jobState.config.id)
+
+                // Record this encode for ETAPredictor (Issue #470) so
+                // future jobs with a similar codec/preset/resolution/
+                // hw-accel combination get a history-weighted estimate
+                // instead of only the naive in-job linear one.
+                // `lastKnownInputDuration` is only set once a progress
+                // tick reports a `currentTime`; a job that fails before
+                // its first tick (or one FFmpeg reports no progress for)
+                // simply isn't recorded, same as it wouldn't have had a
+                // meaningful speed factor anyway.
+                if let inputDuration = jobState.lastKnownInputDuration,
+                   let encodeDuration = jobState.elapsedTime, encodeDuration > 0 {
+                    etaPredictor.recordEncode(EncodeHistoryEntry(
+                        codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                        preset: jobState.config.profile.videoPreset ?? "default",
+                        resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                        inputDuration: inputDuration,
+                        encodeDuration: encodeDuration,
+                        hardwareAccelerated: jobState.config.profile.useHardwareEncoding
+                    ))
+                }
+
+                // Finalise and persist this job's statistics (Issue #284).
+                // `EncodingStatisticsStore` reads/writes its JSON history
+                // file synchronously in `init()`/`addStatistics(_:)`, so —
+                // mirroring `EncodingGraphsView`'s own handling of the same
+                // store — that disk I/O runs via `Task.detached` rather
+                // than blocking this `@MainActor`-isolated method. Only the
+                // `Sendable` `EncodingStatistics` snapshot crosses into the
+                // detached task, never `self`/`jobState`.
+                if let outputSize = fileSizeInBytes(atPath: jobState.config.outputURL.path) {
+                    statsCollector.setOutputFileSize(outputSize)
+                }
+                statsCollector.markComplete()
+                let finalStatistics = statsCollector.currentStatistics
+                await Task.detached {
+                    EncodingStatisticsStore().addStatistics(finalStatistics)
+                }.value
 
                 // Track encode completion with duration category (Issue #183)
                 let durationCategory: String
@@ -748,10 +1261,142 @@ final class AppViewModel {
                     settingKey: "notifyOnCompletion"
                 )
 
+                let outputSizeBytes = fileSizeInBytes(atPath: jobState.config.outputURL.path)
+                let outputSizeLabel = outputSizeBytes
+                    .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown"
+                sendCompletionEmail(
+                    settingKey: "emailOnComplete",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    duration: elapsed,
+                    outputSize: outputSizeLabel,
+                    success: true
+                )
+
+                sendWebhookNotification(
+                    settingKey: "webhookOnComplete",
+                    event: "encode_complete",
+                    status: "success",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    durationSeconds: jobState.elapsedTime ?? 0,
+                    outputSizeBytes: outputSizeBytes ?? 0
+                )
+
+                // Media server auto-scan (Issue #295 / #203). The setting's
+                // own label is "Auto-scan after successful encode" (not
+                // "at queue end"), so this fires per successful job here,
+                // matching the wording exactly.
+                if UserDefaults.standard.bool(forKey: "mediaServerAutoScan") {
+                    triggerMediaServerAutoScan()
+                }
+
+                // Post-encode action hooks (Issue #277). The chain engine
+                // itself (`PostEncodeActionChain.execute`) is real —
+                // scp/cloud/scripts/trash/notify all genuinely execute —
+                // but `PostEncodeActionsView` previously only invoked it
+                // from its own dry-run Test button, never from a real
+                // job. Loaded fresh from `UserDefaults` on every
+                // completion (mirrors `sendCompletionEmail`'s /
+                // `sendWebhookNotification`'s own config-loading pattern
+                // above), so an edit made mid-queue in Settings takes
+                // effect starting with the very next job.
+                let postEncodeChain = PostEncodeActionsView.loadPersistedChain()
+                if postEncodeChain.actions.contains(where: \.isEnabled) {
+                    let inputURL = jobState.config.inputURL
+                    let outputURL = jobState.config.outputURL
+
+                    // `PostEncodeActionChain` is a plain `Sendable`
+                    // struct with no `@MainActor` state to race on (see
+                    // its own concurrency doc comment in
+                    // PostEncodeActions.swift), and `execute` already
+                    // hops to `@MainActor` itself internally only where
+                    // it must (`.openInFinder`/`.sendNotification`) —
+                    // everything else, including `.runShellScript`'s
+                    // blocking `Process.waitUntilExit()`, runs off the
+                    // main actor by design. Mirroring `sendCompletionEmail`'s
+                    // `Task.detached` above, this captures only
+                    // `Sendable` values (`postEncodeChain`, the two
+                    // `URL`s) — deliberately NOT `[weak self]`: unlike
+                    // `sendWebhookNotification`'s non-detached
+                    // `Task { @MainActor [weak self] in }`, sending a
+                    // `@MainActor`-isolated `self` into a genuinely
+                    // detached, non-isolated context is the exact
+                    // "sending 'self' risks data races" Swift 6 error
+                    // `StoreManager.listenForTransactions()` already hit
+                    // and documents. Failures are silently dropped here,
+                    // same as `sendCompletionEmail`'s own fire-and-forget
+                    // behaviour — never surfaced as a job failure, since
+                    // the encode itself already succeeded.
+                    Task.detached {
+                        try? await postEncodeChain.execute(
+                            inputURL: inputURL,
+                            outputURL: outputURL,
+                            success: true
+                        )
+                    }
+                }
+
+                // Watch-folder post-action (Issue #277).
+                // `WatchFolderConfig.postAction` (the move/delete-after-
+                // encode picker in `WatchFolderView`) was persisted but
+                // never read back. `watchFolderJobs` only has an entry
+                // for jobs enqueued via `enqueueWatchFolderFile(_:config:)`
+                // — every other job (manual enqueue, multi-output, etc.)
+                // leaves this a no-op. `removeValue` both looks up and
+                // clears the association so it never leaks.
+                if let watchFolderConfig = watchFolderJobs.removeValue(forKey: jobState.config.id) {
+                    applyWatchFolderPostAction(watchFolderConfig, sourceURL: jobState.config.inputURL)
+                }
+
+                // Delete source file after successful encode, if enabled
+                // (SettingsView.deleteSourceAfterEncode — previously
+                // persisted but never read). Deliberately last in this
+                // success block: every other completion action above has
+                // already had its chance to read `jobState.config` before
+                // anything gets deleted.
+                if UserDefaults.standard.bool(forKey: "deleteSourceAfterEncode") {
+                    deleteSourceFileIfSafe(job: jobState.config)
+                }
+
             } catch {
                 jobState.status = .failed
                 jobState.errorMessage = error.localizedDescription
                 jobState.completedAt = Date()
+
+                // Clear any watch-folder association without applying its
+                // `postAction` (Issue #277) — `PostProcessingAction` only
+                // ever fires after a *successful* encode (see its own doc
+                // comment); a failed job's source file should stay put
+                // for the user to retry or inspect. Still removed here so
+                // the side table never leaks an entry for a job that will
+                // never reach the success path.
+                watchFolderJobs.removeValue(forKey: jobState.config.id)
+
+                // Persist failed-job statistics so the Dashboard success rate is real (Issue #284).
+                statsCollector.markFailed()
+                let failedStatistics = statsCollector.currentStatistics
+                await Task.detached { EncodingStatisticsStore().addStatistics(failedStatistics) }.value
+
+                // Save a resume checkpoint (honest-minimal resumable jobs)
+                // so ResumableJobsView has real interrupted-job data to
+                // list. NOTE this is "honest-minimal": there is no seek-
+                // resume yet — ResumableJobsView.resumeCheckpoint(_:)
+                // re-queues the job from scratch (0%), it does not resume
+                // mid-file. `lastGoodTimestamp` is recorded here for a
+                // future true seek-resume but isn't consumed by anything
+                // yet. Best-effort like the other persistence above —
+                // failures are silently dropped rather than surfaced as a
+                // second error on top of the encode failure itself.
+                let failureCheckpoint = EncodingCheckpoint(
+                    jobId: jobState.config.id,
+                    inputURL: jobState.config.inputURL,
+                    outputURL: jobState.config.outputURL,
+                    profileSnapshot: jobState.config.profile,
+                    lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
+                    progressFraction: jobState.progress
+                )
+                try? CheckpointManager().saveCheckpoint(failureCheckpoint)
 
                 // Track encode failure (Issue #183)
                 analytics.track(.encodeFailed)
@@ -763,6 +1408,27 @@ final class AppViewModel {
                     title: "Encoding Failed",
                     body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
                     settingKey: "notifyOnFailure"
+                )
+
+                sendCompletionEmail(
+                    settingKey: "emailOnFailure",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    duration: jobState.elapsedTime.map { formatDuration($0) } ?? "unknown",
+                    outputSize: "—",
+                    success: false,
+                    errorMessage: error.localizedDescription
+                )
+
+                sendWebhookNotification(
+                    settingKey: "webhookOnFailure",
+                    event: "encode_failed",
+                    status: "failure",
+                    fileName: jobState.config.inputURL.lastPathComponent,
+                    profile: jobState.config.profile.name,
+                    durationSeconds: jobState.elapsedTime ?? 0,
+                    outputSizeBytes: 0,
+                    errorMessage: error.localizedDescription
                 )
             }
 
@@ -783,6 +1449,40 @@ final class AppViewModel {
             title: "Queue Finished",
             body: summary,
             settingKey: "notifyOnQueueFinished"
+        )
+
+        // Queue-finished email (Issue #348). `emailOnQueueFinished`
+        // (EmailSettingsView's third trigger toggle, alongside
+        // emailOnComplete/emailOnFailure which are already wired above)
+        // had no reader. Reuses the same job-completion email template as
+        // the per-job paths: there is no single "job" for a whole-queue
+        // event, so the summary counts stand in for profile/size, and
+        // `success` reflects whether any job actually failed rather than
+        // always claiming success.
+        sendCompletionEmail(
+            settingKey: "emailOnQueueFinished",
+            fileName: "Encoding Queue",
+            profile: summary,
+            duration: "—",
+            outputSize: "—",
+            success: engine.queue.failedCount == 0,
+            errorMessage: engine.queue.failedCount > 0
+                ? "\(engine.queue.failedCount) job(s) failed — see the Queue view for details."
+                : nil
+        )
+
+        // Queue-finished webhook leg (Issue #296). There is no single
+        // "job" for a whole-queue event, so `WebhookJobInfo.fileName`
+        // carries the summary text and `status` reflects whether any job
+        // failed, rather than always claiming success.
+        sendWebhookNotification(
+            settingKey: "webhookOnQueueFinished",
+            event: "queue_complete",
+            status: engine.queue.failedCount == 0 ? "success" : "failure",
+            fileName: "Encoding Queue: \(summary)",
+            profile: "-",
+            durationSeconds: 0,
+            outputSizeBytes: 0
         )
     }
 
@@ -814,6 +1514,24 @@ final class AppViewModel {
         activityIndicator.stopTracking()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
+
+        // Save a resume checkpoint (honest-minimal resumable jobs) — see
+        // the matching save in startQueue()'s failure branch for the
+        // "re-queues from 0, does not seek-resume" caveat. `startQueue()`'s
+        // own catch block may also fire once `engine.stopEncoding()` makes
+        // the in-flight `encode()` throw — that's fine, it just overwrites
+        // this same checkpoint file with an equivalent snapshot.
+        if let jobState = activeJobState {
+            let cancelCheckpoint = EncodingCheckpoint(
+                jobId: jobState.config.id,
+                inputURL: jobState.config.inputURL,
+                outputURL: jobState.config.outputURL,
+                profileSnapshot: jobState.config.profile,
+                lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
+                progressFraction: jobState.progress
+            )
+            try? CheckpointManager().saveCheckpoint(cancelCheckpoint)
+        }
     }
 
     // MARK: - Notifications
@@ -839,6 +1557,142 @@ final class AppViewModel {
         )
 
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Completion Email (Issue #348)
+
+    /// Send a completion-email notification if the corresponding setting
+    /// is enabled and a valid SMTP configuration exists.
+    ///
+    /// `emailOnComplete` / `emailOnFailure` (`EmailSettingsView`'s
+    /// trigger toggles) previously had zero consumers — this is the
+    /// wiring. Config loading and email/curl-argument construction happen
+    /// here on the `@MainActor`; the blocking `curl` subprocess itself —
+    /// the same transport already proven in
+    /// `EmailSettingsView.sendTestEmail()` — runs in a `Task.detached`
+    /// that captures only the prepared `Sendable` `String`/`[String]`
+    /// values, never `self`. Best-effort: failures are silently dropped,
+    /// matching `sendNotification`'s own fire-and-forget behaviour.
+    private func sendCompletionEmail(
+        settingKey: String,
+        fileName: String,
+        profile: String,
+        duration: String,
+        outputSize: String,
+        success: Bool,
+        errorMessage: String? = nil
+    ) {
+        guard UserDefaults.standard.bool(forKey: settingKey) else { return }
+        guard let config = EmailSettingsView.loadSMTPConfig() else { return }
+
+        let (subject, body) = EmailNotifier.formatJobCompletionEmail(
+            fileName: fileName,
+            profile: profile,
+            duration: duration,
+            outputSize: outputSize,
+            success: success,
+            errorMessage: errorMessage
+        )
+        let rawEmail = EmailNotifier.buildNotificationEmail(subject: subject, body: body, config: config)
+        let curlArgs = EmailNotifier.sendViaProcess(email: rawEmail, config: config)
+
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+            process.arguments = curlArgs
+
+            let inputPipe = Pipe()
+            process.standardInput = inputPipe
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+
+            do {
+                try process.run()
+                if let emailData = rawEmail.data(using: .utf8) {
+                    inputPipe.fileHandleForWriting.write(emailData)
+                }
+                inputPipe.fileHandleForWriting.closeFile()
+                process.waitUntilExit()
+            } catch {
+                // Completion emails are a convenience, not load-bearing —
+                // dropped silently here, same as `sendNotification` never
+                // surfacing `UNUserNotificationCenter` errors.
+            }
+        }
+    }
+
+    // MARK: - Webhook Notifications (Issue #296)
+
+    /// Send a webhook notification if the corresponding trigger event is
+    /// enabled and a valid webhook configuration is persisted.
+    ///
+    /// `webhookOnComplete` / `webhookOnFailure` / `webhookOnQueueFinished`
+    /// (`WebhookSettingsView`'s trigger toggles) previously had zero
+    /// consumers — the only production `WebhookSender.send` call was the
+    /// settings view's own Test button. This is the wiring, mirroring
+    /// `sendCompletionEmail` immediately above: config loading happens
+    /// here on the `@MainActor`, and the network request runs in an
+    /// unstructured `Task { }` — not `Task.detached`, unlike the email
+    /// path's blocking `curl` subprocess above, `WebhookSender.send` is
+    /// already a non-blocking `async` `URLSession` call, so there's no
+    /// thread to free up by detaching — so a slow or retrying webhook
+    /// (`WebhookConfig.retryDelaySeconds`) never blocks the queue loop.
+    /// Failures are logged, never thrown or surfaced as a job failure.
+    private func sendWebhookNotification(
+        settingKey: String,
+        event: String,
+        status: String,
+        fileName: String,
+        profile: String,
+        durationSeconds: Double,
+        outputSizeBytes: Int64,
+        errorMessage: String? = nil
+    ) {
+        guard UserDefaults.standard.bool(forKey: settingKey) else { return }
+        guard let config = WebhookSettingsView.loadWebhookConfig() else { return }
+
+        let job = WebhookJobInfo(
+            fileName: fileName,
+            profile: profile,
+            durationSeconds: durationSeconds,
+            outputSizeBytes: outputSizeBytes
+        )
+        let payload = WebhookPayload.now(event: event, job: job, status: status, errorMessage: errorMessage)
+
+        Task { @MainActor [weak self] in
+            do {
+                try await WebhookSender.send(payload: payload, config: config)
+            } catch {
+                self?.appendLog(.warning, "Webhook delivery failed: \(error.localizedDescription)", category: .general)
+            }
+        }
+    }
+
+    // MARK: - Media Server Auto-Scan (Issue #295 / #203)
+
+    /// Trigger a media-server library scan after a successful encode, if
+    /// a usable server configuration is persisted.
+    ///
+    /// `mediaServerAutoScan` (`MediaServerSettingsView`'s toggle) had no
+    /// reader — this is the wiring, called from the per-job success path
+    /// in `startQueue()`. Fires the same
+    /// `MediaServerIntegration.triggerLibraryScan` call the settings
+    /// view's manual "Trigger Library Scan Now" button uses. Fire-and-
+    /// forget in an unstructured `Task { }` (network call, non-blocking —
+    /// same reasoning as `sendWebhookNotification` above): failures are
+    /// logged, never surfaced as an error on the (already-succeeded)
+    /// encoding job.
+    private func triggerMediaServerAutoScan() {
+        guard let config = MediaServerSettingsView.loadMediaServerConfig() else { return }
+
+        Task { @MainActor [weak self] in
+            do {
+                try await MediaServerIntegration.triggerLibraryScan(config: config)
+                self?.appendLog(.info, "Media server library scan triggered.", category: .encoding)
+            } catch {
+                self?.appendLog(.warning, "Media server auto-scan failed: \(error.localizedDescription)", category: .encoding)
+            }
+        }
     }
 
     // MARK: - Logging
@@ -884,6 +1738,139 @@ final class AppViewModel {
 
     // MARK: - Helpers
 
+    /// The size, in bytes, of the file at `path`, or `nil` if it cannot be
+    /// determined (missing file, unreadable attributes, etc.). Used by the
+    /// queue runner's `EncodingStatisticsCollector` wiring (Issue #284) —
+    /// `nil` is passed straight through rather than fabricating `0`, so an
+    /// unreadable file size stays honestly absent from the stored stats.
+    private func fileSizeInBytes(atPath path: String) -> Int64? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return nil
+        }
+        if let size = attributes[.size] as? Int64 {
+            return size
+        }
+        if let size = attributes[.size] as? UInt64, size <= UInt64(Int64.max) {
+            return Int64(size)
+        }
+        return nil
+    }
+
+    /// Delete the source file for a completed job, if — and only if — it
+    /// is safe to do so (SettingsView.deleteSourceAfterEncode, Issue #7
+    /// completeness audit).
+    ///
+    /// This is a data-destructive operation, so it is deliberately
+    /// conservative:
+    ///   - Only ever called from the `.completed` success path in
+    ///     `startQueue()` — never on failure or cancellation (those hit
+    ///     the `catch` block, which never calls this).
+    ///   - The output file must exist and be non-empty, so a crashed or
+    ///     truncated encode never takes the source down with it.
+    ///   - Input and output paths must differ, in case an
+    ///     `overwriteExisting` configuration ever made them identical.
+    /// Deletion failures are logged, never thrown — this is best-effort
+    /// clean-up, not something that should ever fail an already-completed
+    /// job.
+    ///
+    /// - Parameter job: The completed job's configuration.
+    private func deleteSourceFileIfSafe(job: EncodingJobConfig) {
+        guard job.inputURL.path != job.outputURL.path else {
+            appendLog(
+                .warning,
+                "Skipped deleting source: input and output paths are identical (\(job.inputURL.path))",
+                category: .encoding, jobID: job.id
+            )
+            return
+        }
+
+        guard let outputSize = fileSizeInBytes(atPath: job.outputURL.path), outputSize > 0 else {
+            appendLog(
+                .warning,
+                "Skipped deleting source: output file missing or empty at \(job.outputURL.path)",
+                category: .encoding, jobID: job.id
+            )
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: job.inputURL)
+            appendLog(
+                .info,
+                "Deleted source file after successful encode: \(job.inputURL.lastPathComponent)",
+                category: .encoding, jobID: job.id
+            )
+        } catch {
+            appendLog(
+                .warning,
+                "Failed to delete source file \(job.inputURL.lastPathComponent): \(error.localizedDescription)",
+                category: .encoding, jobID: job.id
+            )
+        }
+    }
+
+    /// Apply a watch folder's configured `postAction` to a source file
+    /// after its encode completes successfully (Issue #277).
+    ///
+    /// `WatchFolderConfig.postAction` (`WatchFolderView`'s picker) was
+    /// persisted but had no reader — this is the wiring, called from
+    /// `startQueue()`'s success path only, for jobs `watchFolderJobs`
+    /// identifies as having come from a watch folder. Best-effort: a
+    /// failure is logged, never thrown — the encode itself already
+    /// succeeded, so a clean-up failure shouldn't retroactively mark it
+    /// otherwise.
+    ///
+    /// - Parameters:
+    ///   - config: The watch folder configuration that produced this job.
+    ///   - sourceURL: The source file to move, delete, or leave in place.
+    private func applyWatchFolderPostAction(_ config: WatchFolderConfig, sourceURL: URL) {
+        switch config.postAction {
+        case .leaveInPlace:
+            break
+
+        case .deleteSource:
+            do {
+                try FileManager.default.removeItem(at: sourceURL)
+                appendLog(
+                    .info,
+                    "Watch folder \"\(config.name)\": deleted source \(sourceURL.lastPathComponent) after encode.",
+                    category: .encoding
+                )
+            } catch {
+                appendLog(
+                    .warning,
+                    "Watch folder \"\(config.name)\": failed to delete source \(sourceURL.lastPathComponent) — \(error.localizedDescription)",
+                    category: .encoding
+                )
+            }
+
+        case .moveToCompleted:
+            // Sibling to the `output` subfolder `effectiveOutputPath`
+            // defaults to when `outputPath` isn't set — "a completed
+            // subfolder" per `PostProcessingAction.moveToCompleted`'s
+            // own doc comment, so it lives under the watched directory
+            // itself rather than under the (possibly quite different)
+            // output directory.
+            let completedDir = URL(fileURLWithPath: config.watchPath).appendingPathComponent("completed")
+            let destination = completedDir.appendingPathComponent(sourceURL.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: completedDir, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: sourceURL, to: destination)
+                appendLog(
+                    .info,
+                    "Watch folder \"\(config.name)\": moved source \(sourceURL.lastPathComponent) to completed/.",
+                    category: .encoding
+                )
+            } catch {
+                appendLog(
+                    .warning,
+                    "Watch folder \"\(config.name)\": failed to move source \(sourceURL.lastPathComponent) to completed/ — \(error.localizedDescription)",
+                    category: .encoding
+                )
+            }
+        }
+    }
+
     /// Format a time interval as a human-readable duration.
     private func formatDuration(_ interval: TimeInterval) -> String {
         let hours = Int(interval) / 3600
@@ -894,6 +1881,24 @@ final class AppViewModel {
         } else {
             return String(format: "%d:%02d", minutes, seconds)
         }
+    }
+
+    /// Formats a profile's output resolution as an `ETAPredictor` matching
+    /// key (e.g. "1920x1080") — Issue #470. Falls back to "source" when
+    /// the profile doesn't override resolution (`outputWidth`/
+    /// `outputHeight` nil means "match source"). This label only needs to
+    /// be *consistent* between the `recordEncode` and `predictETA` call
+    /// sites in `startQueue()`, not pixel-exact, since it is just one of
+    /// several fields `ETAPredictor` matches history entries on.
+    ///
+    /// `static` (rather than an instance method) so it can be called from
+    /// inside the `[weak self]` progress closure in `startQueue()` without
+    /// needing a second, separate `self` unwrap.
+    private static func etaResolutionLabel(for profile: EncodingProfile) -> String {
+        guard let width = profile.outputWidth, let height = profile.outputHeight else {
+            return "source"
+        }
+        return "\(width)x\(height)"
     }
 }
 

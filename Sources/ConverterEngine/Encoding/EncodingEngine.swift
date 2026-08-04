@@ -91,6 +91,11 @@ public final class EncodingEngine: @unchecked Sendable {
     /// The hlg-tools wrapper for PQ → HLG conversion.
     public let hlgTools: HlgToolsWrapper
 
+    /// The subtitle_tonemap wrapper for HDR subtitle colour correction
+    /// (Issues #369 / #409). Used by the pre-processing pipeline below
+    /// when a profile carries a non-nil `subtitleTonemap` config.
+    public let subtitleTonemapper: SubtitleTonemapWrapper
+
     /// Cached FFmpeg binary info (populated after configure()).
     public private(set) var ffmpegInfo: FFmpegBinaryInfo?
 
@@ -126,6 +131,7 @@ public final class EncodingEngine: @unchecked Sendable {
         self.hardwareDetector = HardwareEncoderDetector()
         self.doviTool = DoviToolWrapper()
         self.hlgTools = HlgToolsWrapper()
+        self.subtitleTonemapper = SubtitleTonemapWrapper()
     }
 
     // MARK: - Configuration
@@ -330,6 +336,65 @@ public final class EncodingEngine: @unchecked Sendable {
                    let minLum = cp.masteringDisplayMinLuminance {
                     enrichedJob.hdrMasteringDisplay =
                         "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(\(maxLum * 10000),\(minLum))"
+                }
+            }
+        }
+
+        // -----------------------------------------------------------
+        // Subtitle tone-mapping pre-processing (Issues #369 / #409)
+        // -----------------------------------------------------------
+        //
+        // When the profile opts in (profile.subtitleTonemap != nil), the
+        // source is HDR, AND subtitles are passing through, extract each
+        // supported HDR subtitle stream and run subtitle_tonemap on it.
+        // The pipeline returns one entry per successfully-processed stream;
+        // we build a full per-stream action list that:
+        //
+        //   * .replaceWith(tonemappedFile) for every successfully-processed
+        //     stream  → the encoder picks the SDR-coloured version from a
+        //     separate -i input
+        //   * .passthrough for every other subtitle stream  → unchanged
+        //     stream-by-stream copy from the source
+        //
+        // Including passthrough entries for non-tonemapped streams is
+        // important: once subtitleStreamActions is non-empty the builder
+        // uses it EXCLUSIVELY, so omitting a stream here would silently
+        // drop it from the output. The pipeline.run() helper returns
+        // empty (no-op) when subtitleTonemap is nil, the source is SDR,
+        // or no supported subtitle codec is present — leaving the
+        // legacy subtitlePassthrough behaviour intact.
+        if let sourceInfo,
+           job.profile.subtitlePassthrough,
+           job.profile.subtitleTonemap != nil {
+            let tonemapped = await SubtitleTonemapPipeline.run(
+                source: job.inputURL,
+                sourceInfo: sourceInfo,
+                config: job.profile.subtitleTonemap,
+                wrapper: subtitleTonemapper,
+                tempDir: tempDir,
+                runFFmpeg: { args in
+                    try await self.runFFmpegPass(
+                        ffmpegPath: ffmpegPath,
+                        arguments: args,
+                        pass: nil,
+                        multipassLogPath: nil,
+                        sourceDuration: sourceDuration,
+                        onProgress: { _ in } // Silent extraction
+                    )
+                }
+            )
+            if !tonemapped.isEmpty {
+                let resultByIndex = Dictionary(
+                    uniqueKeysWithValues: tonemapped.map { ($0.streamIndex, $0) }
+                )
+                enrichedJob.subtitleStreamActions = sourceInfo.subtitleStreams.map { stream in
+                    if let result = resultByIndex[stream.streamIndex] {
+                        return .init(
+                            streamIndex: stream.streamIndex,
+                            action: .replaceWith(result.tonemappedFile)
+                        )
+                    }
+                    return .init(streamIndex: stream.streamIndex, action: .passthrough)
                 }
             }
         }

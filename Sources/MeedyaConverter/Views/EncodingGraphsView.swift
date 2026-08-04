@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // MARK: - GraphMetric
@@ -61,12 +62,29 @@ struct EncodingGraphsView: View {
     @State private var selectedMetric: GraphMetric = .fps
     @State private var selectedJobID: UUID?
 
+    /// Persisted history of completed encoding job statistics, backing
+    /// the graphs below. Real, already-tested component
+    /// (`EncodingStatisticsStore` in `ConverterEngine`) — reads its JSON
+    /// history from disk in its initializer, the same way `CloudSyncView`
+    /// seeds its `@State` directly from `CloudProfileSync.shared`.
+    @State private var statisticsStore = EncodingStatisticsStore()
+
+    /// Set after a failed CSV export attempt; cleared on the next
+    /// successful export or metric change. Never set on success — a
+    /// successful export closes the save panel with no further UI, mirroring
+    /// `BitrateHeatmapView.exportAsImage()`.
+    @State private var exportErrorMessage: String?
+
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
             // Metric selector
             metricPicker
+
+            if let exportErrorMessage {
+                exportErrorBanner(message: exportErrorMessage)
+            }
 
             Divider()
 
@@ -85,6 +103,25 @@ struct EncodingGraphsView: View {
             }
         }
         .navigationTitle("Encoding Graphs")
+        .onAppear {
+            // Reload from disk each time this view appears so a job
+            // completed since the store was last constructed shows up.
+            // `EncodingStatisticsStore` only reads its history file inside
+            // `init()`, so a fresh instance is how a re-read happens.
+            // `EncodingStatisticsStore` is `@unchecked Sendable`, so the
+            // (potentially non-trivial) JSON decode of the history file is
+            // kept off the main actor via `Task.detached`, mirroring
+            // `QualityMetricsView.runAnalysis()`'s handling of
+            // `FFmpegBundleManager.locateFFmpeg()` — this `Task { }` itself
+            // is created from a `View` body closure, so it inherits
+            // main-actor isolation and the assignment below is a direct
+            // `@State` write, not a `MainActor.run` hop.
+            Task {
+                statisticsStore = await Task.detached {
+                    EncodingStatisticsStore()
+                }.value
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -101,6 +138,15 @@ struct EncodingGraphsView: View {
 
             Spacer()
 
+            Button {
+                exportCSV()
+            } label: {
+                Label("Export CSV", systemImage: "square.and.arrow.up")
+            }
+            .disabled(statisticsStore.allStatistics.isEmpty)
+            .help("Export all recorded encoding statistics as CSV")
+            .accessibilityLabel("Export encoding statistics as CSV")
+
             if let stats = currentStatistics {
                 Text(stats.jobName)
                     .font(.headline)
@@ -109,6 +155,24 @@ struct EncodingGraphsView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    /// Inline banner shown after a failed CSV export attempt.
+    private func exportErrorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Dismiss") {
+                exportErrorMessage = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
@@ -289,10 +353,44 @@ struct EncodingGraphsView: View {
 
     // MARK: - Helpers
 
+    /// The statistics currently displayed: the history entry matching
+    /// `selectedJobID` if one is set, otherwise the most recently
+    /// completed job. Real data sourced from `EncodingStatisticsStore`
+    /// (`ConverterEngine`) — `nil` (driving `emptyStateView` above) is an
+    /// honest reflection of "no encode has been recorded yet", not a
+    /// placeholder.
     private var currentStatistics: EncodingStatistics? {
-        // Placeholder — in a real implementation this would come from
-        // the active job's statistics collector or the history store
-        nil
+        let history = statisticsStore.allStatistics
+        if let selectedJobID {
+            return history.first { $0.jobID == selectedJobID }
+        }
+        return history.first
+    }
+
+    // MARK: - Actions
+
+    /// Exports every recorded job's statistics as CSV via
+    /// `EncodingStatisticsStore.exportAsCSV()` (Issue #363) — one row per
+    /// completed job, not just the currently-displayed one. Pure string
+    /// formatting on the `ConverterEngine` side (see
+    /// `EncodingStatistics.csvHeader`/`csvRow`); this method only adds the
+    /// `NSSavePanel` and the file write, mirroring
+    /// `BitrateHeatmapView.exportAsImage()` / `StatisticsExportView
+    /// .exportData()`'s CSV branch.
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.title = "Export Encoding Statistics"
+        panel.nameFieldStringValue = "encoding_statistics.csv"
+        panel.allowedContentTypes = [UTType.commaSeparatedText]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try statisticsStore.exportAsCSV().write(to: url, options: .atomic)
+            exportErrorMessage = nil
+        } catch {
+            exportErrorMessage = "Failed to export CSV: \(error.localizedDescription)"
+        }
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

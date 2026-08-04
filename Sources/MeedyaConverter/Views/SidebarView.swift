@@ -28,6 +28,7 @@ struct SidebarView: View {
             // Workflow section — the main encoding pipeline steps.
             Section("Workflow") {
                 sidebarLabel(for: .source)
+                sidebarLabel(for: .mediaBrowser)
                 sidebarLabel(for: .streams)
                 sidebarLabel(for: .output)
             }
@@ -36,15 +37,17 @@ struct SidebarView: View {
             Section("Monitor") {
                 sidebarLabel(for: .queue)
                     .badge(viewModel.engine.queue.totalCount)
+                sidebarLabel(for: .resumableJobs)
                 sidebarLabel(for: .log)
                     .badge(viewModel.logEntries.count)
                 sidebarLabel(for: .dashboard)
+                sidebarLabel(for: .encodingGraphs)
+                sidebarLabel(for: .statisticsExport)
                 sidebarLabel(for: .resourceMonitor)
             }
 
             // Tools section — editing, analysis, batch operations.
             Section("Tools") {
-                sidebarLabel(for: .images)
                 sidebarLabel(for: .burn)
                 sidebarLabel(for: .trimEdit)
                 sidebarLabel(for: .analyze)
@@ -53,10 +56,23 @@ struct SidebarView: View {
                 sidebarLabel(for: .concatenation)
                 sidebarLabel(for: .watermark)
                 sidebarLabel(for: .multiOutput)
+                sidebarLabel(for: .conditionalRules)
+                sidebarLabel(for: .dualDynamicHDR)
                 sidebarLabel(for: .filterGraph)
                 sidebarLabel(for: .edlEditor)
-                sidebarLabel(for: .animatedImage)
                 sidebarLabel(for: .duplicateFinder)
+            }
+
+            // Images & Audio section — image/vector conversion, cropping,
+            // background removal, and voice isolation.
+            Section("Images & Audio") {
+                sidebarLabel(for: .images)
+                sidebarLabel(for: .animatedImage)
+                sidebarLabel(for: .vectorConversion)
+                sidebarLabel(for: .proresVector)
+                sidebarLabel(for: .smartCrop)
+                sidebarLabel(for: .backgroundRemoval)
+                sidebarLabel(for: .voiceIsolation)
             }
 
             // Performance section — benchmarking, optimisation, storage.
@@ -71,7 +87,16 @@ struct SidebarView: View {
 
             // Distribution section — upload, cloud, sharing.
             Section("Distribution") {
-                sidebarLabel(for: .videoUpload)
+                // Roadmap #5: Video Upload's nav entry is gated behind the
+                // remote `video-upload` flag (`RemoteFeatureGateProvider`).
+                // Hidden rather than shown-but-disabled — the feature isn't
+                // reachable at all when the flag is off/unknown/dormant,
+                // which for an unprovisioned intAppsAPI is always (matching
+                // today's behaviour exactly, since the flag's compiled-in
+                // default is `false`).
+                if viewModel.isVideoUploadEnabled {
+                    sidebarLabel(for: .videoUpload)
+                }
                 sidebarLabel(for: .cloudStorage)
                 sidebarLabel(for: .sftp)
                 sidebarLabel(for: .podcastFeed)

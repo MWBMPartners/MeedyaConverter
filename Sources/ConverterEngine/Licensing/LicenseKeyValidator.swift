@@ -341,13 +341,19 @@ public struct LicenseKeyValidator: Sendable {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
-        // Add the new entry
+        // Add the new entry. `WhenUnlockedThisDeviceOnly` blocks
+        // iCloud Keychain sync (a licence key for one machine should
+        // not silently activate the user's other Macs) and excludes
+        // the item from Time Machine backups (so a stolen archive
+        // cannot leak the licence material). Per SECURITY.md F-004
+        // — prior to Cycle 16 this was `WhenUnlocked` without
+        // `ThisDeviceOnly`.
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)

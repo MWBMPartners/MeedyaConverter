@@ -240,22 +240,22 @@ struct EncodeCommand: AsyncParsableCommand {
             if let profile = EncodingProfile.builtInProfiles.first(where: {
                 $0.name.lowercased() == name.lowercased()
             }) {
-                return applyOverrides(to: profile)
+                return try applyOverrides(to: profile)
             }
             // Look up in profile store
             if let profile = engine.profileStore.profile(named: name) {
-                return applyOverrides(to: profile)
+                return try applyOverrides(to: profile)
             }
             throw ValidationError("Profile not found: \(name)")
         }
 
         // Build profile from CLI flags
         var profile = EncodingProfile.quickConvert
-        profile = applyOverrides(to: profile)
+        profile = try applyOverrides(to: profile)
         return profile
     }
 
-    private func applyOverrides(to base: EncodingProfile) -> EncodingProfile {
+    private func applyOverrides(to base: EncodingProfile) throws -> EncodingProfile {
         var profile = base
 
         if videoPassthrough { profile.videoPassthrough = true }
@@ -264,7 +264,16 @@ struct EncodeCommand: AsyncParsableCommand {
         if noSubtitles { profile.subtitlePassthrough = false }
 
         if let codec = videoCodec {
-            profile.videoCodec = VideoCodec(rawValue: codec)
+            if codec == "copy" {
+                // Route through the existing passthrough mechanism rather than
+                // inventing a `.copy` case on VideoCodec (which has none).
+                profile.videoPassthrough = true
+            } else if let resolved = VideoCodec(rawValue: codec) {
+                profile.videoCodec = resolved
+            } else {
+                let accepted = (["copy"] + VideoCodec.allCases.map(\.rawValue)).joined(separator: ", ")
+                throw ValidationError("Unknown --video-codec '\(codec)'. Accepted values: \(accepted).")
+            }
         }
         if let c = crf { profile.videoCRF = c }
         if let br = videoBitrate { profile.videoBitrate = parseBitrate(br) }
@@ -275,7 +284,16 @@ struct EncodeCommand: AsyncParsableCommand {
         }
 
         if let codec = audioCodec {
-            profile.audioCodec = AudioCodec(rawValue: codec)
+            if codec == "copy" {
+                // Route through the existing passthrough mechanism rather than
+                // inventing a `.copy` case on AudioCodec (which has none).
+                profile.audioPassthrough = true
+            } else if let resolved = AudioCodec(rawValue: codec) {
+                profile.audioCodec = resolved
+            } else {
+                let accepted = (["copy"] + AudioCodec.allCases.map(\.rawValue)).joined(separator: ", ")
+                throw ValidationError("Unknown --audio-codec '\(codec)'. Accepted values: \(accepted).")
+            }
         }
         if let br = audioBitrate { profile.audioBitrate = parseBitrate(br) }
         if let ch = audioChannels { profile.audioChannels = ch }
@@ -285,6 +303,9 @@ struct EncodeCommand: AsyncParsableCommand {
                 profile.containerFormat = cf
             } else if let cf = ContainerFormat.from(fileExtension: fmt) {
                 profile.containerFormat = cf
+            } else {
+                let accepted = ContainerFormat.allCases.map(\.rawValue).joined(separator: ", ")
+                throw ValidationError("Unknown --container '\(fmt)'. Accepted values: \(accepted).")
             }
         }
 
@@ -305,7 +326,10 @@ struct EncodeCommand: AsyncParsableCommand {
         let dir = inputURL.deletingLastPathComponent()
         let stem = inputURL.deletingPathExtension().lastPathComponent
         let ext = profile.preferredExtension
-        return dir.appendingPathComponent("\(stem)_converted.\(ext)")
+        // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
+        return dir.appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent("\(stem)_converted.\(ext)")
+        )
     }
 
     private func parseResolution(_ str: String) -> (width: Int, height: Int)? {

@@ -213,7 +213,17 @@ public struct FileStabilityChecker: Sendable {
             outputDir = config.effectiveOutputPath
         }
 
-        return (outputDir as NSString).appendingPathComponent(outputFilename)
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `outputFilename` derives from the watched
+        // file's own name. NOTE: `relativePath` above is deliberately
+        // NOT sanitised here — it is a multi-segment relative
+        // directory path (preserving the watch folder's subdirectory
+        // structure in `.recursive` mode), and running it through
+        // `sanitizeFilenameComponent` would flatten every "/" in it
+        // into "_", collapsing the intended nested output layout.
+        return (outputDir as NSString).appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent(outputFilename)
+        )
     }
 }
 

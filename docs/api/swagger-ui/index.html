@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<!--
+  MeedyaConverter API Explorer — self-hostable Swagger UI
+  Copyright © 2026 MWBM Partners Ltd. All rights reserved.
+
+  This page is a plain static file. It has no build step and no
+  server-side component — it can be opened directly from disk, served
+  by any static file server (python3 -m http.server, nginx, Apache,
+  cPanel/shared hosting, GitHub Pages, etc.), or embedded in an
+  internal docs site. See docs/api/README.md for hosting instructions.
+
+  ----------------------------------------------------------------------
+  VENDORING THESE ASSETS LOCALLY (offline / air-gapped hosting)
+  ----------------------------------------------------------------------
+  By default this page loads the Swagger UI runtime (CSS + JS) from the
+  unpkg CDN, pinned to an exact swagger-ui-dist version so it never
+  changes underneath you. No Swagger UI binaries are vendored into this
+  repository.
+
+  To run this page fully offline, with no outbound network requests:
+    1. Download these three files (same swagger-ui-dist version as the
+       CDN links below) and place them in this directory, next to this
+       index.html:
+         - swagger-ui.css
+         - swagger-ui-bundle.js
+         - swagger-ui-standalone-preset.js
+       e.g.:
+         curl -O https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui.css
+         curl -O https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui-bundle.js
+         curl -O https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui-standalone-preset.js
+       (or `npm install swagger-ui-dist@5.32.11` and copy the three
+       files out of node_modules/swagger-ui-dist/.)
+    2. In the <link>/<script> tags below, replace the three
+       "https://unpkg.com/swagger-ui-dist@5.32.11/..." URLs with the
+       local filenames ("./swagger-ui.css", "./swagger-ui-bundle.js",
+       "./swagger-ui-standalone-preset.js").
+    3. Reload the page. No other changes are needed — the spec URLs
+       are already relative (see SPEC_URLS below) and keep working
+       unchanged.
+  ----------------------------------------------------------------------
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MeedyaConverter API Explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Interactive API documentation for the MeedyaConverter CLI (meedya-convert) and the experimental HTTP API (#355).">
+
+<!-- Swagger UI runtime — pinned CDN version. See the vendoring comment above to swap for local files. -->
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui.css">
+
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+
+  body {
+    margin: 0;
+    background: #fafafa;
+  }
+
+  /* A small banner above Swagger UI's own topbar, since the fabricated
+     parts of the HTTP API are easy to miss once you're inside the
+     "Try it out" flow for a given operation. Swagger UI itself already
+     renders `deprecated: true` operations with strikethrough text and
+     surfaces `x-status` / description content per-operation. */
+  #meedya-banner {
+    background: #7a1f1f;
+    color: #fff;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 8px 16px;
+    text-align: center;
+  }
+
+  #meedya-banner a {
+    color: #ffd7d7;
+  }
+
+  #meedya-banner.spec-cli {
+    background: #234;
+  }
+
+  #swagger-ui {
+    box-sizing: border-box;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e1e; }
+  }
+</style>
+</head>
+<body>
+
+<div id="meedya-banner">
+  Loading…
+</div>
+
+<div id="swagger-ui"></div>
+
+<!-- Swagger UI runtime — pinned CDN version. See the vendoring comment above to swap for local files. -->
+<script src="https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui-bundle.js" crossorigin></script>
+<script src="https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui-standalone-preset.js" crossorigin></script>
+
+<script>
+(function () {
+  "use strict";
+
+  // Relative paths so this page works from any sub-directory it's
+  // deployed under (a docs site prefix, a shared-hosting subfolder,
+  // a GitHub Pages project path, etc.) as long as the two spec files
+  // stay one level up from swagger-ui/, matching this repo's layout:
+  //   docs/api/meedya-convert-api.yaml
+  //   docs/api/meedya-http-api.yaml
+  //   docs/api/swagger-ui/index.html   <- this file
+  var SPEC_URLS = [
+    {
+      url: "../meedya-convert-api.yaml",
+      name: "meedya-convert CLI (accurate, refreshed 2026-07-28)"
+    },
+    {
+      url: "../meedya-http-api.yaml",
+      name: "HTTP API — EXPERIMENTAL, mostly not implemented (#355)"
+    }
+  ];
+
+  var banner = document.getElementById("meedya-banner");
+
+  function describeSelectedSpec(url) {
+    var match = SPEC_URLS.filter(function (s) { return s.url === url; })[0];
+    if (!match) return;
+    if (match.url.indexOf("http-api") !== -1) {
+      banner.className = "spec-http";
+      banner.innerHTML =
+        "HTTP API spec selected — most operations here are " +
+        "<strong>NOT IMPLEMENTED</strong> (fabricated responses; see " +
+        "each operation's description). Tracked by " +
+        '<a href="https://github.com/MWBMPartners/MeedyaConverter/issues/355" target="_blank" rel="noopener">issue #355</a>.';
+    } else {
+      banner.className = "spec-cli";
+      banner.innerHTML =
+        "meedya-convert CLI spec selected — this describes the real, " +
+        "working command-line tool (not a network API).";
+    }
+  }
+
+  window.onload = function () {
+    var ui = SwaggerUIBundle({
+      urls: SPEC_URLS,
+      "urls.primaryName": SPEC_URLS[0].name,
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIStandalonePreset
+      ],
+      plugins: [
+        SwaggerUIBundle.plugins.DownloadUrl
+      ],
+      layout: "StandaloneLayout",
+      docExpansion: "list",
+      defaultModelsExpandDepth: 1,
+      onComplete: function () {
+        describeSelectedSpec(SPEC_URLS[0].url);
+      }
+    });
+
+    // Swagger UI's topbar spec-selector dispatches a redux action when
+    // the dropdown changes; the simplest reliable way to react to it
+    // without depending on internal action names across versions is to
+    // watch the <select> element it renders.
+    var pollForSelect = setInterval(function () {
+      var select = document.querySelector(".topbar .download-url-wrapper select");
+      if (!select) return;
+      clearInterval(pollForSelect);
+      describeSelectedSpec(select.value);
+      select.addEventListener("change", function (evt) {
+        // Swagger UI needs a tick to swap the loaded spec before the
+        // banner text below is meaningful; the change event itself is
+        // enough of a signal for our purposes since the banner only
+        // depends on which URL was chosen, not the load result.
+        describeSelectedSpec(evt.target.value);
+      });
+    }, 200);
+
+    window.ui = ui;
+  };
+})();
+</script>
+</body>
+</html>

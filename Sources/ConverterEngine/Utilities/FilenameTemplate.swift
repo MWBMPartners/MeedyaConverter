@@ -145,8 +145,16 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         defaultFormatter.dateFormat = "yyyy-MM-dd"
         result = result.replacingOccurrences(of: "{date}", with: defaultFormatter.string(from: date))
 
-        // Sanitise: remove characters not allowed in filenames
-        return sanitiseFilename(result)
+        // Sanitise: remove characters not allowed in filenames.
+        // F-002 defensive sanitisation per SECURITY.md (POLISH
+        // follow-up): `sanitiseFilename` below strips "/", ":", "\\"
+        // but not a bare ".." — and `result` can be built entirely
+        // from untrusted media metadata (e.g. a crafted file's
+        // {title} tag) substituted into a user-editable template.
+        // Routing the final string through PathSanitizer additionally
+        // collapses ".." and strips NUL / trailing dot-whitespace; it
+        // is a no-op for any ordinary resolved filename.
+        return PathSanitizer.sanitizeFilenameComponent(sanitiseFilename(result))
     }
 
     // MARK: - Collision Handling
@@ -186,6 +194,55 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         return candidate
     }
 
+    // MARK: - Overwrite-Aware Resolution (Issue #7 completeness audit)
+
+    /// Resolve the output URL, honouring the caller's "overwrite existing
+    /// output files" preference.
+    ///
+    /// When `overwriteExisting` is `false` (the default, and the app's
+    /// existing behaviour prior to this method existing), delegates to
+    /// ``resolveWithCollisionHandling(sourceFile:profile:outputDirectory:fileExtension:date:)``
+    /// so an existing file at the resolved path is never silently
+    /// clobbered — a numeric suffix (`_1`, `_2`, ...) is appended instead.
+    ///
+    /// When `overwriteExisting` is `true`, returns the plain resolved path
+    /// with no collision suffixing at all, even if a file already exists
+    /// there — the caller (FFmpeg, invoked with `-y`) is expected to
+    /// overwrite it in place.
+    ///
+    /// - Parameters:
+    ///   - sourceFile: The source media file.
+    ///   - profile: The encoding profile.
+    ///   - outputDirectory: The output directory to check for collisions.
+    ///   - fileExtension: The file extension to append.
+    ///   - overwriteExisting: Whether existing output files may be
+    ///     overwritten in place rather than auto-renamed.
+    ///   - date: The date to use for template resolution.
+    /// - Returns: The resolved output URL.
+    public func resolveOutputURL(
+        sourceFile: MediaFile,
+        profile: EncodingProfile,
+        outputDirectory: URL,
+        fileExtension: String,
+        overwriteExisting: Bool,
+        date: Date = Date()
+    ) -> URL {
+        guard overwriteExisting else {
+            return resolveWithCollisionHandling(
+                sourceFile: sourceFile,
+                profile: profile,
+                outputDirectory: outputDirectory,
+                fileExtension: fileExtension,
+                date: date
+            )
+        }
+
+        let baseName = resolve(sourceFile: sourceFile, profile: profile, date: date)
+        return outputDirectory
+            .appendingPathComponent(baseName)
+            .appendingPathExtension(fileExtension)
+    }
+
     // MARK: - Helpers
 
     /// Remove characters that are invalid in macOS/APFS filenames.
@@ -213,13 +270,18 @@ public struct FilenameTemplate: Codable, Sendable, Hashable {
         formatter.dateFormat = "yyyy-MM-dd"
         let dateString = formatter.string(from: Date())
 
-        return sanitiseFilename(
-            template
-                .replacingOccurrences(of: "{title}", with: baseName)
-                .replacingOccurrences(of: "{name}", with: baseName)
-                .replacingOccurrences(of: "{container}", with: ext)
-                .replacingOccurrences(of: "{ext}", with: ext)
-                .replacingOccurrences(of: "{date}", with: dateString)
+        // F-002 defensive sanitisation per SECURITY.md — see the
+        // comment in `resolve(sourceFile:profile:date:)` above; same
+        // reasoning applies to this legacy overload.
+        return PathSanitizer.sanitizeFilenameComponent(
+            sanitiseFilename(
+                template
+                    .replacingOccurrences(of: "{title}", with: baseName)
+                    .replacingOccurrences(of: "{name}", with: baseName)
+                    .replacingOccurrences(of: "{container}", with: ext)
+                    .replacingOccurrences(of: "{ext}", with: ext)
+                    .replacingOccurrences(of: "{date}", with: dateString)
+            )
         )
     }
 }

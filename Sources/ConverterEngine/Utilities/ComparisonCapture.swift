@@ -201,7 +201,12 @@ public struct ComparisonCapture: Sendable {
                 .replacingOccurrences(of: " ", with: "_")
                 .replacingOccurrences(of: "/", with: "-")
             let outputFileName = "\(sourceFileName)_\(sanitisedProfileName)_\(Int(timestamp))s.png"
-            let outputPath = (outputDir as NSString).appendingPathComponent(outputFileName)
+            // F-002 defensive sanitisation per SECURITY.md (POLISH
+            // follow-up): `sanitisedProfileName` derives from the
+            // user-typed profile name, only partially escaped above.
+            let outputPath = (outputDir as NSString).appendingPathComponent(
+                PathSanitizer.sanitizeFilenameComponent(outputFileName)
+            )
 
             let arguments = captureFrame(
                 inputPath: inputPath,

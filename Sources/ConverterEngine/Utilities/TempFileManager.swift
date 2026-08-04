@@ -41,10 +41,31 @@ public final class TempFileManager: @unchecked Sendable {
 
     /// Create a new TempFileManager.
     ///
-    /// - Parameter baseDirectory: The root directory for temp files.
-    ///   Defaults to the OS temp directory (auto-managed by the OS).
-    public init(baseDirectory: URL? = nil) {
+    /// - Parameters:
+    ///   - baseDirectory: The root directory for temp files.
+    ///     Defaults to the OS temp directory (auto-managed by the OS).
+    ///   - cleanupOrphansOnInit: Whether to scan `baseDirectory` for
+    ///     `meedya-job-*` directories left behind by a previous run
+    ///     (e.g. after a crash or force-quit) and remove them. Defaults
+    ///     to `true` for the production code path; tests pass `false`
+    ///     when they want to inspect pre-existing fixture directories
+    ///     before the manager touches them.
+    ///
+    /// The cleanup step is safe because it only ever removes directories
+    /// whose name begins with `meedya-job-` and is not in the active set —
+    /// which, at construction time, is empty by definition. The audit
+    /// rationale for invoking this in `init` lives in issue #380: orphan
+    /// detection used to require an explicit `cleanupOrphanedJobs()` call
+    /// from the host app, so a crash followed by a restart would leak
+    /// gigabytes of demuxed-stream debris until someone wired the call up.
+    public init(
+        baseDirectory: URL? = nil,
+        cleanupOrphansOnInit: Bool = true
+    ) {
         self.baseDirectory = baseDirectory ?? FileManager.default.temporaryDirectory
+        if cleanupOrphansOnInit {
+            cleanupOrphanedJobs()
+        }
     }
 
     // MARK: - Job Directory Management

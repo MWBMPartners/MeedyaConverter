@@ -39,11 +39,30 @@ public enum QCCheckType: String, Codable, Sendable, CaseIterable {
 }
 
 // ---------------------------------------------------------------------------
+// MARK: - QCStatus
+// ---------------------------------------------------------------------------
+/// The verdict of a single quality-control check.
+///
+/// Distinguishes a genuinely-executed check's pass/fail outcome from a
+/// check that has no real detector behind it yet. Introduced by Issue #445
+/// so that unimplemented checks (``QualityChecker/runAllChecks(inputPath:profile:)``'s
+/// former `audioSync`/`levelCompliance`/`corruptFrames`/`formatConformance`
+/// stubs) can never be reported as a fabricated ``passed`` result.
+public enum QCStatus: String, Codable, Sendable {
+    /// The check actually ran and found no issue.
+    case passed
+    /// The check actually ran and found an issue.
+    case failed
+    /// The check has no real detector implemented yet and did not run.
+    case notImplemented
+}
+
+// ---------------------------------------------------------------------------
 // MARK: - QCResult
 // ---------------------------------------------------------------------------
 /// The outcome of a single quality-control check against a media file.
 ///
-/// Each result carries a pass/fail verdict, a human-readable ``details``
+/// Each result carries a ``status`` verdict, a human-readable ``details``
 /// string describing what was found, and an optional ``timestamp`` pointing
 /// to the location in the file where the issue was detected.
 ///
@@ -57,8 +76,9 @@ public struct QCResult: Identifiable, Codable, Sendable {
     /// The type of check that produced this result.
     public let check: QCCheckType
 
-    /// Whether the check passed (`true`) or found an issue (`false`).
-    public let passed: Bool
+    /// The verdict for this check: ``QCStatus/passed``, ``QCStatus/failed``,
+    /// or ``QCStatus/notImplemented`` when no real detector ran.
+    public let status: QCStatus
 
     /// Human-readable description of the finding.
     public let details: String
@@ -69,18 +89,24 @@ public struct QCResult: Identifiable, Codable, Sendable {
     /// Severity level: "info", "warning", or "error".
     public let severity: String
 
+    /// Convenience accessor: `true` only when the check actually ran and
+    /// passed. `false` for both a genuine failure and a not-implemented
+    /// check — callers that need to distinguish the two should switch on
+    /// ``status`` directly rather than relying on this shortcut.
+    public var passed: Bool { status == .passed }
+
     /// Memberwise initializer.
     public init(
         id: UUID = UUID(),
         check: QCCheckType,
-        passed: Bool,
+        status: QCStatus,
         details: String,
         timestamp: TimeInterval? = nil,
         severity: String = "info"
     ) {
         self.id = id
         self.check = check
-        self.passed = passed
+        self.status = status
         self.details = details
         self.timestamp = timestamp
         self.severity = severity
@@ -229,6 +255,42 @@ public struct QualityChecker: Sendable {
         ]
     }
 
+    /// Builds FFmpeg arguments for a corrupt-frame / decode-error scan
+    /// (roadmap #8, Issue #445).
+    ///
+    /// Runs FFmpeg with `-v error` so stderr carries only genuine
+    /// decode-error-or-worse log lines (FFmpeg suppresses info/warning
+    /// noise at this verbosity), decoding every frame to a null muxer via
+    /// `-f null -` — the same null-sink pattern
+    /// ``buildBlackFrameDetectionArgs(inputPath:)`` uses — without
+    /// re-encoding or writing any output file.
+    ///
+    /// - Parameter inputPath: Absolute path to the media file to analyse.
+    /// - Returns: Array of arguments suitable for `Process.arguments`.
+    public static func buildCorruptFrameDetectionArgs(inputPath: String) -> [String] {
+        return [
+            "-v", "error",
+            "-i", inputPath,
+            "-f", "null",
+            "-"
+        ]
+    }
+
+    /// Builds FFmpeg arguments for a loudness-compliance measurement pass
+    /// (roadmap #8, Issue #445).
+    ///
+    /// Delegates to ``LoudnessReporter/buildAnalysisArguments(inputPath:)``
+    /// — the identical `loudnorm=print_format=json` measurement command
+    /// already proven by `LoudnessReportView` — so `levelCompliance`
+    /// reuses the exact same, tested FFmpeg invocation rather than
+    /// inventing a second one.
+    ///
+    /// - Parameter inputPath: Absolute path to the media file to analyse.
+    /// - Returns: Array of arguments suitable for `Process.arguments`.
+    public static func buildLevelComplianceArgs(inputPath: String) -> [String] {
+        LoudnessReporter.buildAnalysisArguments(inputPath: inputPath)
+    }
+
     // MARK: - Output Parsers
 
     /// Parses FFmpeg stderr output from a `blackdetect` filter run into
@@ -248,7 +310,7 @@ public struct QualityChecker: Sendable {
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return [QCResult(
                 check: .blackFrames,
-                passed: true,
+                status: .passed,
                 details: "No black frames detected (parse unavailable).",
                 severity: "info"
             )]
@@ -268,7 +330,7 @@ public struct QualityChecker: Sendable {
 
             results.append(QCResult(
                 check: .blackFrames,
-                passed: false,
+                status: .failed,
                 details: String(
                     format: "Black segment at %.2fs, duration %.2fs",
                     start, duration
@@ -281,7 +343,7 @@ public struct QualityChecker: Sendable {
         if results.isEmpty {
             results.append(QCResult(
                 check: .blackFrames,
-                passed: true,
+                status: .passed,
                 details: "No black frames detected.",
                 severity: "info"
             ))
@@ -309,7 +371,7 @@ public struct QualityChecker: Sendable {
               let endRegex = try? NSRegularExpression(pattern: endPattern) else {
             return [QCResult(
                 check: .silenceDetection,
-                passed: true,
+                status: .passed,
                 details: "No silence detected (parse unavailable).",
                 severity: "info"
             )]
@@ -341,7 +403,7 @@ public struct QualityChecker: Sendable {
 
             results.append(QCResult(
                 check: .silenceDetection,
-                passed: false,
+                status: .failed,
                 details: String(
                     format: "Silence at %.2fs, duration %.2fs",
                     startTime, duration
@@ -354,7 +416,7 @@ public struct QualityChecker: Sendable {
         if results.isEmpty {
             results.append(QCResult(
                 check: .silenceDetection,
-                passed: true,
+                status: .passed,
                 details: "No silence detected.",
                 severity: "info"
             ))
@@ -363,26 +425,160 @@ public struct QualityChecker: Sendable {
         return results
     }
 
+    /// Parses FFmpeg `-v error` stderr output from
+    /// ``buildCorruptFrameDetectionArgs(inputPath:)`` into structured
+    /// ``QCResult`` values (roadmap #8, Issue #445).
+    ///
+    /// At `-v error` verbosity FFmpeg only emits lines for genuine decode
+    /// errors and worse (info/warning-level chatter like filter setup or
+    /// stream mapping is suppressed), so every non-blank line in `output`
+    /// is treated as one real decode-error report — mirroring
+    /// ``parseBlackFrameOutput(_:)``'s one-``QCResult``-per-detected-issue
+    /// shape. An empty (or whitespace-only) `output` means FFmpeg decoded
+    /// the whole file without reporting a single error, so a single
+    /// passing result is returned.
+    ///
+    /// - Parameter output: The raw stderr text from the `-v error` FFmpeg run.
+    /// - Returns: One ``QCResult`` per reported decode error, or a single
+    ///   passing result if none were reported.
+    public static func parseCorruptFrameOutput(_ output: String) -> [QCResult] {
+        let lines = output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else {
+            return [QCResult(
+                check: .corruptFrames,
+                status: .passed,
+                details: "No decode errors detected.",
+                severity: "info"
+            )]
+        }
+
+        return lines.map { line in
+            QCResult(
+                check: .corruptFrames,
+                status: .failed,
+                details: line,
+                severity: "error"
+            )
+        }
+    }
+
+    /// Best-effort mapping from a ``QCProfile/loudnessStandard`` free-form
+    /// label (e.g. `"EBU R128"`, set by the built-in ``broadcast``
+    /// profile) to the ``NormalizationStandard`` case
+    /// ``LoudnessReporter/checkCompliance(report:standard:)`` needs.
+    ///
+    /// Falls back to ``NormalizationStandard/ebur128`` — the most common
+    /// broadcast target, and the same default `LoudnessReportView` uses —
+    /// when the profile leaves the field `nil` or sets it to an
+    /// unrecognised string, so `levelCompliance` always evaluates against
+    /// *some* real standard rather than silently no-opping.
+    ///
+    /// - Parameter label: The profile's `loudnessStandard` string, or `nil`.
+    /// - Returns: The best-matching ``NormalizationStandard``.
+    public static func normalizationStandard(forLoudnessStandard label: String?) -> NormalizationStandard {
+        guard let label else { return .ebur128 }
+        let lowered = label.lowercased()
+        if lowered.contains("ebu") { return .ebur128 }
+        if lowered.contains("atsc") { return .atscA85 }
+        if lowered.contains("itu") { return .ituBS1770 }
+        if lowered.contains("podcast") { return .podcast }
+        if lowered.contains("stream") { return .streaming }
+        if lowered.contains("cinema") { return .cinema }
+        return .ebur128
+    }
+
+    /// Parses the `loudnorm` measurement stderr from
+    /// ``buildLevelComplianceArgs(inputPath:)`` and evaluates it against
+    /// `standard` (roadmap #8, Issue #445).
+    ///
+    /// Reuses ``LoudnessReporter/parseAnalysisOutput(_:)`` for the JSON
+    /// extraction and ``LoudnessReporter/checkCompliance(report:standard:)``
+    /// for the pass/fail verdict — the identical, tested EBU R128 logic
+    /// `LoudnessReportView` already relies on — so this is a thin adapter
+    /// from a `LoudnessReport` to a QC ``QCResult``, not a second
+    /// implementation of loudness math.
+    ///
+    /// - Parameters:
+    ///   - output: Raw stderr from the FFmpeg measurement pass.
+    ///   - standard: The loudness standard to check compliance against —
+    ///     see ``normalizationStandard(forLoudnessStandard:)`` to derive
+    ///     one from a ``QCProfile/loudnessStandard`` label.
+    /// - Returns: A single-element array with the real pass/fail verdict,
+    ///   or a `.failed` result (never `.passed`, and never
+    ///   `.notImplemented` — the check genuinely ran) if the measurement
+    ///   output could not be parsed.
+    public static func parseLevelComplianceOutput(
+        _ output: String,
+        standard: NormalizationStandard
+    ) -> [QCResult] {
+        guard let report = LoudnessReporter.parseAnalysisOutput(output) else {
+            return [QCResult(
+                check: .levelCompliance,
+                status: .failed,
+                details: "Could not parse loudness measurement output from FFmpeg.",
+                severity: "error"
+            )]
+        }
+
+        let compliant = LoudnessReporter.checkCompliance(report: report, standard: standard)
+        let preset = NormalizationPresets.preset(for: standard)
+        let details = String(
+            format: "Integrated loudness %.1f LUFS (target %.1f LUFS), true peak %.1f dBTP (limit %.1f dBTP) against %@.",
+            report.integratedLUFS, preset.targetLUFS, report.truePeakDBTP, preset.truePeakLimit,
+            standard.displayName
+        )
+
+        return [QCResult(
+            check: .levelCompliance,
+            status: compliant ? .passed : .failed,
+            details: details,
+            severity: compliant ? "info" : "warning"
+        )]
+    }
+
     // MARK: - Batch Runner
 
-    /// Runs all enabled checks from the given profile and returns
-    /// aggregated results.
+    /// Resolves every enabled check from the given profile that does
+    /// **not** require executing an FFmpeg process, and returns their
+    /// honest results (Issue #445).
     ///
-    /// This method does **not** execute FFmpeg processes directly. For
-    /// checks that require FFmpeg analysis (black frames, silence), it
-    /// returns placeholder results indicating the check is pending. The
-    /// caller is responsible for running the FFmpeg commands returned by
-    /// ``buildBlackFrameDetectionArgs(inputPath:)`` and
-    /// ``buildSilenceDetectionArgs(inputPath:threshold:)`` and then
-    /// parsing the output.
+    /// `blackFrames`, `silenceDetection`, `corruptFrames`, and
+    /// `levelCompliance` are deliberately **not** included in this
+    /// method's output: all four now have real detectors
+    /// (``buildBlackFrameDetectionArgs(inputPath:)`` /
+    /// ``parseBlackFrameOutput(_:)``,
+    /// ``buildSilenceDetectionArgs(inputPath:threshold:)`` /
+    /// ``parseSilenceOutput(_:)``,
+    /// ``buildCorruptFrameDetectionArgs(inputPath:)`` /
+    /// ``parseCorruptFrameOutput(_:)``, and
+    /// ``buildLevelComplianceArgs(inputPath:)`` /
+    /// ``parseLevelComplianceOutput(_:standard:)``, added for roadmap #8 /
+    /// Issue #445), but running them means executing FFmpeg — something
+    /// this pure-function utility does not do (see the type-level
+    /// documentation). Callers that enable those checks must run the
+    /// FFmpeg commands themselves via `FFmpegProcessController`, parse the
+    /// output with the corresponding `parse...Output(_:)` function, and
+    /// merge those results with this method's output — see
+    /// `QualityCheckView.runQualityChecks()` for the reference
+    /// implementation.
     ///
-    /// Non-FFmpeg checks (audio sync, level compliance, format conformance,
-    /// corrupt frames) produce stub results suitable for future expansion.
+    /// The remaining checks — `audioSync` and `formatConformance` — have
+    /// no real detector implemented yet (`audioSync` is gated on #421/
+    /// #422). Previously this method reported a fabricated `passed: true`
+    /// for every unimplemented check (and `formatConformance` conflated
+    /// mere file existence with genuine conformance validation); it now
+    /// reports ``QCStatus/notImplemented`` for both so a stub can never be
+    /// rendered or exported as a passing check.
     ///
     /// - Parameters:
     ///   - inputPath: Absolute path to the media file.
     ///   - profile: The ``QCProfile`` controlling which checks to run.
-    /// - Returns: Array of ``QCResult`` values for all enabled checks.
+    /// - Returns: Array of ``QCResult`` values for the enabled checks this
+    ///   method can resolve without running FFmpeg.
     public static func runAllChecks(
         inputPath: String,
         profile: QCProfile
@@ -391,61 +587,36 @@ public struct QualityChecker: Sendable {
 
         for check in profile.enabledChecks.sorted(by: { $0.rawValue < $1.rawValue }) {
             switch check {
-            case .blackFrames:
-                // Caller must run buildBlackFrameDetectionArgs and parse output.
-                results.append(QCResult(
-                    check: .blackFrames,
-                    passed: true,
-                    details: "Black frame detection requires FFmpeg execution. "
-                           + "Use buildBlackFrameDetectionArgs() and parseBlackFrameOutput().",
-                    severity: "info"
-                ))
-
-            case .silenceDetection:
-                // Caller must run buildSilenceDetectionArgs and parse output.
-                results.append(QCResult(
-                    check: .silenceDetection,
-                    passed: true,
-                    details: "Silence detection requires FFmpeg execution. "
-                           + "Use buildSilenceDetectionArgs() and parseSilenceOutput().",
-                    severity: "info"
-                ))
+            case .blackFrames, .silenceDetection, .corruptFrames, .levelCompliance:
+                // Requires running FFmpeg — resolved by the caller (e.g.
+                // QualityCheckView), not here. Intentionally not appended.
+                continue
 
             case .audioSync:
                 results.append(QCResult(
                     check: .audioSync,
-                    passed: true,
-                    details: "Audio sync verification pending implementation.",
-                    severity: "info"
-                ))
-
-            case .levelCompliance:
-                let standard = profile.loudnessStandard ?? "unspecified"
-                results.append(QCResult(
-                    check: .levelCompliance,
-                    passed: true,
-                    details: "Level compliance (\(standard)) pending implementation.",
+                    status: .notImplemented,
+                    details: "Audio sync verification has no detector implemented yet.",
                     severity: "info"
                 ))
 
             case .formatConformance:
-                // Basic file-existence check as a placeholder.
+                // A real conformance check would validate container/codec
+                // parameters against a target spec; only file existence can
+                // currently be verified, which is not the same claim, so
+                // this is reported as not-implemented rather than a pass —
+                // the existence check is still surfaced in `details` since
+                // a missing file is useful, unambiguous information.
                 let exists = FileManager.default.fileExists(atPath: inputPath)
                 results.append(QCResult(
                     check: .formatConformance,
-                    passed: exists,
+                    status: .notImplemented,
                     details: exists
-                        ? "File exists and is accessible."
-                        : "File not found at path: \(inputPath)",
+                        ? "Format conformance validation has no detector implemented yet "
+                          + "(file exists and is accessible)."
+                        : "Format conformance validation has no detector implemented yet, "
+                          + "and the file was not found at path: \(inputPath).",
                     severity: exists ? "info" : "error"
-                ))
-
-            case .corruptFrames:
-                results.append(QCResult(
-                    check: .corruptFrames,
-                    passed: true,
-                    details: "Corrupt frame detection pending implementation.",
-                    severity: "info"
                 ))
             }
         }

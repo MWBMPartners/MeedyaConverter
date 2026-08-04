@@ -22,6 +22,10 @@ import ConverterEngine
 /// Phase 12 — Media Library Browser (Issue #333)
 struct MediaBrowserView: View {
 
+    // MARK: - Environment
+
+    @Environment(AppViewModel.self) private var viewModel
+
     // MARK: - Sort Configuration
 
     /// Columns available for sorting the results table.
@@ -461,10 +465,14 @@ struct MediaBrowserView: View {
 
     /// Imports the selected files into the encoding queue.
     private func importSelectedFiles() {
-        let selected = displayedFiles.filter { selectedFileIDs.contains($0.id) }
-        // The selected file URLs are available for queue integration
-        _ = selected.map(\.url)
-        // Queue integration would be handled by the parent view or view model
+        let urls = displayedFiles
+            .filter { selectedFileIDs.contains($0.id) }
+            .map(\.url)
+        guard !urls.isEmpty else { return }
+        Task { @MainActor in
+            await viewModel.importFiles(urls)
+            viewModel.selectedNavItem = .source
+        }
     }
 
     // MARK: - Formatting Helpers

@@ -44,6 +44,15 @@ struct BenchmarkView: View {
     /// Error message from the most recent operation, if any.
     @State private var errorMessage: String?
 
+    /// The in-flight benchmark suite task, retained so it can be cancelled
+    /// when the user cancels or the view disappears.
+    @State private var benchmarkTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the benchmark currently running,
+    /// retained so `cancelBenchmarks()` can stop the running process rather
+    /// than merely abandoning it.
+    @State private var currentController: FFmpegProcessController?
+
     /// Controls visibility of the export save panel.
     @State private var showExportPanel = false
 
@@ -102,6 +111,9 @@ struct BenchmarkView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
+        .onDisappear {
+            cancelBenchmarks()
+        }
     }
 
     // MARK: - Toolbar
@@ -188,6 +200,12 @@ struct BenchmarkView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+
+            Button("Cancel") {
+                cancelBenchmarks()
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Cancel benchmark suite")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -349,14 +367,32 @@ struct BenchmarkView: View {
 
     // MARK: - Actions
 
-    /// Runs the standard benchmark suite asynchronously.
+    /// Runs the standard benchmark suite asynchronously against real FFmpeg.
     ///
-    /// Each benchmark generates FFmpeg arguments via
+    /// Mirrors the execution pattern proven in
+    /// `QualityMetricsView.runAnalysis()` (Issue #434), which is the
+    /// closest reference since benchmarks also loop multiple sequential
+    /// FFmpeg passes: locate FFmpeg via `FFmpegBundleManager`, then for
+    /// each entry in ``EncodingBenchmark/standardBenchmarks`` build its
+    /// arguments with
     /// ``EncodingBenchmark/buildBenchmarkArguments(codec:preset:resolution:duration:hwAccel:)``
-    /// and creates a simulated result. In a production build, these
-    /// arguments would be passed to FFmpegProcessController for
-    /// actual execution.
+    /// and run them through `FFmpegProcessController.startEncoding(
+    /// arguments:)`. The encode's output is discarded via `-f null -`
+    /// (there is no file to stat — `BenchmarkResult` has no size field),
+    /// so only wall-clock time and reported frame count are measured: the
+    /// frame count comes from the last `-progress` update, wall-clock time
+    /// from a `Date()` span around the run, and fps is computed as
+    /// `frames / encodeTime` via ``EncodingBenchmark/makeResult(codec:preset:resolution:frames:encodeTime:hardwareAccelerated:)``.
+    ///
+    /// The background work runs on a detached task — this view's methods
+    /// are implicitly main-actor isolated (via `View` conformance), so a
+    /// plain `Task { }` here would infer that isolation and could block
+    /// the UI thread on `FFmpegBundleManager.locateFFmpeg()`'s blocking
+    /// `-version` probe and on the FFmpeg passes themselves. All UI-state
+    /// mutations explicitly hop back to the main actor.
     private func runStandardBenchmarks() {
+        guard !isRunning else { return }
+
         let benchmarks = EncodingBenchmark.standardBenchmarks
         isRunning = true
         currentBenchmarkIndex = 0
@@ -364,14 +400,25 @@ struct BenchmarkView: View {
         results.removeAll()
         errorMessage = nil
 
-        Task {
-            for (index, benchmark) in benchmarks.enumerated() {
+        benchmarkTask = Task.detached {
+            let bundleManager = FFmpegBundleManager()
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try bundleManager.locateFFmpeg().path
+            } catch {
                 await MainActor.run {
-                    currentBenchmarkIndex = index
+                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before running benchmarks."
+                    isRunning = false
                 }
+                return
+            }
 
-                // Build the arguments (validates the argument builder works).
-                let _ = EncodingBenchmark.buildBenchmarkArguments(
+            benchmarkLoop: for (index, benchmark) in benchmarks.enumerated() {
+                if Task.isCancelled { break benchmarkLoop }
+
+                await MainActor.run { currentBenchmarkIndex = index }
+
+                let arguments = EncodingBenchmark.buildBenchmarkArguments(
                     codec: benchmark.codec,
                     preset: benchmark.preset,
                     resolution: benchmark.resolution,
@@ -379,82 +426,67 @@ struct BenchmarkView: View {
                     hwAccel: false
                 )
 
-                // Simulated result — in production, this would come from
-                // parsing actual FFmpeg output via parseBenchmarkOutput().
-                let simulatedFps = simulateBenchmarkFps(
+                let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                await MainActor.run { currentController = controller }
+
+                var lastFrame = 0
+                let startTime = Date()
+
+                do {
+                    let progressStream = try controller.startEncoding(arguments: arguments)
+                    for await progress in progressStream {
+                        if let frame = progress.frame {
+                            lastFrame = frame
+                        }
+                        if Task.isCancelled {
+                            controller.stopEncoding()
+                            break
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorMessage = "Benchmark failed for \(benchmark.codec.rawValue)/\(benchmark.preset) at \(benchmark.resolution): \(error.localizedDescription)"
+                    }
+                    continue benchmarkLoop
+                }
+
+                if Task.isCancelled { break benchmarkLoop }
+
+                let encodeTime = Date().timeIntervalSince(startTime)
+                let result = EncodingBenchmark.makeResult(
                     codec: benchmark.codec,
                     preset: benchmark.preset,
-                    resolution: benchmark.resolution
-                )
-
-                let result = BenchmarkResult(
-                    codec: benchmark.codec.rawValue,
-                    preset: benchmark.preset,
                     resolution: benchmark.resolution,
-                    fps: simulatedFps,
-                    duration: 10.0 * 30.0 / simulatedFps,
+                    frames: lastFrame,
+                    encodeTime: encodeTime,
                     hardwareAccelerated: false
                 )
 
                 await MainActor.run {
                     results.append(result)
                 }
-
-                // Brief delay between benchmarks for UI responsiveness.
-                try? await Task.sleep(for: .milliseconds(100))
             }
 
             await MainActor.run {
+                currentController = nil
                 isRunning = false
             }
         }
     }
 
-    /// Generates a simulated FPS value based on codec complexity.
+    /// Cancel an in-progress benchmark suite.
     ///
-    /// This is a placeholder until real FFmpeg execution is wired up.
-    /// The values approximate relative codec performance.
-    private func simulateBenchmarkFps(
-        codec: VideoCodec,
-        preset: String,
-        resolution: String
-    ) -> Double {
-        // Base FPS by codec complexity.
-        let baseFps: Double
-        switch codec {
-        case .h264: baseFps = 120
-        case .h265: baseFps = 60
-        case .av1: baseFps = 20
-        default: baseFps = 80
-        }
-
-        // Preset multiplier — faster presets produce higher FPS.
-        let presetMultiplier: Double
-        switch preset.lowercased() {
-        case "ultrafast": presetMultiplier = 3.0
-        case "superfast": presetMultiplier = 2.5
-        case "veryfast": presetMultiplier = 2.0
-        case "faster": presetMultiplier = 1.5
-        case "fast": presetMultiplier = 1.2
-        case "medium", "6": presetMultiplier = 1.0
-        case "slow", "4": presetMultiplier = 0.6
-        case "slower": presetMultiplier = 0.3
-        case "veryslow": presetMultiplier = 0.15
-        case "8": presetMultiplier = 1.5 // AV1 preset 8
-        default: presetMultiplier = 1.0
-        }
-
-        // Resolution multiplier — higher resolution reduces FPS.
-        let resMultiplier: Double
-        if resolution.contains("3840") {
-            resMultiplier = 0.25
-        } else if resolution.contains("2560") {
-            resMultiplier = 0.5
-        } else {
-            resMultiplier = 1.0 // 1920x1080
-        }
-
-        return baseFps * presetMultiplier * resMultiplier
+    /// Stops the currently-running FFmpeg process (if any), cancels the
+    /// benchmark `Task`, and resets `isRunning` so no process or task is
+    /// left running in the background after the user cancels or navigates
+    /// away from this view. Any benchmarks already completed remain in
+    /// `results`; the remaining ones in the suite are not run.
+    private func cancelBenchmarks() {
+        currentController?.stopEncoding()
+        currentController = nil
+        benchmarkTask?.cancel()
+        benchmarkTask = nil
+        isRunning = false
     }
 
     /// Generates a CSV report from the current benchmark results.

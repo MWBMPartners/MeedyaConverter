@@ -100,6 +100,53 @@ struct PostEncodeActionsView: View {
                 onAdd: { addAction(type: selectedType) }
             )
         }
+        .onAppear {
+            actionChain = Self.loadPersistedChain()
+        }
+        .onChange(of: actionChainSnapshot) {
+            persistChain()
+        }
+    }
+
+    // MARK: - Persistence (Issue #277)
+
+    /// `UserDefaults` key under which the JSON-encoded action chain
+    /// lives. Not `private` so `AppViewModel`'s job-completion path
+    /// (Issue #277) can decode the same blob via `loadPersistedChain()`
+    /// below without a live view instance — mirrors
+    /// `EmailSettingsView.loadSMTPConfig()` /
+    /// `WebhookSettingsView.loadWebhookConfig()`'s static-load idiom.
+    static let userDefaultsKey = "postEncodeActionChain"
+
+    /// Load the persisted action chain, independent of this view being
+    /// on screen. Returns an empty chain (no actions) when nothing has
+    /// been saved yet or the stored JSON fails to decode, mirroring this
+    /// view's own `@State` default.
+    static func loadPersistedChain() -> PostEncodeActionChain {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+              let chain = try? JSONDecoder().decode(PostEncodeActionChain.self, from: data) else {
+            return PostEncodeActionChain()
+        }
+        return chain
+    }
+
+    /// Persist the current action chain to `UserDefaults` as JSON.
+    private func persistChain() {
+        guard let data = try? JSONEncoder().encode(actionChain) else { return }
+        UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+    }
+
+    /// A JSON-encoded snapshot of `actionChain`, recomputed on every body
+    /// evaluation.
+    ///
+    /// `PostEncodeActionChain` / `PostEncodeAction` are `Codable` but not
+    /// `Equatable` (see `PostEncodeActions.swift`), so `.onChange` can't
+    /// track `actionChain` directly. Comparing its encoded bytes instead
+    /// (`Data` is `Equatable`) catches every add / remove / reorder /
+    /// in-place row edit (toggles, name, config fields) without adding a
+    /// new conformance to that read-only-ideally engine type.
+    private var actionChainSnapshot: Data {
+        (try? JSONEncoder().encode(actionChain)) ?? Data()
     }
 
     // MARK: - Actions
@@ -305,10 +352,62 @@ struct PostEncodeActionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-        case .uploadSFTP, .uploadCloud:
-            Text("This action type is not yet available.")
-                .font(.caption)
-                .foregroundStyle(.orange)
+        case .uploadSFTP:
+            let profiles = SFTPProfileStore.loadProfiles()
+            if profiles.isEmpty {
+                Text("No saved SFTP servers. Add one in Settings → SFTP, then pick it here.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else {
+                Picker(
+                    "SFTP Server",
+                    selection: Binding(
+                        get: { action.config["sftpProfileID"] ?? "" },
+                        set: { action.config["sftpProfileID"] = $0 }
+                    )
+                ) {
+                    Text("Select a server…").tag("")
+                    ForEach(profiles, id: \.id) { profile in
+                        Text("\(profile.label) (\(profile.host))").tag(profile.id.uuidString)
+                    }
+                }
+                .accessibilityLabel("SFTP server profile")
+
+                Text("Uploads the encoded output file via scp to the selected server.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+        case .uploadCloud:
+            // Issue #459: Dropbox / Google Drive / OneDrive / S3 (S3
+            // added roadmap #7, re #459/#162) execute a real,
+            // authenticated upload via `CloudUploadExecutor`.
+            // YouTube/Vimeo remain out of scope — see
+            // `CloudUploadExecutor`'s doc comment.
+            let profiles = CloudStorageProfileStore.loadProfiles()
+            if profiles.isEmpty {
+                Text("No saved cloud storage configurations. Add one in Settings → Cloud Storage, then pick it here.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else {
+                Picker(
+                    "Cloud Storage Configuration",
+                    selection: Binding(
+                        get: { action.config["cloudProfileID"] ?? "" },
+                        set: { action.config["cloudProfileID"] = $0 }
+                    )
+                ) {
+                    Text("Select a configuration…").tag("")
+                    ForEach(profiles, id: \.id) { profile in
+                        Text("\(profile.label) (\(profile.provider.rawValue))").tag(profile.id.uuidString)
+                    }
+                }
+                .accessibilityLabel("Cloud storage configuration")
+
+                Text("Uploads the encoded output file to the selected Dropbox, Google Drive, OneDrive, or S3 destination.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
 
         // "Run on failure" toggle — common to all action types.
@@ -397,8 +496,8 @@ struct AddActionSheet: View {
         case .openInFinder: return "Reveal in Finder"
         case .runShellScript: return "Run Shell Script"
         case .webhook: return "Send Webhook"
-        case .uploadSFTP: return "Upload via SFTP (Future)"
-        case .uploadCloud: return "Upload to Cloud (Future)"
+        case .uploadSFTP: return "Upload via SFTP"
+        case .uploadCloud: return "Upload to Cloud"
         case .sendNotification: return "Send Notification"
         }
     }

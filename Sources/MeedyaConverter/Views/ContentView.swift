@@ -80,6 +80,8 @@ struct ContentView: View {
         // -- Workflow ------------------------------------------------------
         case .source:
             SourceFileView()
+        case .mediaBrowser:
+            MediaBrowserView()
         case .streams:
             StreamInspectorView()
         case .output:
@@ -88,16 +90,26 @@ struct ContentView: View {
         // -- Monitor -------------------------------------------------------
         case .queue:
             JobQueueView()
+        case .resumableJobs:
+            ResumableJobsView()
         case .log:
             ActivityLogView()
         case .dashboard:
             DashboardView()
+        case .encodingGraphs:
+            EncodingGraphsView()
+        case .statisticsExport:
+            StatisticsExportView()
         case .resourceMonitor:
             ResourceMonitorView()
 
         // -- Tools ---------------------------------------------------------
         case .images:
             ImageConversionView()
+        case .vectorConversion:
+            VectorConversionView()
+        case .proresVector:
+            ProResVectorView()
         case .burn:
             BurnSettingsView()
         case .trimEdit:
@@ -114,12 +126,22 @@ struct ContentView: View {
             WatermarkView()
         case .multiOutput:
             MultiOutputView()
+        case .conditionalRules:
+            ConditionalRulesView()
+        case .dualDynamicHDR:
+            DualDynamicHDRView()
         case .filterGraph:
             FilterGraphEditorView()
         case .edlEditor:
             EDLEditorView()
         case .animatedImage:
             AnimatedImageView()
+        case .smartCrop:
+            SmartCropView()
+        case .backgroundRemoval:
+            BackgroundRemovalView()
+        case .voiceIsolation:
+            VoiceIsolationView()
         case .duplicateFinder:
             DuplicateFinderView()
 

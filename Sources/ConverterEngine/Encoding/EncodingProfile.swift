@@ -139,6 +139,25 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// Whether to passthrough subtitles.
     public var subtitlePassthrough: Bool
 
+    /// HDR subtitle tone-mapping settings.
+    ///
+    /// When `nil` (the default), HDR-coloured subtitles are passed
+    /// through unchanged — appropriate for HDR-aware players and for
+    /// HDR output containers. When non-`nil`, the encoding pipeline
+    /// runs `subtitle_tonemap` against PGS / VobSub / ASS streams to
+    /// remap their colour values into the SDR gamut described by the
+    /// nested `SubtitleTonemapConfig` (HDR source profile, target peak
+    /// luminance in nits, alpha preservation).
+    ///
+    /// Optional with a default of `nil` so existing profile JSON on
+    /// disk continues to decode cleanly — the auto-synthesised
+    /// `Decodable` treats a missing field as `nil` here.
+    ///
+    /// Surfaced in the UI via the "Subtitles" section of
+    /// `OutputSettingsView`. See issues #369 (engine) and #381 / #396
+    /// (UI binding).
+    public var subtitleTonemap: SubtitleTonemapConfig?
+
     // MARK: - Per-Stream Overrides (Phase 3.5 / Issue #41)
 
     /// Per-stream encoding overrides allowing different codec, bitrate, and quality
@@ -198,6 +217,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         loudnessNormalization: String? = nil,
         applyPeakLimiter: Bool = false,
         subtitlePassthrough: Bool = true,
+        subtitleTonemap: SubtitleTonemapConfig? = nil,
         perStreamSettings: PerStreamSettings? = nil,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
@@ -239,6 +259,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.loudnessNormalization = loudnessNormalization
         self.applyPeakLimiter = applyPeakLimiter
         self.subtitlePassthrough = subtitlePassthrough
+        self.subtitleTonemap = subtitleTonemap
         self.perStreamSettings = perStreamSettings
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
@@ -350,6 +371,14 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
                 }
                 if let preset = videoOverride.preset {
                     builder.perStreamVideoPreset[index] = preset
+                }
+            }
+
+            // Apply per-stream subtitle overrides to the builder
+            for (index, subtitleOverride) in perStream.subtitleOverrides {
+                builder.perStreamSubtitleInclude[index] = subtitleOverride.include
+                if subtitleOverride.passthrough {
+                    builder.perStreamSubtitlePassthrough[index] = true
                 }
             }
         }
@@ -932,6 +961,21 @@ public final class EncodingProfileStore: @unchecked Sendable {
         return profiles.filter { $0.category == category }
     }
 
+    /// A lock-protected snapshot of every profile (built-in + user-created).
+    ///
+    /// Existing UI call sites (`CloudSyncView`, `TeamProfileView`, etc.) read
+    /// the raw `profiles` property directly — safe there only because those
+    /// reads and the mutating methods above are all serialised onto the
+    /// `@MainActor`. `APIServer` (Issue #355, `GET /profiles`) reads the store
+    /// from its own background dispatch queue, genuinely concurrently with
+    /// `@MainActor` mutations, so it needs a read that actually takes `lock`.
+    /// Added for that caller; existing call sites are unaffected.
+    public func allProfiles() -> [EncodingProfile] {
+        lock.lock()
+        defer { lock.unlock() }
+        return profiles
+    }
+
     // MARK: - Import/Export
 
     /// Export a profile to JSON data for sharing.
@@ -983,6 +1027,7 @@ public final class EncodingProfileStore: @unchecked Sendable {
             loudnessNormalization: profile.loudnessNormalization,
             applyPeakLimiter: profile.applyPeakLimiter,
             subtitlePassthrough: profile.subtitlePassthrough,
+            subtitleTonemap: profile.subtitleTonemap,
             perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,

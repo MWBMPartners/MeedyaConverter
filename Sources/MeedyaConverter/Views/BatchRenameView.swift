@@ -340,8 +340,13 @@ struct BatchRenameView: View {
                 let fm = FileManager.default
                 for (index, url) in files.enumerated() {
                     let directory = url.deletingLastPathComponent()
+                    // F-002 defensive sanitisation per SECURITY.md
+                    // (Cycle 25): `newName` is derived from a
+                    // user-editable rename template. Sanitise so
+                    // no template can produce a path-escaping
+                    // component.
                     let newURL = directory.appendingPathComponent(
-                        seqPreviews[index].newName
+                        PathSanitizer.sanitizeFilenameComponent(seqPreviews[index].newName)
                     )
                     if newURL != url {
                         try fm.moveItem(at: url, to: newURL)

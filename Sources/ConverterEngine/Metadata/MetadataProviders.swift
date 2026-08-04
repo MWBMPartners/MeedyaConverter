@@ -8,12 +8,24 @@
 import Foundation
 
 // MARK: - TheTVDBClient
+//
+// Scheduled for removal (#374) once MeedyaSuite-core is on by default.
+// Prefer `SuiteCoreMetadataAdapter` for all new call sites. The inline client
+// below is retained only as the fallback path when the suite-core bindings
+// are not linked (SUITE_CORE build flag off).
 
 /// Builds TheTVDB API v4 request URLs for TV show metadata lookup.
 ///
 /// TheTVDB uses bearer token authentication obtained via API key.
 ///
 /// Phase 14.5
+///
+/// - Important: Scheduled for removal in issue #374. New call sites must use
+///   `SuiteCoreMetadataAdapter` which routes through MeedyaSuite-core's
+///   unified provider system. This inline client remains only as the fallback
+///   path while the `SUITE_CORE` build flag is opt-in. Do not add new
+///   references to `TheTVDBClient` — the tests below are the last legitimate
+///   usage and will be migrated alongside the removal.
 public struct TheTVDBClient: Sendable {
 
     /// TheTVDB API v4 base URL.

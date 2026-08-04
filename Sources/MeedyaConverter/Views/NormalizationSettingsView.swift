@@ -34,6 +34,16 @@ struct NormalizationSettingsView: View {
     @State private var measuredLRA: Double?
     @State private var errorMessage: String?
 
+    /// The in-flight measurement task, retained so it can be cancelled when
+    /// the user navigates away mid-measurement. Mirrors
+    /// `LoudnessReportView.analysisTask`.
+    @State private var measurementTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the measurement pass currently
+    /// running, retained so `cancelMeasurement()` can stop it rather than
+    /// merely abandoning it. Mirrors `LoudnessReportView.currentController`.
+    @State private var currentController: FFmpegProcessController?
+
     // MARK: - Body
 
     var body: some View {
@@ -61,6 +71,9 @@ struct NormalizationSettingsView: View {
         .navigationTitle("Audio Normalization")
         .onChange(of: selectedStandard) { _, newValue in
             applyPreset(for: newValue)
+        }
+        .onDisappear {
+            cancelMeasurement()
         }
     }
 
@@ -175,7 +188,7 @@ struct NormalizationSettingsView: View {
     private var measurementControls: some View {
         HStack {
             Button {
-                Task { await measureLevels() }
+                measureLevels()
             } label: {
                 Label(
                     isMeasuring ? "Measuring..." : "Measure Levels",
@@ -188,6 +201,11 @@ struct NormalizationSettingsView: View {
             if isMeasuring {
                 ProgressView()
                     .controlSize(.small)
+
+                Button("Cancel") {
+                    cancelMeasurement()
+                }
+                .accessibilityLabel("Cancel loudness measurement")
             }
 
             Spacer()
@@ -307,11 +325,25 @@ struct NormalizationSettingsView: View {
 
     /// Trigger a measurement-only pass on the selected file.
     ///
-    /// Builds FFmpeg arguments via ``NormalizationPresets`` and delegates
-    /// execution to the engine layer. Results populate the measurement
-    /// display cards.
-    private func measureLevels() async {
-        guard let file = viewModel.selectedFile else { return }
+    /// Mirrors the execution pattern in `LoudnessReportView.runAnalysis()`:
+    /// locate FFmpeg via `FFmpegBundleManager`, build arguments with
+    /// `NormalizationPresets.buildMeasureArguments(inputPath:)`, run them
+    /// through `FFmpegProcessController.startEncoding(arguments:)` off the
+    /// main actor (draining the progress stream so cancellation is noticed
+    /// promptly), then parse the `loudnorm` JSON block FFmpeg writes to
+    /// stderr with `NormalizationPresets.parseMeasurementOutput(_:)` and
+    /// populate ``measuredLUFS``/``measuredTruePeak``/``measuredLRA``.
+    ///
+    /// Errors are surfaced honestly: a missing FFmpeg binary, a failed
+    /// launch, or unparsable output all set ``errorMessage`` and leave the
+    /// measured values `nil` — no fabricated results.
+    private func measureLevels() {
+        guard !isMeasuring else { return }
+
+        guard let file = viewModel.selectedFile else {
+            errorMessage = "Select a source file before measuring loudness levels."
+            return
+        }
 
         isMeasuring = true
         errorMessage = nil
@@ -327,6 +359,82 @@ struct NormalizationSettingsView: View {
             category: .audio
         )
 
+        measurementTask = Task {
+            let bundleManager = FFmpegBundleManager()
+            let ffmpegPath: String
+            do {
+                let ffmpegInfo = try bundleManager.locateFFmpeg()
+                ffmpegPath = ffmpegInfo.path
+            } catch {
+                await MainActor.run {
+                    errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before measuring loudness."
+                    isMeasuring = false
+                }
+                return
+            }
+
+            let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+            await MainActor.run { currentController = controller }
+
+            do {
+                // Measurement output is discarded (-f null -), so the
+                // progress stream carries no meaningful fraction; it is
+                // drained purely to let the process run to completion and
+                // to notice cancellation promptly.
+                let progressStream = try controller.startEncoding(arguments: args)
+                for await _ in progressStream {
+                    if Task.isCancelled {
+                        controller.stopEncoding()
+                        break
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Loudness measurement failed for \(file.fileName): \(error.localizedDescription)"
+                    currentController = nil
+                    isMeasuring = false
+                }
+                return
+            }
+
+            if Task.isCancelled {
+                await MainActor.run {
+                    currentController = nil
+                    isMeasuring = false
+                }
+                return
+            }
+
+            guard let parsed = NormalizationPresets.parseMeasurementOutput(controller.errorOutput) else {
+                await MainActor.run {
+                    errorMessage = "Could not read loudness data for \(file.fileName)."
+                    currentController = nil
+                    isMeasuring = false
+                }
+                return
+            }
+
+            await MainActor.run {
+                measuredLUFS = parsed.integratedLUFS
+                measuredTruePeak = parsed.truePeakDBTP
+                measuredLRA = parsed.loudnessRangeLU
+                currentController = nil
+                isMeasuring = false
+            }
+        }
+    }
+
+    /// Cancel an in-progress loudness measurement.
+    ///
+    /// Stops the currently-running FFmpeg process (if any) and cancels the
+    /// measurement `Task` so no process or task is left running in the
+    /// background after the user cancels or navigates away from this view.
+    /// Mirrors `LoudnessReportView.cancelAnalysis()`.
+    private func cancelMeasurement() {
+        currentController?.stopEncoding()
+        currentController = nil
+        measurementTask?.cancel()
+        measurementTask = nil
         isMeasuring = false
     }
 }

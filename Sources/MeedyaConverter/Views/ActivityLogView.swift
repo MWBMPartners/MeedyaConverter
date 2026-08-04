@@ -27,7 +27,14 @@ struct ActivityLogView: View {
     @State private var searchText = ""
     @State private var selectedLevel: LogEntry.Level?
     @State private var selectedSource: LogEntry.Source?
-    @State private var autoScroll = true
+
+    /// Whether to auto-scroll to the newest log entry as new ones arrive.
+    /// Persisted (Issue #475 — `SettingsView.GeneralSettingsTab`'s
+    /// "Auto-scroll activity log" toggle used its own local `@State` here
+    /// previously and never read this key); the in-view toolbar toggle
+    /// below still lets the user flip it per-session, but the persisted
+    /// setting is now the source of truth for the initial value.
+    @AppStorage("autoScrollLog") private var autoScrollLog = true
 
     // MARK: - Body
 
@@ -87,11 +94,11 @@ struct ActivityLogView: View {
             Spacer()
 
             // Auto-scroll toggle
-            Toggle(isOn: $autoScroll) {
+            Toggle(isOn: $autoScrollLog) {
                 Image(systemName: "arrow.down.to.line")
             }
             .toggleStyle(.button)
-            .help(autoScroll ? "Auto-scroll enabled" : "Auto-scroll disabled")
+            .help(autoScrollLog ? "Auto-scroll enabled" : "Auto-scroll disabled")
 
             // Entry count
             Text("\(filteredEntries.count) entries")
@@ -147,7 +154,7 @@ struct ActivityLogView: View {
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
             .onChange(of: viewModel.logEntries.count) { _, _ in
-                if autoScroll, let last = filteredEntries.last {
+                if autoScrollLog, let last = filteredEntries.last {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }

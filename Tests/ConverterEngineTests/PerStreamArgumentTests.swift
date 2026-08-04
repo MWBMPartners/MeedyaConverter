@@ -173,6 +173,10 @@ final class PerStreamArgumentTests: XCTestCase {
             audioOverrides: [
                 0: AudioStreamOverride(codec: .aacLC, bitrate: 192_000),
                 1: AudioStreamOverride(codec: .flac),
+            ],
+            subtitleOverrides: [
+                0: SubtitleStreamOverride(include: true, passthrough: true),
+                1: SubtitleStreamOverride(include: false, passthrough: true),
             ]
         )
 
@@ -198,6 +202,12 @@ final class PerStreamArgumentTests: XCTestCase {
         XCTAssertEqual(builder.perStreamAudioBitrate[0], 192_000)
         XCTAssertEqual(builder.perStreamAudioCodec[1], .flac)
 
+        // Verify per-stream subtitle overrides were applied to builder
+        XCTAssertEqual(builder.perStreamSubtitleInclude[0], true)
+        XCTAssertEqual(builder.perStreamSubtitleInclude[1], false)
+        XCTAssertEqual(builder.perStreamSubtitlePassthrough[0], true)
+        XCTAssertEqual(builder.perStreamSubtitlePassthrough[1], true)
+
         // Verify the built arguments contain expected flags
         let args = builder.build()
         assertConsecutive(args, flag: "-c:v:0", value: "copy")
@@ -205,6 +215,18 @@ final class PerStreamArgumentTests: XCTestCase {
         assertConsecutive(args, flag: "-c:a:0", value: "aac")
         assertConsecutive(args, flag: "-c:a:1", value: "flac")
         assertConsecutive(args, flag: "-b:a:0", value: "192k")
+        assertConsecutive(args, flag: "-c:s:0", value: "copy")
+
+        // Stream 1's include:false override must produce an explicit
+        // exclusion map, not just a builder-side flag with no CLI effect.
+        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
+        XCTAssertTrue(
+            mapPairs.contains { $0.1 == "-0:s:1" },
+            "Expected a negative -map excluding subtitle stream 1: \(args)"
+        )
+        // Excluded streams get no redundant per-stream codec option —
+        // there is no matching output stream left to apply it to.
+        XCTAssertFalse(args.contains("-c:s:1"), "Excluded stream 1 should not get a -c:s:1 codec option")
     }
 
     // MARK: - 11. Empty Overrides Fall Through to Global
@@ -231,6 +253,58 @@ final class PerStreamArgumentTests: XCTestCase {
         // Global codec should produce -c:v libx264
         assertConsecutive(args, flag: "-c:v", value: "libx264")
         assertConsecutive(args, flag: "-crf", value: "23")
+    }
+
+    // MARK: - 12. Per-Stream Subtitle Overrides (Issue #41)
+
+    func testPerStreamSubtitleExclusionMapping() {
+        var builder = makeBuilder()
+        builder.subtitlePassthrough = true
+        builder.perStreamSubtitleInclude[1] = false
+        let args = builder.build()
+
+        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
+        XCTAssertTrue(
+            mapPairs.contains { $0.1 == "0:s?" },
+            "Default all-subtitles map should still be present: \(args)"
+        )
+        XCTAssertTrue(
+            mapPairs.contains { $0.1 == "-0:s:1" },
+            "Stream 1 should be explicitly excluded: \(args)"
+        )
+    }
+
+    func testPerStreamSubtitleExclusionAppliesUnderMapAllStreams() {
+        var builder = makeBuilder()
+        builder.mapAllStreams = true
+        builder.perStreamSubtitleInclude[2] = false
+        let args = builder.build()
+
+        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
+        XCTAssertTrue(mapPairs.contains { $0.1 == "0" }, "mapAllStreams should still emit -map 0: \(args)")
+        XCTAssertTrue(
+            mapPairs.contains { $0.1 == "-0:s:2" },
+            "Stream 2 should still be excluded under mapAllStreams: \(args)"
+        )
+    }
+
+    func testPerStreamSubtitlePassthroughForcesCopy() {
+        var builder = makeBuilder()
+        builder.perStreamSubtitlePassthrough[0] = true
+        let args = builder.build()
+
+        assertConsecutive(args, flag: "-c:s:0", value: "copy")
+    }
+
+    func testEmptyPerStreamSubtitleOverridesNoExclusion() {
+        var builder = makeBuilder()
+        builder.subtitlePassthrough = true
+        let args = builder.build()
+
+        XCTAssertFalse(
+            args.contains { $0.hasPrefix("-0:s:") },
+            "No exclusion maps expected when perStreamSubtitleInclude is empty: \(args)"
+        )
     }
 
     // MARK: - PerStreamSettings Codable Round-Trip

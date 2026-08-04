@@ -38,7 +38,27 @@ jobs:
     name: Analyze Swift
     # macOS 15 runner already has Swift 6.3 preinstalled — no setup-swift needed
     runs-on: macos-15
-    timeout-minutes: 45
+    # Retained at 120 min as a safety net. With build-mode: autobuild
+    # CodeQL runs `xcodebuild`/`swift build` for us instead of our own
+    # explicit step, but the underlying instrumented-compile cost is
+    # the same — so the cap stays high to cover slow-runner cases.
+    #
+    # Timeline of CodeQL runs while diagnosing the variance:
+    #   2026-05-19  id 26129098306  manual + 75 min cap  ✅ 26 min total
+    #   2026-05-20  id 26124433339  manual + 75 min cap  ❌ cancelled at 75
+    #   2026-05-20  id 26147778531  manual + 75 min cap  ❌ cancelled at 77
+    #   2026-05-20  id 26176989617  manual + 120 min cap ❌ cancelled at 120
+    #   2026-05-20  id 26184254801  build-mode: none     ❌ Swift unsupports
+    #
+    # PR #415 first tried `build-mode: none`; the CodeQL action
+    # rejected it for Swift at init time:
+    #   "Swift does not support the none build mode. Please try using
+    #    one of the following build modes instead: autobuild, manual."
+    # Falling back to `autobuild` lets CodeQL run its own build rather
+    # than our explicit step — semantically similar to manual but
+    # routes the build through CodeQL's wrapper, which is arguably
+    # better-instrumented and may reduce variance.
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
@@ -48,25 +68,56 @@ jobs:
     steps:
       # Step 1: Check out the repository
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       # Step 2: Verify Swift version (already installed on runner)
       - name: Verify Swift version
         run: swift --version
 
-      # Step 3: Initialize CodeQL for the specified language
+      # Step 3: Cache SPM dependencies
+      #
+      # `build-mode: autobuild` (chosen in PR #415 after Swift rejected
+      # `build-mode: none`) DOES build the project — CodeQL routes
+      # `swift build` through its own wrapper rather than letting us
+      # run it directly. The cache therefore still helps cut SPM
+      # dependency download time on warm runners, same as in
+      # build.yml and release.yml.
+      - name: Cache SPM dependencies
+        uses: actions/cache@v6
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-codeql-
+            ${{ runner.os }}-spm-
+
+      # Step 4: Initialize CodeQL with build-mode: autobuild
+      #
+      # `autobuild` lets CodeQL run the build for us (via its
+      # internal `xcodebuild`/`swift build` wrapper) rather than us
+      # running it explicitly via a "Build for CodeQL analysis" step.
+      # For SPM projects this is functionally similar to running
+      # `swift build` manually but routes through a CodeQL-managed
+      # wrapper that integrates more cleanly with the extractor.
+      #
+      # `build-mode: none` was tried first (it's the GitHub-blog-post-
+      # recommended path for compiled languages) but the CodeQL Swift
+      # extractor refused: "Swift does not support the none build mode.
+      # Please try using one of the following build modes instead:
+      # autobuild, manual." See PR #415 commit history.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: autobuild
           # Use extended security queries for comprehensive analysis
           queries: security-extended
 
-      # Step 4: Build the project (CodeQL needs to observe the build)
-      - name: Build for CodeQL analysis
-        run: swift build
-
       # Step 5: Run CodeQL analysis
+      #
+      # No explicit "Build for CodeQL analysis" step is needed under
+      # `build-mode: autobuild` — the CodeQL action runs its own
+      # build during the analyze step.
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:

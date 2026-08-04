@@ -68,6 +68,22 @@ struct VideoTrimmerView: View {
     /// Error message to display, if any.
     @State private var errorMessage: String?
 
+    /// Success message to display after Apply genuinely completes, if any.
+    @State private var successMessage: String?
+
+    // MARK: - Apply Execution State (Issue #444)
+
+    /// The in-flight apply task, retained so it can be cancelled when the
+    /// user navigates away from this view while a trim/snip/split is
+    /// running. Mirrors `LoudnessReportView.analysisTask` /
+    /// `BenchmarkView.benchmarkTask`.
+    @State private var applyTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the pass currently running,
+    /// retained so `cancelApply()` can stop the running process rather
+    /// than merely abandoning it.
+    @State private var currentController: FFmpegProcessController?
+
     // MARK: - Frame Navigation State (Issue #341)
 
     /// Whether frame-accurate mode is enabled.
@@ -105,6 +121,7 @@ struct VideoTrimmerView: View {
         .onChange(of: trimEndFraction) { _, _ in recalculateSegments() }
         .onChange(of: snipRegions) { _, _ in recalculateSegments() }
         .onAppear { recalculateSegments() }
+        .onDisappear { cancelApply() }
         // Drop a single video file to set as the trim source (Issue #366).
         .onDrop(
             of: [.fileURL, .movie, .video],
@@ -420,6 +437,16 @@ struct VideoTrimmerView: View {
                     .padding(.horizontal)
             }
 
+            // Success display (Issue #444) — only ever set after the
+            // FFmpeg process genuinely completes and its output file
+            // has been verified to exist on disk.
+            if let successMessage {
+                Text(successMessage)
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal)
+            }
+
             // Apply button
             HStack {
                 Spacer()
@@ -481,18 +508,46 @@ struct VideoTrimmerView: View {
     }
 
     /// Execute the configured trim operation.
+    ///
+    /// Mirrors the execution pattern proven in
+    /// `QualityMetricsView.runAnalysis()` (Issue #434) and
+    /// `BenchmarkView.runStandardBenchmarks()` (Issue #435): locate FFmpeg
+    /// via `FFmpegBundleManager`, build arguments with the `VideoTrimmer`/
+    /// `VideoConcatenator` builders, run them through
+    /// `FFmpegProcessController.startEncoding(arguments:)`, and only report
+    /// success once the process has genuinely exited zero *and* the output
+    /// file has been verified to exist on disk (Issue #444).
+    ///
+    /// `VideoTrimmerView` is a `struct: View`, not a `@MainActor` class, so
+    /// — like the sibling views in this file's neighbourhood — its methods
+    /// are implicitly main-actor isolated via `View` conformance. A plain
+    /// `Task { }` here therefore inherits that isolation, so `@State`
+    /// mutations are direct property writes rather than `MainActor.run`
+    /// hops (matching `QualityMetricsView`'s post-Issue-#434 shape). Every
+    /// value captured into the task — paths, `TrimConfig`, the resulting
+    /// argument arrays — is `Sendable`, so nothing unsafe crosses the
+    /// closure boundary. The one genuinely blocking call —
+    /// `FFmpegBundleManager.locateFFmpeg()`, which blocks synchronously on
+    /// process exit — is still pulled into a `Task.detached` that returns
+    /// only a `Sendable` `String` and never touches `self`/`@State`, so it
+    /// never blocks the main thread.
     private func applyTrim() {
+        guard let file = viewModel.selectedFile else {
+            errorMessage = "No source file selected. Import a video file before applying a trim."
+            return
+        }
+
         errorMessage = nil
+        successMessage = nil
         isApplying = true
 
-        // Build the trim configuration
-        let splitBytes: Int64? = if let mb = Double(splitSizeMB) {
+        let splitBytes: Int64? = if let mb = Double(splitSizeMB), mb > 0 {
             Int64(mb * 1_048_576)
         } else {
             nil
         }
 
-        let _: TrimConfig = TrimConfig(
+        let config = TrimConfig(
             trimStart: trimStartFraction * duration,
             trimEnd: trimEndFraction * duration,
             snipRegions: snipRegions,
@@ -501,10 +556,272 @@ struct VideoTrimmerView: View {
             copyMode: copyMode
         )
 
-        // In a full implementation, this would invoke FFmpegProcessController
-        // with the arguments from VideoTrimmer.buildTrimArguments() or
-        // VideoTrimmer.buildSnipArguments(). For now, mark as complete.
+        let inputPath = file.fileURL.path
+        let outputDir = viewModel.outputDirectory ?? FileManager.default.temporaryDirectory
+        let baseName = PathSanitizer.sanitizeFilenameComponent(
+            file.fileURL.deletingPathExtension().lastPathComponent
+        )
+        let ext = file.fileURL.pathExtension.isEmpty ? "mp4" : file.fileURL.pathExtension
+        let sourceDuration = duration
+
+        applyTask = Task {
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                errorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before applying a trim."
+                isApplying = false
+                return
+            }
+
+            do {
+                // Split takes priority when configured, since FFmpeg's
+                // segment muxer (buildSplitArguments) operates on the whole
+                // input independently of trim/snip. Otherwise snip (which
+                // itself respects the trim head/tail via buildSnipArguments)
+                // runs when interior regions are marked; a plain head/tail
+                // trim is the fallback.
+                if config.splitBySize != nil || config.splitByChapters {
+                    let outputs = try await runSplit(
+                        ffmpegPath: ffmpegPath,
+                        inputPath: inputPath,
+                        outputDir: outputDir,
+                        config: config,
+                        duration: sourceDuration
+                    )
+                    successMessage = "Split complete. Wrote \(outputs.count) file(s) to \(outputDir.path)."
+                } else if !config.snipRegions.isEmpty {
+                    let output = try await runSnipAndConcat(
+                        ffmpegPath: ffmpegPath,
+                        inputPath: inputPath,
+                        outputDir: outputDir,
+                        baseName: baseName,
+                        ext: ext,
+                        config: config
+                    )
+                    successMessage = "Snip complete. Output written to \(output)."
+                } else {
+                    let output = try await runSimpleTrim(
+                        ffmpegPath: ffmpegPath,
+                        inputPath: inputPath,
+                        outputDir: outputDir,
+                        baseName: baseName,
+                        ext: ext,
+                        config: config
+                    )
+                    successMessage = "Trim complete. Output written to \(output)."
+                }
+            } catch is CancellationError {
+                // Cancelled by the user (or the view disappeared) — no
+                // success/error banner; cancelApply() already reset state.
+            } catch {
+                errorMessage = "Trim failed: \(error.localizedDescription)"
+            }
+
+            currentController = nil
+            isApplying = false
+        }
+    }
+
+    /// Cancel an in-progress Apply operation.
+    ///
+    /// Stops the currently-running FFmpeg process (if any) and cancels the
+    /// apply `Task` so no process or task is left running in the
+    /// background after the user navigates away from this view mid-trim.
+    private func cancelApply() {
+        currentController?.stopEncoding()
+        currentController = nil
+        applyTask?.cancel()
+        applyTask = nil
         isApplying = false
+    }
+
+    /// Runs a single FFmpeg pass to completion, honouring cancellation and
+    /// checking the real exit code — mirrors the pass-execution shape
+    /// proven in `QualityMetricsView.runAnalysis()`'s `passLoop`.
+    private func runToCompletion(
+        _ controller: FFmpegProcessController,
+        arguments: [String]
+    ) async throws {
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await _ in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
+    }
+
+    /// Runs a simple head/tail trim (`VideoTrimmer.buildTrimArguments`) and
+    /// returns the produced output path. Throws if FFmpeg exits non-zero or
+    /// no output file is actually written.
+    private func runSimpleTrim(
+        ffmpegPath: String,
+        inputPath: String,
+        outputDir: URL,
+        baseName: String,
+        ext: String,
+        config: TrimConfig
+    ) async throws -> String {
+        let outputPath = outputDir.appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent("\(baseName)_trimmed.\(ext)")
+        ).path
+
+        let arguments = VideoTrimmer.buildTrimArguments(
+            inputPath: inputPath,
+            outputPath: outputPath,
+            config: config
+        )
+
+        let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+        currentController = controller
+        try await runToCompletion(controller, arguments: arguments)
+
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: controller.exitCode ?? -1,
+                stderr: "FFmpeg reported success but no output file was found at \(outputPath)."
+            )
+        }
+        return outputPath
+    }
+
+    /// Runs a snip operation: one `VideoTrimmer.buildSnipArguments` FFmpeg
+    /// pass per keep-segment (written to a scratch temp directory), then
+    /// joins the segments into the final output with
+    /// `VideoConcatenator.buildDemuxerConcatArguments`. The scratch segment
+    /// files and concat list are always removed afterwards, whether the
+    /// operation succeeds or fails.
+    private func runSnipAndConcat(
+        ffmpegPath: String,
+        inputPath: String,
+        outputDir: URL,
+        baseName: String,
+        ext: String,
+        config: TrimConfig
+    ) async throws -> String {
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("trim_snip_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+        let segments = VideoTrimmer.buildSnipArguments(
+            inputPath: inputPath,
+            outputDir: scratchDir.path,
+            config: config
+        )
+        guard !segments.isEmpty else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: -1,
+                stderr: "The configured trim/snip range leaves no content to keep."
+            )
+        }
+
+        for segment in segments {
+            if Task.isCancelled { throw CancellationError() }
+            let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+            currentController = controller
+            try await runToCompletion(controller, arguments: segment.arguments)
+            guard FileManager.default.fileExists(atPath: segment.outputPath) else {
+                throw FFmpegProcessError.processFailure(
+                    exitCode: controller.exitCode ?? -1,
+                    stderr: "FFmpeg reported success but no segment file was found at \(segment.outputPath)."
+                )
+            }
+        }
+
+        let finalOutputPath = outputDir.appendingPathComponent(
+            PathSanitizer.sanitizeFilenameComponent("\(baseName)_trimmed.\(ext)")
+        ).path
+
+        let segmentURLs = segments.map { URL(fileURLWithPath: $0.outputPath) }
+        let (concatListContent, concatArgsTemplate) = VideoConcatenator.buildDemuxerConcatArguments(
+            files: segmentURLs,
+            outputPath: finalOutputPath
+        )
+
+        let listFileURL = scratchDir.appendingPathComponent("concat_list.txt")
+        try concatListContent.write(to: listFileURL, atomically: true, encoding: .utf8)
+
+        let concatArguments = concatArgsTemplate.map {
+            $0 == "<CONCAT_LIST_FILE>" ? listFileURL.path : $0
+        }
+
+        if Task.isCancelled { throw CancellationError() }
+        let concatController = FFmpegProcessController(binaryPath: ffmpegPath)
+        currentController = concatController
+        try await runToCompletion(concatController, arguments: concatArguments)
+
+        guard FileManager.default.fileExists(atPath: finalOutputPath) else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: concatController.exitCode ?? -1,
+                stderr: "FFmpeg reported success but no output file was found at \(finalOutputPath)."
+            )
+        }
+        return finalOutputPath
+    }
+
+    /// Runs a size- or chapter-based split (`VideoTrimmer.buildSplitArguments`).
+    /// FFmpeg's segment muxer writes every output file from a single pass,
+    /// so this is one FFmpeg invocation; returns the paths of the files
+    /// actually found on disk matching the segment pattern.
+    private func runSplit(
+        ffmpegPath: String,
+        inputPath: String,
+        outputDir: URL,
+        config: TrimConfig,
+        duration: TimeInterval
+    ) async throws -> [String] {
+        let jobs = VideoTrimmer.buildSplitArguments(
+            inputPath: inputPath,
+            outputDir: outputDir.path,
+            config: config,
+            duration: duration
+        )
+        guard let job = jobs.first else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: -1,
+                stderr: "No split configuration (chapters or max size) was set."
+            )
+        }
+
+        let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+        currentController = controller
+        try await runToCompletion(controller, arguments: job.arguments)
+
+        // job.outputPath is a segment-muxer pattern such as
+        // ".../split_%03d.mp4" — resolve which files FFmpeg actually wrote
+        // by matching the literal prefix/suffix around "%03d".
+        let patternURL = URL(fileURLWithPath: job.outputPath)
+        let patternName = patternURL.lastPathComponent
+        let patternParts = patternName.components(separatedBy: "%03d")
+        let prefix = patternParts.first ?? patternName
+        let suffix = patternParts.count > 1 ? patternParts[1] : ""
+
+        let dirContents = (try? FileManager.default.contentsOfDirectory(
+            at: patternURL.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        )) ?? []
+        let written = dirContents
+            .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix(suffix) }
+            .map(\.path)
+            .sorted()
+
+        guard !written.isEmpty else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: controller.exitCode ?? -1,
+                stderr: "FFmpeg reported success but no split output files were found matching \(job.outputPath)."
+            )
+        }
+        return written
     }
 
     // MARK: - Formatting

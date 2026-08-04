@@ -364,16 +364,26 @@ struct BackgroundRemovalView: View {
                 errorMessage = error.localizedDescription
             }
         } else {
-            // Batch processing — save to output directory
-            let savePanel = NSSavePanel()
-            savePanel.canCreateDirectories = true
-            savePanel.message = "Choose output directory for processed images."
-            savePanel.nameFieldLabel = "Output Folder:"
-            savePanel.nameFieldStringValue = "BackgroundRemoved"
+            // Batch processing — save to a user-chosen output directory
+            // (Issue #488). An `NSOpenPanel` configured for directory
+            // selection is the correct control here — the panel needs to
+            // pick an *existing* folder to save multiple files into, not
+            // a single new file path, which is what `NSSavePanel` is for.
+            // Matches the `canChooseDirectories = true` pattern used for
+            // output-directory pickers elsewhere (e.g.
+            // `SettingsView.chooseOutputDirectory()`).
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = true
+            panel.message = "Choose output directory for processed images."
+            panel.prompt = "Choose"
 
-            // Use a simple directory approach: save to Desktop subfolder
-            let outputDir = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BackgroundRemoved")
+            guard panel.runModal() == .OK, let outputDir = panel.url else {
+                isProcessing = false
+                return
+            }
 
             do {
                 let outputURLs = try await batchProcess(
@@ -408,7 +418,9 @@ struct BackgroundRemovalView: View {
 
         for inputURL in inputURLs {
             let baseName = inputURL.deletingPathExtension().lastPathComponent
-            let outputURL = outputDir.appendingPathComponent("\(baseName)_nobg.\(ext)")
+            // F-002 defensive sanitisation per SECURITY.md (Cycle 25).
+            let component = PathSanitizer.sanitizeFilenameComponent("\(baseName)_nobg.\(ext)")
+            let outputURL = outputDir.appendingPathComponent(component)
 
             try await BackgroundRemover.removeBackground(
                 inputURL: inputURL,

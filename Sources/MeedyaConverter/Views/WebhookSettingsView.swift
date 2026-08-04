@@ -171,11 +171,32 @@ struct WebhookSettingsView: View {
     ///
     /// - Returns: A configured `WebhookConfig` or `nil` if the URL is invalid.
     private func buildConfig() -> WebhookConfig? {
-        guard let url = URL(string: webhookURL) else { return nil }
+        Self.loadWebhookConfig()
+    }
 
-        let preset = WebhookPreset(rawValue: webhookPreset) ?? .generic
+    /// Load the persisted webhook configuration independent of this view
+    /// being on screen — the same `UserDefaults` keys this view's
+    /// `@AppStorage` properties bind to (which write straight through to
+    /// `UserDefaults`, so this always reflects the latest saved settings).
+    /// Mirrors `EmailSettingsView.loadSMTPConfig()`.
+    ///
+    /// Used by `AppViewModel`'s encode-complete / encode-failed /
+    /// queue-finished paths (Issue #296) to send real webhooks without
+    /// needing a `WebhookSettingsView` instance. Returns `nil` when the
+    /// URL is empty or invalid, so callers can silently skip sending.
+    ///
+    /// - Returns: A configured `WebhookConfig`, or `nil` if `webhookURL`
+    ///   is empty or not a valid URL.
+    static func loadWebhookConfig() -> WebhookConfig? {
+        let defaults = UserDefaults.standard
+
+        let urlString = defaults.string(forKey: "webhookURL") ?? ""
+        guard !urlString.isEmpty, let url = URL(string: urlString) else { return nil }
+
+        let presetRaw = defaults.string(forKey: "webhookPreset") ?? WebhookPreset.generic.rawValue
+        let preset = WebhookPreset(rawValue: presetRaw) ?? .generic
+
         var config: WebhookConfig
-
         switch preset {
         case .discord:
             config = .discord(webhookURL: url)
@@ -186,9 +207,13 @@ struct WebhookSettingsView: View {
         }
 
         // Merge custom headers.
-        let custom = parseHeaders()
-        for (key, value) in custom {
-            config.headers[key] = value
+        let headersJSON = defaults.string(forKey: "webhookCustomHeaders") ?? ""
+        if !headersJSON.isEmpty,
+           let data = headersJSON.data(using: .utf8),
+           let custom = try? JSONDecoder().decode([String: String].self, from: data) {
+            for (key, value) in custom {
+                config.headers[key] = value
+            }
         }
 
         return config

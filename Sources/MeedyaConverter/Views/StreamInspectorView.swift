@@ -301,6 +301,15 @@ struct AudioStreamRow: View {
                             .foregroundStyle(.blue)
                             .clipShape(Capsule())
                     }
+                    // Lossless / Spatial badges (#372) — sourced from
+                    // `SuiteCoreCodecClassifier` via
+                    // `MediaStream.suiteCoreCodecDescriptor`.
+                    if stream.isLosslessAudio == true {
+                        badge("Lossless", .teal, accessibilityLabel: "Lossless audio")
+                    }
+                    if stream.isSpatialAudio == true {
+                        badge("Spatial", .indigo, accessibilityLabel: "Spatial audio")
+                    }
                 }
             }
 
@@ -344,6 +353,21 @@ struct AudioStreamRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// A small capsule badge, matching `VideoStreamRow`'s styling.
+    /// `accessibilityLabel` gives VoiceOver an unambiguous announcement
+    /// (e.g. "Lossless audio" rather than the terser visible "Lossless").
+    private func badge(_ text: String, _ color: Color, accessibilityLabel: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+            .accessibilityLabel(accessibilityLabel)
     }
 
     private func formatBitrate(_ bps: Int) -> String {

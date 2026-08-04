@@ -211,6 +211,19 @@ struct VideoUploadView: View {
                 .progressViewStyle(.linear)
             }
 
+            if !viewModel.isVideoUploadEnabled {
+                Label(
+                    "Video upload is not available in this build yet.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Text("Direct upload requires connecting a YouTube/Vimeo account (coming in a future update).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             HStack {
                 Spacer()
 
@@ -223,15 +236,26 @@ struct VideoUploadView: View {
                 }
 
                 Button("Upload") {
-                    startUpload()
+                    // TODO(#446): real OAuth2 upload — wire this to an
+                    // actual YouTube/Vimeo upload request once OAuth
+                    // credentials are available. Disabled for GA (v0.1.0)
+                    // rather than faking success (see the removed
+                    // `startUpload()` implementation this replaced, which
+                    // recorded `VideoUploadHistory(success: true)` without
+                    // ever sending anything).
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(
-                    !isAuthenticated
-                    || videoTitle.isEmpty
-                    || selectedFilePath.isEmpty
-                    || isUploading
-                )
+                // Roadmap #5: gated by the remote `video-upload` flag
+                // instead of a hardcoded `true`. The flag only controls
+                // EXPOSURE — this button's action is still the empty
+                // TODO(#446) above, since the actual OAuth2 upload wiring
+                // (#294) is a separate, blocked piece of work. A
+                // maintainer should only flip `video-upload` on once #294
+                // ships; until then this stays disabled regardless,
+                // because the flag's compiled-in fail-safe default (and
+                // the behaviour while intAppsAPI is unprovisioned) is
+                // `false` — see `RemoteFeatureGateProvider.builtInDefaults`.
+                .disabled(!viewModel.isVideoUploadEnabled)
             }
         }
     }
@@ -322,58 +346,13 @@ struct VideoUploadView: View {
         selectedFilePath = url.path
     }
 
-    /// Initiates the upload process.
-    ///
-    /// Builds the appropriate upload request and would normally send it
-    /// via URLSession. For now, records the attempt in history.
-    private func startUpload() {
-        let tags = tagsText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-
-        let config = VideoUploadConfig(
-            service: selectedService,
-            title: videoTitle,
-            description: videoDescription,
-            tags: tags,
-            privacy: privacy,
-            accessToken: accessToken
-        )
-
-        let request: URLRequest?
-        switch selectedService {
-        case .youtube:
-            request = VideoUploader.buildYouTubeUploadRequest(
-                filePath: selectedFilePath,
-                config: config
-            )
-        case .vimeo:
-            request = VideoUploader.buildVimeoUploadRequest(
-                filePath: selectedFilePath,
-                config: config
-            )
-        }
-
-        guard request != nil else {
-            errorMessage = "Failed to build upload request. Check the file path and try again."
-            showError = true
-            return
-        }
-
-        isUploading = true
-        uploadProgress = 0
-
-        // Record in history (actual network upload would happen here).
-        let historyEntry = VideoUploadHistory(
-            filePath: selectedFilePath,
-            service: selectedService,
-            title: videoTitle,
-            success: true
-        )
-        uploadHistory.insert(historyEntry, at: 0)
-
-        // Simulate completion for now.
-        isUploading = false
-        uploadProgress = 1.0
-    }
+    // NOTE(#446): `startUpload()` used to live here. It built a real
+    // `URLRequest` via `VideoUploader.buildYouTubeUploadRequest`/
+    // `buildVimeoUploadRequest` but never sent it — it just unconditionally
+    // inserted `VideoUploadHistory(success: true)` into `uploadHistory`
+    // and flipped `isUploading` back off, fabricating a success entry for
+    // an upload that never happened. Real OAuth2 credentials are blocked
+    // on the maintainer (tracked in #446), so for the v0.1.0 GA the Upload
+    // button above is disabled and unwired instead of shipping a fake
+    // success path. See `// TODO(#446)` on the button action.
 }

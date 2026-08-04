@@ -13,6 +13,685 @@
 
 ## [Unreleased]
 
+### Security
+
+- **F-002 defence-in-depth complete -- remaining user-derived path
+  components sanitised** -- the last ~13 `appendingPathComponent` call
+  sites that build a filename from user-supplied data (rename-rule
+  find/replace output, user-typed profile/template names, media-file
+  basenames) now route through `PathSanitizer.sanitizeFilenameComponent`,
+  matching the migration already completed for the GUI views in an
+  earlier cycle. The highest-value fix is `BatchRenamer.apply` --
+  unlike a plain `lastPathComponent`, a rename rule's `replaceWith`
+  text is fully attacker-controllable and previously flowed unsanitised
+  into the destination path. Multi-segment relative directory paths
+  (which intentionally contain `/`) were left untouched to avoid
+  flattening legitimate subdirectory structure. See `SECURITY.md`
+  finding F-002 for the full site-by-site breakdown (re #428).
+- **FFmpeg supply chain hardened -- universal, first-party, verified
+  (F-011)** -- `scripts/bundle-ffmpeg.sh` now sources `ffmpeg` / `ffprobe` /
+  `ffplay` solely from the first-party mirror `MeedyaSuite/MeedyaDL-Tools`,
+  pinned to an immutable dated release tag, instead of an unverified
+  third-party static-build host. Each per-arch archive is SHA-256-verified
+  against the release's own `SHA256SUMS` **before** unpack, fail-closed
+  (missing pin/checksums -> exit 6, mismatch -> exit 7). The two per-arch
+  archives are `lipo`-combined into a genuinely **universal (arm64 +
+  x86_64)** binary per tool, and the app itself is now built universal too
+  (`swift build -c release --arch arm64 --arch x86_64` in `release.yml`).
+  The former URL-keyed `scripts/ffmpeg-checksums.txt` bridge (and its
+  `--refresh-checksums` mode) has been removed -- the trust root is the
+  first-party tagged release's own checksums, so there is no local hash
+  list to keep in sync. Found by the post-VERIFY adversarial review; fixed
+  across two commits (re #428).
+- **Probe-watchdog PID-reuse TOCTOU mitigated (F-012)** -- `FFmpegProbe`'s
+  finished-check, `isRunning` re-check, and the actual terminate/kill now
+  happen under a single `ProbeRunState` lock, closing the realistic window
+  where a timer could fire just after the process had already exited. A
+  sub-microsecond kernel-level PID-reuse race remains inherent to signalling
+  any `Foundation.Process` by PID and is accepted, documented inline (re #428).
+
+### Added
+
+- **Cloud-upload execution (PR #472)** -- real, authenticated upload to S3
+  (SigV4), Dropbox, Google Drive, OneDrive (chunked/resumable), and SFTP
+  (`scp`), reachable from `CloudStorageView` and the `.uploadCloud`
+  post-encode action. YouTube/Vimeo remain disabled pending OAuth (#446).
+  Not in a tagged release yet.
+- **Unified statistics dashboard** -- `AggregateStatistics`, `DashboardView`,
+  and `StatisticsExportView` roll per-job encoding stats into an aggregate
+  view with export.
+- **Email + webhook completion notifications** -- `WebhookSender` fires on
+  job success/failure from the queue's per-job completion path in
+  `AppViewModel`.
+- **Watch-folder auto-encode** -- monitored folders now auto-enqueue new
+  files for encoding rather than only appearing in the UI.
+- **Recent files & pinned favourites** -- `RecentFilesManager` +
+  `RecentFilesView`, wired into navigation.
+- **Scheduled encoding** -- `EncodingScheduler` + `ScheduleView` let a job
+  be queued for a future start time.
+- **IntAppsAPI remote feature-flags + alpha/beta update channels** --
+  `IntAppsAPIClient` reads remote flags and update-channel selection.
+- **Overwrite-existing / delete-source-after-encode toggles** -- both now
+  read from settings and take effect at encode completion.
+- **Automatic media-server library-scan on encode completion** --
+  `AppViewModel.triggerMediaServerAutoScan()` fires
+  `MediaServerIntegration.triggerLibraryScan` from the per-job success path
+  in `startQueue()`; the `mediaServerAutoScan` toggle in
+  `MediaServerSettingsView` previously had no reader. The manual "Trigger
+  Library Scan Now" button already worked before this change.
+- **Navigation exposure of 10 previously-orphaned views** -- views that
+  existed as source files but had no sidebar/menu entry are now reachable
+  from the app.
+
+  None of the ten items above are in the released `v0.1.0-rc.3` build;
+  they land in the next alpha build. See the "Documentation" entry below
+  for the doc corrections that came out of auditing these against the
+  actual call graph.
+
+- **Metadata / ID-tag passthrough guards + SUITE_CORE bindings tracking
+  (#478)** -- the cross-repo media-ID program's correctness obligation for
+  MeedyaConverter is that a conversion must NOT strip a file's external /
+  catalogue identifier tags (ISRC, UPC/ICPN, MusicBrainz IDs, ISWC, …).
+  Added argv-level guards in `ConverterEngineTests+FFmpegArguments.swift`
+  pinning the load-bearing property: a **default** encode emits
+  `-map_metadata 0` (copies the entire global metadata dictionary — every
+  tag family, not drop-unknown) and `-map_chapters 0`, and must not emit
+  `-map_metadata -1`; `copySourceMetadata = false` omits the copy-all
+  (negative control); and the `--no-copy-metadata` opt-out's trailing
+  `-map_metadata -1` is proven to come *after* the copy-all so ffmpeg's
+  last-arg-wins precedence genuinely strips. Added value-exact assertions
+  for `MetadataPassthroughBuilder` (`copyAll` == `-map_metadata 0`,
+  `strip` == `-map_metadata -1`) that close the positional wrong-but-green
+  gap in the pre-existing `contains(...)`-only tests. **Deliverable 1
+  (SUITE_CORE bindings) is tracking-only**: a note on `SuiteCoreMetadataAdapter`
+  records that the shared identifier vocabulary (MeedyaSuite-core's
+  `identifier_types` registry + `CommonTag`, MeedyaSuite-core#65) will reach
+  this app through that adapter once the core Swift bindings ship
+  (MeedyaSuite-core#28) — and that NO MeedyaConverter-local identifier model
+  should be added meanwhile (it would be throwaway). No dep bump; no new
+  identifier modelling. NOTE: this container has no Swift toolchain, so the
+  new tests were authored by source-review against the existing test idioms
+  and **compilation + `swift test` must be validated by CI** — not run
+  locally.
+
+- **`RenderFarmConfigurationLoader` consumes `RenderFarmSettingsTab`'s
+  AppStorage settings (#346)** -- a new pure, Foundation-only
+  `ConverterEngine.RenderFarmConfigurationLoader` reads the
+  `renderFarm.*` `UserDefaults` keys the settings tab already persists
+  and builds a `RenderFarmClient.Configuration` plus the initial
+  `[RenderFarmAgentInfo]` registry from them. It enforces the same
+  insecure-transport contract as `RenderFarmClient` itself: plain HTTP
+  is only permitted when the user has both enabled the toggle **and**
+  supplied a non-blank acknowledgement string, otherwise no
+  `InsecureTransportOverride` is produced. Malformed or empty
+  `agentsJSON` decodes to an empty registry rather than throwing/
+  crashing, and the discovery-interval/chunk-size settings are clamped
+  to sane bounds before conversion. `RenderFarmSettingsTab` now shares
+  its exact `UserDefaults` key strings with the loader via
+  `RenderFarmConfigurationLoader.Keys` so the two sides cannot drift.
+  This lands the settings-to-engine bridge the tab's header comment
+  described as deferred; the transport implementations (SSH/TLS),
+  Bonjour discovery, and the agent binary remain and #346 stays open.
+- **Lossless/spatial audio badges in the Stream Inspector (#372)** --
+  `FFmpegProbe` now tags each audio stream with a
+  `SuiteCoreCodecDescriptor` via `SuiteCoreCodecClassifier` (codec name +
+  channel layout + sample format), using its built-in fallback
+  classification table by default -- no `SUITE_CORE` build flag required.
+  `MediaStream` gains an optional `suiteCoreCodecDescriptor` field (and
+  `isLosslessAudio`/`isSpatialAudio` convenience accessors), defaulted to
+  `nil` so existing call sites and previously-persisted `Codable` data
+  are unaffected. The Stream Inspector shows "Lossless"/"Spatial" badges
+  on audio streams accordingly. This is the default-build fallback
+  slice; the live MeedyaSuite-core Rust classification path remains
+  gated on its tagged release (#372 stays open).
+- **SHA-256 checksums attached to Direct release assets** -- `release.yml`
+  now generates `<asset>.sha256` for both the DMG and the CLI tarball
+  after they're built/signed/notarised, and attaches both `.sha256`
+  files to the GitHub Release alongside the DMG and tarball. Closes a
+  #428 Direct-distribution must-do; README already documented a
+  `shasum -a 256 -c` verification step that had no file to check
+  against until now (re #428).
+
+### Changed
+
+CLI contract changes on `wip/alpha-consolidation` (PR #472). Not in the
+released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
+`help/cli-reference.md` are updated to match.
+
+- **`encode --video-codec`/`--audio-codec`/`--container` now reject
+  unrecognised values** -- previously an unrecognised value was silently
+  dropped (video/audio stream disabled, or container left unchanged) and
+  the command still exited 0; `applyOverrides(to:)` now throws a
+  `ValidationError` listing the accepted values. `copy` is now an
+  accepted `--video-codec`/`--audio-codec` value, routed to the existing
+  `--video-passthrough`/`--audio-passthrough` flags rather than a nonexistent
+  codec case (#466).
+- **`batch --job-file` now exits non-zero if any job fails** -- previously
+  always exited 0 even when every job failed, unlike `--dir`'s existing
+  behaviour. `runJobFileBatch` now tracks failures across the loop and
+  throws `ExitCode(ExitCodes.encodingFailed.rawValue)` (4) if any job
+  failed, matching `--dir` mode exactly. Both modes still process every
+  job before exiting (#484).
+- **`profiles --show`/`--export`/`--validate` and `validate --profile`
+  now resolve against the persisted profile store, not just built-ins**
+  -- same built-ins-first-then-store order as `encode --profile`, so a
+  profile imported via `profiles --import` is now found by these
+  commands instead of reported "not found". `profiles --list` now
+  sources `EncodingProfileStore().allProfiles()` (#489).
+- **`manifest --hdr` now rejected** with a validation error
+  ("`--hdr is not yet supported for manifest generation`") instead of
+  being silently accepted and ignored -- the manifest encode path has no
+  HDR colour-signalling implementation, unlike the main `encode`
+  pipeline's `FFmpegArgumentBuilder`. `manifest --video-codec`/
+  `--audio-codec` now reject unrecognised values the same way `encode`
+  does, instead of silently defaulting to h264/aac; and
+  `manifest --variants custom` now requires `--ladder-file`, instead of
+  silently falling through to the default ladder (#490).
+
+### Fixed
+
+- **HDR PQ/HDR10 colour signalling now emitted, and a latent HLG-signalling
+  regression fixed alongside it** -- `buildPQPreservationArguments()`
+  existed but was never wired in, so PQ/HDR10/Dolby-Vision-base-layer
+  sources (the most common HDR input) silently lost BT.2020/SMPTE ST 2084
+  colour signalling. Fixing this surfaced that the HDR argument block ran
+  *before* `extraArguments` was assigned, so both the new PQ args and the
+  pre-existing HLG colour-signalling args were being overwritten and
+  dropped before ffmpeg ever saw them; the block now runs after, so both
+  paths reach `build()` (#486).
+- **Per-stream subtitle overrides now applied** (#485) --
+  `PerStreamSettings.subtitleOverrides` was collected by the UI but
+  `toArgumentBuilder` never consumed it, unlike the audio/video overrides
+  which already worked. `-map -0:s:<i>` exclusion and forced
+  `-c:s:<i> copy` are now applied the same way the audio/video paths do.
+- **Profile import now preserves `subtitleTonemap`** (#487) -- both
+  `EncodingProfileStore.importProfile(from:)` and
+  `ProfileSharing.importFromJSON` omitted the field when reconstructing a
+  profile, so an imported or shared profile silently lost its subtitle
+  tone-mapping setting. Note: `ProfileSharing`'s share-link generation/
+  consumption flow itself remains separately broken and was not touched
+  by this fix (#491, still open).
+- **Post-encode action hooks now persist and fire on job completion, and
+  watch-folder move/delete post-actions are honoured** -- the Hooks tab's
+  action chain (`PostEncodeActionChain` -- real scp/cloud/scripts/trash/
+  notify) previously only ran from its own dry-run Test button; it's now
+  persisted to `UserDefaults` and executed from the queue's success path.
+  `WatchFolderConfig.postAction` (move-to-completed / delete-source) is
+  now honoured too, previously a no-op. Failure-path `runOnFailure`
+  invocation is deliberately still out of scope (#277).
+- **Output "Folder Structure" mode now honoured** (#275) -- the
+  `outputMode` picker (mirror source tree vs. flat) had no readers;
+  output was always flat regardless of the setting. A new
+  `OutputPathResolver.resolveOutputDirectory(...)` now picks the
+  destination directory per `outputMode`, composed with the existing
+  filename-template/overwrite logic.
+- **Metadata Tag editor now writes tags via ffmpeg** --
+  `MetadataTagEditorView` built the ffmpeg argument list for display only
+  and never ran it; a "Write Tags..." action now runs ffmpeg for real via
+  `FFmpegProcessController`, reporting success only on exit 0 with the
+  output file present (#467).
+- **Loudness "Measure Levels" now runs ffmpeg** --
+  `NormalizationSettingsView.measureLevels()` built ffmpeg arguments but
+  never launched a process, so the button spun with no result; it now
+  runs ffmpeg and populates measured LUFS/True Peak/LRA, mirroring
+  `LoudnessReportView`'s pattern from #433 (#292).
+- **Conditional encoding rules now applied at enqueue, and the rules view
+  is reachable** -- `RuleEngine.evaluateRules` was fully implemented but
+  had zero callers; a matching rule now overrides the profile for that
+  job only (the manual Output Settings selection is left untouched).
+  `ConditionalRulesView` is also now reachable from the sidebar (Tools
+  group), previously orphaned (#469).
+- **Team-profile HTTP push now actually sends** --
+  `TeamProfileManager.pushProfiles`'s `.httpServer` case built the PUT
+  request but never sent it, while the view reported "Pushed N profiles
+  successfully" regardless; it now awaits the request via `URLSession`
+  and only reports success on a 2xx response. The team-profile
+  conflict-resolution UI remains unwired and is tracked separately, not
+  touched by this fix (#482).
+- **Bitrate-heatmap "Export Image" now renders the real heatmap** --
+  `exportAsImage()` previously drew only a flat background rectangle and
+  swallowed write errors with `try?`; it now renders the same
+  `drawHeatmap(context:size:analysis:)` routine used on-screen through an
+  off-screen `ImageRenderer` and surfaces failures through an error
+  banner instead (#483).
+- **Background-removal batch honours the chosen output directory** -- the
+  batch path built an `NSSavePanel` but never called `runModal()` on it,
+  and hardcoded output to `~/Desktop/BackgroundRemoved`. Replaced with an
+  `NSOpenPanel` for directory selection; cancelling now returns without
+  processing instead of silently falling back to Desktop (#488).
+- **Dead Settings toggles wired up** -- `autoScrollLog`, `defaultProfileName`,
+  custom ffmpeg/ffprobe paths, and `confirmBeforeEncoding` were persisted
+  but read by nothing; all four now take effect (`ActivityLogView`,
+  `AppViewModel.init`, `EncodingEngine.init`, and the Queue tab's Start
+  Queue confirmation respectively) (#475).
+- **History-weighted queue ETA** -- the orphaned `ETAPredictor` is now
+  wired into the queue: `predictETA` supersedes the naive linear estimate
+  once matching per-profile encode-speed history exists (cold-start still
+  falls back to linear), and `recordEncode` logs each successful encode's
+  speed on completion (#470).
+- **QueueOptimizer's reorder now applies to the live queue** --
+  `applyOptimisation()` previously animated a checkmark and dismissed
+  without writing the reordered queue back; a new
+  `EncodingQueue.reorder(to:)` now permutes the live queue to match
+  (#448).
+- **SmartCrop "Apply to Job" now wired in** -- `applyCropToJob()` was an
+  empty method body; the chosen crop now merges into the enqueue filter
+  chain, with precedence over auto-crop (#474).
+- **Help menu / Cmd+? now opens the Help window** -- it previously called
+  the `meedyaconverter://help` URL scheme, which has no registered
+  handler (a silent no-op); it now calls `openWindow(id: "help")`
+  directly (#481).
+
+- **`LoudnessReportView` wired to real EBU R128 / ITU-R BS.1770 loudness
+  analysis (#433)** -- `runAnalysis()` was a stub that set `isAnalysing =
+  false` immediately and never ran anything, so the Phase 12 loudness
+  compliance feature (#340) showed no results despite `LoudnessReporter`
+  being fully implemented. It now locates FFmpeg via
+  `FFmpegBundleManager`, runs `LoudnessReporter.buildAnalysisArguments`
+  through `FFmpegProcessController` for each queued source file
+  (mirroring `QualityPreviewView`'s proven execution pattern), parses the
+  `loudnorm` JSON block from the captured stderr with
+  `LoudnessReporter.parseAnalysisOutput`, and evaluates compliance with
+  `LoudnessReporter.checkCompliance` against the selected standard. A
+  missing FFmpeg binary now surfaces a clear error message instead of
+  silently doing nothing, and cancelling (or navigating away) stops the
+  running FFmpeg process and analysis task cleanly -- no leaked process
+  or task. Also fixes a latent crash in `LoudnessReporter.
+  parseAnalysisOutput` found while adding test coverage: it subscripted a
+  `ClosedRange` up to `jsonEnd.upperBound`, which equals `String.
+  endIndex` (an invalid, one-past-the-end index) whenever the loudnorm
+  JSON's closing `}` was the last captured character, crashing with an
+  out-of-bounds fatal error; switched to a half-open range, which is both
+  correct and crash-safe.
+- **`QualityMetricsView` wired to real VMAF/SSIM/PSNR analysis (#434)** --
+  `runAnalysis()` built the FFmpeg argument list for the selected
+  metric(s), populated the command preview, and immediately set
+  `isAnalysing = false` without ever executing FFmpeg, so the Phase 7
+  quality-scoring feature (#291) -- gauges, quality grade, per-frame
+  chart -- could never show real data despite `QualityMetrics` being
+  fully implemented. It now mirrors `LoudnessReportView`'s proven
+  pattern (#433): locates FFmpeg via `FFmpegBundleManager`, and for
+  each selected metric ("All" runs VMAF, SSIM, and PSNR as three
+  sequential passes) builds arguments with `QualityMetrics.build*
+  Arguments` and executes them through `FFmpegProcessController.
+  startEncoding`. SSIM/PSNR scores are parsed from stderr via
+  `QualityMetrics.parseSSIMOutput`/`parsePSNROutput`; VMAF writes a
+  JSON log to a unique temp file which is parsed with `QualityMetrics.
+  parseVMAFLog` for both the aggregate score and the per-frame series
+  that feeds the chart (falling back to stderr parsing if the log
+  can't be read), and the temp log is always deleted afterwards. A
+  new pre-flight check probes `ffmpeg -hide_banner -filters` for
+  `libvmaf` support before attempting VMAF -- if absent, VMAF is
+  skipped with a clear message while SSIM/PSNR still run in "All"
+  mode, rather than failing the whole pass with an obscure
+  filter-not-found error. A missing FFmpeg binary surfaces a clear
+  error message instead of silently doing nothing; a new Cancel
+  button, `.onDisappear`, and `deinit` all stop the running process
+  and analysis task cleanly, with no leaked process, task, or temp
+  file. Verified end-to-end against real FFmpeg on the dev machine
+  (Homebrew `ffmpeg-full` 8.1.2 with libvmaf): PSNR 36.79 dB, SSIM
+  0.9749, VMAF mean 86.12 (20 frames) on a `crf 10` vs `crf 40`
+  synthetic test clip. Added pure unit tests for the previously
+  untested `QualityMetrics` (Utility) builders/parsers using
+  real-captured FFmpeg stderr and a real-shaped VMAF JSON log (re
+  #291, re #428).
+- **`BenchmarkView` wired to real FFmpeg benchmark execution (#435)** --
+  `runStandardBenchmarks()` built real FFmpeg arguments for each
+  codec/preset/resolution combination via `EncodingBenchmark.
+  buildBenchmarkArguments` but then fabricated a "simulated" fps figure
+  from hard-coded per-codec/preset multipliers instead of ever running
+  them, so the Phase 13 encoding-speed benchmark feature (#325) showed
+  entirely made-up numbers. It now mirrors `QualityMetricsView`'s
+  proven pattern (#434), the closest reference since benchmarks also
+  loop multiple sequential FFmpeg passes: locates FFmpeg via
+  `FFmpegBundleManager`, then for each `standardBenchmarks` entry runs
+  the real arguments through `FFmpegProcessController.startEncoding`
+  (output discarded via `-f null -`; `BenchmarkResult` has no size
+  field, so no temp output file is needed), measures real wall-clock
+  encode time with `Date()`, and reads the real frame count from the
+  last `-progress` update. A new pure helper, `EncodingBenchmark.
+  makeResult(codec:preset:resolution:frames:encodeTime:
+  hardwareAccelerated:)`, computes `fps = frames / encodeTime` so the
+  figure reflects genuine throughput rather than FFmpeg's `speed=`
+  multiplier. Runs on a `Task.detached` (mirroring `QualityMetricsView`)
+  so the blocking FFmpeg-locate probe and the passes themselves can't
+  block the UI thread; a missing FFmpeg binary surfaces a clear error
+  instead of showing fabricated data; a new Cancel button and
+  `.onDisappear` stop the running process and benchmark task cleanly,
+  with results already collected up to that point retained. Verified
+  end-to-end against real FFmpeg 8.1.2 on the dev machine: `h264/
+  ultrafast@1920x1080` measured 300 frames / 0.463s = 648.55 fps,
+  `h264/medium@1920x1080` measured 300 frames / 1.938s = 154.76 fps --
+  sane, clearly differentiated real numbers. Added 14 pure unit tests
+  for the previously-untested `EncodingBenchmark` (argument building,
+  stderr-output parsing, and the new `makeResult` helper) (re #325,
+  re #428).
+- **`release.yml` header/precheck/FFmpeg comments corrected** -- three
+  stale or incorrect comments fixed with no logic change: the header no
+  longer implies GitHub can branch-filter a tag push to `main` (it
+  can't -- tagging the right commit is a maintainer responsibility);
+  the precheck job's recovery note now points at `gh run rerun
+  <run-id>` instead of the non-existent `gh workflow run` (this
+  workflow has no `workflow_dispatch` trigger); and the FFmpeg-bundling
+  step comment no longer claims arm64-only output now that the script
+  produces genuinely universal binaries (F-011) (re #428).
+- **README install/verify instructions matched to the real asset
+  names** -- README referenced `MeedyaConverter-<version>.dmg` and a
+  bare `.dmg.sha256`; the actual asset (and the one `release.yml`
+  now produces a checksum for) is `MeedyaConverter-<version>-macOS.dmg`.
+  The CLI tarball name and the `shasum -a 256 -c` example are corrected
+  to match (re #428).
+
+### Documentation
+
+- **README / PROJECT_STATUS / FEATURES honesty reconciliation** -- audited
+  every user-facing feature claim in README.md, PROJECT_STATUS.md, and
+  FEATURES.md against the actual call graph (static analysis; no
+  `swift build` available in this environment). Relabelled orphaned/
+  arg-builder-only code as "Planned / scaffolded" instead of removing the
+  roadmap context, and separated real-but-unreleased branch work (cloud
+  upload execution, unified statistics, email/webhook notifications,
+  watch-folder auto-encode, recent files, scheduled encoding, IntAppsAPI,
+  orphaned-view navigation, overwrite/delete-source toggles -- see Added,
+  above) into its own "landing in the next alpha build" section so it's
+  not confused with the released `v0.1.0-rc.3`. Two previously-unflagged
+  findings surfaced during the audit: the Scene Detection view builds
+  FFmpeg arguments but never launches FFmpeg (logs "requested" and
+  returns -- #288, same class of bug #433-#435 fixed elsewhere but this
+  one wasn't caught at the time), and AccurateRip verification has no real
+  caller (`AudioCDReader` has zero instantiation sites). Also reworded
+  unverifiable specifics (exact test counts) to "full suite, verified in
+  CI" rather than restating stale numbers, and corrected the open-issue
+  count to 98 (verified).
+- **New Direct-distribution release runbook**
+  (`docs/distribution/direct-release.md`) documenting the actual
+  `release.yml` flow end-to-end: pre-flight checklist, cutting an rc/GA
+  tag, a step-by-step walkthrough of what CI does, a local smoke-test
+  procedure for the published artefacts, failure/re-run guidance, a
+  soak-window policy placeholder, and known gaps (the CHANGELOG-date
+  step not being committed by CI; the CLI tarball being signed but not
+  notarised; the FFmpeg pin being a single deliberate edit) (re #428).
+- **`apple-secrets-setup.md` verification section rewritten** -- it
+  told the reader to dry-run via Actions -> "Run workflow", but
+  `release.yml` has no `workflow_dispatch` trigger; that button doesn't
+  exist. Rewritten to state the precheck can only be observed on a real
+  `v*` tag push, with a pointer to the new release runbook and a noted
+  (but not implemented) option to add a `workflow_dispatch`
+  precheck-only path later (re #428).
+- **`help/cli-reference.md` rewritten** against the real `meedya-convert`
+  command surface -- it previously called the binary `meedya-cli` and
+  claimed "the CLI tool will be implemented in Phase 6"; both were stale,
+  since the CLI shipped in Phase 4. All six subcommands (`encode`, `probe`,
+  `profiles`, `batch`, `manifest`, `validate`), their real options, and the
+  actual POSIX exit codes (0/1/2/3/4/5/6/130) are now documented from
+  source and cross-checked against `docs/api/meedya-convert-api.yaml` (#429).
+- **New help topic `help/vector-conversion.md`** documenting the Tools
+  sidebar's Vector Conversion (raster -> SVG) and ProRes to Vector
+  (ProRes 4444 -> animated SVG) views: input formats, editability presets,
+  tracing modes, alpha strategies, animation methods, and the ProRes
+  output-size warning, sourced from `RasterVectorConverter.swift`,
+  `ProResToVectorConverter.swift`, and the corresponding SwiftUI views (#429).
+- **`PROJECT_STATUS.md`, `Project_Plan.md`, and `DEV_NOTES.md` refreshed**
+  to post-autopilot reality: full test suite green in CI with 0 compiler
+  warnings, the F-001..F-012 security findings register status,
+  the universal/first-party FFmpeg supply chain, and the `v0.1.0-rc.4`
+  (soak) -> `v0.1.0` GA release posture. Removed a stale "CLI: Phase 6"
+  platform-strategy row in `Project_Plan.md` (the CLI shipped in Phase 4)
+  and corrected the `profiles`/`validate` CLI command descriptions there
+  to match the shipped flag surface (#429).
+
+---
+
+## [0.1.0-rc.4] -- 2026-MM-DD (TBD)
+
+### Highlights
+
+User-facing summary of the changes since rc.3 (engineering detail follows
+below):
+
+- **HDR subtitles now actually render in the output.** The Subtitles
+  section in Output Settings (added in rc.3 as a UI-only switch) is now
+  wired all the way through the encoding engine via `SubtitleTonemapPipeline`,
+  so toggling HDR-aware subtitle tone-mapping changes the bytes that get
+  written to disk.
+- **New Settings tabs.** Encoding → Metadata lets you pick a metadata
+  backend (with a live availability indicator for MeedyaSuite-core);
+  Encoding → Audio CD exposes the AccurateRip submission controls; and
+  Services → Render Farm exposes the insecure-transport gate, Bonjour
+  discovery, chunk-size and agent-list controls behind the new render
+  farm subsystem.
+- **New Tools views for vector workflows.** "Vector Conversion" (raster →
+  SVG) and "ProRes to Vector" (ProRes 4444 → animated SVG) are now first-
+  class sidebar entries instead of being CLI-only.
+- **Distinct Render Farm icon.** The Render Farm sidebar entry no longer
+  shares an icon with SFTP, so the two are visually distinguishable at a
+  glance.
+- **More reliable CI / release pipeline.** SPM dependency caching now
+  actually keys off something that exists at checkout time, CodeQL no
+  longer falsely cancels on slow runners, and branch protection accepts
+  the same status-check name CI actually reports — so PRs merge on green
+  without needing the admin override.
+
+### Added -- 2026-05-20 (subtitle tone-mapping end-to-end + workflow polish)
+
+- **Subtitle tone-mapping reaches the output bytes** -- the
+  OutputSettingsView toggle that landed in PR #397 was previously
+  cosmetic: the per-profile `subtitleTonemap` config was stored but
+  no encoding-pipeline code consumed it. PR #413 closes the loop in
+  five steps:
+    1. `FFmpegArgumentBuilder.SubtitleStreamAction` (passthrough /
+       replaceWith(URL) / drop) + `subtitleStreamActions` field
+       drives per-source-stream subtitle mapping when non-empty
+    2. Five unit tests for the builder
+    3. `EncodingJobConfig` threads `subtitleStreamActions` to the
+       builder (introduced `SubtitleStreamActionEntry` Codable struct)
+    4. `EncodingEngine.encode()` calls `SubtitleTonemapPipeline.run(...)`
+       as a pre-processing stage and populates
+       `enrichedJob.subtitleStreamActions` from the result
+    5. Integration test pinning the full data flow
+  (PR #413, closes #409 / completes the chain that started with #369
+  engine and #397 UI binding)
+
+### Fixed -- 2026-05-20 (workflow infrastructure)
+
+- **CodeQL workflow cancellations**: the 75-minute timeout cap was
+  insufficient on slow `macos-15` runners — same code completing in
+  24 minutes on one runner but cancelling at 77 minutes on another.
+  Diagnosis revealed CodeQL's Swift extractor re-instruments every
+  compile invocation, so SPM caching cannot short-circuit the
+  dominant cost. Timeout raised to 120 minutes for hardware-variance
+  headroom. (PR #412)
+- **SPM cache step in codeql.yml**: previously cold every run, now
+  matches the pattern in build.yml/release.yml. The cache itself
+  saves only ~30 s of SPM-download time but provides a baseline for
+  future tuning. (PR #411)
+- **SPM cache key was hashing a gitignored file**: all six workflows
+  used `hashFiles('Package.resolved')`, but Package.resolved is in
+  .gitignore and absent at runner checkout time — the hash was
+  always empty and every cache went to a single per-prefix bucket.
+  Fixed to `hashFiles('Package.swift', 'Package.resolved')` so the
+  always-tracked Package.swift drives discrimination today, and a
+  future policy change to commit Package.resolved adds exact-version
+  precision for free. Affects build.yml, beta-alpha.yml, codeql.yml,
+  dev-build.yml, release.yml, testflight.yml. (this batch)
+
+### Changed -- 2026-05-20
+
+- **Branch protection cleanup**: removed the PR-review requirement
+  on main, updated the required-status-check context name to match
+  what CI actually reports (`Build & Test (macOS)`), and rewrote the
+  "Protect main branch" repository ruleset to require the actual
+  check name rather than the template defaults (`Frontend
+  (ubuntu-latest)` / `Backend (ubuntu-latest)`) it had been carrying
+  since project creation. PRs now merge without `--admin` once
+  Build & Test passes.
+
+### Added -- 2026-05-18 (UI gap closure for #381 + audit follow-ups)
+
+- **Subtitle tone-mapping UI** -- `OutputSettingsView` gains a new
+  Subtitles section with a master toggle, HDR source profile picker,
+  target luminance stepper, and preserve-alpha toggle. Bound to a new
+  optional `EncodingProfile.subtitleTonemap: SubtitleTonemapConfig?`.
+  (PR #397, addresses #396 / part of #381)
+- **MeedyaSuite-core metadata backend UI** -- new "Metadata" tab in
+  Settings → Encoding with a picker over `SuiteCoreMetadataBackend`,
+  AppStorage persistence, and a live status line. The `.suiteCore`
+  option is rendered as disabled when `SuiteCoreAvailability.isAvailable`
+  is false. (PR #399, addresses #398 / part of #381)
+- **AccurateRip submission UI** -- new "Audio CD" tab in Settings →
+  Encoding with toggle + drive model + read offset stepper (±500
+  samples) + software identifier + Link to the AccurateRip drive-offset
+  table. Subordinate fields are `.disabled` when the master toggle is
+  off. (PR #401, addresses #400 / part of #381)
+- **Vector Conversion UI** -- new "Vector Conversion" view under the
+  Tools sidebar, bound to `RasterToVectorConfig` with Input/Preset/
+  Tracing/Alpha/Animation/Other sections. Preset auto-drives tracing
+  mode + colour count except for `.custom`. Animation section only
+  renders when input format is animated. (PR #403, addresses #402 /
+  part of #381)
+- **ProRes → Vector UI** -- new "ProRes to Vector" view under the
+  Tools sidebar, bound to `ProResToVectorConfig` with Source/Alpha/
+  embedded-tracing-editor/Animation/Assembly/Warning sections. Reuses
+  the new factored `RasterToVectorConfigEditor`. Output-size warning
+  fires when `shouldWarnAboutOutputSize(...)` returns true.
+  (PR #405, addresses #404 / part of #381)
+- **Render Farm settings UI** -- new "Render Farm" tab in Settings →
+  Services with insecure-transport toggle + acknowledgement, Bonjour
+  discovery interval stepper, chunk size segmented picker (1/4/16/64
+  MiB), agents list with discovered/manual badges, and an Add-agent
+  modal sheet. AppStorage-backed today; engine consumer reads the keys
+  when #346 transport lands. (PR #407, addresses #406 / part of #381)
+
+### Fixed -- 2026-05-18 (release.yml stabilisation)
+
+- **Keychain tests in release-mode CI** -- a fresh GitHub Actions
+  `macos-15` runner has no unlocked default user keychain, causing all
+  four `APIKeyManagerKeychainTests` cases to report empty secrets on
+  hydrate. The tests now probe Keychain round-trip in `setUpWithError`
+  and `XCTSkip` cleanly when persistence is unavailable, instead of
+  falsely failing. (PR #394)
+- **release.yml changelog extraction on BSD sed** -- the trailing-
+  blank-strip in `scripts/extract-changelog.sh` used the GNU-sed idiom
+  `-e :a -e '/^\n*$/{$d;N;ba}'`, which BSD sed (macOS default) rejects
+  with "unexpected EOF (pending }'s)". Replaced with portable awk that
+  buffers all lines, tracks the last non-blank, and emits up to that
+  point. (PR #395)
+- **AppIcon asset catalog** -- previously contained only `app-icon.svg`,
+  which SPM's asset-catalog compiler does not consume at multiple sizes,
+  producing a built bundle with a generic/missing icon. Rasterized PNGs
+  at the seven distinct macOS sizes (16/32/64/128/256/512/1024) added
+  to `AppIcon.appiconset/`. `scripts/export-icons.sh` extended to keep
+  the catalog in sync on regeneration. (PR #385)
+
+### Security -- 2026-05-18 (#380 audit closure)
+
+All four deferred items from the #380 security + memory audit closed:
+
+- **FTP credentials no longer on curl argv** -- `SFTPUploader` now writes
+  a `0600`-permissioned temp config file consumed via `curl -K <path>`;
+  credentials no longer appear in `ps aux` for the duration of an upload.
+  (PR #382 commit 53ba286)
+- **API key secrets moved to Keychain** -- `APIKeyManager` persistence
+  now splits metadata (v2 envelope on disk) from secrets (kSecClassGeneric-
+  Password, one item per `(provider, label)`). Legacy `[StoredAPIKey]`
+  JSON files are auto-migrated on first load. (PR #382 commit 34d7987)
+- **TempFileManager orphan cleanup on init** -- new
+  `cleanupOrphansOnInit: Bool = true` parameter so production gets
+  defensive cleanup for free; tests can opt out. (PR #382 commit ccdc46d)
+- **RenderFarmClient `.plainHTTP` gated by InsecureTransportOverride
+  token** -- replaces the bare `allowInsecureTransports: Bool` flag
+  with a capability-token type whose factory forces every override
+  site to write `.developmentOnly(acknowledgement: …)` — a static
+  review signal. (PR #382 commit 750aaf5)
+
+### Changed -- 2026-05-18
+
+- **TestFlight workflow guardrails** -- `testflight.yml`'s `push.tags`
+  trigger fired unexpectedly on `v0.1.0-rc.1` and uploaded build 244
+  to App Store Connect, where Apple's validators flagged seven ITMS
+  findings. The workflow is now `disabled_manually` at the registry
+  AND the `push.tags` trigger is commented out — both must be reversed
+  to resume automated submissions. Re-enable preconditions tracked in
+  #392. The seven ITMS items are tracked individually in #386-#391.
+  (PR #393)
+- **CodeQL workflow timeout** -- bumped `timeout-minutes` from 45 to
+  75 after the post-#382 codebase growth started producing intermittent
+  cancel-on-timeout results. CodeQL is not a required branch-protection
+  check, so this is informational hygiene.
+- **Dependency Review workflow fix** -- removed the redundant
+  `deny-licenses` from `dependency-review.yml`; `actions/dependency-
+  review-action@v4` rejects passing both `allow-licenses` and
+  `deny-licenses`. (PR #382 commit d468ece)
+
+### Added -- 2026-04-20 (integration batch #371–#378, #178)
+
+- **MeedyaSuite-core Swift Package integration scaffolding** -- `Package.swift`
+  adds `SUITE_CORE=1` env flag (with optional `SUITE_CORE_PATH` for local
+  development) that pulls in `MWBMPartners/MeedyaSuite-core` and wires the
+  `MeedyaCore` product into `ConverterEngine` (#373)
+- **SuiteCoreBridge** -- `Sources/ConverterEngine/SuiteCore/SuiteCoreBridge.swift`
+  exposes `SuiteCoreAvailability`, `SuiteCoreBridgeError`, and
+  `SuiteCoreSmokeTest.ping()` for end-to-end bridge verification (#373)
+- **SuiteCoreTypes** -- `SuiteCoreMetadataProvider`, `SuiteCoreCodecDescriptor`,
+  and `SuiteCoreFingerprintResult` mirror the Rust types from meedya-core (#373)
+- **SuiteCoreMetadataAdapter** -- routes metadata lookups through
+  MeedyaSuite-core when linked, falling back to the inline providers
+  otherwise; advertises 12 additional providers (imdb, acoustid,
+  rottentomatoes, metacritic, tvmaze, anidb, kitsu, animeplanet,
+  last_fm, deezer, spotify_metadata, apple_music) when suite-core is on (#371)
+- **SuiteCoreCodecClassifier** -- unified codec classification with a
+  table-driven fallback covering lossless codecs (FLAC, ALAC, TrueHD, MLP,
+  DTS-HD MA, PCM), always-spatial codecs (Atmos, MPEG-H 3D Audio, IAMF,
+  DTS:X, AC-4 IMS), and spatial channel layouts (#372)
+- **Metadata cleanup tracking** -- `docs/migration/suite-core-cleanup.md`
+  file-by-file checklist for removing the inline TheTVDB client once
+  MeedyaSuite-core is default-on (#374)
+- **Subtitle tone-mapping** -- `SubtitleTonemapWrapper` integrates
+  quietvoid/subtitle_tonemap following the DoviToolWrapper pattern, with
+  full HDR10/HDR10+/Dolby Vision/HLG support and accepted formats .sup,
+  .sub, .idx, .ass, .ssa (#369)
+- **Render-farm subsystem** -- `RenderFarmAgent` + `RenderFarmClient` pure
+  value types + agent registry + pluggable `RenderFarmTransportAdapter`;
+  Bonjour service type `_meedyaconverter-agent._tcp`, per-chunk SHA-256,
+  versioned REST paths, and `progressStream` AsyncThrowingStream with
+  terminal-state auto-stop (#346)
+- **Raster ↔ vector image conversion scaffolding** -- covers 30+ Phase 15
+  raster formats, SVG 1.1/2.0 output, 4 tracing modes, 6 editability
+  presets, 3 alpha strategies, 4 animation methods, plus
+  `buildVTracerArguments`/`buildPotraceArguments`/`buildRsvgConvertArguments`
+  pure argument builders (#376)
+- **ProRes alpha → animated SVG scaffolding** -- extends the raster/vector
+  pipeline with ProRes 4444 / 4444 XQ / 4444 HDR variant detection,
+  rational-accurate frame rates (23.976, 29.97, 59.94 etc), HDR tone-map
+  chain for 4444 HDR, SMIL/CSS/hybrid/frame-sequence SVG assembly, and
+  output-size warnings (#377)
+- **FFplay bundling** -- `FFmpegBundleManager.locateFFplay()` +
+  `isFFplayAvailable()` soft-fail helper; `scripts/bundle-ffmpeg.sh`
+  downloads and stages ffmpeg + ffprobe + **ffplay** from a static-build
+  distribution for arm64 or x86_64 and validates each with -version (#378)
+- **App Store Connect metadata** -- `metadata/en-US/` fastlane-ready
+  description, subtitle, promotional text, keywords, release notes,
+  support/marketing/privacy URLs plus `metadata/copyright.txt`,
+  category files, and `review_information.yml` with reviewer notes;
+  `docs/distribution/app-store-submission.md` 7-section runbook (#178)
+
+### Fixed -- 2026-04-20
+
+- **potrace alphamax clamp** -- was always 1.0 because of a typo in the
+  min/max expression; now maps the 0..10 simplification knob onto
+  potrace's 0.0..1.3 range (#379)
+- **Critical: Mega.nz JSON command injection** -- login and upload-complete
+  commands no longer string-interpolate user-supplied fields into JSON;
+  switched to `JSONSerialization` (#380)
+- **Critical: Mux direct-upload JSON injection** -- same fix pattern (#380)
+- **Critical: SFTP rsync SSH command injection** -- key-file path is now
+  single-quoted with `'\\''`-escaped embedded quotes (#380)
+- **Major: FFmpegProcessController unbounded stderr buffer** -- added 10 MiB
+  soft cap with line-drop trimming (#380)
+- **Major: RenderFarmClient progressStream task leak** -- task is now
+  assigned to a box the termination closure captures, preventing detached
+  tasks when the caller abandons the stream between init and first poll (#380)
+
 ### Added -- 2026-04-05
 
 - **Comprehensive documentation update** -- Rewrote and updated all 10 wiki pages, OpenAPI spec, CHANGELOG, and PROJECT_STATUS to reflect current application state (#186)
@@ -92,50 +771,6 @@
 
 ---
 
-## [0.1.0-alpha] -- Unreleased
-
-> Alpha milestone targeting Phases 0-4 completion.
-
-### Added
-
-- SPM package with three targets: ConverterEngine (library), meedya-convert (CLI), MeedyaConverter (SwiftUI app)
-- FFmpeg bundle manager with binary discovery, version detection, and validation
-- FFmpeg process controller with start/pause/resume/stop and progress monitoring
-- Media file probing via FFprobe -- streams, HDR detection, chapters, metadata
-- Complete data models -- MediaFile, MediaStream, 16 video codecs, 30+ audio codecs, 25+ containers, 14+ subtitle formats
-- FFmpeg argument builder translating encoding settings to CLI arguments
-- Encoding profile system with 7+ built-in presets and JSON persistence
-- Encoding job queue with priority ordering, state tracking, batch management
-- Temp file management with per-job directories and disk space monitoring
-- Encoding engine orchestrating full video/audio conversion pipeline
-- 30 unit tests covering all Phase 1 components
-- Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: sidebar navigation, source import, stream inspector, output settings, queue, log
-- Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
-- HDR-to-SDR tone mapping (hable/reinhard/mobius/bt2390/clip), auto-trigger for incompatible settings
-- PQ-to-HLG conversion via hlg-tools (preferred) or FFmpeg zscale fallback
-- PQ-to-DV Profile 8.4 + HLG combined conversion: three-tier DV-to-HLG-to-SDR fallback
-- Dolby Vision preservation pipeline: RPU extract, encode, inject via dovi_tool
-- HLG-to-DV auto-conversion via dovi_tool generate (Profile 8.4)
-- Container-codec compatibility matrix with validation and UI warnings
-- Automatic black bar crop detection via FFmpeg cropdetect
-- Hardware encoder detection (VideoToolbox/NVENC/QSV/AMF/VA-API)
-- In-app help system, settings view, profile management
-- AccurateRip verification engine for audio disc ripping
-- Audio disc fidelity module (CDTOC, cuesheet, chapters, whole-disc ripping)
-- CLI tool with 6 subcommands: encode, probe, profiles, batch, manifest, validate
-- Licensing module: EntitlementGating, ProductCatalog, StoreManager, RevenueCat, LicenseKeyValidator
-- Encoding pipelines, conditional rules, post-encode actions, encoding checkpoints
-- Watch folder monitoring, scene detection, content analysis
-- Audio normalization presets, surround upmixer, audio fingerprinting
-- Metadata lookup and auto-tagging (MusicBrainz, TMDB, TVDB, Discogs)
-- Cloud upload providers (12+), media server notifications, API key management
-- Quality metrics (VMAF/SSIM), encoding reports, frame comparison
-- AI upscaler, forensic watermark, DCP generator
-- 35+ SwiftUI views including pipeline editor, schedule, conditional rules, bitrate heatmap, audio waveform, quality preview, paywall, analytics settings
-
----
-
 ## Version History
 
 > **Version format:** `MAJOR.MINOR.PATCH`
@@ -146,7 +781,12 @@
 
 | Version | Date | Highlights |
 | ------- | ---- | ---------- |
-| 0.1.0-alpha | TBD | Core engine, SwiftUI app, CLI tool, HDR workflows, encoding profiles, licensing, pipelines |
+| 0.1.0-rc.4 | 2026-MM-DD (TBD) | Subtitle tone-mapping wired end-to-end, new Metadata / Audio CD / Render Farm settings tabs, Vector Conversion and ProRes-to-Vector tools surfaced in sidebar, distinct Render Farm icon, CI/release hardening (SPM cache key, CodeQL timeout, branch-protection check name) |
+| 0.1.0-rc.3 | 2026-05-18 | Release-pipeline stabilisation: portable `awk`-based changelog extraction in `scripts/extract-changelog.sh` (replaces a GNU-sed idiom BSD sed rejected) so `release.yml` runs to completion on macOS runners |
+| 0.1.0-rc.2 | 2026-05-18 | `APIKeyManagerKeychainTests` skip cleanly via `XCTSkip` when the CI runner has no unlocked default keychain, unblocking `release.yml` |
+| 0.1.0-rc.1 | 2026-05-18 | Rasterised AppIcon PNGs (16 → 1024 px) added to `AppIcon.appiconset/` so the built bundle ships with the correct icon; first release candidate carrying the integration batch and #380 audit closure |
+| 0.1.0-beta.1 | 2026-04-08 | Beta channel cut: DV + HDR10+ dual-dynamic HDR pipeline, dual bundle IDs (Direct vs App Store Lite), TestFlight + dev-build workflows, full UI surfacing of 33 views, REST API server, watch folders, watermark/voice-isolation/background-removal, full metadata-tag editor, cloud upload providers, quality scoring (VMAF/SSIM/PSNR), and the first comprehensive code review pass |
+| 0.1.0-alpha | 2026-04-08 | Alpha cut from the same commit as beta.1: core engine, SwiftUI app, CLI tool, HDR workflows (PQ→HLG, DV preservation, HDR→SDR tone mapping), 7+ encoding profiles, licensing module, encoding pipelines, AccurateRip, metadata lookup |
 
 ---
 

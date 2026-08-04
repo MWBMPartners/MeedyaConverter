@@ -17,6 +17,17 @@ import ConverterEngine
 /// list, and a view of team member activity.
 ///
 /// Phase 14.1 — Team Shared Encoding Profiles (Issue #345)
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28, re #451):**
+/// `pushProfiles()`/`pullProfiles()` (this file's only `Task.detached`
+/// sites) were re-checked against the genuine bug class — a `@MainActor`
+/// class `self` captured into `Task.detached` and mutated back via
+/// `MainActor.run` — and found already correct: this is a `View` struct,
+/// so a plain `Task { }` inherits its implicit main-actor isolation
+/// (`@State` writes are direct), and the inner `Task.detached` in each
+/// method captures/returns only `Sendable` values (`profiles`/
+/// `repository`/`[EncodingProfile]`), never `self`. No changes made — see
+/// `pushProfiles()`'s doc comment for the full reasoning.
 struct TeamProfileView: View {
 
     // MARK: - Environment
@@ -259,6 +270,23 @@ struct TeamProfileView: View {
     }
 
     /// Push local profiles to the configured repository.
+    ///
+    /// `TeamProfileView` is a `struct: View`, so — mirroring
+    /// `VideoTrimmerView.applyTrim()` (Issue #444/#451) — its methods are
+    /// implicitly main-actor isolated. A plain `Task { }` here therefore
+    /// inherits that isolation, so `@State` mutations below are direct
+    /// property writes rather than `MainActor.run` hops, and `self` never
+    /// crosses an isolation boundary. `TeamProfileManager.pushProfiles(_:to:)`
+    /// — whose `.iCloudSharedFolder`/`.gitRepository` cases still perform
+    /// genuinely blocking synchronous file I/O, and whose `.httpServer`
+    /// case now really awaits the PUT via `URLSession` (Issue #482) — is
+    /// pulled into a `Task.detached` that captures and returns only
+    /// `Sendable` values (`profiles`, `repository`) and never touches
+    /// `self`. Only on genuine success (the `do` block completing without
+    /// throwing, meaning the HTTP push got a 2xx or the file write
+    /// succeeded) are `lastSyncDate`/`statusMessage` updated to report
+    /// success; any thrown error — including a non-2xx HTTP response — is
+    /// surfaced via `statusMessage`/`isError` in the `catch` below instead.
     private func pushProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -267,27 +295,30 @@ struct TeamProfileView: View {
         let repository = buildRepository()
         let profiles = viewModel.engine.profileStore.profiles
 
-        Task.detached {
+        Task {
             do {
-                let mgr = TeamProfileManager(repository: repository)
-                try mgr.pushProfiles(profiles, to: repository)
-                await MainActor.run {
-                    lastSyncDate = Date()
-                    statusMessage = "Pushed \(profiles.count) profiles successfully."
-                    isError = false
-                    isSyncing = false
-                }
+                try await Task.detached {
+                    let mgr = TeamProfileManager(repository: repository)
+                    try await mgr.pushProfiles(profiles, to: repository)
+                }.value
+                lastSyncDate = Date()
+                statusMessage = "Pushed \(profiles.count) profiles successfully."
+                isError = false
+                isSyncing = false
             } catch {
-                await MainActor.run {
-                    statusMessage = error.localizedDescription
-                    isError = true
-                    isSyncing = false
-                }
+                statusMessage = error.localizedDescription
+                isError = true
+                isSyncing = false
             }
         }
     }
 
     /// Pull profiles from the configured repository.
+    ///
+    /// Mirrors `pushProfiles()` above: a plain `Task { }` inherits this
+    /// view's main-actor isolation, and only the blocking
+    /// `TeamProfileManager.pullProfiles(from:)` I/O call is isolated in a
+    /// `Task.detached` returning a `Sendable` `[EncodingProfile]`.
     private func pullProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -295,23 +326,21 @@ struct TeamProfileView: View {
 
         let repository = buildRepository()
 
-        Task.detached {
+        Task {
             do {
-                let mgr = TeamProfileManager(repository: repository)
-                let pulled = try mgr.pullProfiles(from: repository)
-                await MainActor.run {
-                    remoteProfiles = pulled
-                    lastSyncDate = Date()
-                    statusMessage = "Pulled \(pulled.count) profiles."
-                    isError = false
-                    isSyncing = false
-                }
+                let pulled = try await Task.detached {
+                    let mgr = TeamProfileManager(repository: repository)
+                    return try mgr.pullProfiles(from: repository)
+                }.value
+                remoteProfiles = pulled
+                lastSyncDate = Date()
+                statusMessage = "Pulled \(pulled.count) profiles."
+                isError = false
+                isSyncing = false
             } catch {
-                await MainActor.run {
-                    statusMessage = error.localizedDescription
-                    isError = true
-                    isSyncing = false
-                }
+                statusMessage = error.localizedDescription
+                isError = true
+                isSyncing = false
             }
         }
     }

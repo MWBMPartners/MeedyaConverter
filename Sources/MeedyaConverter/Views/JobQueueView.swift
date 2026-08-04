@@ -24,6 +24,13 @@ struct JobQueueView: View {
     // MARK: - State
 
     @State private var showCancelConfirmation = false
+    @State private var showStartConfirmation = false
+
+    /// "Confirm before starting encoding" (#475 —
+    /// `SettingsView.GeneralSettingsTab`'s toggle was persisted but never
+    /// read). Gates the "Start Queue" button below, the main choke point
+    /// for kicking off encoding from the Queue tab.
+    @AppStorage("confirmBeforeEncoding") private var confirmBeforeEncoding = false
 
     // MARK: - Body
 
@@ -51,6 +58,16 @@ struct JobQueueView: View {
             Button("Continue Encoding", role: .cancel) {}
         } message: {
             Text("This will stop the current encoding job. The partial output file will be deleted.")
+        }
+        .alert("Start Encoding?", isPresented: $showStartConfirmation) {
+            Button("Start Encoding") {
+                Task {
+                    await viewModel.startQueue()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will begin encoding \(viewModel.engine.queue.pendingCount) queued file(s).")
         }
     }
 
@@ -192,8 +209,12 @@ struct JobQueueView: View {
         } else {
             // Start Queue
             Button("Start Queue", systemImage: "play.fill") {
-                Task {
-                    await viewModel.startQueue()
+                if confirmBeforeEncoding {
+                    showStartConfirmation = true
+                } else {
+                    Task {
+                        await viewModel.startQueue()
+                    }
                 }
             }
             .disabled(viewModel.engine.queue.pendingCount == 0)

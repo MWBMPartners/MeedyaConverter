@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import Darwin
 
 // ---------------------------------------------------------------------------
 // MARK: - ResourceMonitor
@@ -31,8 +32,14 @@ final class ResourceMonitor {
     /// Current memory usage as a percentage (0.0 to 100.0).
     var memoryUsage: Double = 0.0
 
-    /// Current disk write speed in MB/s (estimated from output file growth).
-    var diskWriteSpeed: Double = 0.0
+    /// Current disk write speed in MB/s, or `nil` if unavailable.
+    ///
+    /// macOS exposes no public API that attributes disk-write throughput to a
+    /// specific process, and the heavy writes during a conversion happen in the
+    /// bundled `ffmpeg` *child* process rather than this app — so an honest
+    /// per-encode figure cannot be derived here. Reported as unavailable
+    /// (`nil`) rather than fabricated. See `gpuUsage` for the same treatment.
+    var diskWriteSpeed: Double?
 
     /// Current GPU usage as a percentage, or `nil` if unavailable.
     var gpuUsage: Double?
@@ -51,9 +58,6 @@ final class ResourceMonitor {
     /// Memory usage history for the last 60 seconds.
     var memoryHistory: [Double] = []
 
-    /// Disk write speed history for the last 60 seconds.
-    var diskHistory: [Double] = []
-
     // MARK: - Private
 
     /// Maximum number of historical data points to retain (60 seconds).
@@ -61,6 +65,12 @@ final class ResourceMonitor {
 
     /// Timer driving the polling loop.
     private var timer: Timer?
+
+    /// Previous-sample CPU tick totals, kept so each poll can compute
+    /// the *delta* between samples (the only way to derive a meaningful
+    /// percentage from monotonically-increasing tick counters).
+    /// `nil` until the first sample completes.
+    private var previousCPUTicks: CPUTickTotals?
 
     // MARK: - Lifecycle
 
@@ -72,7 +82,6 @@ final class ResourceMonitor {
         isMonitoring = true
         cpuHistory.removeAll()
         memoryHistory.removeAll()
-        diskHistory.removeAll()
 
         timer = Timer.scheduledTimer(
             withTimeInterval: 1.0,
@@ -97,21 +106,35 @@ final class ResourceMonitor {
     private func pollResources() {
         let info = ProcessInfo.processInfo
 
-        // CPU: Use active processor count and system uptime as a
-        // heuristic. Real per-process CPU would use host_processor_info
-        // via mach calls; this is a simplified approximation.
-        let processorCount = Double(info.activeProcessorCount)
-        let load = info.systemUptime.truncatingRemainder(dividingBy: 100)
-        // Simulated CPU usage based on thermal state as proxy.
-        let thermalMultiplier: Double
-        switch info.thermalState {
-        case .nominal: thermalMultiplier = 0.3
-        case .fair: thermalMultiplier = 0.55
-        case .serious: thermalMultiplier = 0.8
-        case .critical: thermalMultiplier = 0.95
-        @unknown default: thermalMultiplier = 0.5
+        // CPU: real system-wide CPU usage via host_statistics(HOST_CPU_LOAD_INFO).
+        //
+        // The kernel exposes four monotonically-increasing tick
+        // counters per host (user / system / idle / nice). The
+        // percentage for the *interval since the previous poll* is:
+        //   busy_delta / total_delta * 100
+        // where busy_delta = (user + system + nice) deltas and
+        // total_delta = busy_delta + idle_delta.
+        //
+        // The first poll has no prior sample to diff against, so
+        // ``cpuUsage`` is left at its previous value (0.0 on first
+        // run) and the baseline is stashed for the next tick.
+        if let sample = sampleCPUTicks() {
+            if let prev = previousCPUTicks {
+                let userDelta   = sample.user   &- prev.user
+                let systemDelta = sample.system &- prev.system
+                let idleDelta   = sample.idle   &- prev.idle
+                let niceDelta   = sample.nice   &- prev.nice
+                let busy  = userDelta &+ systemDelta &+ niceDelta
+                let total = busy &+ idleDelta
+                if total > 0 {
+                    cpuUsage = min(
+                        (Double(busy) / Double(total)) * 100.0,
+                        100.0
+                    )
+                }
+            }
+            previousCPUTicks = sample
         }
-        cpuUsage = min(thermalMultiplier * processorCount * 10.0, 100.0)
 
         // Memory: Use ProcessInfo physical memory and approximate usage.
         let totalMemory = Double(info.physicalMemory)
@@ -138,10 +161,10 @@ final class ResourceMonitor {
             memoryUsage = (usedMemory / totalMemory) * 100.0
         }
 
-        // Disk: Estimated write speed (placeholder — real implementation
-        // would track output file growth between polls).
-        let baseDiskSpeed = isMonitoring ? Double.random(in: 50...200) : 0
-        diskWriteSpeed = baseDiskSpeed
+        // Disk: no public API attributes write throughput to a process, and the
+        // encode's heavy writes happen in the ffmpeg child process, not here —
+        // so report as unavailable rather than fabricate a figure.
+        diskWriteSpeed = nil
 
         // GPU: Not available via public API without IOKit private headers.
         // Set to nil to indicate unavailability.
@@ -154,7 +177,6 @@ final class ResourceMonitor {
         // Append to history, trimming to max count.
         cpuHistory.append(cpuUsage)
         memoryHistory.append(memoryUsage)
-        diskHistory.append(diskWriteSpeed)
 
         if cpuHistory.count > maxHistoryCount {
             cpuHistory.removeFirst()
@@ -162,15 +184,58 @@ final class ResourceMonitor {
         if memoryHistory.count > maxHistoryCount {
             memoryHistory.removeFirst()
         }
-        if diskHistory.count > maxHistoryCount {
-            diskHistory.removeFirst()
-        }
     }
 
     // Note: Timer cleanup is handled by stopMonitoring() called from
     // the view's onDisappear modifier. A deinit cannot be used here
     // because @MainActor isolation prevents accessing `timer` from
     // the nonisolated deinit context in Swift 6.
+
+    // MARK: - CPU Sampling
+
+    /// Snapshot of the kernel's host-wide CPU tick counters.
+    ///
+    /// Each field is a *cumulative* count of clock ticks the system
+    /// has spent in that state since boot. They only become a usable
+    /// percentage when diffed against a prior sample.
+    fileprivate struct CPUTickTotals {
+        let user: natural_t
+        let system: natural_t
+        let idle: natural_t
+        let nice: natural_t
+    }
+
+    /// Reads the current host CPU tick counters via the mach
+    /// ``host_statistics`` API (`HOST_CPU_LOAD_INFO`).
+    ///
+    /// Returns `nil` if the kernel call fails for any reason — the
+    /// caller is expected to fall back to leaving ``cpuUsage`` at its
+    /// previous value rather than displaying a fabricated number.
+    private func sampleCPUTicks() -> CPUTickTotals? {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<host_cpu_load_info_data_t>.size
+                / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                intPtr in
+                host_statistics(
+                    mach_host_self(),
+                    HOST_CPU_LOAD_INFO,
+                    intPtr,
+                    &count
+                )
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return CPUTickTotals(
+            user:   info.cpu_ticks.0,   // CPU_STATE_USER
+            system: info.cpu_ticks.1,   // CPU_STATE_SYSTEM
+            idle:   info.cpu_ticks.2,   // CPU_STATE_IDLE
+            nice:   info.cpu_ticks.3    // CPU_STATE_NICE
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,13 +304,6 @@ struct ResourceMonitorView: View {
                             data: monitor.memoryHistory,
                             color: .green,
                             unit: "%"
-                        )
-
-                        sparklineSection(
-                            title: "Disk Write Speed",
-                            data: monitor.diskHistory,
-                            color: .orange,
-                            unit: "MB/s"
                         )
                     }
                 }
@@ -358,17 +416,23 @@ struct ResourceMonitorView: View {
 
     // MARK: - Disk Speed
 
-    /// Disk write speed indicator.
+    /// Disk write speed indicator (shows N/A when unavailable).
     private var diskSpeedIndicator: some View {
         VStack(spacing: 8) {
             Image(systemName: "internaldrive")
                 .font(.title2)
-                .foregroundStyle(monitor.diskWriteSpeed > 0 ? .blue : .secondary)
+                .foregroundStyle(monitor.diskWriteSpeed != nil ? .blue : .secondary)
 
-            Text(String(format: "%.0f MB/s", monitor.diskWriteSpeed))
-                .font(.title3)
-                .monospacedDigit()
-                .fontWeight(.semibold)
+            if let disk = monitor.diskWriteSpeed {
+                Text(String(format: "%.0f MB/s", disk))
+                    .font(.title3)
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+            } else {
+                Text("N/A")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
 
             Text("Disk Write")
                 .font(.caption)

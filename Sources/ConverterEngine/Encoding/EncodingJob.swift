@@ -111,6 +111,16 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// When `.pq`, PQ/HDR10 colour metadata is applied.
     public var hdrTransferFunction: HDRTransferFunction?
 
+    /// Per-source-stream subtitle handling (Issue #409). Populated by
+    /// `EncodingEngine.encode(...)` from the result of
+    /// `SubtitleTonemapPipeline.run(...)` so HDR subtitle tone-mapping
+    /// (#369) actually reaches the output.
+    ///
+    /// Empty by default — when empty, the FFmpegArgumentBuilder uses
+    /// its legacy `subtitlePassthrough`/`subtitleStreamIndex` behaviour
+    /// and no existing call site is affected.
+    public var subtitleStreamActions: [FFmpegArgumentBuilder.SubtitleStreamActionEntry] = []
+
     /// Timestamp when this job was created.
     public var createdAt: Date
 
@@ -160,6 +170,14 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.subtitleStreamIndex = subtitleStreamIndex
         builder.mapAllStreams = mapAllStreams
 
+        // Per-source-stream subtitle actions (Issue #409). When
+        // non-empty, takes precedence over the legacy
+        // subtitlePassthrough/subtitleStreamIndex pair (see
+        // FFmpegArgumentBuilder.buildStreamMapping for the override
+        // logic). Populated by EncodingEngine.encode(...) from the
+        // SubtitleTonemapPipeline result.
+        builder.subtitleStreamActions = subtitleStreamActions
+
         // Apply metadata
         builder.metadata = outputMetadata
         builder.streamMetadata = streamMetadata
@@ -177,14 +195,19 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.maxCLL = hdrMaxCLL
         builder.maxFALL = hdrMaxFALL
 
-        // Apply HLG-specific colour signalling when source is HLG
-        if hdrTransferFunction == .hlg {
-            let hlgArgs = builder.buildHLGPreservationArguments()
-            builder.extraArguments.append(contentsOf: hlgArgs)
-        }
-
         // Apply extra arguments
         builder.extraArguments = extraArguments
+
+        // Apply HDR colour signalling AFTER the job's extra arguments are set,
+        // so it survives to the final invocation. Previously this block ran
+        // BEFORE `builder.extraArguments = extraArguments`, which overwrote the
+        // appended flags — silently dropping BOTH the HLG (pre-existing) and PQ
+        // colour-signalling arguments before ffmpeg ever saw them (#486).
+        if hdrTransferFunction == .hlg {
+            builder.extraArguments.append(contentsOf: builder.buildHLGPreservationArguments())
+        } else if hdrTransferFunction == .pq {
+            builder.extraArguments.append(contentsOf: builder.buildPQPreservationArguments())
+        }
 
         return builder.build()
     }
@@ -214,6 +237,15 @@ public final class EncodingJobState: ObservableObject, @unchecked Sendable {
 
     /// Current frame being processed.
     @Published public var currentFrame: Int?
+
+    /// Best available estimate of the source media's duration in seconds
+    /// (Issue #470), derived from FFmpeg's own `currentTime /
+    /// fractionComplete` progress ratio as it becomes available. Not
+    /// `@Published` — it's an internal bookkeeping value for
+    /// `AppViewModel.startQueue()`'s `ETAPredictor` wiring, not something
+    /// the UI binds to directly. `nil` until the first progress tick with
+    /// a known `currentTime` arrives.
+    public var lastKnownInputDuration: TimeInterval?
 
     /// Error message if the job failed.
     @Published public var errorMessage: String?
@@ -338,6 +370,33 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Reorder the entire queue to match a new job ordering, keyed by job ID.
+    ///
+    /// Existing `EncodingJobState` identities are preserved — this only
+    /// changes their position within `jobs`, it does not add, remove, or
+    /// duplicate entries. IDs in `newOrder` that no longer exist in the
+    /// queue are ignored; any queued jobs not mentioned in `newOrder`
+    /// (e.g., added concurrently) keep their prior relative order,
+    /// appended after the reordered jobs.
+    ///
+    /// Used by `QueueOptimizerView` to apply `SmartQueueOptimizer` results
+    /// back to the live queue (Issue #448).
+    public func reorder(to newOrder: [UUID]) {
+        lock.lock()
+        var byID = Dictionary(uniqueKeysWithValues: jobs.map { ($0.config.id, $0) })
+        var reordered: [EncodingJobState] = []
+        reordered.reserveCapacity(jobs.count)
+        for id in newOrder {
+            if let job = byID.removeValue(forKey: id) {
+                reordered.append(job)
+            }
+        }
+        // Preserve any jobs not mentioned in `newOrder`, in their original order.
+        reordered.append(contentsOf: jobs.filter { byID[$0.config.id] != nil })
+        jobs = reordered
+        lock.unlock()
+    }
+
     /// Cancel a specific job. If it's currently encoding, stops the encode.
     public func cancelJob(id: UUID) {
         lock.lock()
@@ -370,6 +429,22 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
         lock.lock()
         jobs.removeAll { $0.status == .completed || $0.status == .failed || $0.status == .cancelled }
         lock.unlock()
+    }
+
+    /// A lock-protected snapshot of all jobs currently in the queue.
+    ///
+    /// Every existing UI call site (`JobQueueView`, `QueueOptimizerView`, etc.)
+    /// reads the raw `jobs` property directly — safe there only because those
+    /// reads and the mutating queue methods above are all serialised onto the
+    /// `@MainActor`. `APIServer` (Issue #355) reads the queue from its own
+    /// background dispatch queue, genuinely concurrently with `@MainActor`
+    /// mutations, so it needs a read that actually takes `lock` rather than
+    /// the unsynchronised property getter. Added for that caller; existing
+    /// call sites are unaffected and unchanged.
+    public func jobsSnapshot() -> [EncodingJobState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return jobs
     }
 
     // MARK: - Statistics

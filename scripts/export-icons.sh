@@ -133,11 +133,29 @@ for size in 48 72 96 144 192; do
 done
 
 # ── Copy into Xcode asset catalog ────────────────────────────────────
+#
+# The macOS asset catalog needs rasterized PNGs at every pixel size it
+# references in `Contents.json`. SPM's asset-catalog compiler does NOT
+# consume SVG sources at multiple sizes, so a Contents.json that only
+# points at an SVG yields a build with a missing icon.
+#
+# We copy the macOS subset of the PNGs we just rendered (sizes 16, 32,
+# 64, 128, 256, 512, 1024) into `AppIcon.appiconset/` under the
+# `icon_<W>x<H>.png` names that `Contents.json` expects. Regenerating
+# the icon set is therefore a single `./scripts/export-icons.sh`.
 echo ""
 echo "=== Xcode Asset Catalog ==="
 APPICONSET="$PROJECT_ROOT/Sources/MeedyaConverter/Resources/Assets.xcassets/AppIcon.appiconset"
-cp "$SOURCE_SVG" "$APPICONSET/app-icon.svg"
-echo "  Copied SVG into $APPICONSET/app-icon.svg"
+for size in 16 32 64 128 256 512 1024; do
+  src="$MACOS_DIR/icon_${size}x${size}.png"
+  dst="$APPICONSET/icon_${size}x${size}.png"
+  if [[ -f "$src" ]]; then
+    cp "$src" "$dst"
+    echo "  Copied: $dst"
+  else
+    echo "  Warning: expected $src, not found — skipping" >&2
+  fi
+done
 
 # ── Clean up master temp file ────────────────────────────────────────
 rm -f "$TMPDIR/mc-icon-master.png"

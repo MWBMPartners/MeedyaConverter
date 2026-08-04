@@ -211,6 +211,55 @@ public struct EncodingBenchmark: Sendable {
         )
     }
 
+    // MARK: - Result Construction
+
+    /// Builds a real ``BenchmarkResult`` from measured execution data.
+    ///
+    /// `fps` is derived as `frames / encodeTime` — the number of frames
+    /// FFmpeg actually reported encoding, divided by the measured
+    /// wall-clock time the encode took — rather than from FFmpeg's
+    /// self-reported `speed=` multiplier. This keeps the figure correct
+    /// regardless of the synthetic test source's nominal frame rate and
+    /// avoids re-parsing stderr text when the caller already has the
+    /// frame count from the `-progress` stream.
+    ///
+    /// Used by ``BenchmarkView`` (Issue #325 / #<new-issue>) once a
+    /// benchmark's FFmpeg process has actually run to completion (or been
+    /// cancelled part-way through, in which case the caller should not
+    /// call this — a partial run does not represent a real measurement).
+    ///
+    /// - Parameters:
+    ///   - codec: The codec that was benchmarked.
+    ///   - preset: The encoder preset that was used.
+    ///   - resolution: The resolution that was benchmarked.
+    ///   - frames: The number of frames FFmpeg reported as encoded (e.g.
+    ///     the last `frame=` value from its `-progress` output).
+    ///   - encodeTime: The measured wall-clock duration of the encode, in
+    ///     seconds.
+    ///   - hardwareAccelerated: Whether hardware acceleration was used.
+    /// - Returns: A ``BenchmarkResult`` with `fps` computed from the
+    ///   measured frames and time (`0` if `encodeTime` is zero or
+    ///   negative, to avoid dividing by zero for a benchmark that failed
+    ///   instantly).
+    public static func makeResult(
+        codec: VideoCodec,
+        preset: String,
+        resolution: String,
+        frames: Int,
+        encodeTime: TimeInterval,
+        hardwareAccelerated: Bool
+    ) -> BenchmarkResult {
+        let fps = encodeTime > 0 ? Double(frames) / encodeTime : 0
+        return BenchmarkResult(
+            codec: codec.rawValue,
+            preset: preset,
+            resolution: resolution,
+            fps: fps,
+            duration: encodeTime,
+            hardwareAccelerated: hardwareAccelerated
+        )
+    }
+
     // MARK: - Standard Benchmark Suite
 
     /// A predefined set of codec/preset/resolution combinations that

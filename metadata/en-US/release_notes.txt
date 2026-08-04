@@ -1,0 +1,9 @@
+Initial TestFlight beta release.
+
+• Full video / audio / subtitle / optical-disc conversion engine
+• HDR tone-mapping with Dolby Vision Profile 5, 7, 8.1, and 8.4
+• AccurateRip verification and whole-disc audio-CD fidelity
+• Watch folders, conditional rules, and scheduled jobs
+• VMAF/SSIM quality metrics and A/B preview
+• Cloud delivery to 12+ storage providers
+• CLI tool (meedya-convert) for automation pipelines

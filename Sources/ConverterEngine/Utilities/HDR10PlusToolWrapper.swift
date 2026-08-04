@@ -275,6 +275,34 @@ public final class HDR10PlusToolWrapper: @unchecked Sendable {
         return ["inject", "-i", inputPath, "-j", metadataPath, "-o", outputPath]
     }
 
+    // MARK: - Generic Invocation (Issue #370)
+
+    /// Run an arbitrary hdr10plus_tool subcommand and return its raw result.
+    ///
+    /// Exposes the same process runner used by the typed convenience methods
+    /// above (`extractMetadata`, `injectMetadata`, `getInfo`,
+    /// `validateMetadata`) for pipeline orchestration callers — such as
+    /// `DualDynamicHDRPipelineExecutor` — that walk a pre-built list of
+    /// `PipelineStepDescriptor`s carrying their own argument arrays. Prefer
+    /// the typed methods when one exists; this is the escape hatch for the
+    /// rest.
+    ///
+    /// - Parameter arguments: Full hdr10plus_tool argument list, e.g.
+    ///   `["inject", "-i", hevcPath, "-j", jsonPath, "-o", outPath]`.
+    /// - Returns: The process exit code and trimmed stdout/stderr.
+    /// - Throws: `HDR10PlusToolError.binaryNotFound` if hdr10plus_tool is
+    ///   not installed. Never throws on a non-zero exit code — callers
+    ///   inspect `exitCode` themselves, matching `Process.terminationStatus`
+    ///   semantics.
+    public func run(arguments: [String]) async throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        guard let binary = locateBinary() else {
+            throw HDR10PlusToolError.binaryNotFound
+        }
+
+        let result = try await runAsync(binary, arguments: arguments)
+        return (result.exitCode, result.stdout, result.stderr)
+    }
+
     // MARK: - Private Helpers
 
     /// Result of a command-line process execution.

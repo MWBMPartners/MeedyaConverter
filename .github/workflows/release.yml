@@ -4,13 +4,18 @@
 #
 # Purpose:
 #   Builds a release-optimised binary, packages it into a DMG, and publishes
-#   a GitHub Release whenever a version tag (e.g. v1.0.0) is pushed to the
-#   main branch.
+#   a GitHub Release whenever a version tag (e.g. v1.0.0) is pushed to this
+#   repository.
 #
 # Trigger:
-#   Push a tag matching the pattern "v*" on the main branch, for example:
-#     git tag v1.0.0
+#   Push a tag matching the pattern "v*", for example:
+#     git tag v1.0.0 <commit-sha-on-main>
 #     git push origin v1.0.0
+#
+#   GitHub Actions has no mechanism to restrict `on.push.tags` to commits
+#   reachable from a given branch — a v* tag fires this workflow no matter
+#   which commit it points at. Only ever tag a commit that is actually on
+#   `main`; this is enforced by maintainer discipline, not by CI.
 #
 # Copyright (c) 2026 MWBM Partners Ltd. All rights reserved.
 # =============================================================================
@@ -23,8 +28,11 @@ name: "Production Release"
 # This workflow only runs when a tag starting with "v" is pushed. Tags are
 # expected to follow semantic versioning: v1.0.0, v2.3.1, etc.
 #
-# The branch filter on push/tags ensures this fires only for version tags
-# and not for arbitrary branch pushes.
+# `on.push.tags` is a tag-NAME filter, not a branch filter — GitHub Actions
+# has no way to restrict a tag push to commits reachable from a specific
+# branch, so a v* tag pushed against any commit (on any branch, or no
+# branch at all) will trigger this workflow. Tagging the intended commit
+# on `main` is a maintainer responsibility, not something CI enforces.
 # ---------------------------------------------------------------------------
 on:
   push:
@@ -55,9 +63,116 @@ permissions:
   contents: write
 
 jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Apple-secrets precheck (fail-fast)
+  # ---------------------------------------------------------------------------
+  # Cheap ubuntu-latest job that runs BEFORE the macos-15 release job. Its
+  # only purpose is to assert that the six secrets the release pipeline
+  # depends on are populated, AND that APPLE_SIGNING_IDENTITY contains the
+  # literal substring "Developer ID Application" — i.e. the right cert
+  # family for Direct distribution (not Apple Distribution / Mac App Store).
+  #
+  # Without this gate, a misconfigured secret means a v* tag silently
+  # produces an unsigned / wrong-cert DMG, which Apple notarisation later
+  # rejects deep into the build — wasting ~30 minutes and burning the
+  # tag's release number.
+  #
+  # Failing this job stops the release before any keychain / build /
+  # signing step runs, costing roughly one ubuntu-minute. This workflow has
+  # no `workflow_dispatch` trigger, so once the secret is fixed the way to
+  # retry against the same tag is `gh run rerun <run-id>` (find the run ID
+  # with `gh run list --workflow=release.yml`) — NOT `gh workflow run`,
+  # which requires a dispatch-style trigger this workflow doesn't have.
+  #
+  # This job NEVER prints the secret values themselves — only their
+  # presence (and, for APPLE_SIGNING_IDENTITY, whether the substring
+  # check passes). The check uses `-n` on a masked variable; GitHub
+  # Actions auto-redacts any accidental echo of a secret in workflow
+  # logs as a defence-in-depth fallback.
+  # ---------------------------------------------------------------------------
+  precheck-secrets:
+    name: Pre-flight — Apple-secrets fail-fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Assert all 6 Apple secrets are populated and the cert family is Direct
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          # Non-empty asserts. The check tests whether the expanded value is
+          # the empty string (-z); GitHub Actions auto-masks secrets, so a
+          # populated secret expands to "***" or its literal value depending
+          # on the runner config, but never expands to "" if it is set.
+          assert_set() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "::error::Required secret '$name' is empty or missing."
+              fail=1
+            else
+              echo "  ✓ $name is populated"
+            fi
+          }
+
+          echo "Checking Apple Developer secrets are present (values not printed):"
+          assert_set APPLE_CERTIFICATE          "$APPLE_CERTIFICATE"
+          assert_set APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+          assert_set APPLE_SIGNING_IDENTITY     "$APPLE_SIGNING_IDENTITY"
+          assert_set APPLE_ID                   "$APPLE_ID"
+          assert_set APPLE_PASSWORD             "$APPLE_PASSWORD"
+          assert_set APPLE_TEAM_ID              "$APPLE_TEAM_ID"
+
+          # Cert-family assert. APPLE_SIGNING_IDENTITY must contain the
+          # literal substring "Developer ID Application" — the cert family
+          # Apple requires for Direct-distribution code signing. Mistakenly
+          # configuring "Apple Distribution" (App Store) or "Mac Installer"
+          # (the .pkg signer, not the .app signer) here would let the
+          # workflow keep going and produce a binary Gatekeeper rejects.
+          #
+          # We test the substring rather than the exact value so the team
+          # can rotate certs (the name suffix changes with the team-id /
+          # serial) without having to remember to update this assertion.
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            case "$APPLE_SIGNING_IDENTITY" in
+              *"Developer ID Application"*)
+                echo "  ✓ APPLE_SIGNING_IDENTITY contains 'Developer ID Application'"
+                ;;
+              *)
+                echo "::error::APPLE_SIGNING_IDENTITY must contain the literal substring 'Developer ID Application' — found a different cert family. This indicates the secret was populated with the wrong cert (likely 'Apple Distribution' or 'Mac Installer'). For Direct distribution use 'Developer ID Application: <Team Name> (<TEAM_ID>)'."
+                fail=1
+                ;;
+            esac
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Apple-secrets precheck failed. Open Repository → Settings → Secrets and variables → Actions and verify all six APPLE_* secrets are set with the correct values (APPLE_SIGNING_IDENTITY must use the Developer ID Application cert). The release workflow has been stopped before any signing or notarisation step ran."
+            exit 1
+          fi
+
+          echo ""
+          echo "All Apple-secrets prechecks passed. Release job will proceed."
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build & publish the Direct release
+  # ---------------------------------------------------------------------------
+  # Runs on macos-15 only after precheck-secrets has confirmed all six
+  # Apple Developer secrets are populated with the correct cert family.
+  # ---------------------------------------------------------------------------
   release:
     name: Build & Publish Production Release
     runs-on: macos-15
+    needs: precheck-secrets
 
     # -----------------------------------------------------------------------
     # Timeout: release builds and packaging should complete well within this
@@ -72,7 +187,7 @@ jobs:
       # changelog from commit messages between the previous tag and this one.
       # ---------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -111,10 +226,10 @@ jobs:
       # Reuse cached dependencies to speed up the release build.
       # ---------------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
-          key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-spm-release-
             ${{ runner.os }}-spm-
@@ -126,13 +241,22 @@ jobs:
         run: swift package resolve
 
       # ---------------------------------------------------------------------
-      # Step 6: Build in release configuration
+      # Step 6: Build a UNIVERSAL (arm64 + x86_64) release binary
       # ---------------------------------------------------------------------
-      # Release builds enable full optimisations (-O) producing smaller and
-      # faster binaries suitable for distribution.
+      # Release builds enable full optimisations (-O). Building for both arches
+      # produces a single universal Mach-O that runs natively on Apple Silicon
+      # AND Intel (no Rosetta). SwiftPM writes universal output to
+      # `.build/apple/Products/Release`, not `.build/release`, so we resolve the
+      # exact bin path via --show-bin-path and export it for later steps.
       # ---------------------------------------------------------------------
-      - name: Build (release)
-        run: swift build -c release
+      - name: Build (release, universal arm64 + x86_64)
+        run: |
+          set -euo pipefail
+          swift build -c release --arch arm64 --arch x86_64
+          SWIFT_BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+          echo "SWIFT_BIN=${SWIFT_BIN}" >> "$GITHUB_ENV"
+          echo "→ universal build output: ${SWIFT_BIN}"
+          lipo -archs "${SWIFT_BIN}/MeedyaConverter" || true
 
       # ---------------------------------------------------------------------
       # Step 7: Run tests against the release build
@@ -181,11 +305,17 @@ jobs:
           echo "${VERSION}" > VERSION
           echo "VERSION file updated to: ${VERSION}"
 
+          # Monotonic build number for CFBundleVersion (Apple requires this
+          # to increase across every uploaded build — using commit count gives
+          # us a deterministic, monotonically-increasing integer).
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+
           echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "major=${MAJOR}" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
-          echo "Release version: ${VERSION} (tag: ${TAG_NAME}, prerelease: ${IS_PRERELEASE})"
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION} (tag: ${TAG_NAME}, prerelease: ${IS_PRERELEASE}, build: ${BUILD_NUMBER})"
 
       # ---------------------------------------------------------------------
       # Step 9: Create app bundle structure
@@ -196,27 +326,58 @@ jobs:
       - name: Create app bundle
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          BUILD_NUMBER="${{ steps.version.outputs.build_number }}"
           APP_NAME="MeedyaConverter"
           APP_BUNDLE="${APP_NAME}.app"
 
-          echo "Creating app bundle: ${APP_BUNDLE}"
+          echo "Creating app bundle: ${APP_BUNDLE} (v${VERSION}, build ${BUILD_NUMBER})"
 
           # Create the bundle directory structure
           mkdir -p "${APP_BUNDLE}/Contents/MacOS"
           mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-          # Copy the release binary into the bundle
-          if [ -f ".build/release/${APP_NAME}" ]; then
-            cp ".build/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+          # Copy the universal release binary into the bundle
+          # (SWIFT_BIN was exported by the universal build step).
+          if [ -f "${SWIFT_BIN}/${APP_NAME}" ]; then
+            cp "${SWIFT_BIN}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
           else
-            echo "::error::GUI binary not found at .build/release/${APP_NAME}"
+            echo "::error::GUI binary not found at ${SWIFT_BIN}/${APP_NAME}"
             exit 1
           fi
 
-          # Copy Info.plist with version substitution
-          sed -e "s/<string>0.1.0</<string>${VERSION}</" \
-            "Sources/${APP_NAME}/Resources/Info.plist" \
-            > "${APP_BUNDLE}/Contents/Info.plist"
+          # Ship the SwiftPM resource bundle inside the .app.
+          # SwiftPM emits the MeedyaConverter target's declared resources
+          # (Assets.xcassets, the MeedyaConverter.sdef AppleScript definition,
+          # and the bundled Help Markdown) into a SEPARATE
+          # MeedyaConverter_MeedyaConverter.bundle alongside the binary — NOT
+          # into the executable. Because this step hand-builds the .app, that
+          # bundle must be copied into Contents/Resources or the shipped app
+          # has no resources: AppleScript/Automator integration and the in-app
+          # Help would be dead-on-arrival in Direct DMGs. Fail closed if the
+          # bundle is missing (e.g. a Package.swift resources regression).
+          RESOURCE_BUNDLE="${SWIFT_BIN}/${APP_NAME}_${APP_NAME}.bundle"
+          if [ -d "${RESOURCE_BUNDLE}" ]; then
+            cp -R "${RESOURCE_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${RESOURCE_BUNDLE}"
+            exit 1
+          fi
+
+          # Copy Info.plist verbatim, then drive the version keys with
+          # PlistBuddy. The old sed-based substitution silently no-op'd
+          # the first time the template's placeholder didn't match
+          # exactly (e.g. after the placeholder version was bumped past
+          # 0.1.0), shipping a build with stale metadata.
+          cp "Sources/${APP_NAME}/Resources/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${APP_BUNDLE}/Contents/Info.plist"
+
+          # Generate the .icns from the AppIcon.appiconset PNG sources
+          # and stage it as Contents/Resources/MeedyaConverter.icns —
+          # the filename matches the CFBundleIconFile key in Info.plist.
+          # The script is deterministic given the PNG inputs; we don't
+          # commit the binary blob to the repo.
+          ./scripts/generate-app-icns.sh "${APP_BUNDLE}/Contents/Resources/MeedyaConverter.icns"
 
           # Set the executable bit
           chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
@@ -224,6 +385,36 @@ jobs:
           echo "App bundle created successfully."
           ls -la "${APP_BUNDLE}/Contents/"
           ls -la "${APP_BUNDLE}/Contents/MacOS/"
+          ls -la "${APP_BUNDLE}/Contents/Resources/"
+
+      # ---------------------------------------------------------------------
+      # Step 9b: Bundle FFmpeg + HDR tools into the .app
+      # ---------------------------------------------------------------------
+      # Stage ffmpeg/ffprobe/ffplay (and any HDR helpers the script supports)
+      # into Contents/Helpers BEFORE codesigning, so the notarised DMG is
+      # actually self-contained. Prior releases shipped a .app with no
+      # encoder inside; on a clean Mac the app launched but every job failed
+      # with "ffmpeg not found" because the search path only resolved when
+      # the user happened to already have Homebrew ffmpeg installed.
+      #
+      # The script writes UNIVERSAL (arm64 + x86_64) binaries to
+      # ${DEST_DIR}/{ffmpeg,ffprobe,ffplay}: each per-arch archive is
+      # downloaded from the first-party MeedyaDL-Tools mirror, SHA-256
+      # verified against that release's own SHA256SUMS, and `lipo`-combined
+      # (F-011). No arch-specific branching is needed on the runner side.
+      # ---------------------------------------------------------------------
+      - name: Bundle FFmpeg + HDR tools
+        run: |
+          APP_BUNDLE="MeedyaConverter.app"
+          HELPERS_DIR="${APP_BUNDLE}/Contents/Helpers"
+
+          mkdir -p "${HELPERS_DIR}"
+
+          chmod +x scripts/bundle-ffmpeg.sh
+          ./scripts/bundle-ffmpeg.sh "${HELPERS_DIR}"
+
+          echo "Helpers staged into ${HELPERS_DIR}:"
+          ls -la "${HELPERS_DIR}"
 
       # ---------------------------------------------------------------------
       # Step 10: Sign the app bundle
@@ -245,9 +436,9 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             chmod +x scripts/codesign.sh
-            ./scripts/codesign.sh .build/release/meedya-convert
+            ./scripts/codesign.sh "${SWIFT_BIN}/meedya-convert"
           else
             echo "::warning::CLI binary not found, skipping CLI signing."
           fi
@@ -305,16 +496,52 @@ jobs:
       - name: Package CLI binary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if [ -f .build/release/meedya-convert ]; then
+          if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             mkdir -p cli-staging
-            cp .build/release/meedya-convert cli-staging/
+            cp "${SWIFT_BIN}/meedya-convert" cli-staging/
             tar -czf "meedya-convert-${VERSION}-macOS.tar.gz" -C cli-staging .
             rm -rf cli-staging
             echo "CLI package created: meedya-convert-${VERSION}-macOS.tar.gz"
           fi
 
       # ---------------------------------------------------------------------
-      # Step 16: Generate changelog
+      # Step 16: Generate SHA-256 checksums for the release assets
+      # ---------------------------------------------------------------------
+      # Direct downloads have no App Store integrity guarantee, and the DMG
+      # is the primary Gatekeeper trust anchor only up to the point a user's
+      # browser preserves the quarantine attribute correctly — a detached
+      # SHA-256 lets a user (or README's documented `shasum -a 256 -c`
+      # command) verify the bytes they downloaded match what was published,
+      # independent of code signing. Runs after BOTH assets exist (DMG
+      # signed+notarized in Step 14, CLI tarball packaged in Step 15) and
+      # before "Create GitHub Release" so both checksum files can be
+      # attached alongside their assets.
+      #
+      # `shasum -a 256 <asset>` writes "<hash>  <asset>" using the bare
+      # filename (both assets live at the repo/workspace root here), which
+      # is exactly the line `shasum -a 256 -c <asset>.sha256` expects when
+      # run from the same directory as the downloaded asset.
+      # ---------------------------------------------------------------------
+      - name: Generate SHA-256 checksums
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="MeedyaConverter-${VERSION}-macOS.dmg"
+          CLI_TAR="meedya-convert-${VERSION}-macOS.tar.gz"
+
+          for ASSET in "$DMG_NAME" "$CLI_TAR"; do
+            if [ -f "$ASSET" ]; then
+              shasum -a 256 "$ASSET" > "${ASSET}.sha256"
+              echo "Checksum written: ${ASSET}.sha256"
+              cat "${ASSET}.sha256"
+            else
+              echo "::warning::Asset ${ASSET} not found; skipping its checksum."
+            fi
+          done
+
+      # ---------------------------------------------------------------------
+      # Step 17: Generate changelog
       # ---------------------------------------------------------------------
       # Extract the changelog section for this version from CHANGELOG.md
       # using the extract-changelog.sh helper. Falls back to git log if
@@ -332,7 +559,7 @@ jobs:
           echo "Changelog generated with ${LINES} lines for version ${VERSION}."
 
       # ---------------------------------------------------------------------
-      # Step 16b: Update CHANGELOG.md with release date
+      # Step 17b: Update CHANGELOG.md with release date
       # ---------------------------------------------------------------------
       # Stamp the [Unreleased] or version heading with today's date so
       # the changelog reflects when the release was actually published.
@@ -358,12 +585,13 @@ jobs:
           fi
 
       # ---------------------------------------------------------------------
-      # Step 17: Create GitHub Release
+      # Step 18: Create GitHub Release
       # ---------------------------------------------------------------------
       # Publish a GitHub Release with:
       #   - The version tag as the release name
       #   - The auto-generated changelog as the release body
-      #   - The signed/notarized DMG and CLI tarball as release assets
+      #   - The signed/notarized DMG and CLI tarball as release assets, plus
+      #     their SHA-256 checksum files (Step 16) for integrity verification
       #   - Marked as a full (non-pre-release) production release
       #
       # Uses the GitHub CLI (gh) which is pre-installed on GitHub-hosted
@@ -382,10 +610,22 @@ jobs:
             ASSETS+=("${DMG}#MeedyaConverter ${VERSION} (macOS DMG)")
           fi
 
+          # DMG SHA-256 checksum
+          DMG_SHA="${DMG}.sha256"
+          if [ -f "$DMG_SHA" ]; then
+            ASSETS+=("${DMG_SHA}#MeedyaConverter ${VERSION} DMG SHA-256 checksum")
+          fi
+
           # CLI tarball (optional additional artifact)
           CLI_TAR="meedya-convert-${VERSION}-macOS.tar.gz"
           if [ -f "$CLI_TAR" ]; then
             ASSETS+=("${CLI_TAR}#meedya-convert ${VERSION} (macOS CLI)")
+          fi
+
+          # CLI tarball SHA-256 checksum
+          CLI_TAR_SHA="${CLI_TAR}.sha256"
+          if [ -f "$CLI_TAR_SHA" ]; then
+            ASSETS+=("${CLI_TAR_SHA}#meedya-convert ${VERSION} CLI SHA-256 checksum")
           fi
 
           # Determine release flags based on semver pre-release status
@@ -409,7 +649,7 @@ jobs:
             "${ASSETS[@]}"
 
       # ---------------------------------------------------------------------
-      # Step 18: Clean up keychain
+      # Step 19: Clean up keychain
       # ---------------------------------------------------------------------
       # Remove the temporary keychain to avoid leaking the signing
       # certificate on shared runners. Runs even if previous steps fail.

@@ -193,7 +193,7 @@ struct EmailSettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Email Notifications")
         .onAppear {
-            smtpPassword = loadPasswordFromKeychain()
+            smtpPassword = Self.loadPasswordFromKeychain()
             passwordLoaded = true
         }
     }
@@ -267,6 +267,55 @@ struct EmailSettingsView: View {
             useTLS: smtpUseTLS,
             fromAddress: fromAddress,
             toAddresses: parseRecipients()
+        )
+    }
+
+    /// Load the persisted SMTP configuration independent of this view
+    /// being on screen — the same `UserDefaults` keys this view's
+    /// `@AppStorage` properties bind to, plus the Keychain password.
+    ///
+    /// Used by `AppViewModel`'s encode-completion / encode-failure paths
+    /// (Issue #348) to send notification emails without needing an
+    /// `EmailSettingsView` instance. Returns `nil` when the configuration
+    /// is incomplete (mirrors `isConfigValid` above), so callers can
+    /// silently skip sending rather than fail loudly.
+    ///
+    /// - Returns: A configured `SMTPConfig`, or `nil` if required fields
+    ///   (host, username, password, from address, at least one recipient)
+    ///   are missing.
+    static func loadSMTPConfig() -> SMTPConfig? {
+        let defaults = UserDefaults.standard
+
+        let host = defaults.string(forKey: "emailSMTPHost") ?? ""
+        let port = (defaults.object(forKey: "emailSMTPPort") as? Int) ?? 587
+        let username = defaults.string(forKey: "emailSMTPUsername") ?? ""
+        let useTLS = (defaults.object(forKey: "emailSMTPUseTLS") as? Bool) ?? true
+        let fromAddress = defaults.string(forKey: "emailFromAddress") ?? ""
+        let toAddressesJSON = defaults.string(forKey: "emailToAddresses") ?? "[]"
+
+        let toAddresses: [String] = {
+            guard let data = toAddressesJSON.data(using: .utf8),
+                  let array = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return array
+        }()
+
+        let password = loadPasswordFromKeychain()
+
+        guard !host.isEmpty, !username.isEmpty, !password.isEmpty,
+              !fromAddress.isEmpty, !toAddresses.isEmpty else {
+            return nil
+        }
+
+        return SMTPConfig(
+            host: host,
+            port: port,
+            username: username,
+            password: password,
+            useTLS: useTLS,
+            fromAddress: fromAddress,
+            toAddresses: toAddresses
         )
     }
 
@@ -358,20 +407,34 @@ struct EmailSettingsView: View {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
-        // Add the new password.
+        // Add the new password. `WhenUnlockedThisDeviceOnly` blocks
+        // iCloud Keychain sync, excludes the item from Keychain
+        // backups, and gates access on the device being currently
+        // unlocked (not merely first-unlocked-since-boot). Per
+        // SECURITY.md F-004 — prior to Cycle 16 no accessibility
+        // attribute was set, which defaulted to `WhenUnlocked`
+        // (without `ThisDeviceOnly`), so the SMTP password could
+        // sync to other Macs on the same Apple ID and appear in
+        // Time Machine backups.
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: Self.keychainAccount,
             kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
     }
 
     /// Load the SMTP password from the macOS Keychain.
     ///
+    /// Static because it depends only on the type-level `keychainService`
+    /// / `keychainAccount` constants, never on instance state — which lets
+    /// `loadSMTPConfig()` below (and any other caller, e.g. `AppViewModel`'s
+    /// completion-email wiring, re #348) call it without a live view.
+    ///
     /// - Returns: The stored password string, or an empty string if not found.
-    private func loadPasswordFromKeychain() -> String {
+    static func loadPasswordFromKeychain() -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,

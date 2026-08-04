@@ -236,7 +236,12 @@ public struct BackgroundRemover: Sendable {
 
         for inputURL in inputURLs {
             let baseName = inputURL.deletingPathExtension().lastPathComponent
-            let outputURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
+            // F-002 defensive sanitisation per SECURITY.md (POLISH
+            // follow-up): mirrors the fix already applied to the
+            // single-image path in `BackgroundRemovalView`.
+            let outputURL = outputDir.appendingPathComponent(
+                PathSanitizer.sanitizeFilenameComponent("\(baseName).\(ext)")
+            )
 
             try await removeBackground(inputURL: inputURL, outputURL: outputURL, config: config)
             outputURLs.append(outputURL)

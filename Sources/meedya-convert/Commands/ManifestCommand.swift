@@ -93,6 +93,22 @@ struct ManifestCommand: AsyncParsableCommand {
         guard ["hls", "dash", "cmaf"].contains(format.lowercased()) else {
             throw ValidationError("Invalid format '\(format)'. Use: hls, dash, or cmaf.")
         }
+
+        // ManifestGenerator.buildVariantArguments never reads config.preserveHDR —
+        // there is no HDR signalling (mastering-display/MaxCLL side data, 10-bit
+        // pixel format, etc.) in the manifest encode path, unlike the main encode
+        // pipeline's FFmpegArgumentBuilder. Rather than silently accept and ignore
+        // --hdr, fail loudly until that's actually implemented (#490).
+        if preserveHDR {
+            throw ValidationError("--hdr is not yet supported for manifest generation.")
+        }
+
+        // "custom" is advertised as a --variants value but the ladder always comes
+        // from --ladder-file when provided (see resolveVariants); without one,
+        // "custom" silently fell through to the default ladder. Require the file.
+        if variantPreset.lowercased() == "custom" && ladderFile == nil {
+            throw ValidationError("--variants custom requires --ladder-file <path>.")
+        }
     }
 
     // MARK: - Execution
@@ -115,9 +131,16 @@ struct ManifestCommand: AsyncParsableCommand {
             throw ExitCode(ExitCodes.invalidArguments.rawValue)
         }
 
-        // Resolve codecs
-        let vCodec = VideoCodec(rawValue: videoCodec) ?? .h264
-        let aCodec = AudioCodec(rawValue: audioCodec) ?? .aacLC
+        // Resolve codecs — validate like EncodeCommand.applyOverrides rather than
+        // silently defaulting an unrecognised codec string to h264/aac.
+        guard let vCodec = VideoCodec(rawValue: videoCodec) else {
+            let accepted = VideoCodec.allCases.map(\.rawValue).joined(separator: ", ")
+            throw ValidationError("Unknown --video-codec '\(videoCodec)'. Accepted values: \(accepted).")
+        }
+        guard let aCodec = AudioCodec(rawValue: audioCodec) else {
+            let accepted = AudioCodec.allCases.map(\.rawValue).joined(separator: ", ")
+            throw ValidationError("Unknown --audio-codec '\(audioCodec)'. Accepted values: \(accepted).")
+        }
 
         // Resolve variant ladder
         let variants = try resolveVariants()

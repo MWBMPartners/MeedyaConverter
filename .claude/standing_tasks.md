@@ -2,7 +2,9 @@
 
 > These tasks MUST be performed automatically after EVERY development prompt/action.
 > Saved for Claude AI context continuity.
-> Last updated: 2026-04-04
+> They are **project- and repo-wide**: they apply to ALL contributors, across ANY
+> dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
+> Last updated: 2026-08-04
 
 ## Mandatory Post-Action Tasks
 
@@ -16,12 +18,23 @@
 
 ### 1a. Acceptance Criteria Tracking
 
-- **At every step/stage of work**, review the relevant GitHub Issue's acceptance criteria checklist
-- **Tick each criteria item** (`- [x]`) as soon as it is verified complete
-- Do this incrementally — not just at the end. Each commit/action should update the checkboxes
-- If a criteria item is partially done, add a comment noting progress
-- This applies to ALL issues, ALL phases, consistently — no exceptions
-- Use `gh issue edit {number} --body` to update checkboxes, or `gh issue comment` for progress notes
+**Policy (clarified 2026-07-18 per #429):** incremental ticking is the ideal,
+but the *enforceable gate* is close-time, so the document's authority does not
+erode when incremental ticking is impractical.
+
+- **Tick incrementally where practical** — as each acceptance-criterion item is
+  verified complete, flip it to `- [x]` (`gh issue edit {number} --body-file` or a
+  `gh issue comment` progress note). Do this as you go, not only at the end.
+- **Hard gate (must hold at close):** before an issue is closed, EVERY acceptance-
+  criterion box is either ticked, or explicitly annotated as deferred with a
+  tracking issue reference (e.g. "engine consumption tracked in #346"). Closing an
+  issue with silently-unchecked criteria and no annotation is not permitted.
+- **Evidence:** each close (or each incremental tick batch) carries a short comment
+  citing the PR/commit/test that satisfies the criteria — the audit trail a
+  third-party reviewer can follow.
+- **Enforcement:** the merge-gate checklist in `.github/PULL_REQUEST_TEMPLATE.md`
+  prompts the merger to confirm AC boxes are ticked before merge.
+- Applies to ALL issues, ALL phases, consistently — no exceptions.
 
 ### 2. Code Quality — Lint, Syntax & Structure
 
@@ -51,7 +64,7 @@
   - PROJECT_STATUS.md
   - Project_Plan.md
   - DEV_NOTES.md (if exists)
-  - help/*.md (all help documentation)
+  - Sources/MeedyaConverter/Resources/Help/*.md (all help documentation)
 
 ### 6. GitHub Updates
 
@@ -63,7 +76,7 @@
 
 ### 7. In-App Documentation
 
-- Update all in-app help content in Resources/Help/
+- Update all in-app help content in Sources/MeedyaConverter/Resources/Help/
 - Ensure help text matches current feature state
 
 ### 8. Gitignore Maintenance
@@ -92,11 +105,35 @@
 - Store in `docs/api/` as OpenAPI YAML spec
 - This ensures the CLI API documentation is always current and machine-readable
 
+### 12. Dev Cache Cleanup (after each PR + at session end)
+
+- After **each merged PR**, run `./scripts/clean-dev-caches.sh` (default `--quick`):
+  - Clears the project's `.build/`, `.swiftpm/xcode/`, `.swiftpm/configuration/`
+  - Clears the project-specific Xcode `DerivedData/MeedyaConverter-*`
+  - Frees ~1-3 GiB on this codebase; fast, no impact on other Rust / Swift work on the machine
+- At **session end** (or when disk pressure is felt), run `./scripts/clean-dev-caches.sh --deep`:
+  - Adds the global SwiftPM download cache + cargo registry cache (+ source)
+  - Adds any sibling `MeedyaSuite-core/target/` if checked out
+  - Slower first build for any project on the machine afterwards, but recovers the most space
+- Use `--dry-run` to preview what would be removed without deleting
+- Why: everything cleaned regenerates automatically (build outputs from source, download caches from network). Aggressive cleanup prevents the disk-full failures we hit on 2026-05-20 mid-session when `/tmp` ran out and Claude tools blocked
+- Safe to skip: never. The script is non-destructive in the data-loss sense; the only cost is regeneration time
+
 ### 13. Claude Context Updates
 
 - Update .claude/ memory, context, and prompt files
 - Keep project brief current
 - Update MEMORY.md in Claude's memory directory
+
+### 14. GitHub PR Security Checks (monitor on EVERY PR — always applicable)
+
+- On every pull request, monitor GitHub's own security checks and fix any real finding before merge — a green `Build & Test (macOS)` is necessary but NOT sufficient:
+  - **CodeQL / code scanning** (`Analyze Swift`) — investigate and fix security alerts, not just the pass/fail box
+  - **Dependency Review** — resolve any flagged vulnerable or incompatible-license dependency
+  - **Secret scanning / push protection** — never merge if a secret is detected; remove + rotate it
+  - **`security-check` pin-hygiene workflow** — keep all GitHub Actions pinned (semver tag or SHA)
+  - **OpenSSF Scorecard** advisories surfaced in the dependency-review comment — address where actionable
+- Applies regardless of session, branch, or task. If a security check fails or a scanning alert appears, treat it like any CI failure: investigate, fix, re-run to green.
 
 ## Code Standards (Apply to All Code)
 
@@ -114,3 +151,87 @@
 - Explicitly call out any features that cannot meet App Store guidelines
 - Code signing and notarization ready (paid Apple Developer Programme account)
 - Dual distribution: App Store (sandboxed) + Direct (Sparkle updates)
+
+---
+
+## Workflow & Processing Standing Tasks (added 2026-08-04)
+
+> Repo-wide operating procedure. Applies to every contributor and every dev
+> environment. These are process directives; the numbered "Mandatory Post-Action
+> Tasks" above remain the per-step checklist.
+
+### W1. Project-state accuracy (GitHub Issues + Claude context)
+
+- Periodically (and whenever significant work lands) do a **full sweep of ALL
+  GitHub Issues — open AND closed** — and reconcile each against the **actual
+  codebase**, never against commit titles, PR text, or other documents. No
+  assumptions/inferences: confirm by reading the code (callers exist, the code
+  path executes, the setting is read, the UI/CLI reaches it).
+- Update all **Claude memory / context / prompt files** in `.claude/`
+  (`project_brief.md`, `standing_tasks.md`, `prompt_history.md`, `HANDOFF.md`,
+  and any others) to match reality.
+- Where a fix is implemented on the working branch but not yet merged, mark the
+  issue **"implemented on branch, closes on merge"** with an evidence comment —
+  do not close it until the change is actually released to the target branch.
+
+### W2. Keep the Handoff document current (crash-safe continuity)
+
+- Update `.claude/HANDOFF.md` **as you go**, not only at the end, so any session
+  can resume exactly where the last left off after any interruption.
+
+### W3. Deep analysis & planning → Fable 5 (sequential); implementation → Sonnet/Haiku
+
+- Perform **deep analysis and deep planning** using **sequential (never parallel)
+  Fable 5 agents**. If Fable 5 is unavailable, fall back to Opus for that run and
+  **retry Fable 5** on the next deep-analysis/planning run.
+- Carry out **implementation** with **Sonnet or Haiku**, whichever fits. Use
+  **Opus only when the implementation is genuinely complex**.
+- Philosophy: **GIRFT — Get It Right First Time.** Spend tokens/credits
+  efficiently while still producing top-quality, correct code.
+
+### W4. Use available plugins
+
+- Use `dev-team-plugins` (and other configured plugins/skills) to help perform,
+  manage, or propose any of this work where they add leverage.
+
+### W5. Steps after EACH task
+
+1. **Commit and push** the work to the single working branch that will eventually
+   target `alpha` (currently `wip/alpha-consolidation`).
+2. **Update the relevant GitHub Issue(s) individually** for that task (progress
+   comment, tick acceptance-criteria boxes, close only when truly satisfied).
+3. **Update Claude memory & context** in `.claude/`.
+4. **Update the Handoff document** so work is resumable at any point.
+
+### W6. Thorough documentation update
+
+- Keep ALL `.md` docs current (README, CHANGELOG, PROJECT_STATUS, Project_Plan,
+  DEV_NOTES, FEATURES, PROJECT, `docs/**`, help markdown).
+- Update **in-app help / guides** (`Sources/MeedyaConverter/Resources/Help/`).
+- Update **Claude memory/context** in `.claude/`.
+- If the project exposes an **API**, update the **OpenAPI/Swagger** spec
+  (`docs/api/*.yaml`).
+- If the project gains **web-based components** and a browsable **Swagger UI**
+  isn't already bundled, include one — prepared to be **hostable on shared
+  hosting (no Docker / no build step)**. (Already present at
+  `docs/api/swagger-ui/`.)
+
+### W7. Efficient / smart processing
+
+- Reorder and bundle these tasks as needed to execute efficiently, provided none
+  is dropped.
+
+### W8. Autonomy
+
+- Work through ALL queued tasks **autonomously**. Only pause when an **EXPLICIT
+  decision or action from the user** is required — state, in the simplest wording,
+  exactly what is needed and why — then **continue autonomously** with the rest of
+  the queue without waiting.
+
+### W9. No PR stacking
+
+- **Do not** open multiple stacked PRs. Commit all work to the single working
+  branch (`wip/alpha-consolidation`) which will target `alpha` via **one** PR
+  created later. This avoids PR merge-race conditions.
+- Exception already in force: MWBM-intAppsAPI changes go to that repo's
+  `feat/feature-targeting-consolidated` branch.

@@ -15,8 +15,11 @@ import AppKit
 /// The type of action to execute after an encoding job completes.
 ///
 /// Actions run in the order they appear in a `PostEncodeActionChain`.
-/// Some types (`.uploadSFTP`, `.uploadCloud`) are reserved for future
-/// implementation and currently throw an "unsupported" error if executed.
+/// All cases execute for real — `.uploadSFTP` (Issue #450) and
+/// `.uploadCloud` (Issue #459) both perform a genuine, authenticated
+/// transfer and only report success when the destination actually
+/// accepted the bytes; see their doc comments for the execution path
+/// each one uses.
 public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// Move the source file to the macOS Trash.
     case moveSourceToTrash
@@ -32,10 +35,20 @@ public enum PostEncodeActionType: String, Codable, Sendable, CaseIterable {
     /// Send a webhook POST request (delegates to `WebhookSender`).
     case webhook
 
-    /// Upload the output file via SFTP (future — not yet implemented).
+    /// Upload the output file via SFTP/`scp`, using a server profile saved
+    /// in `SFTPSettingsView` and looked up through `SFTPProfileStore`
+    /// (Issue #450). See `PostEncodeAction.config` for the expected key.
     case uploadSFTP
 
-    /// Upload the output file to cloud storage (future — not yet implemented).
+    /// Upload the output file to a saved cloud storage configuration
+    /// (Dropbox / Google Drive / OneDrive / S3 — S3 added roadmap #7, re
+    /// #459/#162), using a profile saved in `CloudStorageView` and looked
+    /// up through `CloudStorageProfileStore` (Issue #459 — mirrors the
+    /// `.uploadSFTP` wiring shipped for Issue #450). See
+    /// `PostEncodeAction.config` for the expected key. YouTube/Vimeo and
+    /// full OAuth PKCE remain out of scope for this action; see
+    /// `CloudUploadExecutor`'s doc comment for what providers it
+    /// actually executes.
     case uploadCloud
 
     /// Send a macOS notification with a custom message.
@@ -72,6 +85,17 @@ public struct PostEncodeAction: Identifiable, Codable, Sendable {
     /// - `.webhook`: `"url"` — the webhook endpoint URL.
     /// - `.sendNotification`: `"message"` — the notification body text.
     /// - `.sendNotification`: `"title"` — optional notification title.
+    /// - `.uploadSFTP`: `"sftpProfileID"` — the `UUID` string of a saved
+    ///   `SFTPServerConfig` profile (see `SFTPSettingsView` /
+    ///   `SFTPProfileStore`). No credentials are ever stored here —
+    ///   only a reference to a profile whose secret lives in the
+    ///   Keychain via `SFTPCredentialStore`.
+    /// - `.uploadCloud`: `"cloudProfileID"` — the `UUID` string of a
+    ///   saved `CloudStorageConfig` (see `CloudStorageView` /
+    ///   `CloudStorageProfileStore`). As with `.uploadSFTP`, no
+    ///   credential is ever stored here — only a reference to a
+    ///   configuration whose OAuth token lives in the Keychain via
+    ///   `APIKeyManager`.
     public var config: [String: String]
 
     /// Whether this action is enabled. Disabled actions are skipped.
@@ -126,6 +150,19 @@ public struct PostEncodeAction: Identifiable, Codable, Sendable {
 /// - `{status}` — the job outcome (`success` or `failure`).
 ///
 /// Phase 17 — Post-Encode Hooks (Issue #277)
+///
+/// **Swift 6 concurrency re-audit (roadmap #14, 2026-07-28):** this
+/// file's two `Task.detached` sites (`uploadViaSFTP`'s and
+/// `sendMacOSNotification`'s) were re-checked against the genuine bug
+/// class — a `@MainActor` class `self` captured into `Task.detached` and
+/// mutated back via `MainActor.run` — and found already correct:
+/// `PostEncodeActionChain` is a plain `Sendable` struct, not a
+/// `@MainActor` class, so there is no main-actor state for either site to
+/// race on. `uploadViaSFTP`'s `Task.detached` captures/returns only
+/// `Sendable` values (`localPath`/`profile` in, `SFTPUploadOutcome` out),
+/// never `self`; `sendMacOSNotification`'s is a bare fire-and-forget
+/// `Task.detached` that captures no `self`/state and never hops back via
+/// `MainActor.run` at all. No changes made.
 public struct PostEncodeActionChain: Codable, Sendable {
 
     // MARK: - Properties
@@ -152,6 +189,9 @@ public struct PostEncodeActionChain: Codable, Sendable {
         case unsupportedAction(PostEncodeActionType)
         /// A required configuration key is missing.
         case missingConfig(key: String, actionName: String)
+        /// A configured upload (SFTP/cloud) genuinely failed. Carries the
+        /// real error the uploader reported — never a fabricated one.
+        case uploadFailed(actionName: String, message: String)
 
         public var errorDescription: String? {
             switch self {
@@ -161,6 +201,8 @@ public struct PostEncodeActionChain: Codable, Sendable {
                 return "Action type '\(type.rawValue)' is not yet supported."
             case .missingConfig(let key, let name):
                 return "Action '\(name)' is missing required config key '\(key)'."
+            case .uploadFailed(let name, let message):
+                return "Action '\(name)' upload failed: \(message)"
             }
         }
     }
@@ -179,6 +221,55 @@ public struct PostEncodeActionChain: Codable, Sendable {
     /// - Throws: The first error encountered during execution. Subsequent
     ///   actions are still attempted even if an earlier action fails.
     public func execute(inputURL: URL, outputURL: URL, success: Bool) async throws {
+        try await execute(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            success: success,
+            actionExecutor: nil
+        )
+    }
+
+    // MARK: - Test Seam (Issue #450 test coverage — roadmap #9)
+
+    /// Runs the chain exactly like ``execute(inputURL:outputURL:success:)``,
+    /// but lets a caller substitute the real per-action dispatch
+    /// (`executeAction`) with an injected closure.
+    ///
+    /// This exists purely so `PostEncodeActionsTests` can exercise the
+    /// chain's ordering / skip / error-aggregation logic without spawning
+    /// real processes or making real network calls — `executeAction`
+    /// ultimately shells out to `scp`/`curl`/`osascript`/`zsh` or hits the
+    /// network via `WebhookSender`/`CloudUploadExecutor`, none of which
+    /// belong in a fast, deterministic unit test.
+    ///
+    /// Deliberately NOT `public`: the only caller outside this file is the
+    /// test target, which reaches it via `@testable import ConverterEngine`
+    /// (documented at the top of `PostEncodeActionsTests.swift`). Every
+    /// production call site goes through the zero-argument-defaulted public
+    /// `execute(inputURL:outputURL:success:)` above, which always passes
+    /// `nil`, so behaviour for every existing caller is unchanged.
+    ///
+    /// - Parameters:
+    ///   - inputURL: The source file URL.
+    ///   - outputURL: The output file URL.
+    ///   - success: Whether the encoding job completed successfully.
+    ///   - actionExecutor: When `nil` (the public entry point's behaviour),
+    ///     every action runs through the real `executeAction`
+    ///     implementation. When non-nil, it replaces that dispatch
+    ///     entirely — the injected closure receives the action and the
+    ///     job's `success` flag and is responsible for throwing to
+    ///     simulate a failing action.
+    /// - Throws: The first error encountered during execution. Subsequent
+    ///   actions are still attempted even if an earlier action fails —
+    ///   this method does NOT abort the chain on a failing action; it
+    ///   collects the first error and keeps going, matching
+    ///   `execute(inputURL:outputURL:success:)`'s documented behaviour.
+    func execute(
+        inputURL: URL,
+        outputURL: URL,
+        success: Bool,
+        actionExecutor: (@Sendable (PostEncodeAction, Bool) async throws -> Void)?
+    ) async throws {
         var firstError: (any Error)?
 
         for action in actions {
@@ -189,12 +280,16 @@ public struct PostEncodeActionChain: Codable, Sendable {
             if !success && !action.runOnFailure { continue }
 
             do {
-                try await executeAction(
-                    action,
-                    inputURL: inputURL,
-                    outputURL: outputURL,
-                    success: success
-                )
+                if let actionExecutor {
+                    try await actionExecutor(action, success)
+                } else {
+                    try await executeAction(
+                        action,
+                        inputURL: inputURL,
+                        outputURL: outputURL,
+                        success: success
+                    )
+                }
             } catch {
                 if firstError == nil { firstError = error }
             }
@@ -271,10 +366,10 @@ public struct PostEncodeActionChain: Codable, Sendable {
             await sendMacOSNotification(title: title, body: substituted)
 
         case .uploadSFTP:
-            throw ActionError.unsupportedAction(.uploadSFTP)
+            try await uploadViaSFTP(action: action, outputURL: outputURL)
 
         case .uploadCloud:
-            throw ActionError.unsupportedAction(.uploadCloud)
+            try await uploadViaCloud(action: action, outputURL: outputURL)
         }
     }
 
@@ -295,7 +390,17 @@ public struct PostEncodeActionChain: Codable, Sendable {
     ///   - profile: The encoding profile name.
     ///   - status: The job outcome string.
     /// - Returns: The string with all placeholders replaced.
-    private func substituteVariables(
+    ///
+    /// Not `private`: kept at the default internal access level (instead
+    /// of `fileprivate`/`private`) solely so `PostEncodeActionsTests` can
+    /// assert on it directly via `@testable import ConverterEngine` —
+    /// substitution is a pure string transform with no process/network
+    /// side effects, ideal for a direct unit test, but every action that
+    /// uses it (`.runShellScript`, `.sendNotification`) does spawn a real
+    /// process to observe the substituted result otherwise. No public API
+    /// or behaviour changes: this remains unreachable from outside the
+    /// module for any non-`@testable` consumer.
+    func substituteVariables(
         in string: String,
         inputURL: URL,
         outputURL: URL,
@@ -319,6 +424,123 @@ public struct PostEncodeActionChain: Codable, Sendable {
     /// - Parameter inputURL: The source file URL.
     private func moveToTrash(inputURL: URL) async throws {
         try FileManager.default.trashItem(at: inputURL, resultingItemURL: nil)
+    }
+
+    /// Upload the encoded output file to a saved SFTP server profile via
+    /// `scp`.
+    ///
+    /// Reuses the existing uploader plumbing end to end rather than
+    /// inventing a parallel path:
+    /// - `action.config["sftpProfileID"]` resolves to a profile through
+    ///   `SFTPProfileStore.profile(withID:)`, which reads the exact same
+    ///   `UserDefaults` blob `SFTPSettingsView` writes and restores the
+    ///   password (if any) from the Keychain via `SFTPCredentialStore` —
+    ///   no credential is ever stored inside `PostEncodeAction.config`.
+    /// - `SFTPUploader.upload(localPath:config:)` builds argv with
+    ///   `SFTPUploader.buildSCPArguments(localPath:config:)` (unchanged —
+    ///   credentials never touch argv) and runs `scp`.
+    ///
+    /// Concurrency mirrors `SFTPSettingsView.probeConnection` (Issue
+    /// #447): the blocking `scp`/`waitUntilExit()` work happens inside
+    /// `Task.detached`, capturing and returning only `Sendable` values
+    /// (`SFTPServerConfig` in, `SFTPUploadOutcome` out) — never `self`.
+    ///
+    /// - Parameters:
+    ///   - action: The configured `.uploadSFTP` action.
+    ///   - outputURL: The encoded output file to upload.
+    /// - Throws: `ActionError.missingConfig` if no valid profile
+    ///   reference is configured, or `ActionError.uploadFailed` with the
+    ///   real `scp` error if the transfer fails.
+    private func uploadViaSFTP(action: PostEncodeAction, outputURL: URL) async throws {
+        guard let profileIDString = action.config["sftpProfileID"],
+              let profileID = UUID(uuidString: profileIDString),
+              let profile = SFTPProfileStore.profile(withID: profileID) else {
+            throw ActionError.missingConfig(key: "sftpProfileID", actionName: action.name)
+        }
+
+        let localPath = outputURL.path
+        let outcome = await Task.detached {
+            SFTPUploader.upload(localPath: localPath, config: profile)
+        }.value
+
+        guard outcome.succeeded else {
+            throw ActionError.uploadFailed(actionName: action.name, message: outcome.message)
+        }
+    }
+
+    /// Upload the encoded output file to a saved cloud storage
+    /// configuration (Dropbox / Google Drive / OneDrive / S3 — S3 added
+    /// roadmap #7, re #459/#162), executing the transfer for real via
+    /// `CloudUploadExecutor` (Issue #459).
+    ///
+    /// Reuses the same plumbing end to end that `CloudStorageView`
+    /// uses, mirroring `uploadViaSFTP` above (Issue #450):
+    /// - `action.config["cloudProfileID"]` resolves to a configuration
+    ///   through `CloudStorageProfileStore.profile(withID:)`, which
+    ///   reads the same `UserDefaults` blob `CloudStorageView` writes
+    ///   and restores the secret credential(s) from the Keychain via
+    ///   `APIKeyManager` — no credential is ever stored inside
+    ///   `PostEncodeAction.config`.
+    /// - `CloudUploadExecutor.uploadToCloudStorage(fileURL:config:)`
+    ///   picks the matching request builder (Dropbox / Google Drive /
+    ///   OneDrive, including OneDrive's chunked upload-session path for
+    ///   files over 4 MB; or S3, including its multipart path for files
+    ///   over 100 MB) and performs the real, authenticated transfer.
+    ///
+    /// Unlike `uploadViaSFTP`'s `scp` invocation, the executor's work is
+    /// genuinely `async` (no blocking `Process.waitUntilExit()`), so no
+    /// `Task.detached` hop is needed here — `await`ing it directly
+    /// never blocks a thread.
+    ///
+    /// - Parameters:
+    ///   - action: The configured `.uploadCloud` action.
+    ///   - outputURL: The encoded output file to upload.
+    /// - Throws: `ActionError.missingConfig` if no valid profile
+    ///   reference is configured, or `ActionError.uploadFailed` with
+    ///   the real executor error (`CloudUploadExecutor.UploadError`'s
+    ///   description — real HTTP status + body, or a real transport
+    ///   failure) if the transfer fails.
+    private func uploadViaCloud(action: PostEncodeAction, outputURL: URL) async throws {
+        guard let profileIDString = action.config["cloudProfileID"],
+              let profileID = UUID(uuidString: profileIDString),
+              let profile = CloudStorageProfileStore.profile(withID: profileID) else {
+            throw ActionError.missingConfig(key: "cloudProfileID", actionName: action.name)
+        }
+
+        // S3 (roadmap #7, re #459/#162) validates a different credential
+        // shape than the OAuth providers — access key ID + secret access
+        // key + bucket, none of which is an "access token" in the OAuth
+        // sense, even though `accessToken` is the field that carries the
+        // access key ID (see `CloudStorageConfig.accessToken`'s doc
+        // comment).
+        if profile.provider == .s3 {
+            guard !profile.accessToken.isEmpty,
+                  !(profile.secretAccessKey ?? "").isEmpty,
+                  !(profile.bucket ?? "").isEmpty else {
+                throw ActionError.uploadFailed(
+                    actionName: action.name,
+                    message: "S3 credentials are incomplete for \"\(profile.label)\". Add the access "
+                        + "key ID, secret access key, and bucket in Cloud Storage settings and save "
+                        + "the configuration first."
+                )
+            }
+        } else {
+            guard !profile.accessToken.isEmpty else {
+                throw ActionError.uploadFailed(
+                    actionName: action.name,
+                    message: "No access token is saved for \(profile.provider.rawValue). "
+                        + "Paste an OAuth token in Cloud Storage settings and save the "
+                        + "configuration first."
+                )
+            }
+        }
+
+        let executor = CloudUploadExecutor()
+        do {
+            _ = try await executor.uploadToCloudStorage(fileURL: outputURL, config: profile)
+        } catch {
+            throw ActionError.uploadFailed(actionName: action.name, message: error.localizedDescription)
+        }
     }
 
     /// Reveal the output file in Finder.

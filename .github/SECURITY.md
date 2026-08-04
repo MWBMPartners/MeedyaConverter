@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.x     | :white_check_mark: |
-| < 1.0   | :x:                |
+| Version | Supported   |
+| ------- | ----------- |
+| 0.1.x   | ✓ (current) |
+| < 0.1   | ✗           |
 
-Only the latest release within a supported major version receives security updates.
+Until 1.0, security response is best-effort on the latest minor version. Major versions (when they happen) receive security fixes for the latest minor of the preceding major for 6 months.
 
 ## Reporting a Vulnerability
 

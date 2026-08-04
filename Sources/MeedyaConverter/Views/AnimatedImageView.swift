@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import UniformTypeIdentifiers
 import ConverterEngine
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,16 @@ struct AnimatedImageView: View {
 
     /// Whether a generation operation is currently running.
     @State private var isGenerating: Bool = false
+
+    /// The in-flight generation task, retained so it can be cancelled if
+    /// the user clicks Cancel or navigates away mid-generation. Mirrors
+    /// `VideoTrimmerView.applyTask`.
+    @State private var generationTask: Task<Void, Never>?
+
+    /// The FFmpeg process currently running (palette pass, GIF pass, or the
+    /// single APNG pass), retained so `cancelGeneration()` can stop it.
+    /// Mirrors `VideoTrimmerView.currentController`.
+    @State private var currentController: FFmpegProcessController?
 
     // MARK: - Body
 
@@ -184,19 +195,35 @@ struct AnimatedImageView: View {
                     }
                     .disabled(isGenerating)
                     .keyboardShortcut(.return, modifiers: .command)
+
+                    if isGenerating {
+                        Button("Cancel", action: cancelGeneration)
+                            .accessibilityLabel("Cancel animated image generation")
+                    }
                     Spacer()
                 }
 
                 if let status = statusMessage {
                     Text(status)
                         .font(.caption)
-                        .foregroundStyle(status.contains("Error") ? .red : .green)
+                        .foregroundStyle(statusColor(for: status))
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Animated Image")
+        .onDisappear {
+            cancelGeneration()
+        }
+    }
+
+    /// Colour for the status banner: red for a real failure, secondary for
+    /// a user-initiated cancellation, green for success.
+    private func statusColor(for status: String) -> Color {
+        if status.hasPrefix("Error") { return .red }
+        if status == "Cancelled." { return .secondary }
+        return .green
     }
 
     // MARK: - Computed Properties
@@ -245,7 +272,27 @@ struct AnimatedImageView: View {
     // MARK: - Actions
 
     /// Presents an NSSavePanel and generates the animated image.
+    ///
+    /// Real execution (Issue #321): runs the real two-pass GIF-palette /
+    /// single-pass APNG arguments `AnimatedImageGenerator.buildGIFArguments`
+    /// / `buildAPNGArguments` already build, against `viewModel.selectedFile`,
+    /// via `FFmpegProcessController` — the same runner/`AsyncStream`-draining
+    /// pattern `VideoTrimmerView.runSimpleTrim`/`runToCompletion` use. On
+    /// success the real output file exists at the user-chosen path; on
+    /// failure, an honest error naming what actually went wrong (never a
+    /// fabricated "success").
+    ///
+    /// `AnimatedImageView` is a `struct: View`, so the plain `Task { }`
+    /// below inherits main-actor isolation (mirrors `ImageConversionView
+    /// .startConversion()` / `VideoTrimmerView.applyTrim()`): `@State`
+    /// reads/writes are direct property mutations, not `MainActor.run` hops.
     private func generate() {
+        guard !isGenerating else { return }
+        guard let file = viewModel.selectedFile else {
+            statusMessage = "Error: No source file selected. Import a video before generating."
+            return
+        }
+
         let panel = NSSavePanel()
         panel.title = "Save Animated Image"
         panel.nameFieldStringValue = "output.\(format.rawValue)"
@@ -260,23 +307,113 @@ struct AnimatedImageView: View {
         statusMessage = "Generating..."
         isGenerating = true
 
-        // In a real implementation this would invoke FFmpegBackend to
-        // run the generated arguments. For now we store the args to
-        // demonstrate the pipeline integration point.
         let config = currentConfig
-        let _ = format == .gif
-            ? AnimatedImageGenerator.buildGIFArguments(
-                inputPath: "<source>",
-                outputPath: url.path,
-                config: config
-            )
-            : [AnimatedImageGenerator.buildAPNGArguments(
-                inputPath: "<source>",
-                outputPath: url.path,
-                config: config
-            )]
+        let inputPath = file.fileURL.path
+        let outputPath = url.path
 
-        statusMessage = "Arguments prepared for \(url.lastPathComponent)"
+        generationTask = Task {
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                statusMessage = "Error: FFmpeg could not be found. Install FFmpeg or configure its location in Settings."
+                isGenerating = false
+                return
+            }
+
+            do {
+                switch format {
+                case .gif:
+                    // Two-pass palette workflow: palettegen, then paletteuse.
+                    let passes = AnimatedImageGenerator.buildGIFArguments(
+                        inputPath: inputPath,
+                        outputPath: outputPath,
+                        config: config
+                    )
+
+                    let paletteController = FFmpegProcessController(binaryPath: ffmpegPath)
+                    currentController = paletteController
+                    try await runToCompletion(paletteController, arguments: passes[0])
+
+                    let gifController = FFmpegProcessController(binaryPath: ffmpegPath)
+                    currentController = gifController
+                    try await runToCompletion(gifController, arguments: passes[1])
+
+                    // Remove the intermediate palette PNG
+                    // (AnimatedImageGenerator.buildGIFArguments derives its
+                    // path from the output path's directory).
+                    let paletteDir = (outputPath as NSString).deletingLastPathComponent
+                    let palettePath = (paletteDir as NSString).appendingPathComponent("palette_tmp.png")
+                    try? FileManager.default.removeItem(atPath: palettePath)
+
+                case .apng:
+                    let args = AnimatedImageGenerator.buildAPNGArguments(
+                        inputPath: inputPath,
+                        outputPath: outputPath,
+                        config: config
+                    )
+                    let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+                    currentController = controller
+                    try await runToCompletion(controller, arguments: args)
+                }
+
+                guard FileManager.default.fileExists(atPath: outputPath) else {
+                    throw FFmpegProcessError.processFailure(
+                        exitCode: currentController?.exitCode ?? -1,
+                        stderr: "FFmpeg reported success but no output file was found at \(outputPath)."
+                    )
+                }
+
+                statusMessage = "Generated \(url.lastPathComponent)"
+                viewModel.appendLog(
+                    .info,
+                    "Animated \(format.rawValue.uppercased()) generated: \(url.lastPathComponent)"
+                )
+            } catch is CancellationError {
+                statusMessage = "Cancelled."
+            } catch {
+                statusMessage = "Error: \(error.localizedDescription)"
+                viewModel.appendLog(
+                    .error,
+                    "Animated \(format.rawValue.uppercased()) generation failed: \(error.localizedDescription)"
+                )
+            }
+
+            currentController = nil
+            isGenerating = false
+        }
+    }
+
+    /// Cancel an in-progress generation. Mirrors `VideoTrimmerView.cancelApply()`.
+    private func cancelGeneration() {
+        generationTask?.cancel()
+        currentController?.stopEncoding()
+        currentController = nil
+        generationTask = nil
         isGenerating = false
+    }
+
+    /// Runs an `FFmpegProcessController` encoding pass to completion by
+    /// draining its progress `AsyncStream`. Mirrors
+    /// `VideoTrimmerView.runToCompletion`.
+    private func runToCompletion(
+        _ controller: FFmpegProcessController,
+        arguments: [String]
+    ) async throws {
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await _ in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
     }
 }

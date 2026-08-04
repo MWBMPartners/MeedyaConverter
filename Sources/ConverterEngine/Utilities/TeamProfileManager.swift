@@ -142,17 +142,23 @@ public final class TeamProfileManager: @unchecked Sendable {
     ///
     /// Serialises the provided profiles to JSON and writes them to the
     /// configured repository location. For iCloud shared folders this
-    /// writes directly to the folder; for HTTP servers it would POST to
-    /// the server endpoint; for Git it writes to the repository working tree.
+    /// writes directly to the folder; for HTTP servers it sends an HTTP
+    /// PUT to the server endpoint via `URLSession` and requires a 2xx
+    /// response; for Git it writes to the repository working tree.
     ///
     /// - Parameters:
     ///   - profiles: The encoding profiles to push.
     ///   - repository: The target repository configuration.
-    /// - Throws: An error if serialisation or file I/O fails.
+    /// - Throws: An error if serialisation, file I/O, or the HTTP push fails
+    ///   — mirrors the "never fabricate success" contract `WebhookSender`
+    ///   and `MediaServerIntegration` already establish elsewhere in this
+    ///   module: a non-2xx (or non-HTTP) response throws
+    ///   ``TeamProfileError/httpError(statusCode:body:)`` rather than
+    ///   silently reporting success.
     public func pushProfiles(
         _ profiles: [EncodingProfile],
         to repository: TeamProfileRepository
-    ) throws {
+    ) async throws {
         let data = try encoder.encode(profiles)
 
         switch repository.syncMethod {
@@ -174,15 +180,19 @@ public final class TeamProfileManager: @unchecked Sendable {
             guard let serverURL = repository.serverURL else {
                 throw TeamProfileError.noServerURL
             }
-            // Build the push request; actual network call is the caller's
-            // responsibility via URLSession.
             var request = URLRequest(url: serverURL)
             request.httpMethod = "PUT"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = data
-            // Store for caller retrieval — in production this would be
-            // sent asynchronously.
-            _ = request
+
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let body = String(data: responseData, encoding: .utf8)
+                throw TeamProfileError.httpError(statusCode: code, body: body)
+            }
         }
 
         queue.sync {
@@ -310,6 +320,11 @@ public enum TeamProfileError: LocalizedError, Sendable {
     /// The profile data could not be decoded.
     case decodingFailed(String)
 
+    /// The HTTP server responded with a non-success status code when
+    /// pushing profiles. `body` is the raw response body, if any, decoded
+    /// as UTF-8 text.
+    case httpError(statusCode: Int, body: String?)
+
     /// A human-readable description of the error.
     public var errorDescription: String? {
         switch self {
@@ -319,6 +334,8 @@ public enum TeamProfileError: LocalizedError, Sendable {
             return "No server URL is configured for team profile sync."
         case .decodingFailed(let detail):
             return "Failed to decode team profiles: \(detail)"
+        case .httpError(let statusCode, let body):
+            return "Team profile push failed with HTTP \(statusCode)\(body.map { ": \($0)" } ?? "")"
         }
     }
 }

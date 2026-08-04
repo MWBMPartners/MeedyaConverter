@@ -74,12 +74,40 @@ struct MediaServerSettingsView: View {
 
     /// Build a `MediaServerConfig` from the current settings, or `nil` if invalid.
     private var currentConfig: MediaServerConfig? {
-        guard !serverHost.isEmpty, !apiKey.isEmpty else { return nil }
+        Self.loadMediaServerConfig()
+    }
+
+    /// Load the persisted media server configuration independent of this
+    /// view being on screen — the same `UserDefaults` keys this view's
+    /// `@AppStorage` properties bind to. Mirrors
+    /// `EmailSettingsView.loadSMTPConfig()`.
+    ///
+    /// Used by `AppViewModel`'s post-encode auto-scan wiring (Issue #295 /
+    /// #203) to trigger a library scan without needing a
+    /// `MediaServerSettingsView` instance. Returns `nil` when the host or
+    /// API key is missing (mirrors `currentConfig` above), so callers can
+    /// silently skip.
+    ///
+    /// - Returns: A configured `MediaServerConfig`, or `nil` if `serverHost`
+    ///   or `apiKey` is empty.
+    static func loadMediaServerConfig() -> MediaServerConfig? {
+        let defaults = UserDefaults.standard
+
+        let host = defaults.string(forKey: "mediaServerHost") ?? ""
+        let apiKey = defaults.string(forKey: "mediaServerAPIKey") ?? ""
+        guard !host.isEmpty, !apiKey.isEmpty else { return nil }
+
+        let typeRaw = defaults.string(forKey: "mediaServerType") ?? MediaServerType.plex.rawValue
+        let serverType = MediaServerType(rawValue: typeRaw) ?? .plex
+        let port = (defaults.object(forKey: "mediaServerPort") as? Int) ?? serverType.defaultPort
+        let useTLS = (defaults.object(forKey: "mediaServerUseTLS") as? Bool) ?? false
+        let libraryId = defaults.string(forKey: "mediaServerLibraryId") ?? ""
+
         return MediaServerConfig(
             serverType: serverType,
             displayName: "\(serverType.displayName) Server",
-            host: serverHost,
-            port: serverPort,
+            host: host,
+            port: port,
             apiKey: apiKey,
             useTLS: useTLS,
             libraryID: libraryId.isEmpty ? nil : libraryId

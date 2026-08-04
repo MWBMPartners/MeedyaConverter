@@ -67,6 +67,14 @@ struct SettingsView: View {
                     PathSettingsTab()
                 }
 
+                Tab("Metadata", systemImage: "tag") {
+                    MetadataSettingsTab()
+                }
+
+                Tab("Audio CD", systemImage: "opticaldisc") {
+                    AccurateRipSettingsTab()
+                }
+
                 Tab("Watch Folder", systemImage: "eye") {
                     WatchFolderView()
                 }
@@ -86,8 +94,24 @@ struct SettingsView: View {
                     WebhookSettingsView()
                 }
 
+                // Issue #348 — SMTP config UI, wired to AppViewModel's
+                // encode success/failure paths via `EmailSettingsView
+                // .loadSMTPConfig()` + `sendCompletionEmail`.
+                Tab("Email", systemImage: "envelope") {
+                    EmailSettingsView()
+                }
+
                 Tab("Media Server", systemImage: "server.rack") {
                     MediaServerSettingsView()
+                }
+
+                // `point.3.connected.trianglepath.dotted` rather than
+                // `network`: the latter is already used by the SFTP
+                // sidebar entry in the AppViewModel, and a distributed
+                // render farm is conceptually closer to a constellation
+                // of nodes than to a generic network link.
+                Tab("Render Farm", systemImage: "point.3.connected.trianglepath.dotted") {
+                    RenderFarmSettingsTab()
                 }
 
                 Tab("Analytics", systemImage: "chart.bar") {
@@ -196,6 +220,260 @@ struct EncodingSettingsTab: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Encoding")
+    }
+}
+
+// MARK: - MetadataSettingsTab (Issues #371 engine / #381 / #398 UI)
+//
+// Lets the user pick which backend strategy MeedyaConverter uses for metadata
+// lookups (cover art, episode info, IDs, etc.). Three options:
+//
+//   * Automatic — Prefer MeedyaSuite-core when linked; fall back to the
+//                 built-in inline providers otherwise. This is the safest
+//                 default and what existing users get with no action.
+//   * Suite-core — Force suite-core. Throws `.notCompiledIn` at lookup time
+//                  if the binary wasn't built with `SUITE_CORE=1`, which is
+//                  why this option is *disabled* in the picker when
+//                  `SuiteCoreAvailability.isAvailable` is false.
+//   * Inline only — Bypass suite-core even when it is linked in. Useful
+//                   when debugging provider parity between the two backends.
+//
+// Persistence: a single `@AppStorage` key (`metadataBackend`) holding the
+// enum's rawValue. Engine consumers construct a `SuiteCoreMetadataAdapter`
+// from that key (read via `UserDefaults.standard` in the engine layer, or
+// passed through from the view-model — both work).
+
+/// Metadata-backend selection settings.
+struct MetadataSettingsTab: View {
+
+    /// Persisted backend choice. Default is `automatic` so existing
+    /// installs (no key written) behave exactly as before.
+    @AppStorage("metadataBackend") private var rawBackend: String =
+        SuiteCoreMetadataBackend.automatic.rawValue
+
+    /// Bridged `SuiteCoreMetadataBackend` binding. Parses the persisted
+    /// rawValue on read; if a corrupt value sneaks into UserDefaults (e.g.
+    /// from a future build that adds a case this binary doesn't know),
+    /// we silently fall back to `.automatic` so the UI never crashes.
+    private var backend: Binding<SuiteCoreMetadataBackend> {
+        Binding<SuiteCoreMetadataBackend>(
+            get: {
+                SuiteCoreMetadataBackend(rawValue: rawBackend) ?? .automatic
+            },
+            set: { rawBackend = $0.rawValue }
+        )
+    }
+
+    var body: some View {
+        Form {
+            Section("Provider backend") {
+                Picker("Strategy", selection: backend) {
+                    ForEach(SuiteCoreMetadataBackend.allCases, id: \.self) { option in
+                        // Disable `.suiteCore` when the binary wasn't built
+                        // with SUITE_CORE=1; otherwise picking it would mean
+                        // every lookup throws `.notCompiledIn`.
+                        let isOptionDisabled =
+                            option == .suiteCore
+                            && !SuiteCoreAvailability.isAvailable
+                        Text(displayName(for: option))
+                            .tag(option)
+                            .foregroundStyle(isOptionDisabled ? .secondary : .primary)
+                    }
+                }
+                .pickerStyle(.inline)
+                .accessibilityLabel("Metadata provider backend strategy")
+
+                // Help text — matches the copy specified in #381 verbatim
+                // so a future audit can grep for it.
+                Text(
+                    "Automatic uses MeedyaSuite-core when linked, "
+                    + "else the built-in providers."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                // Live status line. Surfaces what's actually going to happen
+                // right now, which is more useful than just describing the
+                // options abstractly — especially when `.automatic` is the
+                // default and the user might not realise suite-core isn't
+                // available in this build.
+                statusLine
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Metadata")
+    }
+
+    // MARK: - Helpers
+
+    /// User-facing label for each `SuiteCoreMetadataBackend` case. Kept
+    /// in this file (rather than as a property on the engine enum) because
+    /// it is purely a UI string and shouldn't pollute the engine's public
+    /// API surface.
+    private func displayName(for backend: SuiteCoreMetadataBackend) -> String {
+        switch backend {
+        case .automatic:  return "Automatic (recommended)"
+        case .suiteCore:
+            return SuiteCoreAvailability.isAvailable
+                ? "MeedyaSuite-core only"
+                : "MeedyaSuite-core only (unavailable — rebuild with SUITE_CORE=1)"
+        case .inlineOnly: return "Built-in providers only"
+        }
+    }
+
+    /// One-line summary of which backend will service the next lookup,
+    /// given the current selection AND the runtime suite-core availability.
+    @ViewBuilder
+    private var statusLine: some View {
+        let selected = SuiteCoreMetadataBackend(rawValue: rawBackend) ?? .automatic
+        let suiteCoreLinked = SuiteCoreAvailability.isAvailable
+
+        switch selected {
+        case .automatic:
+            if suiteCoreLinked {
+                Text("Currently routing through MeedyaSuite-core "
+                     + "(version \(SuiteCoreAvailability.linkedVersion ?? "unknown")).")
+            } else {
+                Text("MeedyaSuite-core is not linked in this build — "
+                     + "using the built-in providers.")
+            }
+        case .suiteCore:
+            if suiteCoreLinked {
+                Text("Forcing MeedyaSuite-core. Lookups for sources without "
+                     + "a suite-core mapping will throw.")
+            } else {
+                Text("MeedyaSuite-core is not available; this option will "
+                     + "throw at lookup time. Switch to Automatic or "
+                     + "Built-in providers.")
+                    .foregroundStyle(.orange)
+            }
+        case .inlineOnly:
+            Text("Bypassing MeedyaSuite-core. Using the built-in providers "
+                 + "even when suite-core is linked.")
+        }
+    }
+}
+
+// MARK: - AccurateRipSettingsTab (#381 / #400)
+//
+// Exposes the user-facing settings for AccurateRip submission. AccurateRip
+// is a community database that lets CD rippers verify their rips against
+// thousands of other users' rips of the same disc — a near-certain way to
+// catch read errors, jitter, or offset issues that defeat checksum-only
+// verification. Submitting our own verified rips back to the database
+// keeps the community dataset growing.
+//
+// The submission API is in `AccurateRipVerifier.SubmissionConfig`:
+//
+//   enabled:     Bool   - master opt-in (default false; submission is opt-in
+//                         per AccurateRip's terms)
+//   driveModel:  String - exact drive model string (used by AccurateRip
+//                         to bucket results by drive)
+//   driveOffset: Int    - per-drive read offset in samples; without this
+//                         the rip can be bit-perfect but offset from the
+//                         reference, producing a non-match
+//   softwareId:  String - identifies the ripping software (default
+//                         "MeedyaConverter"; AccurateRip uses this in
+//                         user-agent strings and statistics)
+//
+// Persistence: four `@AppStorage` keys mirroring the struct fields.
+// Engine consumers (the rip pipeline) read the keys and assemble a
+// `SubmissionConfig` at submission time. Keeping persistence keyed
+// per-field rather than as a JSON-encoded blob means a future addition
+// to `SubmissionConfig` doesn't invalidate the user's existing settings.
+
+/// AccurateRip submission preferences.
+struct AccurateRipSettingsTab: View {
+
+    /// Master opt-in. AccurateRip submission is off by default; users
+    /// must consciously opt in (matching the engine's
+    /// `SubmissionConfig.init` default of `false`).
+    @AppStorage("accurateRip.enabled") private var enabled: Bool = false
+
+    /// Drive model string. Persisted as-typed; we don't try to validate
+    /// against a known-drives list because the AccurateRip table is
+    /// large and updated separately from the app.
+    @AppStorage("accurateRip.driveModel") private var driveModel: String = ""
+
+    /// Drive read offset in samples. The acceptance criteria pin the
+    /// range to ±500; in practice most drives are within ±200, but
+    /// some outliers do exist on the AccurateRip drive-offset table.
+    @AppStorage("accurateRip.driveOffset") private var driveOffset: Int = 0
+
+    /// Software identifier sent with submissions. Defaulted to
+    /// "MeedyaConverter" to match the engine's `SubmissionConfig` default
+    /// — pinned via a test in `ConverterEngineTests`.
+    @AppStorage("accurateRip.softwareId") private var softwareId: String = "MeedyaConverter"
+
+    var body: some View {
+        Form {
+            Section("AccurateRip") {
+                // Master toggle. Gates the rest of the form.
+                Toggle(
+                    "Submit verified rips to AccurateRip database",
+                    isOn: $enabled
+                )
+                .accessibilityLabel(
+                    "Enable submission of verified Audio CD rips to the "
+                    + "AccurateRip database"
+                )
+                .help(
+                    "When enabled, MeedyaConverter contributes successfully-"
+                    + "verified rips back to the AccurateRip community "
+                    + "database. Disabled by default; opt-in only."
+                )
+
+                // Subordinate fields. We render them at full visibility
+                // regardless of the master toggle but `.disabled` them
+                // when it's off — that way users can see what the
+                // controls look like before opting in, and don't accidentally
+                // type credentials into a non-functional field.
+                TextField(
+                    "Drive model",
+                    text: $driveModel,
+                    prompt: Text("e.g. PIONEER BD-RW BDR-XS07")
+                )
+                .accessibilityLabel("Optical drive model name")
+                .disabled(!enabled)
+
+                Stepper(
+                    value: $driveOffset,
+                    in: -500...500,
+                    step: 1
+                ) {
+                    HStack {
+                        Text("Read offset")
+                        Spacer()
+                        Text("\(driveOffset > 0 ? "+" : "")\(driveOffset) samples")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .accessibilityLabel("Drive read offset in samples")
+                .disabled(!enabled)
+
+                TextField(
+                    "Software identifier",
+                    text: $softwareId,
+                    prompt: Text("MeedyaConverter")
+                )
+                .accessibilityLabel("Software identifier sent with submissions")
+                .disabled(!enabled)
+
+                // Help line linking to the AccurateRip drive-offset table.
+                // Mandated by the #381 spec — users without their drive
+                // offset would otherwise submit non-matching rips.
+                Link(
+                    "Find your drive's read offset on accuraterip.com",
+                    destination: URL(string: "https://www.accuraterip.com/driveoffsets.htm")!
+                )
+                .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Audio CD")
     }
 }
 
@@ -387,83 +665,253 @@ struct AboutTab: View {
 
 // MARK: - UpdateSettingsTab
 
-/// Update settings: Sparkle auto-check configuration and manual update check.
+/// Update settings: dispatches to one of three update-mechanism UIs based
+/// on the running build.
 ///
-/// In direct distribution builds (non-App Store), this integrates with Sparkle 2
-/// for auto-update checking. In App Store builds, it shows that updates are
-/// managed by the Mac App Store.
+/// * **Sparkle** (Direct + Sparkle bundled) — full Sparkle 2 auto-update UI
+///   with EdDSA verification. Scheduled for v0.2.0 once issue #416's
+///   Cloudflare Worker stands up the appcast feed.
+/// * **GitHub Releases poller** (Direct, no Sparkle bundled) — v0.1.0 ship
+///   path. Polls `api.github.com/repos/MWBMPartners/MeedyaConverter/releases/latest`
+///   with a 1-hour cache, surfaces an "update available" banner when a newer
+///   GA version is published, and links the user to the .dmg download in
+///   their browser. No silent updates; the user installs manually.
+/// * **App Store** (Lite bundle) — defers to the Mac App Store updates UI.
 ///
 /// Phase 9 — Update Checker (Issue #94)
+/// Phase 16 release prep — Sparkle Option A wired (re #428).
 struct UpdateSettingsTab: View {
     @Environment(AppViewModel.self) private var viewModel
+
+    // MARK: - Update Channel (Roadmap #4)
+
+    /// Persisted channel choice. Default is `.stable` so existing installs
+    /// (no key written yet) behave exactly as before — this key is read
+    /// by `GitHubReleaseChecker`/`AppUpdateChecker` via `UserDefaults`,
+    /// mirroring the `metadataBackend` pattern documented on
+    /// `MetadataSettingsTab` above.
+    @AppStorage("updateChannel") private var rawUpdateChannel: String = UpdateChannel.stable.rawValue
+
+    /// Bridged `UpdateChannel` binding. Parses the persisted rawValue on
+    /// read; an unrecognised value (e.g. from a future build) silently
+    /// falls back to `.stable` rather than crashing the Settings window.
+    private var channelBinding: Binding<UpdateChannel> {
+        Binding<UpdateChannel>(
+            get: { UpdateChannel(rawValue: rawUpdateChannel) ?? .stable },
+            set: { rawUpdateChannel = $0.rawValue }
+        )
+    }
 
     var body: some View {
         let updateChecker = viewModel.updateChecker
 
         Form {
-            if updateChecker.isSparkleAvailable {
-                Section("Automatic Updates") {
-                    Toggle("Automatically check for updates", isOn: Binding(
-                        get: { updateChecker.automaticallyChecksForUpdates },
-                        set: { updateChecker.automaticallyChecksForUpdates = $0 }
-                    ))
-                    .accessibilityLabel("Enable automatic update checking on launch")
-
-                    if let lastCheck = updateChecker.lastUpdateCheckDate {
-                        LabeledContent("Last checked") {
-                            Text(lastCheck, style: .relative)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section("Manual Check") {
-                    HStack {
-                        Button {
-                            updateChecker.checkForUpdates()
-                        } label: {
-                            Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .disabled(!updateChecker.canCheckForUpdates || updateChecker.isCheckingForUpdates)
-
-                        Spacer()
-
-                        if updateChecker.isCheckingForUpdates {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    }
-
-                    Text(updateChecker.statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    Text("Updates are verified using EdDSA (Ed25519) code signatures before installation.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Section("Updates") {
-                    HStack(spacing: 8) {
-                        Image(systemName: "apple.logo")
-                            .foregroundStyle(.secondary)
-                        Text("Updates are managed by the Mac App Store.")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button("Open App Store Updates") {
-                        if let url = URL(string: "macappstore://showUpdatesPage") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.caption)
-                }
+            switch updateChecker.mechanism {
+            case .sparkle:
+                sparkleSections(updateChecker: updateChecker)
+            case .githubReleases:
+                githubReleasesSections(updateChecker: updateChecker)
+            case .appStore:
+                appStoreSections
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Updates")
+    }
+
+    // MARK: - Sparkle UI (Option B, v0.2.0+)
+
+    @ViewBuilder
+    private func sparkleSections(updateChecker: AppUpdateChecker) -> some View {
+        Section("Automatic Updates") {
+            Toggle("Automatically check for updates", isOn: Binding(
+                get: { updateChecker.automaticallyChecksForUpdates },
+                set: { updateChecker.automaticallyChecksForUpdates = $0 }
+            ))
+            .accessibilityLabel("Enable automatic update checking on launch")
+
+            if let lastCheck = updateChecker.lastUpdateCheckDate {
+                LabeledContent("Last checked") {
+                    Text(lastCheck, style: .relative)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        Section("Manual Check") {
+            HStack {
+                Button {
+                    updateChecker.checkForUpdates()
+                } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!updateChecker.canCheckForUpdates || updateChecker.isCheckingForUpdates)
+
+                Spacer()
+
+                if updateChecker.isCheckingForUpdates {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Text(updateChecker.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section {
+            Text("Updates are verified using EdDSA (Ed25519) code signatures before installation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - GitHub Releases poller UI (Option A, v0.1.0 ship path)
+
+    @ViewBuilder
+    private func githubReleasesSections(updateChecker: AppUpdateChecker) -> some View {
+        let github = updateChecker.githubChecker
+        // The intAppsAPI path is only ever "the answer" for a non-stable
+        // channel with intAppsAPI configured — matches
+        // `AppUpdateChecker.performGitHubReleasesCheck`'s dispatch rule
+        // exactly, so this View branches the same way the checker did.
+        let usingIntAppsAPI = channelBinding.wrappedValue != .stable && updateChecker.isIntAppsAPIConfigured
+
+        channelSection(updateChecker: updateChecker)
+
+        Section("Check for Updates") {
+            HStack {
+                Button {
+                    updateChecker.checkForUpdates()
+                } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(updateChecker.isCheckingForUpdates)
+
+                Spacer()
+
+                if updateChecker.isCheckingForUpdates {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .accessibilityHint("Checks for a new build on your selected update channel.")
+
+            Text(updateChecker.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        if usingIntAppsAPI, let result = updateChecker.intAppsUpdateResult, result.updateAvailable {
+            Section("Update Available") {
+                LabeledContent("New build") {
+                    Text(result.currentVersion ?? "Unknown")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.primary)
+                }
+
+                Button {
+                    NSWorkspace.shared.open(result.updateURL)
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
+                .accessibilityHint("Opens the update download page in your browser.")
+            }
+        } else if !usingIntAppsAPI, github.updateAvailable, let release = github.latestRelease {
+            Section("Update Available") {
+                LabeledContent("New version") {
+                    Text(release.tagName)
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.primary)
+                }
+
+                if let dmg = release.dmgAsset {
+                    Button {
+                        NSWorkspace.shared.open(dmg.browserDownloadUrl)
+                    } label: {
+                        Label("Download DMG", systemImage: "arrow.down.circle")
+                    }
+                    .accessibilityHint("Opens the signed and notarised DMG in your browser. You install it manually by mounting and dragging to Applications.")
+                }
+
+                Button {
+                    NSWorkspace.shared.open(release.htmlUrl)
+                } label: {
+                    Label("View Release Notes", systemImage: "doc.text")
+                }
+                .accessibilityHint("Opens the GitHub release page in your browser.")
+            }
+        }
+
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                if channelBinding.wrappedValue == .stable {
+                    Text("MeedyaConverter currently checks GitHub Releases for new versions. In-app updates via Sparkle (with EdDSA-verified signatures) are planned for v0.2.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("Downloads open in your browser and you install manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if usingIntAppsAPI {
+                    Text("You're on the \(channelBinding.wrappedValue.displayName) channel — checking MWBM's update service for pre-release builds.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("You're on the \(channelBinding.wrappedValue.displayName) channel — checking GitHub Releases, including pre-release tags.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Update Channel picker (Roadmap #4)
+
+    @ViewBuilder
+    private func channelSection(updateChecker: AppUpdateChecker) -> some View {
+        Section("Update Channel") {
+            Picker("Channel", selection: channelBinding) {
+                ForEach(UpdateChannel.allCases, id: \.self) { channel in
+                    Text(channel.displayName).tag(channel)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Update channel")
+            .onChange(of: rawUpdateChannel) {
+                // Re-check immediately so switching channels doesn't leave
+                // a stale status message from the previous channel showing.
+                updateChecker.checkForUpdates()
+            }
+
+            if channelBinding.wrappedValue != .stable {
+                Text("Alpha and beta builds may be unstable. Switch back to Stable at any time.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - App Store UI
+
+    @ViewBuilder
+    private var appStoreSections: some View {
+        Section("Updates") {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.logo")
+                    .foregroundStyle(.secondary)
+                Text("Updates are managed by the Mac App Store.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Open App Store Updates") {
+                if let url = URL(string: "macappstore://showUpdatesPage") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .font(.caption)
+        }
     }
 }
 

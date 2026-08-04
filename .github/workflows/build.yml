@@ -82,7 +82,7 @@ jobs:
       # dependencies and git-based version info is available.
       # ---------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       # ---------------------------------------------------------------------
       # Step 2: Verify Swift version
@@ -106,10 +106,10 @@ jobs:
       # dependencies have changed.
       # ---------------------------------------------------------------------
       - name: Cache SPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 

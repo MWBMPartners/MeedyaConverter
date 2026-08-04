@@ -249,8 +249,12 @@ public struct VideoTrimmer: Sendable {
         var results: [(arguments: [String], outputPath: String)] = []
 
         for (index, region) in keepRegions.enumerated() {
+            // F-002 defensive sanitisation per SECURITY.md (POLISH
+            // follow-up): `ext` derives from the input file's extension.
             let segmentPath = (outputDir as NSString).appendingPathComponent(
-                "segment_\(String(format: "%03d", index)).\(ext)"
+                PathSanitizer.sanitizeFilenameComponent(
+                    "segment_\(String(format: "%03d", index)).\(ext)"
+                )
             )
 
             var args: [String] = [
@@ -297,8 +301,9 @@ public struct VideoTrimmer: Sendable {
 
         if let maxSize = config.splitBySize {
             // Size-based splitting via the segment muxer
+            // F-002 defensive sanitisation per SECURITY.md.
             let pattern = (outputDir as NSString).appendingPathComponent(
-                "split_%03d.\(ext)"
+                PathSanitizer.sanitizeFilenameComponent("split_%03d.\(ext)")
             )
 
             var args: [String] = ["-i", inputPath]
@@ -319,8 +324,9 @@ public struct VideoTrimmer: Sendable {
         } else if config.splitByChapters {
             // Chapter-based splitting: one file per chapter.
             // The segment muxer can split on chapters natively.
+            // F-002 defensive sanitisation per SECURITY.md.
             let pattern = (outputDir as NSString).appendingPathComponent(
-                "chapter_%03d.\(ext)"
+                PathSanitizer.sanitizeFilenameComponent("chapter_%03d.\(ext)")
             )
 
             var args: [String] = ["-i", inputPath]

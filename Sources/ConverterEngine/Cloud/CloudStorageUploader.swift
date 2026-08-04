@@ -24,6 +24,28 @@ public enum CloudStorageProvider: String, Codable, Sendable, CaseIterable {
 
     /// Google Drive — uses the Google Drive API v3 upload endpoint.
     case googleDrive
+
+    /// Amazon S3 (and S3-compatible providers — Backblaze B2, DigitalOcean
+    /// Spaces, MinIO, Cloudflare R2, ...) — uses AWS Signature V4-signed
+    /// requests via `S3Uploader`/`AWSV4Signer`, routed through
+    /// `CloudUploadExecutor.uploadToCloudStorage` exactly like the other
+    /// providers (roadmap #7, re #459/#162). Unlike the other three cases,
+    /// S3 authenticates with a static access key ID / secret access key
+    /// pair rather than OAuth — see `usesOAuth` below and
+    /// `CloudStorageConfig`'s `secretAccessKey`/`bucket`/`region`/
+    /// `endpoint` fields.
+    case s3
+
+    /// Whether this provider authenticates via the OAuth 2.0
+    /// authorise-then-paste-a-token flow (`authURL(provider:clientId:)` +
+    /// the access/refresh token fields) as opposed to a static credential
+    /// pair. `.s3` is the one exception — see its case doc comment.
+    public var usesOAuth: Bool {
+        switch self {
+        case .dropbox, .onedrive, .googleDrive: return true
+        case .s3: return false
+        }
+    }
 }
 
 // MARK: - CloudStorageConfig
@@ -35,41 +57,103 @@ public enum CloudStorageProvider: String, Codable, Sendable, CaseIterable {
 /// so the user can have multiple upload targets.
 public struct CloudStorageConfig: Codable, Sendable {
 
+    /// Stable identifier for this configuration, generated fresh by the
+    /// default init and preserved across load/save cycles so
+    /// `CloudStorageProfileStore` (Issue #459) — and
+    /// `PostEncodeActionChain.uploadViaCloud`, which resolves a saved
+    /// configuration by this id — stay addressable across app
+    /// launches. Added alongside the #459 execution layer; no prior
+    /// on-disk `CloudStorageConfig` data exists to migrate (before
+    /// #459 `CloudStorageView` never persisted `savedConfigs` at all —
+    /// see `CloudStorageProfileStore`'s doc comment).
+    public var id: UUID
+
     /// The cloud storage provider.
     public var provider: CloudStorageProvider
 
-    /// The OAuth 2.0 access token for API requests.
+    /// The OAuth 2.0 access token for API requests (Dropbox / OneDrive /
+    /// Google Drive). For `.s3`, this field does double duty as the AWS
+    /// **Access Key ID** — S3 has no OAuth flow, but reusing this field
+    /// (rather than adding a parallel `awsAccessKeyID` field) keeps the
+    /// Keychain hydration path (`CloudStorageProfileStore`) and the
+    /// redact-before-persisting logic (`CloudStorageView.persistConfigs()`)
+    /// uniform across every provider: "the secret credential lives here,
+    /// is never written to `UserDefaults`/`PostEncodeAction.config`, and is
+    /// restored from the Keychain on load."
     public var accessToken: String
 
     /// The OAuth 2.0 refresh token for obtaining new access tokens.
+    /// Unused for `.s3`.
     public var refreshToken: String?
 
-    /// The remote folder path where files will be uploaded.
+    /// The remote folder path where files will be uploaded. For `.s3`
+    /// this is the object-key prefix (e.g. `"videos/"`) rather than a
+    /// literal folder — S3 has no real directory hierarchy, but the same
+    /// field serves both purposes.
     public var remotePath: String
 
     /// A user-facing label for this configuration (e.g., "Work Dropbox").
     public var label: String
 
+    /// AWS **Secret Access Key** — `.s3` only. Like `accessToken`, this is
+    /// a secret: never written to `UserDefaults` or
+    /// `PostEncodeAction.config`, always redacted before persisting and
+    /// restored from the Keychain via `APIKeyManager` (provider `.awsS3`)
+    /// on load. `nil`/unused for the OAuth providers.
+    public var secretAccessKey: String?
+
+    /// S3 bucket name — `.s3` only. Not a secret, so (unlike
+    /// `accessToken`/`secretAccessKey`) it round-trips through
+    /// `UserDefaults` unredacted, same as `remotePath`/`label`.
+    public var bucket: String?
+
+    /// AWS region, e.g. `"us-east-1"` — `.s3` only. Not a secret. When
+    /// `nil`/empty, `S3Uploader`/`AWSV4Signer` fall back to `"us-east-1"`.
+    public var region: String?
+
+    /// Optional custom endpoint for S3-compatible providers (Backblaze B2,
+    /// DigitalOcean Spaces, MinIO, Cloudflare R2, ...) — `.s3` only. Not a
+    /// secret. `nil` means "real AWS S3".
+    public var endpoint: String?
+
     /// Creates a new cloud storage configuration.
     ///
     /// - Parameters:
+    ///   - id: Stable identifier (defaults to a fresh `UUID()`).
     ///   - provider: The cloud storage provider.
-    ///   - accessToken: The OAuth 2.0 access token.
-    ///   - refreshToken: An optional refresh token.
-    ///   - remotePath: The remote folder path for uploads.
+    ///   - accessToken: The OAuth 2.0 access token, or (for `.s3`) the AWS
+    ///     Access Key ID.
+    ///   - refreshToken: An optional refresh token. Unused for `.s3`.
+    ///   - remotePath: The remote folder path for uploads, or (for `.s3`)
+    ///     the object-key prefix.
     ///   - label: A user-facing label for this configuration.
+    ///   - secretAccessKey: AWS Secret Access Key — `.s3` only.
+    ///   - bucket: S3 bucket name — `.s3` only.
+    ///   - region: AWS region — `.s3` only; defaults to `"us-east-1"` when
+    ///     `nil`.
+    ///   - endpoint: Optional S3-compatible custom endpoint — `.s3` only.
     public init(
+        id: UUID = UUID(),
         provider: CloudStorageProvider,
         accessToken: String,
         refreshToken: String? = nil,
         remotePath: String,
-        label: String
+        label: String,
+        secretAccessKey: String? = nil,
+        bucket: String? = nil,
+        region: String? = nil,
+        endpoint: String? = nil
     ) {
+        self.id = id
         self.provider = provider
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.remotePath = remotePath
         self.label = label
+        self.secretAccessKey = secretAccessKey
+        self.bucket = bucket
+        self.region = region
+        self.endpoint = endpoint
     }
 }
 
@@ -105,10 +189,9 @@ public struct CloudStorageUploader: Sendable {
             return nil
         }
 
-        let fileName = (filePath as NSString).lastPathComponent
         let remoteDest = config.remotePath.hasSuffix("/")
-            ? config.remotePath + fileName
-            : config.remotePath + "/" + fileName
+            ? config.remotePath + filePath
+            : config.remotePath + "/" + filePath
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -122,6 +205,152 @@ public struct CloudStorageUploader: Sendable {
             "autorename": true,
             "mute": false,
             "strict_conflict": false
+        ]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
+    // MARK: - Dropbox (upload session, roadmap item #2 / Issue #459)
+
+    /// Build a Dropbox upload-session "start" request for files larger
+    /// than `DropboxUploader.singleUploadMaxBytes` (150 MB) — the
+    /// `/2/files/upload` endpoint used by `buildDropboxUploadRequest`
+    /// rejects anything over that limit.
+    ///
+    /// Uses `JSONSerialization` for the `Dropbox-API-Arg` body (unlike
+    /// `DropboxUploader.buildSessionStartHeaders`, kept untouched as
+    /// existing public API but not reused here — see
+    /// `CloudUploadExecutor.uploadInDropboxSessionChunks`'s doc comment).
+    ///
+    /// - Parameter config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionStartRequest(
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionStartURL) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        let apiArg: [String: Any] = ["close": false]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
+    /// Build a Dropbox upload-session "append" request for one chunk.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The `session_id` returned by the session-start
+    ///     request.
+    ///   - offset: The cursor offset — the number of bytes the server
+    ///     already has for this session, i.e. the byte offset this
+    ///     chunk starts at.
+    ///   - config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionAppendRequest(
+        sessionId: String,
+        offset: Int64,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionAppendURL) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        // Built as an explicitly-annotated intermediate `let` rather than
+        // a literal nested directly inside `apiArg`'s value position:
+        // `sessionId` (String) and `offset` (Int64) are heterogeneous, so
+        // an inline nested literal would leave Swift to infer its type
+        // from context alone, which the compiler flags with a
+        // "heterogeneous collection literal" warning. Naming the type
+        // explicitly avoids that ambiguity.
+        let cursor: [String: Any] = [
+            "session_id": sessionId,
+            "offset": offset,
+        ]
+        let apiArg: [String: Any] = [
+            "cursor": cursor,
+            "close": false,
+        ]
+        if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
+           let argString = String(data: argData, encoding: .utf8) {
+            request.setValue(argString, forHTTPHeaderField: "Dropbox-API-Arg")
+        }
+
+        return request
+    }
+
+    /// Build a Dropbox upload-session "finish" request, closing the
+    /// session and committing the assembled bytes to the destination
+    /// path.
+    ///
+    /// Builds `remoteDest` with the same folder-join logic as
+    /// `buildDropboxUploadRequest` (append `filePath` to
+    /// `config.remotePath`, inserting a `/` unless `remotePath` already
+    /// ends with one). Uses `"mode":"overwrite"`, matching the simple
+    /// upload path — NOT the `"add"` mode hardcoded by the existing
+    /// unused `DropboxUploader.buildSessionFinishHeaders`.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The `session_id` returned by the session-start
+    ///     request.
+    ///   - offset: The final cursor offset — the total number of bytes
+    ///     appended across every chunk (i.e. the full file size).
+    ///   - filePath: The local file name to include in the remote path.
+    ///   - config: The Dropbox cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildDropboxSessionFinishRequest(
+        sessionId: String,
+        offset: Int64,
+        filePath: String,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: DropboxUploader.sessionFinishURL) else {
+            return nil
+        }
+
+        let remoteDest = config.remotePath.hasSuffix("/")
+            ? config.remotePath + filePath
+            : config.remotePath + "/" + filePath
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        // See `buildDropboxSessionAppendRequest` for why `cursor` and
+        // `commit` are hoisted to explicitly-annotated intermediate
+        // `let`s rather than nested inline inside `apiArg`'s literal.
+        let cursor: [String: Any] = [
+            "session_id": sessionId,
+            "offset": offset,
+        ]
+        let commit: [String: Any] = [
+            "path": remoteDest,
+            "mode": "overwrite",
+            "autorename": true,
+            "mute": false,
+            "strict_conflict": false,
+        ]
+        let apiArg: [String: Any] = [
+            "cursor": cursor,
+            "commit": commit,
         ]
         if let argData = try? JSONSerialization.data(withJSONObject: apiArg),
            let argString = String(data: argData, encoding: .utf8) {
@@ -169,6 +398,56 @@ public struct CloudStorageUploader: Sendable {
         return request
     }
 
+    /// Build a Microsoft Graph API "create upload session" request for
+    /// OneDrive large-file uploads (Issue #459).
+    ///
+    /// The simple `/content` PUT endpoint (`buildOneDriveUploadRequest`)
+    /// rejects anything over 4 MB
+    /// (`OneDriveUploader.simpleUploadMaxBytes`) — media output files
+    /// routinely exceed that, so this REQUIRED companion request starts
+    /// a resumable upload session at
+    /// `/me/drive/root:/<path>:/createUploadSession`. The JSON response
+    /// carries an `uploadUrl` that the caller (`CloudUploadExecutor
+    /// .uploadInSessionChunks`) then `PUT`s the file to in
+    /// `Content-Range`-addressed chunks.
+    ///
+    /// - Parameters:
+    ///   - filePath: The local file name to include in the remote path.
+    ///   - config: The OneDrive cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildOneDriveCreateSessionRequest(
+        filePath: String,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        let fileName = (filePath as NSString).lastPathComponent
+        let remoteDest = config.remotePath.hasSuffix("/")
+            ? config.remotePath + fileName
+            : config.remotePath + "/" + fileName
+
+        let encodedPath = remoteDest.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+        ) ?? remoteDest
+
+        let urlString = "https://graph.microsoft.com/v1.0/me/drive/root:\(encodedPath):/createUploadSession"
+        guard let url = URL(string: urlString) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "item": [
+                "@microsoft.graph.conflictBehavior": "rename",
+            ],
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        return request
+    }
+
     // MARK: - Google Drive
 
     /// Build a Google Drive API v3 upload request.
@@ -203,6 +482,54 @@ public struct CloudStorageUploader: Sendable {
         return request
     }
 
+    /// Build a Google Drive resumable-upload "initiate" request for
+    /// files larger than `GoogleDriveUploader.simpleUploadMaxBytes`
+    /// (5 MB) — Google documents the `uploadType=media` endpoint used by
+    /// `buildGoogleDriveUploadRequest` as being for small files only.
+    ///
+    /// A successful `2xx` response to this request carries the session
+    /// URI to `PUT` chunks to in its `Location` header (per Google's
+    /// resumable-upload protocol) — see
+    /// `CloudUploadExecutor.uploadInGoogleDriveResumableChunks`, which
+    /// extracts it.
+    ///
+    /// Uses `JSONSerialization` for the metadata body (unlike the
+    /// existing unused `GoogleDriveUploader.buildUploadMetadata`, kept
+    /// untouched as existing public API but not reused here — string
+    /// interpolation breaks on a filename containing a `"`).
+    ///
+    /// - Parameters:
+    ///   - filePath: The local file name (used to set the file name
+    ///     metadata).
+    ///   - fileSize: The real on-disk file size, sent as
+    ///     `X-Upload-Content-Length` so Drive knows the total size to
+    ///     expect up front.
+    ///   - config: The Google Drive cloud storage configuration.
+    /// - Returns: A configured `URLRequest`, or `nil` if the URL is invalid.
+    public static func buildGoogleDriveResumableInitRequest(
+        filePath: String,
+        fileSize: Int64,
+        config: CloudStorageConfig
+    ) -> URLRequest? {
+        guard let url = URL(string: GoogleDriveUploader.buildResumableUploadURL()) else {
+            return nil
+        }
+
+        let fileName = (filePath as NSString).lastPathComponent
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "X-Upload-Content-Type")
+        request.setValue("\(fileSize)", forHTTPHeaderField: "X-Upload-Content-Length")
+
+        let body: [String: Any] = ["name": fileName]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        return request
+    }
+
     // MARK: - OAuth
 
     /// Build the OAuth 2.0 authorisation URL for a given provider.
@@ -214,11 +541,19 @@ public struct CloudStorageUploader: Sendable {
     /// - Parameters:
     ///   - provider: The cloud storage provider.
     ///   - clientId: The OAuth 2.0 client/application ID.
-    /// - Returns: The authorisation URL to open in the browser.
+    /// - Returns: The authorisation URL to open in the browser, or `nil`
+    ///   for a provider that doesn't use OAuth (`.s3` — see
+    ///   `CloudStorageProvider.usesOAuth`). `CloudStorageView` only calls
+    ///   this from its "Authorise" button, which is only shown when
+    ///   `provider.usesOAuth`, so a real caller never actually hits the
+    ///   `nil` case — it exists so this function is honest rather than
+    ///   force-unwrapping or fabricating a URL that goes nowhere.
     public static func authURL(
         provider: CloudStorageProvider,
         clientId: String
-    ) -> URL {
+    ) -> URL? {
+        guard provider.usesOAuth else { return nil }
+
         let redirectURI = "meedyaconverter://oauth/callback"
         let encodedRedirect = redirectURI.addingPercentEncoding(
             withAllowedCharacters: .urlQueryAllowed
@@ -250,10 +585,137 @@ public struct CloudStorageUploader: Sendable {
                 + "&redirect_uri=\(encodedRedirect)"
                 + "&scope=https://www.googleapis.com/auth/drive.file"
                 + "&access_type=offline"
+
+        case .s3:
+            // Unreachable — the `guard provider.usesOAuth` above already
+            // returned `nil` for `.s3`. Kept only so this switch stays
+            // exhaustive as cases are added.
+            return nil
         }
 
-        // Force-unwrap is safe because the URL strings above are well-formed.
-        // swiftlint:disable:next force_unwrapping
-        return URL(string: urlString)!
+        return URL(string: urlString)
+    }
+}
+
+// MARK: - CloudStorageProfileStore
+
+/// Read-only access to the cloud storage configurations saved by
+/// `CloudStorageView` (Issue #347 / #459), for consumers outside the
+/// app's SwiftUI layer — e.g. `PostEncodeActionChain.uploadViaCloud`
+/// (Issue #450), which runs inside `ConverterEngine` and has no view to
+/// bind form state to.
+///
+/// Mirrors `SFTPProfileStore`, which does the equivalent job for SFTP
+/// profiles: this does not duplicate storage. It reads the exact same
+/// `UserDefaults` blob `CloudStorageView` writes (provider / remotePath
+/// / label metadata, with the access/refresh token fields always
+/// redacted to empty/`nil`) and restores the real tokens from the
+/// Keychain via `APIKeyManager` — the same #380-audited secrets split
+/// every other provider in this codebase already uses.
+///
+/// Before Issue #459, `CloudStorageView` held `savedConfigs` purely in
+/// `@State` — it was never written to `UserDefaults` at all, so there
+/// was nothing for a non-UI consumer like `PostEncodeActionChain` to
+/// read. This store (and the matching persistence added to
+/// `CloudStorageView`) is what makes a saved cloud destination durable
+/// across app launches and referenceable by id from a post-encode
+/// action.
+public enum CloudStorageProfileStore {
+
+    /// `UserDefaults` key under which the redacted profile array lives.
+    /// Shared with `CloudStorageView` so the storage key cannot drift
+    /// between the write side (settings UI) and this read side.
+    public static let userDefaultsKey = "cloudStorageProfiles"
+
+    /// Loads every saved cloud storage configuration, restoring each
+    /// one's access/refresh token from the Keychain.
+    ///
+    /// - Parameter apiKeyManager: The manager to hydrate secrets from.
+    ///   Defaults to a fresh `APIKeyManager()` against the standard
+    ///   on-disk location (the same default `CloudStorageView` uses),
+    ///   so callers that don't already own an instance don't need to
+    ///   construct one.
+    /// - Returns: The saved configurations, or an empty array if none
+    ///   are saved or the stored JSON cannot be decoded.
+    public static func loadProfiles(
+        apiKeyManager: APIKeyManager = APIKeyManager()
+    ) -> [CloudStorageConfig] {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+              let profiles = try? JSONDecoder().decode([CloudStorageConfig].self, from: data) else {
+            return []
+        }
+
+        return profiles.map { hydrateSecrets(for: $0, apiKeyManager: apiKeyManager) }
+    }
+
+    /// Restores a single profile's secret field(s) from the Keychain.
+    ///
+    /// Branches on provider because S3's secret shape is different from
+    /// the OAuth providers': S3 has TWO Keychain-resident secrets (the
+    /// access key ID, stored in `StoredAPIKey.apiKey`, and the secret
+    /// access key, stored in `StoredAPIKey.secretKey` — the exact same
+    /// `(apiKey, secretKey)` pair `S3Uploader.loadCredential` reads), while
+    /// the OAuth providers have one (`StoredAPIKey.accessToken`, plus an
+    /// optional `refreshToken`) and use `StoredAPIKey.apiKey` for the
+    /// OAuth Client ID instead.
+    private static func hydrateSecrets(
+        for profile: CloudStorageConfig,
+        apiKeyManager: APIKeyManager
+    ) -> CloudStorageConfig {
+        guard profile.accessToken.isEmpty else { return profile }
+
+        let candidates = apiKeyManager.keys(for: apiKeyProvider(for: profile.provider))
+        guard let stored = candidates.first(where: { ($0.label ?? "") == profile.label }) ?? candidates.first else {
+            // No matching Keychain entry (deleted out of band, or never
+            // saved) — return the profile as-is. Callers should treat an
+            // empty accessToken as "credential unavailable" rather than
+            // assume it will authenticate, exactly as
+            // `SFTPProfileStore.loadProfiles()` treats an unrecoverable
+            // password.
+            return profile
+        }
+
+        if profile.provider == .s3 {
+            guard !stored.apiKey.isEmpty else { return profile }
+            var copy = profile
+            copy.accessToken = stored.apiKey
+            copy.secretAccessKey = stored.secretKey
+            return copy
+        }
+
+        guard let token = stored.accessToken, !token.isEmpty else { return profile }
+        var copy = profile
+        copy.accessToken = token
+        copy.refreshToken = stored.refreshToken
+        return copy
+    }
+
+    /// Looks up a single saved configuration by its stable `id`.
+    ///
+    /// - Parameters:
+    ///   - id: The configuration's `CloudStorageConfig.id`.
+    ///   - apiKeyManager: The manager to hydrate secrets from.
+    /// - Returns: The matching configuration (with its token restored
+    ///   from the Keychain when available), or `nil` if no
+    ///   configuration with that id is currently saved.
+    public static func profile(
+        withID id: UUID,
+        apiKeyManager: APIKeyManager = APIKeyManager()
+    ) -> CloudStorageConfig? {
+        loadProfiles(apiKeyManager: apiKeyManager).first { $0.id == id }
+    }
+
+    /// Maps the request-builder-side provider enum (`CloudStorageProvider`,
+    /// Issue #347) to the Keychain-side one (`APIKeyProvider`, Issue
+    /// #380). The two exist for historically separate features and use
+    /// slightly different case spellings (`onedrive` vs `oneDrive`) for
+    /// the same service.
+    public static func apiKeyProvider(for provider: CloudStorageProvider) -> APIKeyProvider {
+        switch provider {
+        case .dropbox: return .dropbox
+        case .onedrive: return .oneDrive
+        case .googleDrive: return .googleDrive
+        case .s3: return .awsS3
+        }
     }
 }

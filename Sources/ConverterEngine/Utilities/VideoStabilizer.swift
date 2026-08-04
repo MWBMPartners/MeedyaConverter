@@ -169,23 +169,31 @@ public struct VideoStabilizer: Sendable {
         // Input video
         args += ["-i", inputPath]
 
-        // Build the vidstabdetect filter string
-        let detectFilter = [
-            "vidstabdetect",
+        // Build the vidstabdetect filter string.
+        //
+        // The ``vidstabdetect`` filter expects the form:
+        //   vidstabdetect=shakiness=N:accuracy=N:stepsize=N:result='path'
+        // i.e. the filter name and its first parameter are separated by
+        // ``=``, and subsequent parameters are colon-delimited
+        // ``key=value`` pairs. We build the parameter list separately
+        // and then prefix it with ``vidstabdetect=`` so a missing
+        // parameter cannot accidentally collapse the filter prefix into
+        // a malformed string.
+        //
+        // Historical note: an earlier revision built two separate filter
+        // strings (a join-with-``=`` form and the colon-delimited form)
+        // and discarded the first one. That left a "result of let
+        // unused" warning AND meant any future edit could easily wire
+        // up the broken join-with-``=`` form by mistake, silently
+        // breaking the analysis pass. The single canonical builder
+        // below removes that footgun (Issue #428).
+        let parameters: [String] = [
             "shakiness=\(config.shakiness)",
             "accuracy=\(config.accuracy)",
             "stepsize=\(config.stepSize)",
             "result='\(transformsPath)'"
-        ].joined(separator: "=")
-            // vidstabdetect uses colon-separated key=value pairs
-            .replacingOccurrences(of: "detect=", with: "detect=")
-
-        // Properly formatted: vidstabdetect=shakiness=N:accuracy=N:...
-        let filterString = "vidstabdetect="
-            + "shakiness=\(config.shakiness)"
-            + ":accuracy=\(config.accuracy)"
-            + ":stepsize=\(config.stepSize)"
-            + ":result='\(transformsPath)'"
+        ]
+        let filterString = "vidstabdetect=" + parameters.joined(separator: ":")
 
         args += ["-vf", filterString]
 

@@ -102,7 +102,10 @@ struct BatchCommand: AsyncParsableCommand {
         for (index, file) in files.enumerated() {
             let stem = file.deletingPathExtension().lastPathComponent
             let ext = profile.preferredExtension
-            let outputURL = outputDir.appendingPathComponent("\(stem).\(ext)")
+            // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
+            let outputURL = outputDir.appendingPathComponent(
+                PathSanitizer.sanitizeFilenameComponent("\(stem).\(ext)")
+            )
 
             if FileManager.default.fileExists(atPath: outputURL.path) && !overwrite {
                 if !quiet { printStderr("Skipping \(file.lastPathComponent) (output exists)") }
@@ -182,6 +185,8 @@ struct BatchCommand: AsyncParsableCommand {
         let engine = EncodingEngine()
         try engine.configure()
 
+        var failed = 0
+
         for (index, job) in jobs.enumerated() {
             if !quiet {
                 printStderr("[\(index + 1)/\(jobs.count)] \(job.inputURL.lastPathComponent) → \(job.outputURL.lastPathComponent)")
@@ -197,7 +202,12 @@ struct BatchCommand: AsyncParsableCommand {
                 if !quiet { printStderr("") }
             } catch {
                 printStderr("\n  Failed: \(error.localizedDescription)")
+                failed += 1
             }
+        }
+
+        if failed > 0 {
+            throw ExitCode(ExitCodes.encodingFailed.rawValue)
         }
     }
 

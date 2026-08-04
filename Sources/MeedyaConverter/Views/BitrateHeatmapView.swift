@@ -34,12 +34,27 @@ struct BitrateHeatmapView: View {
     @State private var showComparison = false
     @State private var errorMessage: String?
 
+    /// Set after a failed `exportAsImage()` attempt; cleared on the next
+    /// successful export. Never set on success — a successful export
+    /// closes the save panel with no further UI, mirroring
+    /// `EncodingGraphsView.exportErrorMessage`.
+    @State private var exportErrorMessage: String?
+
+    /// The in-flight analysis task, retained so it can be cancelled when
+    /// the user navigates away from this view mid-analysis. Mirrors
+    /// `LoudnessReportView.analysisTask` / `BenchmarkView.benchmarkTask`.
+    @State private var analysisTask: Task<Void, Never>?
+
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
             toolbar
+
+            if let exportErrorMessage {
+                exportErrorBanner(message: exportErrorMessage)
+            }
 
             Divider()
 
@@ -53,6 +68,9 @@ struct BitrateHeatmapView: View {
             }
         }
         .navigationTitle("Bitrate Heatmap")
+        .onDisappear {
+            cancelAnalysis()
+        }
     }
 
     // MARK: - Toolbar
@@ -60,7 +78,7 @@ struct BitrateHeatmapView: View {
     private var toolbar: some View {
         HStack {
             Button {
-                Task { await analyzeBitrate() }
+                analysisTask = Task { await analyzeBitrate() }
             } label: {
                 Label("Analyze Bitrate", systemImage: "waveform.path.ecg")
             }
@@ -96,6 +114,25 @@ struct BitrateHeatmapView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    /// Banner shown when `exportAsImage()` fails, mirroring
+    /// `EncodingGraphsView.exportErrorBanner(message:)`.
+    private func exportErrorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Dismiss") {
+                exportErrorMessage = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Analyzing State
@@ -397,33 +434,106 @@ struct BitrateHeatmapView: View {
 
     /// Trigger bitrate analysis for the currently selected file.
     ///
-    /// Builds FFprobe arguments via ``BitrateAnalyzer``, but the actual
-    /// process execution is deferred to the view model or engine layer.
-    /// For now, we store the arguments for the caller to execute.
+    /// Builds FFprobe arguments via ``BitrateAnalyzer/buildAnalysisArguments(inputPath:)``,
+    /// actually runs them through the existing process runner —
+    /// `FFmpegBackendFactory.makeDefault().runFFprobe(arguments:timeout:)`
+    /// (`ProcessFFmpegBackend`/`FFmpegKitBackend` in `ConverterEngine`,
+    /// the same one-shot invocation surface documented for "new code" in
+    /// `FFmpegBackend.swift`) — and parses the resulting per-frame CSV
+    /// output with ``BitrateAnalyzer/parseProbeOutput(_:)`` to populate
+    /// the heatmap. No new ffprobe/parsing logic is introduced here.
+    ///
+    /// `BitrateHeatmapView` is a `struct: View`, so this `async` method
+    /// (and the plain `Task { }` that invokes it from the toolbar button)
+    /// is implicitly main-actor isolated via `View` conformance — `@State`
+    /// writes below are direct property mutations, matching
+    /// `QualityMetricsView.runAnalysis()`'s shape. `runFFprobe(...)`
+    /// itself is non-blocking (it suspends on a `CheckedContinuation`
+    /// while the process runs on background dispatch queues internally),
+    /// so it is awaited directly here without needing `Task.detached` —
+    /// the same reasoning `QualityMetricsView` applies to
+    /// `FFmpegProcessController.startEncoding`'s `AsyncStream`.
+    ///
+    /// Known limitation: `ProcessFFmpegBackend`'s one-shot `runFFprobe`
+    /// has no cancellation hook for an invocation already in flight (only
+    /// the streaming `runEncode` path supports `cancelCurrent()`), so
+    /// cancelling this task (via `cancelAnalysis()` / `onDisappear`) stops
+    /// this method from touching `@State` afterwards but does not itself
+    /// terminate an already-running ffprobe process early. Adding that
+    /// would require an `EncodingEngine`/`ConverterEngine` change, which
+    /// is out of scope here.
     private func analyzeBitrate() async {
         guard let file = viewModel.selectedFile else { return }
 
         isAnalyzing = true
         errorMessage = nil
 
-        // Build the ffprobe arguments (execution handled by engine)
         let args = BitrateAnalyzer.buildAnalysisArguments(inputPath: file.fileURL.path)
+        let backend = FFmpegBackendFactory.makeDefault()
 
-        // In a full implementation, the view model would execute ffprobe
-        // and return the output. For now we log the intent.
-        viewModel.appendLog(
-            .info,
-            "Bitrate analysis requested for \(file.fileName) with \(args.count) arguments",
-            category: .general
-        )
+        do {
+            let result = try await backend.runFFprobe(arguments: args, timeout: 300)
+
+            if Task.isCancelled {
+                isAnalyzing = false
+                return
+            }
+
+            let parsed = BitrateAnalyzer.parseProbeOutput(result.stdout)
+            guard !parsed.dataPoints.isEmpty else {
+                errorMessage = "FFprobe returned no readable bitrate data for \(file.fileName)."
+                isAnalyzing = false
+                return
+            }
+
+            analysis = parsed
+            viewModel.appendLog(
+                .info,
+                "Bitrate analysis complete for \(file.fileName): \(parsed.dataPoints.count) data point(s), "
+                + "average \(Int(parsed.averageBitrate)) bps, peak \(Int(parsed.peakBitrate)) bps",
+                category: .general
+            )
+        } catch {
+            if !Task.isCancelled {
+                errorMessage = "Bitrate analysis failed for \(file.fileName): \(error.localizedDescription)"
+                viewModel.appendLog(
+                    .error,
+                    "Bitrate analysis failed for \(file.fileName): \(error.localizedDescription)",
+                    category: .general
+                )
+            }
+        }
 
         isAnalyzing = false
     }
 
-    /// Export the current heatmap as a PNG image via NSBitmapImageRep.
+    /// Cancel an in-progress bitrate analysis.
+    ///
+    /// Cancels the analysis `Task` so no pending state mutation runs
+    /// after the user navigates away from this view. See the known
+    /// limitation noted on `analyzeBitrate()`: the underlying ffprobe
+    /// process itself is not forcibly terminated by this call.
+    private func cancelAnalysis() {
+        analysisTask?.cancel()
+        analysisTask = nil
+        isAnalyzing = false
+    }
+
+    /// Export the current heatmap as a PNG image via `ImageRenderer`.
+    ///
+    /// Renders the same `drawHeatmap(context:size:analysis:)` routine used
+    /// by the on-screen `Canvas` in `heatmapContent(analysis:)` above into
+    /// an off-screen `ImageRenderer`, so the exported PNG shows the actual
+    /// heatmap rather than a flat, contentless background rectangle
+    /// (Issue #483). `drawHeatmap` only depends on the `size` its `Canvas`
+    /// hands it — it never reads `GeometryReader`'s on-screen geometry
+    /// directly — so a fixed off-screen size renders it correctly.
+    /// Failures (a `nil` render or a failed file write) are surfaced via
+    /// `exportErrorMessage` instead of being silently swallowed by
+    /// `try?`, mirroring `EncodingGraphsView.exportCSV()`.
     @MainActor
     private func exportAsImage() {
-        guard analysis != nil else { return }
+        guard let analysis else { return }
 
         let panel = NSSavePanel()
         panel.title = "Export Bitrate Heatmap"
@@ -432,36 +542,41 @@ struct BitrateHeatmapView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        // Render the heatmap to an off-screen image
-        let width = 1920
-        let height = 600
+        let exportSize = CGSize(width: 1920, height: 600)
 
-        guard let bitmapRep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else { return }
+        let renderer = ImageRenderer(content:
+            ZStack(alignment: .topLeading) {
+                Color(nsColor: .controlBackgroundColor)
 
-        NSGraphicsContext.saveGraphicsState()
-        let graphicsContext = NSGraphicsContext(bitmapImageRep: bitmapRep)
-        NSGraphicsContext.current = graphicsContext
+                Canvas { context, size in
+                    drawHeatmap(context: &context, size: size, analysis: analysis)
+                }
+                .padding(.leading, 60)
+                .padding(.bottom, 30)
+                .padding(.trailing, 16)
+                .padding(.top, 16)
+            }
+            .frame(width: exportSize.width, height: exportSize.height)
+        )
+        renderer.proposedSize = ProposedViewSize(exportSize)
+        renderer.scale = 1
 
-        // Draw background
-        NSColor.controlBackgroundColor.setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        guard let cgImage = renderer.cgImage else {
+            exportErrorMessage = "Failed to render the heatmap image for export."
+            return
+        }
 
-        NSGraphicsContext.restoreGraphicsState()
+        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+            exportErrorMessage = "Failed to encode the heatmap image as PNG."
+            return
+        }
 
-        // Save PNG data
-        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-            try? pngData.write(to: url)
+        do {
+            try pngData.write(to: url)
+            exportErrorMessage = nil
+        } catch {
+            exportErrorMessage = "Failed to export heatmap image: \(error.localizedDescription)"
         }
     }
 

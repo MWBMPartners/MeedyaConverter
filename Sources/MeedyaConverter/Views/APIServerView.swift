@@ -55,7 +55,19 @@ final class APIServerViewModel {
     /// Timer for polling the server's request log.
     private var logPollTimer: Timer?
 
+    /// The encoding engine `APIServer` will be told about on start — its
+    /// real `profileStore`/`queue` back `/profiles`, `/queue`, and `/encode`
+    /// (Issue #355). Defaults to a fresh, standalone `EncodingEngine()` so
+    /// this view keeps working unmodified; pass the app's shared
+    /// `AppViewModel.engine` here once this view gains a navigation entry,
+    /// so the API reflects the same profiles/queue the GUI shows.
+    private let engine: EncodingEngine
+
     // MARK: - Lifecycle
+
+    init(engine: EncodingEngine = EncodingEngine()) {
+        self.engine = engine
+    }
 
     /// Generates a new random API key (32-character hex string).
     func generateAPIKey() {
@@ -81,7 +93,7 @@ final class APIServerViewModel {
 
         errorMessage = nil
 
-        let newServer = APIServer(port: portNumber, apiKey: apiKey)
+        let newServer = APIServer(port: portNumber, apiKey: apiKey, engine: engine)
         do {
             try newServer.start()
             server = newServer

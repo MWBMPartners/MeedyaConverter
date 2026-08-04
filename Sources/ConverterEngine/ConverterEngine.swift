@@ -75,7 +75,14 @@ public struct ConverterEngine: Sendable {
     /// During development (0.x.y), the public API is not yet considered
     /// stable and may change between minor versions.
     // ---------------------------------------------------------------------
-    public static let version: String = AppInfo.Version.number
+    ///
+    /// Forwards to `AppInfo.Version.number`, which reads
+    /// `CFBundleShortVersionString` from `Bundle.main.infoDictionary` at
+    /// runtime (with a build-time fallback when no bundle is loaded). This is
+    /// a computed property — not a stored `let` — so the value always reflects
+    /// the bundle the engine is currently running inside, never a value
+    /// captured at first-touch.
+    public static var version: String { AppInfo.Version.number }
 
     // ---------------------------------------------------------------------
     // MARK: Build Metadata
@@ -89,7 +96,7 @@ public struct ConverterEngine: Sendable {
     /// [ConverterEngine/0.1.0] Starting encode job abc-123 ...
     /// ```
     // ---------------------------------------------------------------------
-    public static let buildIdentifier: String = "ConverterEngine/\(version)"
+    public static var buildIdentifier: String { "ConverterEngine/\(version)" }
 
     // ---------------------------------------------------------------------
     // MARK: Initializer

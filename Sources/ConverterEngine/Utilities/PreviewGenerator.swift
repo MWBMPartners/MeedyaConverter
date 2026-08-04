@@ -134,7 +134,10 @@ public struct PreviewGenerator: Sendable {
 
         let baseName = inputURL.deletingPathExtension().lastPathComponent
         let uniqueID = UUID().uuidString.prefix(8)
-        let fileName = "\(baseName)-preview-\(uniqueID).mp4"
+        // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
+        let fileName = PathSanitizer.sanitizeFilenameComponent(
+            "\(baseName)-preview-\(uniqueID).mp4"
+        )
 
         return tempBase.appendingPathComponent(fileName)
     }

@@ -6,16 +6,24 @@
 // ============================================================================
 
 import SwiftUI
+import ConverterEngine
 
 // MARK: - HelpTopic
 
-/// A help documentation topic with title and content.
-struct HelpTopic: Identifiable {
-    let id = UUID()
+/// A help documentation topic with a title and one or more sections.
+struct HelpTopic: Identifiable, Hashable {
+    /// Stable identity — the source filename for bundled topics, or the title
+    /// for the hardcoded fallback topics.
+    let id: String
     let title: String
     let systemImage: String
     let summary: String
+    /// Lower values sort earlier in the sidebar.
+    let sortOrder: Int
     let sections: [HelpSection]
+
+    static func == (lhs: HelpTopic, rhs: HelpTopic) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 /// A section within a help topic.
@@ -23,19 +31,33 @@ struct HelpSection: Identifiable {
     let id = UUID()
     let heading: String
     let body: String
+    /// When `true`, the body is rendered verbatim in a monospaced font because
+    /// it contains a pipe table or fenced code that `AttributedString` cannot
+    /// render faithfully.
+    let isPreformatted: Bool
+
+    init(heading: String, body: String, isPreformatted: Bool = false) {
+        self.heading = heading
+        self.body = body
+        self.isPreformatted = isPreformatted
+    }
 }
 
 // MARK: - HelpView
 
 /// In-app help system with searchable documentation.
 ///
-/// Displays help topics in a sidebar-detail layout. Topics cover
-/// getting started, encoding, profiles, the job queue, keyboard
-/// shortcuts, and troubleshooting.
+/// Topics are loaded from the Markdown files bundled under `Help/` in the
+/// app's resource bundle (`Bundle.module`) — the single source of truth for
+/// user documentation. Each file is parsed with ``HelpTopicParser`` and
+/// rendered in a sidebar-detail layout. If the bundled Help directory is
+/// absent (a build/packaging regression) the view falls back to a small set
+/// of built-in topics so Help is never blank.
 struct HelpView: View {
 
     // MARK: - State
 
+    @State private var topics: [HelpTopic] = []
     @State private var selectedTopic: HelpTopic?
     @State private var searchText = ""
 
@@ -46,9 +68,11 @@ struct HelpView: View {
             List(filteredTopics, selection: $selectedTopic) { topic in
                 Label(topic.title, systemImage: topic.systemImage)
                     .tag(topic)
+                    .accessibilityLabel(topic.title)
+                    .accessibilityHint(topic.summary)
             }
             .listStyle(.sidebar)
-            .searchable(text: $searchText, prompt: "Search help...")
+            .searchable(text: $searchText, prompt: "Search help…")
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
         } detail: {
             if let topic = selectedTopic {
@@ -63,9 +87,12 @@ struct HelpView: View {
         }
         .navigationTitle("Help")
         .frame(minWidth: 700, minHeight: 450)
-        .onAppear {
+        .task {
+            if topics.isEmpty {
+                topics = Self.loadTopics()
+            }
             if selectedTopic == nil {
-                selectedTopic = helpTopics.first
+                selectedTopic = topics.first
             }
         }
     }
@@ -80,54 +107,277 @@ struct HelpView: View {
                     Image(systemName: topic.systemImage)
                         .font(.title)
                         .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
                     Text(topic.title)
                         .font(.title)
                         .fontWeight(.bold)
                 }
                 .padding(.bottom, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(topic.title)
+                .accessibilityAddTraits(.isHeader)
 
-                Text(topic.summary)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                if !topic.summary.isEmpty {
+                    Text(topic.summary)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
 
                 Divider()
 
                 // Sections
                 ForEach(topic.sections) { section in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(section.heading)
-                            .font(.headline)
-                        Text(section.body)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
+                    sectionView(section)
                 }
             }
             .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    @ViewBuilder
+    private func sectionView(_ section: HelpSection) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !section.heading.isEmpty {
+                Text(section.heading)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            if section.isPreformatted {
+                // Tables and fenced code render verbatim, monospaced, and
+                // scroll horizontally so wide tables stay legible.
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Text(section.body)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(Self.attributedMarkdown(section.body))
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: - Markdown rendering
+
+    /// Render inline Markdown (bold, italic, links, inline code) while
+    /// preserving line breaks. Falls back to the raw string if parsing fails.
+    static func attributedMarkdown(_ markdown: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        if let attributed = try? AttributedString(markdown: markdown, options: options) {
+            return attributed
+        }
+        return AttributedString(markdown)
     }
 
     // MARK: - Filtering
 
     private var filteredTopics: [HelpTopic] {
-        if searchText.isEmpty { return helpTopics }
+        if searchText.isEmpty { return topics }
         let query = searchText.lowercased()
-        return helpTopics.filter { topic in
+        return topics.filter { topic in
             topic.title.lowercased().contains(query) ||
             topic.summary.lowercased().contains(query) ||
-            topic.sections.contains { $0.heading.lowercased().contains(query) || $0.body.lowercased().contains(query) }
+            topic.sections.contains {
+                $0.heading.lowercased().contains(query) || $0.body.lowercased().contains(query)
+            }
+        }
+    }
+
+    // MARK: - Topic Loading
+
+    /// Load help topics from the bundled Markdown, or fall back to the
+    /// built-in topics if the Help resource directory is unavailable.
+    static func loadTopics() -> [HelpTopic] {
+        loadBundledTopics() ?? fallbackTopics
+    }
+
+    /// Enumerate and parse the Markdown help files bundled under `Help/`.
+    ///
+    /// Returns `nil` (not an empty array) when the Help directory is absent,
+    /// so callers can distinguish "no bundle" from "bundle present but empty"
+    /// and choose the fallback path accordingly.
+    private static func loadBundledTopics() -> [HelpTopic]? {
+        guard let urls = Bundle.module.urls(
+            forResourcesWithExtension: "md",
+            subdirectory: "Help"
+        ), !urls.isEmpty else {
+            return nil
+        }
+
+        var topics: [HelpTopic] = []
+        for url in urls {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let document = HelpTopicParser.parse(text)
+            let filename = url.lastPathComponent
+            let meta = HelpTopicRegistry.metadata(for: filename, parsedTitle: document.title)
+            let sections = document.sections.map {
+                HelpSection(
+                    heading: $0.heading,
+                    body: $0.body,
+                    isPreformatted: $0.requiresMonospace
+                )
+            }
+            topics.append(
+                HelpTopic(
+                    id: filename,
+                    title: meta.title,
+                    systemImage: meta.systemImage,
+                    summary: meta.summary,
+                    sortOrder: meta.sortOrder,
+                    sections: sections
+                )
+            )
+        }
+
+        return topics.sorted {
+            ($0.sortOrder, $0.title.lowercased()) < ($1.sortOrder, $1.title.lowercased())
         }
     }
 }
 
-// MARK: - Help Topics Data
+// MARK: - Help Topic Registry
 
-/// All built-in help topics.
-private let helpTopics: [HelpTopic] = [
+/// Presentation metadata for the bundled Markdown help topics.
+///
+/// Maps a source filename to a display title, SF Symbol, one-line summary and
+/// sidebar sort order. Any file without an explicit entry is given a sensible
+/// default derived from its parsed title (or filename), so newly added help
+/// files appear in the sidebar automatically without a code change.
+enum HelpTopicRegistry {
+
+    struct Metadata {
+        let title: String
+        let systemImage: String
+        let summary: String
+        let sortOrder: Int
+    }
+
+    /// Known topics, keyed by bundled filename. Sort order follows a natural
+    /// onboarding-to-reference progression.
+    static let entries: [String: Metadata] = [
+        "getting-started.md": Metadata(
+            title: "Getting Started",
+            systemImage: "play.circle",
+            summary: "Learn the basics of importing, configuring and encoding media files.",
+            sortOrder: 10
+        ),
+        "encoding-guide.md": Metadata(
+            title: "Encoding Guide",
+            systemImage: "slider.horizontal.3",
+            summary: "Detailed reference for video and audio encoding settings.",
+            sortOrder: 20
+        ),
+        "container-codec-compatibility.md": Metadata(
+            title: "Container & Codec Compatibility",
+            systemImage: "square.grid.3x3",
+            summary: "Which video and audio codecs work in which container formats.",
+            sortOrder: 30
+        ),
+        "audio-format-compatibility.md": Metadata(
+            title: "Audio Format Compatibility",
+            systemImage: "waveform",
+            summary: "The audio conversion matrix — what converts to what.",
+            sortOrder: 40
+        ),
+        "adaptive-streaming.md": Metadata(
+            title: "Adaptive Streaming",
+            systemImage: "dot.radiowaves.left.and.right",
+            summary: "Prepare HLS and MPEG-DASH packages for adaptive delivery.",
+            sortOrder: 50
+        ),
+        "subtitle-tonemapping.md": Metadata(
+            title: "Subtitles & Tone-Mapping",
+            systemImage: "captions.bubble",
+            summary: "Subtitle handling and HDR-to-SDR tone-mapping options.",
+            sortOrder: 60
+        ),
+        "vector-conversion.md": Metadata(
+            title: "Vector Conversion",
+            systemImage: "scribble.variable",
+            summary: "Convert vector artwork and rasterise for delivery.",
+            sortOrder: 70
+        ),
+        "render-farm.md": Metadata(
+            title: "Render Farm",
+            systemImage: "server.rack",
+            summary: "Distribute encoding jobs across multiple machines.",
+            sortOrder: 80
+        ),
+        "cli-reference.md": Metadata(
+            title: "CLI Reference",
+            systemImage: "terminal",
+            summary: "Command-line usage for the meedya-convert tool.",
+            sortOrder: 90
+        ),
+        "faq.md": Metadata(
+            title: "FAQ",
+            systemImage: "questionmark.circle",
+            summary: "Answers to frequently asked questions.",
+            sortOrder: 100
+        ),
+        "troubleshooting.md": Metadata(
+            title: "Troubleshooting",
+            systemImage: "wrench.and.screwdriver",
+            summary: "Solutions for common issues.",
+            sortOrder: 110
+        ),
+        "updates.md": Metadata(
+            title: "Updates",
+            systemImage: "arrow.down.circle",
+            summary: "How MeedyaConverter checks for and delivers updates.",
+            sortOrder: 120
+        ),
+    ]
+
+    /// Return the metadata for `filename`, synthesising a sensible default for
+    /// any file not present in ``entries``.
+    static func metadata(for filename: String, parsedTitle: String) -> Metadata {
+        if let known = entries[filename] {
+            return known
+        }
+        let fallbackTitle = parsedTitle.isEmpty ? titleFromFilename(filename) : parsedTitle
+        return Metadata(
+            title: fallbackTitle,
+            systemImage: "doc.text",
+            summary: "",
+            // Unmapped files sort after all known topics, alphabetically.
+            sortOrder: 1_000
+        )
+    }
+
+    /// Derive a human-readable title from a filename, e.g.
+    /// `colour-management.md` → `Colour Management`.
+    private static func titleFromFilename(_ filename: String) -> String {
+        let base = filename
+            .replacingOccurrences(of: ".md", with: "")
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return base
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}
+
+// MARK: - Fallback Help Topics
+
+/// Built-in help topics used ONLY when the bundled `Help/` resource directory
+/// is unavailable (a build/packaging regression). Ensures Help is never blank.
+private let fallbackTopics: [HelpTopic] = [
     HelpTopic(
+        id: "fallback-getting-started",
         title: "Getting Started",
         systemImage: "play.circle",
-        summary: "Learn the basics of importing, configuring, and encoding media files.",
+        summary: "Learn the basics of importing, configuring and encoding media files.",
+        sortOrder: 10,
         sections: [
             HelpSection(
                 heading: "Import Source Files",
@@ -149,13 +399,15 @@ private let helpTopics: [HelpTopic] = [
     ),
 
     HelpTopic(
+        id: "fallback-encoding-profiles",
         title: "Encoding Profiles",
         systemImage: "slider.horizontal.3",
         summary: "Understand and manage encoding presets for different use cases.",
+        sortOrder: 20,
         sections: [
             HelpSection(
                 heading: "Built-in Profiles",
-                body: "MeedyaConverter ships with 25 built-in profiles across 7 categories:\n\n**Quick Start**: Web Standard (H.264), Web High Quality (H.265), Web Next-Gen (AV1), Quick Convert, Audio Extract (FLAC)\n\n**HDR-Aware**: 4K HDR Master, 4K HDR Compact, HDR → SDR (Tone-Map), PQ → HLG (Broadcast), PQ → DV+HLG (Max Compat)\n\n**Passthrough**: Remux to MKV, Remux to MP4 (no re-encoding)\n\n**Streaming**: 1080p CVBR, 4K CVBR (for HLS/DASH)\n\n**Professional**: ProRes Proxy, ProRes HQ, DNxHR SQ\n\n**Disc Authoring**: Blu-ray Compatible, DVD Compatible\n\n**Archival**: Lossless (FFV1/FLAC), ProRes 4444\n\n**Hardware**: Hardware H.264, Hardware H.265 (VideoToolbox)"
+                body: "MeedyaConverter ships with built-in profiles across several categories including Quick Start, HDR-Aware, Passthrough, Streaming, Professional, Disc Authoring, Archival, and Hardware."
             ),
             HelpSection(
                 heading: "Custom Profiles",
@@ -163,15 +415,17 @@ private let helpTopics: [HelpTopic] = [
             ),
             HelpSection(
                 heading: "CRF Quality Scale",
-                body: "CRF (Constant Rate Factor) controls quality vs file size. Lower values = higher quality, larger files. Typical ranges:\n\n- 18–20: Visually lossless\n- 20–23: High quality (recommended)\n- 23–28: Good quality, smaller files\n- 28+: Lower quality, smallest files"
+                body: "CRF (Constant Rate Factor) controls quality vs file size. Lower values = higher quality, larger files. 18–20 is visually lossless; 20–23 is high quality (recommended); 23–28 is good quality with smaller files."
             ),
         ]
     ),
 
     HelpTopic(
+        id: "fallback-queue",
         title: "Encoding Queue",
         systemImage: "list.number",
         summary: "Manage batch encoding of multiple files.",
+        sortOrder: 30,
         sections: [
             HelpSection(
                 heading: "Queue Management",
@@ -179,15 +433,17 @@ private let helpTopics: [HelpTopic] = [
             ),
             HelpSection(
                 heading: "Job States",
-                body: "Each job shows its current state:\n\n- Queued (grey clock): Waiting to be processed\n- Encoding (blue bolt): Currently encoding with progress bar\n- Paused (orange pause): Encoding suspended\n- Completed (green checkmark): Successfully finished\n- Failed (red X): Encoding error occurred\n- Cancelled (grey dash): Stopped by user"
+                body: "Each job shows its current state: Queued, Encoding, Paused, Completed, Failed, or Cancelled."
             ),
         ]
     ),
 
     HelpTopic(
+        id: "fallback-shortcuts",
         title: "Keyboard Shortcuts",
         systemImage: "keyboard",
         summary: "Speed up your workflow with keyboard shortcuts.",
+        sortOrder: 40,
         sections: [
             HelpSection(
                 heading: "File Operations",
@@ -201,65 +457,24 @@ private let helpTopics: [HelpTopic] = [
     ),
 
     HelpTopic(
-        title: "Container & Codec Compatibility",
-        systemImage: "square.grid.3x3",
-        summary: "Which video and audio codecs work in which container formats.",
-        sections: [
-            HelpSection(
-                heading: "Overview",
-                body: "Not every codec can be placed in every container format. For example, VP8/VP9 belong in WebM, while ProRes belongs in MOV. MeedyaConverter validates your codec/container choice before encoding and warns about incompatible combinations."
-            ),
-            HelpSection(
-                heading: "Recommended Containers",
-                body: "- **MP4**: Maximum compatibility — plays on browsers, phones, TVs, game consoles. Supports H.264, H.265, AV1, AAC, AC-3, E-AC-3.\n- **MKV**: Maximum flexibility — supports every codec, subtitle format, and chapter style. Best for archival and multi-stream content.\n- **MOV**: Professional editing — native support in Final Cut Pro, DaVinci Resolve, Premiere Pro. Supports ProRes, DNxHR.\n- **WebM**: Modern web delivery — supports VP8, VP9, AV1 video with Opus or Vorbis audio."
-            ),
-            HelpSection(
-                heading: "TrueHD in MP4",
-                body: "Dolby TrueHD is not part of the official MP4 specification, but is widely supported by major players (Plex, Jellyfin, VLC, MPC-HC, Infuse). MeedyaConverter allows TrueHD in MP4 with one important rule:\n\nIn MP4 containers only: TrueHD must NOT be the default audio stream. A fully compatible codec (AAC, AC-3, or E-AC-3) must also be present and set as default. This ensures universal playback.\n\nThis restriction applies only to MP4-family containers. In MKV and all other containers where TrueHD is officially supported, it can be set as the default audio stream with no restrictions."
-            ),
-            HelpSection(
-                heading: "HDR & Dolby Vision",
-                body: "HDR metadata (HDR10, HDR10+, HLG, Dolby Vision) requires:\n\n1. A compatible codec: H.265, AV1, or VP9\n2. 10-bit pixel format (yuv420p10le)\n3. A supported container: MP4, MKV, MOV, or TS\n\nDolby Vision is supported in MP4, MKV, MOV, and MPEG-TS containers. WebM supports HDR10 and HLG but not Dolby Vision.\n\n**PQ → HLG Conversion:** Sources mastered in PQ (SMPTE ST 2084) can be converted to HLG (ARIB STD-B67) for broadcast compatibility. This preserves HDR while changing the transfer function. Use the 'PQ → HLG (Broadcast)' profile or enable 'Convert PQ to HLG' in output settings. When hlg-tools (github.com/wswartzendruber/hlg-tools) is installed it is used automatically for higher quality; otherwise FFmpeg's zscale filter is used as fallback.\n\n**PQ → DV+HLG (Maximum Compatibility):** Combines PQ→HLG conversion with Dolby Vision Profile 8.4 RPU generation via dovi_tool. Produces a single stream with three-tier playback: Dolby Vision on DV devices, HLG on broadcast/HLG devices, and SDR on legacy displays. Requires dovi_tool, HEVC codec, and a DV-capable container (MP4, MKV, MOV, TS)."
-            ),
-            HelpSection(
-                heading: "Chapter Support",
-                body: "Chapters (markers and titles) are supported in MKV, MP4, M4V, M4B, MOV, and OGG containers. When converting to a container that doesn't support chapters (WebM, AVI, TS), chapter data is silently dropped.\n\nChapters are always copied from source to output by default."
-            ),
-            HelpSection(
-                heading: "Subtitle Compatibility",
-                body: "MKV supports all subtitle formats (SRT, ASS/SSA, PGS, VobSub, DVB-SUB, WebVTT). MP4 and MOV only support text-based subtitles (SRT). WebM supports WebVTT.\n\nWhen remuxing from MKV to MP4, image-based subtitles (PGS, VobSub) will be dropped unless converted to text first."
-            ),
-        ]
-    ),
-
-    HelpTopic(
+        id: "fallback-troubleshooting",
         title: "Troubleshooting",
-        systemImage: "wrench",
+        systemImage: "wrench.and.screwdriver",
         summary: "Solutions for common issues.",
+        sortOrder: 110,
         sections: [
             HelpSection(
                 heading: "FFmpeg Not Found",
-                body: "MeedyaConverter requires FFmpeg to encode media. If FFmpeg is not detected automatically, you can set a custom path in Settings > Paths. Download FFmpeg from https://ffmpeg.org or install via Homebrew: brew install ffmpeg"
+                body: "MeedyaConverter requires FFmpeg to encode media. If FFmpeg is not detected automatically, you can set a custom path in Settings > Paths."
             ),
             HelpSection(
                 heading: "Encoding Fails Immediately",
-                body: "Check the Activity Log for the FFmpeg error output. Common causes:\n\n- Input file is corrupted or incomplete\n- Output directory is not writable\n- Insufficient disk space\n- Unsupported codec/container combination"
+                body: "Check the Activity Log for the FFmpeg error output. Common causes: a corrupted input file, an unwritable output directory, insufficient disk space, or an unsupported codec/container combination."
             ),
             HelpSection(
                 heading: "Poor Encoding Quality",
-                body: "Try lowering the CRF value (e.g., from 23 to 18) or switching to a slower preset (e.g., from 'medium' to 'slow'). For HDR content, ensure 'Preserve HDR' is enabled in your profile."
+                body: "Try lowering the CRF value (e.g., from 23 to 18) or switching to a slower preset. For HDR content, ensure 'Preserve HDR' is enabled in your profile."
             ),
         ]
     ),
 ]
-
-// MARK: - HelpTopic Hashable Conformance
-
-extension HelpTopic: Hashable {
-    static func == (lhs: HelpTopic, rhs: HelpTopic) -> Bool {
-        lhs.id == rhs.id
-    }
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}

@@ -53,6 +53,12 @@ struct MeedyaConverterApp: App {
     /// The shared application view model.
     @State private var appViewModel = AppViewModel()
 
+    /// Opens app windows (e.g. the Help window) via SwiftUI's native
+    /// window-opening action. Replaces a dead `meedyaconverter://help`
+    /// URL-scheme round-trip that had no `onOpenURL` handler to catch it
+    /// (Issue #481).
+    @Environment(\.openWindow) private var openWindow
+
     /// User's preferred appearance mode (persisted).
     @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
@@ -76,6 +82,13 @@ struct MeedyaConverterApp: App {
                     Task {
                         await appViewModel.storeManager.loadProducts()
                     }
+                    // Roadmap #5 — remote feature flags (e.g. `video-upload`).
+                    // No-op when intAppsAPI isn't configured; never surfaces
+                    // an error to the UI on failure. See
+                    // `AppViewModel.refreshRemoteFeatureFlags()`.
+                    Task {
+                        await appViewModel.refreshRemoteFeatureFlags()
+                    }
                 }
                 .sheet(isPresented: Binding(
                     get: { !hasCompletedOnboarding },
@@ -84,6 +97,9 @@ struct MeedyaConverterApp: App {
                     OnboardingView()
                         .environment(appViewModel)
                         .interactiveDismissDisabled()
+                }
+                .onOpenURL { url in
+                    handleProfileShareURL(url)
                 }
         }
         .defaultSize(width: 1100, height: 700)
@@ -176,9 +192,47 @@ struct MeedyaConverterApp: App {
     // -----------------------------------------------------------------
 
     private func openHelpWindow() {
-        if let url = URL(string: "meedyaconverter://help") {
-            NSWorkspace.shared.open(url)
+        openWindow(id: "help")
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Profile Share Links
+    // -----------------------------------------------------------------
+
+    /// Handles `meedyaconverter://profile/<base64url>` links opened via
+    /// the OS (Finder/Mail/Messages, or `open meedyaconverter://...` from
+    /// Terminal).
+    ///
+    /// Decodes with `ProfileSharing.importFromShareLink(_:)` — the exact
+    /// counterpart to `ProfileSharing.generateShareLink(_:)`, which mints
+    /// these links from `ProfileManagementView`'s "Copy Share Link" action
+    /// — so the producer and consumer stay in lockstep. The decoded
+    /// profile is added to the shared `EncodingProfileStore` the same way
+    /// a JSON file import is (`ProfileManagementView.importProfile`),
+    /// reusing the store's own persistence rather than writing a second
+    /// import path.
+    ///
+    /// Any URL that isn't this exact route (wrong scheme/host — including
+    /// any other current or future `meedyaconverter://` action) is
+    /// ignored silently, since `onOpenURL` receives every URL the OS
+    /// hands this app, not just profile links. A profile link that fails
+    /// to decode (corrupt/truncated/foreign payload) logs a warning
+    /// instead of crashing — profiles are plain encoding configs with no
+    /// executable content, but the URL itself is untrusted input, so it
+    /// is never imported without a successful decode.
+    private func handleProfileShareURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "meedyaconverter",
+              url.host?.lowercased() == "profile" else {
+            return
         }
+
+        guard let profile = ProfileSharing.importFromShareLink(url.absoluteString) else {
+            appViewModel.appendLog(.warning, "Could not import profile: the share link is invalid or corrupted.")
+            return
+        }
+
+        appViewModel.engine.profileStore.addProfile(profile)
+        appViewModel.appendLog(.info, "Imported profile from share link: \(profile.name)")
     }
 
     // -----------------------------------------------------------------

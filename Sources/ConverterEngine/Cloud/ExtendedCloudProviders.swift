@@ -214,7 +214,18 @@ public struct MegaUploader: Sendable {
         email: String,
         passwordHash: String
     ) -> String {
-        return "[{\"a\":\"us\",\"user\":\"\(email)\",\"uh\":\"\(passwordHash)\"}]"
+        // Use JSONSerialization so quote/backslash/control chars in user-
+        // supplied fields cannot break out of the JSON string literal.
+        let body: [[String: Any]] = [[
+            "a": "us",
+            "user": email,
+            "uh": passwordHash,
+        ]]
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
     }
 
     /// Build an upload request command JSON.
@@ -239,7 +250,21 @@ public struct MegaUploader: Sendable {
         fileKey: String,
         parentNode: String
     ) -> String {
-        return "[{\"a\":\"p\",\"t\":\"\(parentNode)\",\"n\":[{\"h\":\"\(uploadHandle)\",\"t\":0,\"a\":\"\(encryptedAttributes)\",\"k\":\"\(fileKey)\"}]}]"
+        let body: [[String: Any]] = [[
+            "a": "p",
+            "t": parentNode,
+            "n": [[
+                "h": uploadHandle,
+                "t": 0,
+                "a": encryptedAttributes,
+                "k": fileKey,
+            ]],
+        ]]
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
     }
 
     /// Maximum chunk sizes for Mega upload (increases per chunk).
@@ -318,13 +343,20 @@ public struct MuxUploader: Sendable {
         playbackPolicy: String = "public",
         mp4Support: Bool = false
     ) -> String {
-        var json = "{\"cors_origin\":\"\(corsOrigin)\""
-        json += ",\"new_asset_settings\":{"
-        json += "\"playback_policy\":[\"\(playbackPolicy)\"]"
+        var assetSettings: [String: Any] = [
+            "playback_policy": [playbackPolicy],
+        ]
         if mp4Support {
-            json += ",\"mp4_support\":\"standard\""
+            assetSettings["mp4_support"] = "standard"
         }
-        json += "}}"
+        let body: [String: Any] = [
+            "cors_origin": corsOrigin,
+            "new_asset_settings": assetSettings,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes]),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
         return json
     }
 

@@ -74,6 +74,21 @@ struct MetadataTagEditorView: View {
     /// Whether the error alert is shown.
     @State private var showError = false
 
+    /// Whether a tag-write operation is currently running.
+    @State private var isWriting = false
+
+    /// Status message displayed after a write attempt (mirrors
+    /// `AnimatedImageView.statusMessage`).
+    @State private var writeStatusMessage: String?
+
+    /// The in-flight write task, retained so it can be cancelled if the
+    /// user navigates away mid-write. Mirrors `AnimatedImageView.generationTask`.
+    @State private var writeTask: Task<Void, Never>?
+
+    /// The FFmpeg process currently writing tags, retained so
+    /// `cancelWrite()` can stop it. Mirrors `AnimatedImageView.currentController`.
+    @State private var currentController: FFmpegProcessController?
+
     // MARK: - Body
 
     var body: some View {
@@ -107,6 +122,9 @@ struct MetadataTagEditorView: View {
             allowsMultipleSelection: false
         ) { result in
             handleArtworkImport(result)
+        }
+        .onDisappear {
+            cancelWrite()
         }
     }
 
@@ -268,24 +286,67 @@ struct MetadataTagEditorView: View {
 
             // FFmpeg preview
             Section("FFmpeg Arguments") {
-                let args = MetadataTagEditor.buildWriteArguments(
-                    tags: tags,
-                    artworkPath: artworkPath
-                )
-
-                if args.isEmpty {
+                if writeArguments.isEmpty {
                     Text("No arguments generated.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 } else {
-                    Text(args.joined(separator: " "))
+                    Text(writeArguments.joined(separator: " "))
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                         .foregroundStyle(.secondary)
                 }
             }
+
+            // Write action
+            Section {
+                HStack {
+                    Spacer()
+                    Button(action: writeTags) {
+                        if isWriting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.trailing, 4)
+                        }
+                        Text("Write Tags…")
+                    }
+                    .disabled(isWriting || writeArguments.isEmpty)
+                    .accessibilityLabel("Write metadata tags to a new file")
+
+                    if isWriting {
+                        Button("Cancel", action: cancelWrite)
+                            .accessibilityLabel("Cancel metadata tag write")
+                    }
+                    Spacer()
+                }
+
+                if let status = writeStatusMessage {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(writeStatusColor(for: status))
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    /// The FFmpeg arguments for the current tag/artwork state, shared by
+    /// the preview text and the write action.
+    private var writeArguments: [String] {
+        MetadataTagEditor.buildWriteArguments(
+            tags: tags,
+            artworkPath: artworkPath
+        )
+    }
+
+    /// Colour for the write status banner: red for a real failure,
+    /// secondary for a user-initiated cancellation, green for success.
+    /// Mirrors `AnimatedImageView.statusColor(for:)`.
+    private func writeStatusColor(for status: String) -> Color {
+        if status.hasPrefix("Error") { return .red }
+        if status == "Cancelled." { return .secondary }
+        return .green
     }
 
     // MARK: - Tag Editor Sheet
@@ -504,6 +565,133 @@ struct MetadataTagEditorView: View {
             if !tags.contains(where: { $0.key == key }) {
                 tags.append(MediaTag(key: key, value: value))
             }
+        }
+    }
+
+    /// Presents an `NSSavePanel` and writes the current tags/artwork to a
+    /// new file via FFmpeg.
+    ///
+    /// Real execution (Issue #467): FFmpeg cannot rewrite metadata in an
+    /// input file in place, so — mirroring `AnimatedImageView.generate()`
+    /// — the user picks a distinct output path via `NSSavePanel`, and the
+    /// arguments already built by `MetadataTagEditor.buildWriteArguments`
+    /// are run against `viewModel.selectedFile` with
+    /// `FFmpegProcessController`, draining its progress `AsyncStream` the
+    /// same way `runToCompletion` does in `AnimatedImageView`/
+    /// `VideoTrimmerView`. Success is only reported when FFmpeg exits 0
+    /// and the output file actually exists; otherwise an honest error is
+    /// surfaced (never a fabricated "success").
+    ///
+    /// `MetadataTagEditorView` is a `struct: View`, so the plain `Task { }`
+    /// below inherits main-actor isolation (mirrors `AnimatedImageView
+    /// .generate()` / `ImageConversionView.startConversion()`): `@State`
+    /// reads/writes are direct property mutations, not `MainActor.run` hops.
+    private func writeTags() {
+        guard !isWriting else { return }
+        guard let file = viewModel.selectedFile else {
+            writeStatusMessage = "Error: No source file selected. Import a media file before writing tags."
+            return
+        }
+
+        let args = writeArguments
+        guard !args.isEmpty else {
+            writeStatusMessage = "Error: Add at least one tag before writing."
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Save Tagged File"
+        panel.nameFieldStringValue = file.fileURL.lastPathComponent
+        if let type = UTType(filenameExtension: file.fileURL.pathExtension) {
+            panel.allowedContentTypes = [type]
+        }
+
+        guard panel.runModal() == .OK, let outputURL = panel.url else { return }
+
+        writeStatusMessage = "Writing tags..."
+        isWriting = true
+
+        let inputPath = file.fileURL.path
+        let outputPath = outputURL.path
+
+        writeTask = Task {
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                writeStatusMessage = "Error: FFmpeg could not be found. Install FFmpeg or configure its location in Settings."
+                isWriting = false
+                return
+            }
+
+            let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+            currentController = controller
+
+            do {
+                try await runToCompletion(
+                    controller,
+                    arguments: ["-i", inputPath] + args + [outputPath]
+                )
+
+                guard FileManager.default.fileExists(atPath: outputPath) else {
+                    throw FFmpegProcessError.processFailure(
+                        exitCode: controller.exitCode ?? -1,
+                        stderr: "FFmpeg reported success but no output file was found at \(outputPath)."
+                    )
+                }
+
+                writeStatusMessage = "Tags written to \(outputURL.lastPathComponent)"
+                viewModel.appendLog(
+                    .info,
+                    "Metadata tags written: \(outputURL.lastPathComponent)",
+                    category: .metadata
+                )
+            } catch is CancellationError {
+                writeStatusMessage = "Cancelled."
+            } catch {
+                writeStatusMessage = "Error: \(error.localizedDescription)"
+                viewModel.appendLog(
+                    .error,
+                    "Metadata tag write failed: \(error.localizedDescription)",
+                    category: .metadata
+                )
+            }
+
+            currentController = nil
+            isWriting = false
+        }
+    }
+
+    /// Cancel an in-progress tag write. Mirrors `AnimatedImageView.cancelGeneration()`.
+    private func cancelWrite() {
+        writeTask?.cancel()
+        currentController?.stopEncoding()
+        currentController = nil
+        writeTask = nil
+        isWriting = false
+    }
+
+    /// Runs an `FFmpegProcessController` encoding pass to completion by
+    /// draining its progress `AsyncStream`. Mirrors
+    /// `AnimatedImageView.runToCompletion`/`VideoTrimmerView.runToCompletion`.
+    private func runToCompletion(
+        _ controller: FFmpegProcessController,
+        arguments: [String]
+    ) async throws {
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await _ in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
         }
     }
 }

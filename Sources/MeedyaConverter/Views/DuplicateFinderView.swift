@@ -30,6 +30,10 @@ struct DuplicateFinderView: View {
     /// The discovered duplicate groups from the most recent scan.
     @State private var duplicateGroups: [DuplicateGroup] = []
 
+    /// Maximum mean Hamming distance (out of 64) for `.perceptual` matching.
+    /// Only consulted when `selectedMethod == .perceptual`.
+    @State private var perceptualThreshold: Double = Double(PerceptualHasher.defaultDistanceThreshold)
+
     /// Tracks which file URLs the user has marked for deletion.
     @State private var markedForDeletion: Set<URL> = []
 
@@ -61,6 +65,9 @@ struct DuplicateFinderView: View {
         VStack(alignment: .leading, spacing: 16) {
             headerSection
             controlsSection
+            if selectedMethod == .perceptual {
+                perceptualThresholdSection
+            }
             if isScanning {
                 ProgressView("Scanning for duplicates…")
                     .padding()
@@ -118,6 +125,26 @@ struct DuplicateFinderView: View {
             }
             .disabled(selectedDirectory == nil || isScanning)
             .buttonStyle(.borderedProminent)
+        }
+    }
+
+    // MARK: - Perceptual Threshold
+
+    /// Tunable similarity threshold for `.perceptual` matching, shown only
+    /// when that method is selected. Higher values match more loosely
+    /// (more false positives); lower values match more strictly (more
+    /// false negatives).
+    private var perceptualThresholdSection: some View {
+        HStack {
+            Text("Similarity threshold:")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Slider(value: $perceptualThreshold, in: 0...32, step: 1)
+            Text("\(Int(perceptualThreshold))/64")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
+                .monospacedDigit()
         }
     }
 
@@ -195,7 +222,11 @@ struct DuplicateFinderView: View {
 
         let fileURLs = collectFiles(in: directory)
 
-        let results = await DuplicateDetector.findDuplicates(in: fileURLs, method: selectedMethod)
+        let results = await DuplicateDetector.findDuplicates(
+            in: fileURLs,
+            method: selectedMethod,
+            perceptualThreshold: Int(perceptualThreshold)
+        )
         duplicateGroups = results
         isScanning = false
     }

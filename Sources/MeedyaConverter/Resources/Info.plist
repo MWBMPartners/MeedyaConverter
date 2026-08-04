@@ -12,6 +12,14 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>MeedyaConverter</string>
+    <key>CFBundleIconFile</key>
+    <!-- Filename (without extension) of the .icns in Contents/Resources/.
+         scripts/generate-app-icns.sh assembles MeedyaConverter.icns from
+         the AppIcon.appiconset PNG sources; the release.yml + testflight.yml
+         workflows copy it into the bundle's Resources/ directory before
+         signing. Without this key the App Store Connect validator rejects
+         the build with ITMS-90236 (#390). -->
+    <string>MeedyaConverter</string>
     <key>CFBundleIdentifier</key>
     <!-- Direct distribution bundle ID. CI substitutes Ltd.MWBMpartners.MeedyaConverter.Lite for App Store builds. -->
     <string>Ltd.MWBMpartners.MeedyaConverter</string>
@@ -25,6 +33,22 @@
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <!-- Custom URL scheme so the OS delivers meedyaconverter://profile/<base64url>
+         share links to the app; MeedyaConverterApp's .onOpenURL imports the
+         encoded EncodingProfile via ProfileSharing.importFromShareLink (#491).
+         Without this registration Launch Services never routes the URL and the
+         handler can never fire. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Ltd.MWBMpartners.MeedyaConverter.profile</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>meedyaconverter</string>
+            </array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHumanReadableCopyright</key>
