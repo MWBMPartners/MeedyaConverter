@@ -46,12 +46,21 @@ to `wip/alpha-consolidation`.
       `4e99dcf` #448 QueueOptimizer.reorder applied to live queue ·
       `685ff8e` #474 SmartCrop Apply-to-Job → pendingManualCropFilter merged at enqueue ·
       `a770ea3` #481 Help menu → openWindow(id:"help"). Issues #466/#448/#474/#481 updated.
-- [~] **CI:** batch pushed to `wip/alpha-consolidation` (HEAD `a770ea3`); **monitor PR #472 checks**
-      (Build & Test macOS + CodeQL + pin hygiene) → confirm green before scaling to M-tier.
-- [ ] **NEXT (M-tier, ranked):** #475 dead settings keys → #467 metadata tag write → #277 post-encode
-      hooks persist+invoke → #355 API server entry (`serve` subcommand) → #470 ETAPredictor →
-      #469 conditional rules → #477 orphaned app-service sweep. **Then PAUSE for #468** (user decision).
-      Consider also #288 (scene detection execute) + #278 (pipeline execute) surfaced this session.
+- [x] **M-tier batch 1 DONE + pushed** (`b75aba4`, all 4 files reviewed compile-correct):
+      **#475** wired `autoScrollLog`, `defaultProfileName`, `customFFmpeg/ffprobePath`, `confirmBeforeEncoding`
+      (Queue tab Start only); left unwired w/ reasons: `useHardwareAcceleration` (per-profile), `showMenuBarStatus`
+      (MenuBarController never instantiated → deeper orphan #477), `accurateRip.*` (orphaned engine #477).
+      **#470** ETAPredictor wired (predictETA supersede + recordEncode + lastKnownInputDuration; cold-start→linear).
+      Issues #475/#470 updated.
+- [~] **CI:** HEAD `b75aba4` pushed; Build & Test (macOS) in progress (actionlint/deps/pin green).
+      Earlier batch (`a770ea3` quick wins) already confirmed Build & Test GREEN.
+- [~] **Fabrication-audit Workflow `wom8m9da9` RUNNING** (read-only, 9 Sonnet finders + Fable synth) — exhaustive
+      code-first seam sweep for NEW fabricated-capability defects beyond those already catalogued. Apply its
+      register (issue updates + new fixes/issues) when it lands. **Hold impl until it finishes** (keeps its reads clean).
+- [ ] **NEXT (M-tier, ranked, after audit + green):** #467 metadata tag write → #277 post-encode hooks
+      persist+invoke → #355 API server entry (`serve` subcommand) → #469 conditional rules → #477 orphaned
+      app-service sweep. **Then PAUSE for #468** (user decision). Also queued from this session: #288 (scene
+      detection execute), #278 (pipeline execute). Then: OpenAPI/Swagger reconciliation + final docs/in-app help pass.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
