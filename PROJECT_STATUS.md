@@ -34,11 +34,11 @@
   overwrite-existing / delete-source-after-encode toggles. Ten previously
   orphaned views were also wired into app navigation. All of this is real
   code on this branch, none of it is in the released `v0.1.0-rc.3` build.
-- **Docs honesty reconciliation (this pass)** -- README, this file,
-  CHANGELOG, and FEATURES.md were audited against the actual call graph
-  (static analysis; no `swift build` available in this environment).
+- **Docs honesty reconciliation (2026-08-04 morning pass)** -- README, this
+  file, CHANGELOG, and FEATURES.md were audited against the actual call
+  graph (static analysis; no `swift build` available in this environment).
   Several "What's Complete" claims turned out to reference orphaned code
-  with no real caller/executor -- see the new "Planned / scaffolded" group
+  with no real caller/executor -- see the "Planned / scaffolded" group
   below. Two findings worth flagging explicitly: the **Scene Detection**
   view builds FFmpeg arguments but never runs FFmpeg (it logs "requested"
   and returns -- #288, same class of bug `LoudnessReportView`/
@@ -47,6 +47,36 @@
   caller either (`AudioCDReader` has zero instantiation sites). Issue count
   and test counts below are stated only where verifiable from this
   environment; unverifiable specifics were reworded rather than restated.
+- **Large fix wave landed (2026-08-04 afternoon, same day as the
+  reconciliation above -- 20 issues, still on `wip/alpha-consolidation`,
+  PR #472)**: CLI validation hardening (`encode`/`manifest` now reject
+  unrecognised codec/container values and accept `copy`; `batch
+  --job-file` now exits non-zero on failure; `profiles`/`validate` now
+  resolve imported profiles from the store; `manifest --hdr` now rejected
+  -- #466, #484, #489, #490); an HDR colour-signalling fix that also
+  un-broke a latent HLG regression (#486); per-stream subtitle overrides
+  and profile-import `subtitleTonemap` preservation (#485, #487);
+  post-encode hooks now persist/fire and watch-folder post-actions are
+  honoured (#277); output "Folder Structure" mode honoured (#275); the
+  metadata tag editor now writes tags for real (#467) and Loudness
+  "Measure Levels" now runs ffmpeg (#292); conditional encoding rules now
+  applied at enqueue with the rules view reachable (#469); team-profile
+  HTTP push actually sends (#482); Bitrate Heatmap "Export Image" renders
+  the real heatmap (#483); background-removal batch honours a chosen
+  output directory (#488); four dead Settings toggles wired up (#475);
+  history-weighted queue ETA (#470); QueueOptimizer's reorder now applies
+  (#448); SmartCrop "Apply to Job" wired in (#474); and the Help menu /
+  Cmd+? now opens the Help window (#481). None of this is in the released
+  `v0.1.0-rc.3` build. See CHANGELOG.md's `[Unreleased]` section for the
+  full per-fix detail, and the "Landing in the next alpha build" /
+  "Planned / scaffolded" sections below for the updated framing. Still
+  NOT fixed and not to be confused with the above: scene detection
+  execution (#288), encoding pipeline execution (#278), the ~6,000-line
+  orphan clusters (#477), resumable jobs (#468), the REST API server's
+  missing entry point (#355), profile share links (still unconsumable,
+  #491), YouTube/Vimeo upload (#446), and the team-profile
+  conflict-resolution UI (unwired, tracked separately from #482's push
+  fix).
 
 ---
 
@@ -287,7 +317,7 @@
 - Temp file management with per-job directories and disk monitoring
 - Encoding engine orchestrating full video/audio conversion pipeline
 - Feature gating system (free/pro/studio tiers)
-- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings, Vector Conversion, ProRes to Vector -- **note:** the view existing and being reachable does not mean its backend is wired; see "Planned / scaffolded" below for the ones that aren't (pipeline editor, conditional rules, Vector Conversion, and ProRes to Vector among them)
+- Full macOS SwiftUI app: 35+ views including sidebar, source import, stream inspector, output settings, queue, log, dashboard, pipeline editor, schedule, conditional rules, post-encode actions, bitrate heatmap, audio waveform, quality preview, FFmpeg preview, paywall, analytics settings, media server settings, Vector Conversion, ProRes to Vector -- **note:** the view existing and being reachable does not mean its backend is wired; see "Planned / scaffolded" below for the ones that aren't (pipeline editor, Vector Conversion, and ProRes to Vector among them; conditional rules are now wired per #469)
 - Passthrough (video/audio/subtitle), stream selection, metadata editor, HDR warnings
 - HDR-to-SDR tone mapping with auto-trigger for incompatible settings
 - PQ-to-HLG conversion, PQ-to-DV Profile 8.4, Dolby Vision RPU pipeline
@@ -344,6 +374,62 @@ these as shipped until they land in a tagged release:
   (the manual "Trigger Library Scan Now" button already works today; the
   automatic on-completion trigger is the new part)
 - Navigation exposure of 10 previously-orphaned views
+- CLI validation hardening (#466, #484, #489, #490): `encode`'s
+  `--video-codec`/`--audio-codec`/`--container` and `manifest`'s
+  `--video-codec`/`--audio-codec` now reject unrecognised values with a
+  `ValidationError` instead of silently falling back; `copy` is now an
+  accepted `--video-codec`/`--audio-codec` value; `batch --job-file` now
+  exits non-zero (`ExitCodes.encodingFailed` = 4) if any job fails;
+  `profiles --show`/`--export`/`--validate` and `validate --profile` now
+  resolve against the persisted profile store, not just built-ins;
+  `manifest --hdr` is now rejected outright (no HDR signalling
+  implementation exists on that path); `manifest --variants custom` now
+  requires `--ladder-file`. `docs/api/meedya-convert-api.yaml` and
+  `help/cli-reference.md` reflect all of the above
+- HDR PQ/HDR10 colour signalling (`buildPQPreservationArguments()`) is now
+  wired in, and a latent bug that was also silently dropping the
+  pre-existing HLG colour signalling was fixed alongside it (#486)
+- Per-stream subtitle overrides (`PerStreamSettings.subtitleOverrides`)
+  are now applied by `FFmpegArgumentBuilder` (#485); profile import
+  (`EncodingProfileStore.importProfile(from:)`,
+  `ProfileSharing.importFromJSON`) now preserves `subtitleTonemap` (#487)
+- Post-encode action hooks (`PostEncodeActionChain`) now persist to
+  `UserDefaults` and fire from the queue's completion path, and
+  `WatchFolderConfig.postAction` (move-to-completed / delete-source) is
+  now honoured (#277)
+- Output "Folder Structure" mode (`outputMode`, mirror source tree vs.
+  flat) is now honoured via a new `OutputPathResolver` (#275)
+- Metadata Tag editor (`MetadataTagEditorView`) now runs ffmpeg for real
+  via a "Write Tags..." action, instead of only displaying the argv
+  (#467)
+- Loudness "Measure Levels" (`NormalizationSettingsView.measureLevels()`)
+  now runs ffmpeg and populates measured LUFS/True Peak/LRA, instead of
+  spinning with no result (#292)
+- Conditional encoding rules (`RuleEngine.evaluateRules`) are now applied
+  at enqueue time, and `ConditionalRulesView` is now reachable from the
+  sidebar (Tools group), previously orphaned (#469)
+- Team-profile HTTP push (`TeamProfileManager.pushProfiles`'s
+  `.httpServer` case) now actually sends the PUT request instead of
+  fabricating success (#482) -- the team-profile conflict-resolution UI
+  remains unwired and is tracked separately, not touched by this fix
+- Bitrate-Heatmap "Export Image" now renders the real heatmap via an
+  off-screen `ImageRenderer`, instead of a blank PNG (#483)
+- Background-removal batch now honours a chosen output directory via a
+  proper `NSOpenPanel`, instead of a hardcoded `~/Desktop` fallback that
+  the save panel never even showed (#488)
+- Four dead Settings toggles now take effect: `autoScrollLog`,
+  `defaultProfileName`, custom ffmpeg/ffprobe paths, and
+  `confirmBeforeEncoding` (#475)
+- History-weighted queue ETA -- the orphaned `ETAPredictor` is now wired
+  into the queue, using per-profile encode-speed history once it exists
+  (#470)
+- QueueOptimizer's reorder (`EncodingQueue.reorder(to:)`) now applies
+  back to the live queue, instead of only animating a checkmark (#448)
+- SmartCrop "Apply to Job" is now wired into the enqueue filter chain,
+  instead of being an empty method body (#474)
+- Help menu / Cmd+? now opens the Help window via
+  `openWindow(id: "help")`, instead of a dead
+  `meedyaconverter://help` URL scheme with no registered handler (#481)
 
 ---
 
@@ -383,19 +469,22 @@ carried over from an earlier draft):
   `PipelineExecutor`: the editor is presented from Output Settings with no
   `onSave` handler wired up, and `PipelineExecutor` (the generic multi-step
   runner) has zero callers anywhere in the app or engine
-- **Conditional rules** -- never applied at encode time (#469)
 - **Resumable jobs** -- no checkpoint writer; "resume" restarts at 0 (#468)
 - **REST API server mode** -- implemented and unit-tested, but has no
   entry point; unreachable from the app or CLI (#355)
-- **Post-encode hook chains** -- the generic chain engine
-  (`PostEncodeActionChain`) is real but not persisted and not invoked on
-  completion; note this is distinct from the webhook/media-server-scan
-  wiring above, which calls those senders directly rather than through the
-  chain (#277)
+- **Profile share links** -- `ProfileSharing`'s share-link generation/
+  consumption flow is unconsumable; not to be confused with plain JSON
+  profile import via `profiles --import` / `--import`, which works, and
+  now also preserves `subtitleTonemap` (#487) (#491)
+- **Team-profile conflict-resolution UI** -- unwired; distinct from the
+  `.httpServer` push itself, which now genuinely sends (#482, see
+  "Landing in the next alpha build" above)
 - **3D / Stereoscopic** -- `Stereo3DConverter`/`Video3DConverter` have zero
   callers (#477)
-- **Media Metadata Lookup / Auto-Tagging** -- `AutoTagger` is orphaned; the
-  metadata tag editor is display-only (#467, #205)
+- **Media Metadata Lookup / Auto-Tagging** -- `AutoTagger` (automatic
+  lookup against external metadata databases) is orphaned; a separate
+  concern from the metadata tag editor, which now writes tags for real
+  (#467, see "Landing in the next alpha build" above) (#205)
 - **A/B Comparison** -- `ComparisonView` is orphaned (#329)
 - **AI Upscaling** -- `AIUpscaler` exists only as a comment reference
   (#236, #477)

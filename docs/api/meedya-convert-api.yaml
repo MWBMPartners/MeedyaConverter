@@ -22,14 +22,20 @@
 #     against Sources/meedya-convert/**/*.swift and the ConverterEngine
 #     types they reference (VideoCodec, AudioCodec, ContainerFormat,
 #     EncodingProfile, MediaFile, MediaStream, StreamingVariant,
-#     EncodingJobConfig) as of the "Updated" date below. Several `@Option`
-#     help strings in the CLI source list only a handful of *example*
-#     values (e.g. "--video-codec (h264, h265, av1, prores, vp9, copy)")
-#     but do not actually constrain input — ArgumentParser stores these as
-#     plain strings, and the underlying `RawRepresentable` enum in
-#     ConverterEngine decides what is actually accepted. Where the two
-#     disagree, this document follows the code, not the CLI's own --help
-#     text, and calls out the discrepancy explicitly.
+#     EncodingJobConfig) as of the "Updated" date below.
+#   - As of PR #472 (#466/#484/#489/#490, 2026-08-04), `encode`'s
+#     `--video-codec`/`--audio-codec`/`--container` and `manifest`'s
+#     `--video-codec`/`--audio-codec` VALIDATE their input and throw a
+#     `ValidationError` listing the accepted values for anything
+#     unrecognised — this is a behaviour change from the previously
+#     silent-fallback behaviour this document used to describe (see
+#     "Known CLI quirks" below for exactly what changed and what remains
+#     true on the still-permissive options, e.g. `--tonemap-algorithm`,
+#     `--crf`, `--preset`). `@Option` help strings still list only a
+#     handful of *example* values (e.g. "--video-codec (h264, h265, av1,
+#     prores, vp9, copy)") rather than the full accepted set — this
+#     document lists the full set from the `RawRepresentable` enums in
+#     `components/schemas`, plus the now-accepted `copy` value.
 #   - JSON emitted via `JSONEncoder` (probe --format json, profiles
 #     --json/--show/--export) uses Swift's synthesised `Encodable`
 #     conformance: `Optional` properties that are `nil` are OMITTED from
@@ -44,12 +50,26 @@
 #     hand-written job/ladder files; the `required` lists below reflect
 #     the real decode requirements, not the friendlier `init` defaults.
 #
-# Updated: 2026-07-28 — re-verified against Sources/meedya-convert/** and
-# Sources/ConverterEngine/** on branch wip/alpha-consolidation. The CLI
-# command surface (6 subcommands, ~30 encode options) was unchanged since
-# the previous pass on 2026-04-06, but several parameter enums, the
-# batch/ladder-file JSON schemas, and the probe/profile JSON output
-# schemas were substantively wrong — see the notes above and inline below.
+# Updated: 2026-08-04 — re-verified against Sources/meedya-convert/** on
+# branch wip/alpha-consolidation (PR #472, draft — landing in the next
+# alpha build, NOT in the released v0.1.0-rc.3). Since the 2026-07-28 pass,
+# five CLI-contract-changing fixes landed:
+#   - #466: encode --video-codec/--audio-codec/--container now REJECT
+#     unrecognised values (ValidationError) instead of silently dropping
+#     them; `copy` is now an accepted --video-codec/--audio-codec value,
+#     routed to the existing passthrough flags.
+#   - #484: batch --job-file now exits 4 (encodingFailed) if any job
+#     failed, instead of always exiting 0.
+#   - #489: profiles --show/--export/--validate and validate --profile now
+#     resolve against the persisted profile store (not just built-ins);
+#     profiles --list now sources EncodingProfileStore().allProfiles().
+#   - #490: manifest --hdr now REJECTED (ValidationError — HDR signalling
+#     is not implemented in the manifest encode path); manifest
+#     --video-codec/--audio-codec now validate like encode's flags instead
+#     of silently defaulting to h264/aac; --variants custom now requires
+#     --ladder-file.
+# See the "Known CLI quirks" section and each path's parameter
+# descriptions below for the corrected per-flag detail.
 # ============================================================================
 
 openapi: 3.1.0
@@ -76,34 +96,90 @@ info:
     **Known CLI quirks (verified against source, not just --help text):**
     - `encode --video-codec <value>` and `encode --audio-codec <value>`
       accept a `VideoCodec` / `AudioCodec` raw value (see the enums under
-      `components/schemas`), NOT the 5-6 example values shown in the
-      CLI's own `--help` output, and there is no `copy` codec value —
-      passthrough/remux is a separate boolean flag
-      (`--video-passthrough` / `--audio-passthrough`).
-    - If the string passed to `--video-codec` / `--audio-codec` does not
-      match any enum raw value, `EncodeCommand` does not error — it
-      silently sets the profile's codec to `nil`. `FFmpegArgumentBuilder`
-      then emits `-vn` (video disabled) or `-an` (audio disabled) for
-      that stream. A typo in `--video-codec` therefore produces an
-      **audio-only** output file with no error message.
+      `components/schemas`), NOT just the 5-6 example values shown in the
+      CLI's own `--help` output. **As of #466**, `copy` IS now a valid
+      value for both — it does not correspond to an enum case, it is
+      special-cased in `applyOverrides(to:)` to set
+      `videoPassthrough`/`audioPassthrough` instead (equivalent to
+      passing `--video-passthrough` / `--audio-passthrough`).
+    - **As of #466** (previously the opposite — see below), if the string
+      passed to `--video-codec` / `--audio-codec` / `--container` does not
+      match `copy` (codec flags only) or any enum raw value (or, for
+      `--container`, a resolvable file extension via
+      `ContainerFormat.from(fileExtension:)`), `applyOverrides(to:)` now
+      throws a `ValidationError` listing every accepted value, and the
+      command exits without encoding anything. Previously (pre-#466) an
+      unrecognised `--video-codec`/`--audio-codec` was silently dropped —
+      `EncodeCommand` set the profile's codec to `nil`, and
+      `FFmpegArgumentBuilder` emitted `-vn`/`-an` for that stream, so a
+      typo produced an audio-only (or video-only) output file with exit
+      0 and no error message; an unrecognised `--container` silently kept
+      the profile's existing container. Neither happens anymore.
     - Selecting a `VideoCodec` that has no working FFmpeg software
       encoder (`h266`, `av2`, `cineform`, `vc1`, `mv_hevc`, `mv_h264` —
-      i.e. `isEncoderStable == false`) does not fail either: the builder
-      falls back to `libx264` (H.264) silently when not using hardware
-      encoding.
+      i.e. `isEncoderStable == false`) still does not fail: this is
+      unrelated to #466's rejection of *unrecognised* strings — a
+      recognised-but-unsupported codec still passes validation, and the
+      builder falls back to `libx264` (H.264) silently when not using
+      hardware encoding.
     - `encode --tonemap-algorithm` is validated against
       `FFmpegArgumentBuilder.ToneMapAlgorithm`, whose cases are `hable`,
       `reinhard`, `mobius`, `bt2390`, `clip` — but `EncodeCommand`'s own
       `--help` text advertises `linear` as a valid value. `linear` does
       not match any case, so passing it silently falls back to the
-      default (`hable`) with no warning.
+      default (`hable`) with no warning. This was NOT touched by #466
+      (that fix only covers `--video-codec`/`--audio-codec`/`--container`).
     - `encode --crf` and `encode --audio-channels` are NOT range/value
       checked by `encode` itself — any integer is accepted and passed
       through. Only `meedya-convert validate` flags an out-of-range CRF
       (outside 0-63) as a warning.
-    - `encode --container` and `manifest`'s codec options accept any
-      `ContainerFormat` / `VideoCodec` / `AudioCodec` raw value, not just
-      the short example lists in their `--help` text.
+    - **As of #490**, `manifest --video-codec`/`--audio-codec` are now
+      validated exactly like `encode`'s equivalent flags — an
+      unrecognised value throws a `ValidationError` listing the accepted
+      set. Previously (pre-#490) they were resolved as
+      `VideoCodec(rawValue:) ?? .h264` / `AudioCodec(rawValue:) ?? .aacLC`,
+      so a typo silently fell back to h264/aac with no warning; this
+      fallback is gone. `manifest` still has no `copy`/passthrough
+      concept at all (every variant is always re-encoded).
+    - **As of #490**, `manifest --hdr` is now REJECTED outright — passing
+      it throws `ValidationError("--hdr is not yet supported for
+      manifest generation.")` before FFmpeg is even located.
+      `ManifestGenerator.buildVariantArguments` never reads
+      `config.preserveHDR`; there is no HDR colour-signalling
+      implementation in the manifest encode path (unlike the main
+      `encode` pipeline's `FFmpegArgumentBuilder`), so accepting the flag
+      would silently do nothing. Previously (pre-#490) `--hdr` was
+      accepted and silently ignored.
+    - **As of #490**, `manifest --variants custom` now requires
+      `--ladder-file` — `validate()` throws a `ValidationError` if
+      `custom` is passed without one. Previously `"custom"` silently fell
+      through to `StreamingVariant.defaultLadder` (see `resolveVariants`,
+      which only branches on `4k`/`uhd`; every other string, including
+      `custom` and typos, hits the `default:` case). This did not change:
+      `--ladder-file` still always overrides `--variants` when both are
+      given, and `4k`/`uhd` are still the only two preset strings that
+      change behaviour.
+    - **As of #489**, `profiles --show`/`--export`/`--validate` and
+      `validate --profile` now resolve a name against
+      `EncodingProfile.builtInProfiles` FIRST, then
+      `EncodingProfileStore().profile(named:)` — the same order
+      `encode --profile` already used — so a profile imported via
+      `profiles --import` is now found by these commands too. `profiles`
+      with no selection flags (or `--list`) now sources
+      `EncodingProfileStore().allProfiles()` (built-ins + persisted user
+      profiles, de-duplicated by the store) instead of only
+      `EncodingProfile.builtInProfiles`. Previously (pre-#489) all four
+      of these searched built-ins only, so a just-imported profile was
+      reported "not found" by the very tool that imported it.
+    - **As of #484**, `batch --job-file` now exits 4
+      (`ExitCodes.encodingFailed`) if any job in the file failed,
+      matching `batch --dir`'s pre-existing behaviour exactly (both now
+      track a failure count across the loop — still processing every
+      job — and throw `ExitCode(ExitCodes.encodingFailed.rawValue)` if
+      the count is nonzero). Previously (pre-#484) `--job-file` mode
+      logged each failure to stderr but always exited 0 regardless, even
+      if every job failed — breaking the documented CI/CD exit-code
+      contract its sibling mode already honoured.
   contact:
     name: MWBM Partners Ltd
     url: https://github.com/MWBMPartners/MeedyaConverter
@@ -150,7 +226,11 @@ paths:
         profile was resolved (or of `EncodingProfile.quickConvert` if
         `--profile` was omitted).
 
-        **Exit codes:** 0 (success), 4 (encoding failed), 5 (output write error).
+        **Exit codes:** 0 (success), 2 (invalid arguments — unrecognised
+        `--video-codec`/`--audio-codec`/`--container` value, or a
+        mutually-exclusive flag combination such as `--video-passthrough`
+        with `--video-codec`; thrown as a `ValidationError`, #466), 4
+        (encoding failed), 5 (output write error).
       tags:
         - Encoding
       parameters:
@@ -184,11 +264,16 @@ paths:
           required: false
           description: |
             Video codec for re-encoding. Any `VideoCodec` raw value is
-            accepted (see `#/components/schemas/VideoCodec`) — the CLI's
-            own `--help` text only lists 6 examples including a
-            non-existent `copy` value. An unrecognised value results in
-            the video stream being disabled (`-vn`), not an error. Use
-            `--video-passthrough` for stream copy, not a codec value.
+            accepted (see `#/components/schemas/VideoCodec`), PLUS the
+            literal string `copy` (as of #466) — `copy` is not a
+            `VideoCodec` case; `applyOverrides(to:)` special-cases it to
+            set `videoPassthrough = true` instead, equivalent to passing
+            `--video-passthrough`. Any other unrecognised value now
+            throws a `ValidationError` listing the accepted set
+            (`copy` + every `VideoCodec` raw value) and the command exits
+            2 without encoding — this is a change from the pre-#466
+            behaviour, where an unrecognised value silently disabled the
+            video stream (`-vn`) with no error and exit 0.
           schema:
             $ref: '#/components/schemas/VideoCodec'
 
@@ -256,11 +341,16 @@ paths:
           required: false
           description: |
             Audio codec for re-encoding. Any `AudioCodec` raw value is
-            accepted (see `#/components/schemas/AudioCodec`) — the CLI's
-            own `--help` text only lists 6 examples including a
-            non-existent `copy` value. An unrecognised value results in
-            the audio stream being disabled (`-an`), not an error. Use
-            `--audio-passthrough` for stream copy, not a codec value.
+            accepted (see `#/components/schemas/AudioCodec`), PLUS the
+            literal string `copy` (as of #466) — `copy` is not an
+            `AudioCodec` case; `applyOverrides(to:)` special-cases it to
+            set `audioPassthrough = true` instead, equivalent to passing
+            `--audio-passthrough`. Any other unrecognised value now
+            throws a `ValidationError` listing the accepted set
+            (`copy` + every `AudioCodec` raw value) and the command exits
+            2 without encoding — this is a change from the pre-#466
+            behaviour, where an unrecognised value silently disabled the
+            audio stream (`-an`) with no error and exit 0.
           schema:
             $ref: '#/components/schemas/AudioCodec'
 
@@ -310,7 +400,7 @@ paths:
         - name: --container
           in: query
           required: false
-          description: "Output container format. Accepts any `ContainerFormat` raw value (see `#/components/schemas/ContainerFormat`) OR a bare file extension resolved via `ContainerFormat.from(fileExtension:)` (e.g. `mpg`, `mpeg`, `vob`, `mts`, `m2ts`, `aif`, `ogv`). Overrides the profile's default container. The CLI's `--help` text lists only 5 examples."
+          description: "Output container format. Accepts any `ContainerFormat` raw value (see `#/components/schemas/ContainerFormat`) OR a bare file extension resolved via `ContainerFormat.from(fileExtension:)` (e.g. `mpg`, `mpeg`, `vob`, `mts`, `m2ts`, `aif`, `ogv`). Overrides the profile's default container. The CLI's `--help` text lists only 5 examples. As of #466, a value matching neither now throws a `ValidationError` listing every accepted `ContainerFormat` raw value and the command exits 2 — previously it silently left the profile's existing container unchanged."
           schema:
             $ref: '#/components/schemas/ContainerFormat'
 
@@ -441,6 +531,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EncodeResult'
+        "400":
+          description: "Exit 2 — Invalid arguments: an unrecognised `--video-codec`/`--audio-codec`/`--container` value (#466), or a rejected flag combination (`--video-passthrough` + `--video-codec`, `--audio-passthrough` + `--audio-codec`, `--tonemap` + `--pq-to-hlg`)."
         "502":
           description: "Exit 4 — Encoding failed (FFmpeg error)."
         "409":
@@ -522,7 +614,8 @@ paths:
       summary: List, show, export, import, or validate encoding profiles.
       description: |
         Manage encoding profiles. By default (with no flags or with --list),
-        lists all available built-in profiles grouped by category.
+        lists all available profiles (built-in + persisted user profiles)
+        grouped by category.
 
         **Usage:**
         ```
@@ -538,6 +631,15 @@ paths:
         `--validate`; combined with any other flag it is silently
         ignored.
 
+        **As of #489**, name resolution for `--show`/`--export`/
+        `--validate` (and `--list`'s profile source) now includes the
+        persisted user profile store, not just built-ins — see the
+        `--show` parameter description below for the exact lookup order.
+        Previously (pre-#489) all four searched
+        `EncodingProfile.builtInProfiles` only, so a profile just
+        imported via `profiles --import` was reported "not found" by the
+        same tool that had just imported it.
+
         **Exit codes:** 0 (success), 2 (profile not found / invalid arguments).
       tags:
         - Profiles
@@ -545,7 +647,7 @@ paths:
         - name: --list
           in: query
           required: false
-          description: List all available encoding profiles (default action; this flag is not actually read by `run()` — omitting all other selection flags does the same thing).
+          description: "List all available encoding profiles (default action; this flag is not actually read by `run()` — omitting all other selection flags does the same thing). As of #489, sources `EncodingProfileStore().allProfiles()` (built-ins + persisted user profiles, de-duplicated by the store, matching APIServer's GET /profiles) — previously (pre-#489) this listed `EncodingProfile.builtInProfiles` only."
           schema:
             type: boolean
             default: false
@@ -553,14 +655,14 @@ paths:
         - name: --show
           in: query
           required: false
-          description: Show detailed settings of a named built-in profile (case-insensitive match against `EncodingProfile.builtInProfiles` only — user-saved profiles are not searched).
+          description: "Show detailed settings of a named profile. As of #489, resolved case-insensitively against `EncodingProfile.builtInProfiles` FIRST, then `EncodingProfileStore().profile(named:)` — the same order `encode --profile` uses — so a profile imported via `profiles --import` is now found. Previously (pre-#489) only built-ins were searched."
           schema:
             type: string
 
         - name: --export
           in: query
           required: false
-          description: Export a named built-in profile to JSON (`EncodingProfile`, pretty-printed with sorted keys). Outputs to stdout unless `--export-file` is set.
+          description: "Export a named profile to JSON (`EncodingProfile`, pretty-printed with sorted keys). Outputs to stdout unless `--export-file` is set. As of #489, resolved built-ins-first-then-store, same as `--show` above — previously built-ins only."
           schema:
             type: string
 
@@ -581,7 +683,7 @@ paths:
         - name: --validate
           in: query
           required: false
-          description: Validate a named built-in profile for codec/container compatibility issues (searches `EncodingProfile.builtInProfiles` only, not user-saved profiles).
+          description: "Validate a named profile for codec/container compatibility issues. As of #489, resolved built-ins-first-then-store, same order/lookup as `--show` above — previously (pre-#489) searched `EncodingProfile.builtInProfiles` only, not user-saved profiles."
           schema:
             type: string
 
@@ -631,8 +733,10 @@ paths:
         The two modes are mutually exclusive (enforced by `validate()`).
 
         **Exit codes:** 0 (all succeeded), 4 (one or more jobs failed —
-        directory mode only; job-file mode logs failures per-job to
-        stderr but always exits 0).
+        both modes; as of #484, job-file mode now exits 4 the same way
+        directory mode always has, instead of always exiting 0. Both
+        modes still process every job/file in the batch before exiting —
+        a failure does not stop the run early).
       tags:
         - Batch
       parameters:
@@ -712,7 +816,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/BatchResult'
         "502":
-          description: "Exit 4 — One or more jobs failed (--dir mode only)."
+          description: "Exit 4 — One or more jobs failed, in EITHER mode as of #484 (`runJobFileBatch` now tracks a failure count across the loop and throws `ExitCode(ExitCodes.encodingFailed.rawValue)` if it's nonzero, matching `runDirectoryBatch`'s pre-existing behaviour). Previously (pre-#484) job-file mode always exited 0 regardless of per-job failures."
 
   # --------------------------------------------------------------------------
   # manifest — Generate adaptive streaming manifests (HLS/DASH/CMAF)
@@ -732,8 +836,11 @@ paths:
         ```
 
         **Exit codes:** 0 (success), 1 (general error, e.g. FFmpeg
-        unavailable), 2 (invalid `--format` value; `validate()` rejects
-        anything other than hls/dash/cmaf before FFmpeg is even located).
+        unavailable), 2 (invalid arguments — `validate()` rejects, before
+        FFmpeg is even located: a `--format` other than hls/dash/cmaf; as
+        of #490, `--hdr` unconditionally — see the `--hdr` parameter
+        below; an unrecognised `--video-codec`/`--audio-codec`; and
+        `--variants custom` without `--ladder-file`).
       tags:
         - Streaming
       parameters:
@@ -763,7 +870,7 @@ paths:
         - name: --video-codec
           in: query
           required: false
-          description: "Video codec for all variants. Resolved as `VideoCodec(rawValue:) ?? .h264` — NOT restricted to h264/h265/av1 as the flag's `--help` text implies; any `VideoCodec` raw value is accepted, and an unrecognised value silently falls back to `h264` (no error, unlike `encode`'s equivalent flag which disables the stream instead)."
+          description: "Video codec for all variants. Any `VideoCodec` raw value is accepted — NOT restricted to h264/h265/av1 as the flag's `--help` text implies. As of #490, `validate()` now guards this with `VideoCodec(rawValue:)` and throws a `ValidationError` listing the accepted values if unrecognised, mirroring `encode --video-codec`. There is no `copy`/passthrough concept for `manifest` (unlike `encode`) — every variant is always re-encoded. Previously (pre-#490) an unrecognised value was resolved as `VideoCodec(rawValue:) ?? .h264` and silently fell back to `h264` with no error."
           schema:
             type: string
             default: h264
@@ -775,7 +882,7 @@ paths:
         - name: --audio-codec
           in: query
           required: false
-          description: "Audio codec for all variants. Resolved as `AudioCodec(rawValue:) ?? .aacLC` — any `AudioCodec` raw value is accepted; an unrecognised value silently falls back to `aac`."
+          description: "Audio codec for all variants. Any `AudioCodec` raw value is accepted. As of #490, `validate()` now guards this with `AudioCodec(rawValue:)` and throws a `ValidationError` listing the accepted values if unrecognised. Previously (pre-#490) an unrecognised value was resolved as `AudioCodec(rawValue:) ?? .aacLC` and silently fell back to `aac` with no error."
           schema:
             type: string
             default: aac
@@ -818,11 +925,19 @@ paths:
             Variant ladder preset. Only two values change behaviour:
             `4k` or `uhd` (case-insensitive) select
             `StreamingVariant.uhdrLadder` (4 variants up to 2160p); every
-            other string — including the default `default`, and including
-            typos — falls through to `StreamingVariant.defaultLadder` (4
-            variants up to 1080p). There is no `custom` value in the
-            code; to use a custom ladder, pass `--ladder-file` instead,
-            which overrides `--variants` entirely.
+            other string — including the default `default` — falls
+            through to `StreamingVariant.defaultLadder` (4 variants up to
+            1080p) UNLESS `--ladder-file` is also given, which overrides
+            `--variants` entirely regardless of its value. There is still
+            no `custom` case in `resolveVariants`'s switch — `custom` is
+            just one more string that falls through to the default ladder
+            when reached — but as of #490, `validate()` now special-cases
+            it: `--variants custom` WITHOUT `--ladder-file` is rejected
+            with a `ValidationError` before that fallthrough can happen.
+            A typo other than the literal word `custom` (e.g. `defalut`)
+            still silently falls through to the default ladder with no
+            error. Previously (pre-#490) `--variants custom` alone
+            silently produced the default ladder.
           schema:
             type: string
             default: default
@@ -834,14 +949,14 @@ paths:
         - name: --ladder-file
           in: query
           required: false
-          description: Path to a JSON file defining a custom variant ladder (array of `StreamingVariant` objects — see `#/components/schemas/StreamingVariant` for the full set of required keys). Overrides --variants.
+          description: Path to a JSON file defining a custom variant ladder (array of `StreamingVariant` objects — see `#/components/schemas/StreamingVariant` for the full set of required keys). Overrides --variants. As of #490, this is now REQUIRED when `--variants custom` is passed (see the `--variants` description above).
           schema:
             type: string
 
         - name: --hdr
           in: query
           required: false
-          description: Preserve HDR metadata in output variants.
+          description: "Preserve HDR metadata in output variants. As of #490, this flag is now REJECTED — passing it throws `ValidationError(\"--hdr is not yet supported for manifest generation.\")` in `validate()`, before FFmpeg is even located. `ManifestGenerator.buildVariantArguments` never reads `config.preserveHDR`; there is no mastering-display/MaxCLL side-data or 10-bit pixel-format HDR signalling in the manifest encode path, unlike the main `encode` pipeline's `FFmpegArgumentBuilder`. Previously (pre-#490) the flag was accepted and silently had no effect. `--pixel-format yuv420p10le` can still be set manually, but does not by itself reconstruct full HDR signalling."
           schema:
             type: boolean
             default: false
@@ -903,7 +1018,7 @@ paths:
         "500":
           description: "Exit 1 — General error (e.g., FFmpeg not available)."
         "400":
-          description: "Exit 2 — Invalid arguments (bad --format value)."
+          description: "Exit 2 — Invalid arguments: a `--format` other than hls/dash/cmaf; `--hdr` passed at all; an unrecognised `--video-codec`/`--audio-codec`; or `--variants custom` without `--ladder-file` (all as of #490 except `--format`, which predates it)."
 
   # --------------------------------------------------------------------------
   # validate — Validate profiles, manifests, and platform compatibility
@@ -1404,6 +1519,7 @@ components:
             $ref: '#/components/schemas/StreamingVariant'
         preserveHDR:
           type: boolean
+          description: "As of #490, `meedya-convert manifest` can no longer produce a config with this set to `true` — `--hdr` is now rejected by `validate()` before the config is built. Still decodable as `true` when `validate --manifest <file>` is pointed at a hand-written config, since that path only runs `ManifestGenerator.validate(config:)`'s warnings, not `manifest`'s own `--hdr` rejection."
         pixelFormat:
           type: string
         useHardwareEncoding:

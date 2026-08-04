@@ -66,6 +66,15 @@ phase-by-phase feature inventory; the table below is the headline list.
 | 🗓️ **Scheduled Encoding** | Queue jobs to start at a later time |
 | 🚩 **Remote Feature Flags** | IntAppsAPI-backed flags and alpha/beta update channels |
 | ♻️ **Overwrite / Delete-Source Toggles** | Overwrite existing output, delete source after a successful encode |
+| 🏷️ **Metadata Tag Editor (writes tags)** | "Write Tags…" now runs ffmpeg for real instead of only displaying the argv (#467) |
+| 🎚️ **Loudness Measurement** | "Measure Levels" now runs a real EBU R128 ffmpeg pass instead of spinning with no result (#292) |
+| 🔀 **Conditional Encoding Rules** | Rules now apply to the profile at enqueue time, and the Conditional Rules view is reachable from the sidebar (#469) |
+| 🎨 **HDR Colour-Signalling Fix** | PQ/HDR10 now emit BT.2020/SMPTE ST 2084 colour signalling; also fixes a latent bug that was silently dropping the existing HLG colour signalling too (#486) |
+| 📌 **Post-Encode Hooks & Output Layout** | The Hooks tab's action chain now persists and fires on completion, watch-folder move/delete post-actions are honoured, and "Folder Structure" (mirror source tree) output mode is honoured (#277, #275) |
+| 📝 **Subtitle Overrides & Profile-Import Fixes** | Per-stream subtitle overrides are now applied, and importing/sharing a profile preserves its subtitle tone-mapping setting (#485, #487) |
+| 🔄 **Sync & Export Fixes** | Team-profile HTTP push actually sends instead of fabricating success; Bitrate Heatmap "Export Image" renders the real heatmap; background-removal batch honours the chosen output directory (#482, #483, #488) |
+| 🔧 **Settings, Queue & Tool Polish** | Dead Settings toggles wired up (auto-scroll log, default profile, custom ffmpeg/ffprobe paths, confirm-before-encoding); history-weighted queue ETA; QueueOptimizer's reorder now applies; SmartCrop "Apply to Job"; Help menu / Cmd+? opens the Help window (#475, #470, #448, #474, #481) |
+| 🖥️ **CLI Validation Hardening** | `encode`/`manifest` reject unrecognised `--video-codec`/`--audio-codec`/`--container` values (`copy` now accepted); `batch --job-file` exits non-zero on any job failure; `profiles`/`validate` resolve imported profiles from the store; `manifest --hdr` is rejected as unsupported (#466, #484, #489, #490) |
 
 > These are real, working code on `wip/alpha-consolidation` today, but they
 > have **not shipped in a release yet** — do not treat them as available in
@@ -85,7 +94,7 @@ roadmap items, not working features, until their tracking issue closes.
 | 🔍 **Scene Detection** | The Scene Detection view builds FFmpeg arguments but never runs FFmpeg — it logs "requested" and returns; no scenes are ever actually detected (#288) |
 | 🔏 **Forensic Watermarking** | `ForensicWatermark` is orphaned (#477) |
 | 🎥 **3D / Stereoscopic (MV-HEVC / MV-H264)** | `Stereo3DConverter` / `Video3DConverter` have zero callers (#477) |
-| 🏷️ **Media Metadata Lookup / Auto-Tagging** | `AutoTagger` is orphaned; the metadata tag editor is display-only (#467, #205) |
+| 🏷️ **Media Metadata Lookup / Auto-Tagging** | `AutoTagger` (automatic lookup against external metadata databases) is orphaned — a separate concern from the metadata tag editor, which now writes tags for real (#467, see "Landing in the next alpha build" above) (#205) |
 | 👁️ **A/B Comparison** | `ComparisonView` is orphaned (#329) |
 | 🔎 **AI Upscaling** | `AIUpscaler` exists only as a comment reference (#236, #477) |
 | 💿 **Optical Disc Ripping & Authoring** | Disc readers/authors are orphaned — disc **burning** above is the one part of this pipeline that's real (#476) |

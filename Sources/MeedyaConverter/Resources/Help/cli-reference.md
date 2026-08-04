@@ -57,19 +57,19 @@ If `--output` is omitted, the output is written next to the input with a
 | `--input`, `-i` (required) | Path to the input media file. Must exist. |
 | `--output`, `-o` | Output file path. |
 | `--profile`, `-p` | Name/ID of a built-in or custom encoding profile. Flags below override the profile's settings. |
-| `--video-codec` | `h264`, `h265`, `av1`, `prores`, `vp9`, `copy` |
-| `--crf` | Constant Rate Factor (lower = higher quality). |
+| `--video-codec` | `h264`, `h265`, `av1`, `prores`, `vp9`, `copy`, and any other `VideoCodec` raw value (see `docs/api/meedya-convert-api.yaml`). `copy` routes to `--video-passthrough`. An unrecognised value is rejected with a validation error listing the accepted values (exit 2) — see [Codec, Container & Profile Validation](#codec-container--profile-validation) below. |
+| `--crf` | Constant Rate Factor (lower = higher quality). Not range-checked by `encode` itself; use `validate` to flag an out-of-range value. |
 | `--video-bitrate` | Target video bitrate, e.g. `5000k`, `10M`. |
 | `--preset` | Encoder speed/quality preset: `ultrafast` … `veryslow`. |
 | `--resolution` | Output resolution, e.g. `1920x1080`. |
 | `--video-passthrough` | Copy the video stream (no re-encode). Cannot combine with `--video-codec`. |
-| `--audio-codec` | `aac`, `ac3`, `eac3`, `flac`, `opus`, `copy` |
+| `--audio-codec` | `aac`, `ac3`, `eac3`, `flac`, `opus`, `copy`, and any other `AudioCodec` raw value. `copy` routes to `--audio-passthrough`. An unrecognised value is rejected with a validation error (exit 2). |
 | `--audio-bitrate` | Target audio bitrate, e.g. `128k`, `256k`, `640k`. |
-| `--audio-channels` | `1`, `2`, `6` (5.1), `8` (7.1). |
+| `--audio-channels` | `1`, `2`, `6` (5.1), `8` (7.1). Not range-checked by `encode` itself. |
 | `--audio-passthrough` | Copy the audio stream. Cannot combine with `--audio-codec`. |
 | `--subtitle-passthrough` | Copy subtitle streams. |
 | `--no-subtitles` | Exclude all subtitle streams. |
-| `--container` | `mkv`, `mp4`, `webm`, `mov`, `ts` |
+| `--container` | `mkv`, `mp4`, `webm`, `mov`, `ts`, and any other `ContainerFormat` raw value or resolvable file extension. An unrecognised value is rejected with a validation error (exit 2). |
 | `--tonemap` | Enable HDR→SDR tone mapping. Mutually exclusive with `--pq-to-hlg`. |
 | `--tonemap-algorithm` | `hable`, `reinhard`, `mobius`, `bt2390`, `linear` (used with `--tonemap`). |
 | `--pq-to-hlg` | Convert PQ (HDR10) to HLG. Mutually exclusive with `--tonemap`. |
@@ -85,7 +85,7 @@ If `--output` is omitted, the output is written next to the input with a
 | `--json` | Emit progress and the final result as JSON. |
 | `--yes`, `-y` | Overwrite an existing output file without prompting. |
 
-**Exit codes:** `0` success · `4` encoding failed · `5` output write error (exists without `--yes`).
+**Exit codes:** `0` success · `2` invalid arguments (unrecognised `--video-codec`/`--audio-codec`/`--container` value, or a rejected flag combination such as `--video-passthrough` with `--video-codec`) · `4` encoding failed · `5` output write error (exists without `--yes`).
 
 ---
 
@@ -119,7 +119,13 @@ meedya-convert probe -i input.mkv --hdr
 
 Unlike the other subcommands, `profiles` is driven entirely by flags — there
 is no `list`/`show` sub-subcommand. With no flags at all it lists every
-built-in profile (same as `--list`).
+available profile (same as `--list`) — built-in profiles plus any you've
+imported or saved, sourced from the persisted profile store.
+
+`--show`, `--export`, and `--validate` resolve a profile name against the
+built-in profiles first, then the persisted user profile store — the same
+order `encode --profile` uses — so a profile you just imported with
+`profiles --import` is found by all of these, not just by `encode`.
 
 ```bash
 meedya-convert profiles [--list] [--show <name>] [--export <name>]
@@ -136,12 +142,12 @@ meedya-convert profiles --validate "Web Standard" --platform plex
 
 | Option | Description |
 | ------ | ----------- |
-| `--list` | List all built-in profiles, grouped by category (default action). |
-| `--show <name>` | Print the full settings for a named profile. |
-| `--export <name>` | Export a named profile to JSON (stdout unless `--export-file` is set). |
+| `--list` | List all available profiles (built-in + imported/saved), grouped by category (default action). |
+| `--show <name>` | Print the full settings for a named profile (built-ins, then the profile store). |
+| `--export <name>` | Export a named profile to JSON (stdout unless `--export-file` is set; built-ins, then the profile store). |
 | `--export-file <path>` | Output file for `--export`. |
 | `--import <file>` | Import a profile from a JSON file. |
-| `--validate <name>` | Check a named profile for codec/container compatibility issues. |
+| `--validate <name>` | Check a named profile for codec/container compatibility issues (built-ins, then the profile store). |
 | `--platform <name>` | Target platform for `--validate`'s compatibility check (see [validate](#validate--validate-profiles-manifests-and-platform-compatibility) below for the platform list). |
 | `--json` | Output as JSON instead of human-readable text. |
 
@@ -178,7 +184,9 @@ meedya-convert batch --job-file jobs.json --json
 | `--json` | Output the batch summary as JSON (`total`/`completed`/`failed`/`skipped`). |
 | `--yes`, `-y` | Overwrite existing output files without prompting. |
 
-**Exit codes:** `0` all jobs succeeded · `4` one or more jobs failed.
+**Exit codes:** `0` all jobs succeeded · `4` one or more jobs failed (in
+either mode — `--job-file` mode exits non-zero on failure the same way
+`--dir` mode does; both modes still process every job before exiting).
 
 ---
 
@@ -201,14 +209,14 @@ meedya-convert manifest --input input.mkv --output ./streaming --format cmaf --d
 | `--input`, `-i` (required) | Path to the source media file. |
 | `--output`, `-o` (required) | Output directory for manifest + segment files. |
 | `--format`, `-f` | `hls` (default), `dash`, or `cmaf` (writes both). |
-| `--video-codec` | `h264` (default), `h265`, `av1`, applied to every variant. |
-| `--audio-codec` | `aac` (default), `ac3`, `eac3`, `opus`. |
+| `--video-codec` | `h264` (default), `h265`, `av1`, or any other `VideoCodec` raw value, applied to every variant. An unrecognised value is rejected with a validation error (exit 2) — no `copy`/passthrough option exists for `manifest`. |
+| `--audio-codec` | `aac` (default), `ac3`, `eac3`, `opus`, or any other `AudioCodec` raw value. An unrecognised value is rejected with a validation error (exit 2). |
 | `--preset` | Encoder preset. Default `medium`. |
 | `--segment-duration` | Segment duration in seconds. Default `6.0`. |
 | `--keyframe-interval` | Keyframe interval in seconds (GOP alignment). Default `2.0`. |
-| `--variants` | `default` (≤1080p) or `4k`/`uhd` (includes 2160p). Default `default`. |
-| `--ladder-file` | Path to a JSON `StreamingVariant[]` array — overrides `--variants` with a custom ladder. |
-| `--hdr` | Preserve HDR metadata in output variants. |
+| `--variants` | `default` (≤1080p) or `4k`/`uhd` (includes 2160p). Default `default`. `custom` requires `--ladder-file` — using `custom` without one is rejected with a validation error (exit 2). |
+| `--ladder-file` | Path to a JSON `StreamingVariant[]` array — overrides `--variants` with a custom ladder. Required when `--variants custom` is used. |
+| `--hdr` | **Not supported.** Rejected with a validation error ("`--hdr is not yet supported for manifest generation`", exit 2) — the manifest encode path has no HDR colour-signalling implementation, unlike the main `encode` pipeline. |
 | `--pixel-format` | e.g. `yuv420p`, `yuv420p10le`. |
 | `--hardware` | Use a hardware encoder if available. |
 | `--dry-run` | Print the FFmpeg commands that would run, without executing them. |
@@ -216,7 +224,7 @@ meedya-convert manifest --input input.mkv --output ./streaming --format cmaf --d
 | `--json` | Output the result as JSON. |
 | `--yes`, `-y` | Overwrite existing output without prompting. |
 
-**Exit codes:** `0` success · `1` general error (e.g. FFmpeg unavailable) · `2` invalid arguments.
+**Exit codes:** `0` success · `1` general error (e.g. FFmpeg unavailable) · `2` invalid arguments (bad `--format`; `--hdr` passed at all; unrecognised `--video-codec`/`--audio-codec`; or `--variants custom` without `--ladder-file`).
 
 ---
 
@@ -252,6 +260,33 @@ HDR codec support, CRF range (0–63), hardware-encoder-with-CRF mismatches, and
 bitrate/CRF conflicts.
 
 **Exit codes:** `0` valid (warnings allowed unless `--strict`) · `6` validation failed (errors, or warnings under `--strict`).
+
+---
+
+## Codec, Container & Profile Validation
+
+`encode` and `manifest` validate every codec/container value they accept —
+an unrecognised `--video-codec`, `--audio-codec`, or `--container` (`encode`
+only) is rejected with an error listing the accepted values, instead of
+silently falling back to something else:
+
+```text
+$ meedya-convert encode -i in.mkv -o out.mp4 --video-codec h265x
+Error: Unknown --video-codec 'h265x'. Accepted values: copy, h264, h265, h266, mv_hevc, mv_h264, vp8, vp9, av1, av2, prores, dnxhr, cineform, mpeg2, mpeg4, theora, vc1, ffv1, jpeg2000.
+```
+
+`copy` is accepted for both `--video-codec` and `--audio-codec` and is
+equivalent to passing `--video-passthrough` / `--audio-passthrough` — it
+does not correspond to an actual codec.
+
+`manifest --hdr` is rejected outright (there is no HDR colour-signalling
+implementation on the manifest encode path), and `manifest --variants
+custom` requires `--ladder-file`. See the `manifest` option table above.
+
+`profiles --show`/`--export`/`--validate` and `validate --profile` resolve
+a profile name against the built-in profiles first, then your persisted
+profile store, so a profile you've imported with `profiles --import` is
+found by all of them — not just by `encode --profile`.
 
 ---
 

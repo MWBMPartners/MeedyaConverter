@@ -152,7 +152,135 @@
   `shasum -a 256 -c` verification step that had no file to check
   against until now (re #428).
 
+### Changed
+
+CLI contract changes on `wip/alpha-consolidation` (PR #472). Not in the
+released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
+`help/cli-reference.md` are updated to match.
+
+- **`encode --video-codec`/`--audio-codec`/`--container` now reject
+  unrecognised values** -- previously an unrecognised value was silently
+  dropped (video/audio stream disabled, or container left unchanged) and
+  the command still exited 0; `applyOverrides(to:)` now throws a
+  `ValidationError` listing the accepted values. `copy` is now an
+  accepted `--video-codec`/`--audio-codec` value, routed to the existing
+  `--video-passthrough`/`--audio-passthrough` flags rather than a nonexistent
+  codec case (#466).
+- **`batch --job-file` now exits non-zero if any job fails** -- previously
+  always exited 0 even when every job failed, unlike `--dir`'s existing
+  behaviour. `runJobFileBatch` now tracks failures across the loop and
+  throws `ExitCode(ExitCodes.encodingFailed.rawValue)` (4) if any job
+  failed, matching `--dir` mode exactly. Both modes still process every
+  job before exiting (#484).
+- **`profiles --show`/`--export`/`--validate` and `validate --profile`
+  now resolve against the persisted profile store, not just built-ins**
+  -- same built-ins-first-then-store order as `encode --profile`, so a
+  profile imported via `profiles --import` is now found by these
+  commands instead of reported "not found". `profiles --list` now
+  sources `EncodingProfileStore().allProfiles()` (#489).
+- **`manifest --hdr` now rejected** with a validation error
+  ("`--hdr is not yet supported for manifest generation`") instead of
+  being silently accepted and ignored -- the manifest encode path has no
+  HDR colour-signalling implementation, unlike the main `encode`
+  pipeline's `FFmpegArgumentBuilder`. `manifest --video-codec`/
+  `--audio-codec` now reject unrecognised values the same way `encode`
+  does, instead of silently defaulting to h264/aac; and
+  `manifest --variants custom` now requires `--ladder-file`, instead of
+  silently falling through to the default ladder (#490).
+
 ### Fixed
+
+- **HDR PQ/HDR10 colour signalling now emitted, and a latent HLG-signalling
+  regression fixed alongside it** -- `buildPQPreservationArguments()`
+  existed but was never wired in, so PQ/HDR10/Dolby-Vision-base-layer
+  sources (the most common HDR input) silently lost BT.2020/SMPTE ST 2084
+  colour signalling. Fixing this surfaced that the HDR argument block ran
+  *before* `extraArguments` was assigned, so both the new PQ args and the
+  pre-existing HLG colour-signalling args were being overwritten and
+  dropped before ffmpeg ever saw them; the block now runs after, so both
+  paths reach `build()` (#486).
+- **Per-stream subtitle overrides now applied** (#485) --
+  `PerStreamSettings.subtitleOverrides` was collected by the UI but
+  `toArgumentBuilder` never consumed it, unlike the audio/video overrides
+  which already worked. `-map -0:s:<i>` exclusion and forced
+  `-c:s:<i> copy` are now applied the same way the audio/video paths do.
+- **Profile import now preserves `subtitleTonemap`** (#487) -- both
+  `EncodingProfileStore.importProfile(from:)` and
+  `ProfileSharing.importFromJSON` omitted the field when reconstructing a
+  profile, so an imported or shared profile silently lost its subtitle
+  tone-mapping setting. Note: `ProfileSharing`'s share-link generation/
+  consumption flow itself remains separately broken and was not touched
+  by this fix (#491, still open).
+- **Post-encode action hooks now persist and fire on job completion, and
+  watch-folder move/delete post-actions are honoured** -- the Hooks tab's
+  action chain (`PostEncodeActionChain` -- real scp/cloud/scripts/trash/
+  notify) previously only ran from its own dry-run Test button; it's now
+  persisted to `UserDefaults` and executed from the queue's success path.
+  `WatchFolderConfig.postAction` (move-to-completed / delete-source) is
+  now honoured too, previously a no-op. Failure-path `runOnFailure`
+  invocation is deliberately still out of scope (#277).
+- **Output "Folder Structure" mode now honoured** (#275) -- the
+  `outputMode` picker (mirror source tree vs. flat) had no readers;
+  output was always flat regardless of the setting. A new
+  `OutputPathResolver.resolveOutputDirectory(...)` now picks the
+  destination directory per `outputMode`, composed with the existing
+  filename-template/overwrite logic.
+- **Metadata Tag editor now writes tags via ffmpeg** --
+  `MetadataTagEditorView` built the ffmpeg argument list for display only
+  and never ran it; a "Write Tags..." action now runs ffmpeg for real via
+  `FFmpegProcessController`, reporting success only on exit 0 with the
+  output file present (#467).
+- **Loudness "Measure Levels" now runs ffmpeg** --
+  `NormalizationSettingsView.measureLevels()` built ffmpeg arguments but
+  never launched a process, so the button spun with no result; it now
+  runs ffmpeg and populates measured LUFS/True Peak/LRA, mirroring
+  `LoudnessReportView`'s pattern from #433 (#292).
+- **Conditional encoding rules now applied at enqueue, and the rules view
+  is reachable** -- `RuleEngine.evaluateRules` was fully implemented but
+  had zero callers; a matching rule now overrides the profile for that
+  job only (the manual Output Settings selection is left untouched).
+  `ConditionalRulesView` is also now reachable from the sidebar (Tools
+  group), previously orphaned (#469).
+- **Team-profile HTTP push now actually sends** --
+  `TeamProfileManager.pushProfiles`'s `.httpServer` case built the PUT
+  request but never sent it, while the view reported "Pushed N profiles
+  successfully" regardless; it now awaits the request via `URLSession`
+  and only reports success on a 2xx response. The team-profile
+  conflict-resolution UI remains unwired and is tracked separately, not
+  touched by this fix (#482).
+- **Bitrate-heatmap "Export Image" now renders the real heatmap** --
+  `exportAsImage()` previously drew only a flat background rectangle and
+  swallowed write errors with `try?`; it now renders the same
+  `drawHeatmap(context:size:analysis:)` routine used on-screen through an
+  off-screen `ImageRenderer` and surfaces failures through an error
+  banner instead (#483).
+- **Background-removal batch honours the chosen output directory** -- the
+  batch path built an `NSSavePanel` but never called `runModal()` on it,
+  and hardcoded output to `~/Desktop/BackgroundRemoved`. Replaced with an
+  `NSOpenPanel` for directory selection; cancelling now returns without
+  processing instead of silently falling back to Desktop (#488).
+- **Dead Settings toggles wired up** -- `autoScrollLog`, `defaultProfileName`,
+  custom ffmpeg/ffprobe paths, and `confirmBeforeEncoding` were persisted
+  but read by nothing; all four now take effect (`ActivityLogView`,
+  `AppViewModel.init`, `EncodingEngine.init`, and the Queue tab's Start
+  Queue confirmation respectively) (#475).
+- **History-weighted queue ETA** -- the orphaned `ETAPredictor` is now
+  wired into the queue: `predictETA` supersedes the naive linear estimate
+  once matching per-profile encode-speed history exists (cold-start still
+  falls back to linear), and `recordEncode` logs each successful encode's
+  speed on completion (#470).
+- **QueueOptimizer's reorder now applies to the live queue** --
+  `applyOptimisation()` previously animated a checkmark and dismissed
+  without writing the reordered queue back; a new
+  `EncodingQueue.reorder(to:)` now permutes the live queue to match
+  (#448).
+- **SmartCrop "Apply to Job" now wired in** -- `applyCropToJob()` was an
+  empty method body; the chosen crop now merges into the enqueue filter
+  chain, with precedence over auto-crop (#474).
+- **Help menu / Cmd+? now opens the Help window** -- it previously called
+  the `meedyaconverter://help` URL scheme, which has no registered
+  handler (a silent no-op); it now calls `openWindow(id: "help")`
+  directly (#481).
 
 - **`LoudnessReportView` wired to real EBU R128 / ITU-R BS.1770 loudness
   analysis (#433)** -- `runAnalysis()` was a stub that set `isAnalysing =
