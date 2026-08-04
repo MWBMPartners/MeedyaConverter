@@ -356,6 +356,33 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Reorder the entire queue to match a new job ordering, keyed by job ID.
+    ///
+    /// Existing `EncodingJobState` identities are preserved — this only
+    /// changes their position within `jobs`, it does not add, remove, or
+    /// duplicate entries. IDs in `newOrder` that no longer exist in the
+    /// queue are ignored; any queued jobs not mentioned in `newOrder`
+    /// (e.g., added concurrently) keep their prior relative order,
+    /// appended after the reordered jobs.
+    ///
+    /// Used by `QueueOptimizerView` to apply `SmartQueueOptimizer` results
+    /// back to the live queue (Issue #448).
+    public func reorder(to newOrder: [UUID]) {
+        lock.lock()
+        var byID = Dictionary(uniqueKeysWithValues: jobs.map { ($0.config.id, $0) })
+        var reordered: [EncodingJobState] = []
+        reordered.reserveCapacity(jobs.count)
+        for id in newOrder {
+            if let job = byID.removeValue(forKey: id) {
+                reordered.append(job)
+            }
+        }
+        // Preserve any jobs not mentioned in `newOrder`, in their original order.
+        reordered.append(contentsOf: jobs.filter { byID[$0.config.id] != nil })
+        jobs = reordered
+        lock.unlock()
+    }
+
     /// Cancel a specific job. If it's currently encoding, stops the encode.
     public func cancelJob(id: UUID) {
         lock.lock()

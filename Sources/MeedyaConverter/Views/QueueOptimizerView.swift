@@ -224,6 +224,11 @@ struct QueueOptimizerView: View {
 
     /// Apply the optimised order to the live queue.
     private func applyOptimisation() {
+        // Write the previewed ordering back to the real queue — the preview
+        // and the queue share the same job identities, so this reorders
+        // in place rather than duplicating or replacing jobs.
+        viewModel.engine.queue.reorder(to: previewJobs.map(\.id))
+
         withAnimation {
             didApply = true
         }
