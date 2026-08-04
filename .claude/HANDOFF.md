@@ -103,9 +103,19 @@ to `wip/alpha-consolidation`.
       rejects --hdr / unknown codecs / custom-without-ladder. Verified. Issues updated.
 - [x] **Agent D DONE (`0f1dc0f`/`8183a83`):** #467 MetadataTagEditorView real Write-Tags execution; #292
       NormalizationSettings measureLevels real ffmpeg. Verified. Issues updated.
-- [~] **In-flight:** Agent E = #469 conditional rules apply-at-enqueue + surface view, #488 bg-removal save panel.
-- [ ] **NEXT (after E + green):** OpenAPI/Swagger reconciliation (CLI spec: #466/#484/#489/#490 changes) + final
-      docs/in-app help + CHANGELOG reflecting ALL session fixes. Then wrap-up summary.
+- [x] **Agent E DONE (`27b42dd`/`4f9c012`):** #469 conditional rules apply-at-enqueue + surfaced view, #488
+      bg-removal chosen output dir. Verified. Issues updated. Batch CI (`4f9c012`) Build & Test + CodeQL GREEN.
+- [x] **Docs finalization DONE (`b81b546`):** CHANGELOG + README + PROJECT_STATUS + OpenAPI CLI spec +
+      cli-reference.md reconciled to the fix wave (grounded in the 20 fix commits; YAML validated). Fixed a stale
+      "conditional rules not wired" note.
+- [x] **✅ AUTONOMOUS QUEUE COMPLETE (2026-08-04).** 21 issues fixed + full state reconciliation + honesty docs +
+      exhaustive 59-seam audit + standing tasks W1–W9, all on `wip/alpha-consolidation`. PR #472 still DRAFT
+      (do NOT merge). Fix commits: ef2d8ca #466 · 4e99dcf #448 · 685ff8e #474 · a770ea3 #481 · b75aba4 #475/#470 ·
+      75f2de0 #486 · aa0d66e #484 · 9b92932 #485/#487 · 8da5c9f #482 · bb9e818 #483 · 3ee5072 #277/#275 ·
+      3fe0538 #489 · 54e530d #490 · 0f1dc0f #467 · 8183a83 #292 · 27b42dd #469 · 4f9c012 #488 · b81b546 docs.
+      Remaining = the 4 user DECISIONS below + lower-priority OPEN issues tracked in GitHub with evidence:
+      #288, #278, #446, #482(r25 conflicts UI), #329, #333, #340, #353, #286, #331, #281, #241, #324, #352,
+      #350, #338, #257, #323, #285.
 
 ### DECISIONS PENDING USER (present, don't block)
 1. **Orphan-sweep** (rows 28-59, ~6,000 zero-caller lines) — delete pure-dead duplicates + fix false "live" comments; keep issue-tracked stubs. Need OK on deletions.
