@@ -57,10 +57,41 @@ to `wip/alpha-consolidation`.
 - [~] **Fabrication-audit Workflow `wom8m9da9` RUNNING** (read-only, 9 Sonnet finders + Fable synth) — exhaustive
       code-first seam sweep for NEW fabricated-capability defects beyond those already catalogued. Apply its
       register (issue updates + new fixes/issues) when it lands. **Hold impl until it finishes** (keeps its reads clean).
-- [ ] **NEXT (M-tier, ranked, after audit + green):** #467 metadata tag write → #277 post-encode hooks
-      persist+invoke → #355 API server entry (`serve` subcommand) → #469 conditional rules → #477 orphaned
-      app-service sweep. **Then PAUSE for #468** (user decision). Also queued from this session: #288 (scene
-      detection execute), #278 (pipeline execute). Then: OpenAPI/Swagger reconciliation + final docs/in-app help pass.
+- [x] **Exhaustive fabrication-audit Workflow `wom8m9da9` COMPLETE** (10 agents, 2.2M tokens) — **59 deduped
+      seams** with grep evidence, mapped to issues. Full register archived in the workflow journal; key NEW
+      HIGH-impact findings below. **GitHub bookkeeping DONE:** filed **#482** (team-push fake success), **#483** (heatmap blank
+      PNG), **#484** (batch exits 0 on fail), **#485** (per-stream subtitle ignored), **#486** (PQ/HDR10 signalling),
+      **#487** (import drops subtitleTonemap), **#488** (bg-removal save panel), **#489** (CLI profiles blind to
+      imports), **#490** (ManifestCommand inert opts), **#491** (share links unconsumable) + 25 comments on existing.
+      **In-flight:** M2 engine-fix agent → row8=#486, row9=#487, row3=#484, row7=#485.
+
+### Audit register — HIGH-impact NEW seams (2026-08-04, verified vs code)
+- **row 8 — PQ/HDR10 colour signalling never applied** (`FFmpegArgumentBuilder.buildPQPreservationArguments`
+  unwired; `.hlg` sibling IS wired at EncodingJob.swift:198-201). REAL HDR bug. → M2 fixing.
+- **row 9 — profile import drops `subtitleTonemap`** (EncodingProfile.swift:981-1026 + ProfileSharing.swift:91-132).
+  Silent data loss. → M2 fixing.
+- **row 3 — `batch --job-file` exits 0 on failure** (BatchCommand.swift:168-205; sibling runDirectoryBatch throws).
+  → M2 fixing.
+- **row 7 — per-stream subtitle overrides ignored** by `toArgumentBuilder`. → M2 fixing.
+- row 1 — TeamProfile `.httpServer` push reports success, sends nothing; row 2 — BitrateHeatmap "Export Image"
+  writes a blank PNG; row 4 — NormalizationSettings "Measure Levels" no-op (#292); row 5 — PostEncodeActionChain
+  never invoked (#277); row 6 — outputMode/OutputPathResolver mirror-folder no-op (#275); rows 10/11/12-14/18 —
+  bg-removal save panel, CLI ProfilesCommand blind to imports, ManifestCommand inert options, unconsumable share links.
+- MED mapped to existing: #353,#286,#331,#340,#329,#377,#473,#281,#468,#333,#346,#241.
+- **row 24 — checkpoint/resume unwired** (follow-up to #468).
+
+### DECISIONS TO SURFACE (present, don't block — continue other work)
+1. **Orphan-sweep (rows 28-59): ~6,000 lines of zero-caller engine code** — delete-or-wire. Several files carry
+   FALSE "live call site" comments (PQToHLGPipeline, RasterVectorConverter, FFmpegBackend/Factory). Recommendation:
+   DELETE the pure-dead duplicates/false-comment ones (SmartCropIntegration dup, ColorSpaceConverter US-spelled dup,
+   EncodingBackend scaffold, PQToHLGPipeline), correct false prose; LEAVE the issue-tracked feature stubs
+   (#324/#352/#350/#338/#257/#323/#285/#241/#346/#446). Needs user OK on deletions.
+2. **#468 resumable jobs** — delete-vs-honest-minimal (already flagged).
+
+- [ ] **NEXT impl (after M2 + green), ranked:** #277 post-encode hooks persist+invoke → #275 outputMode →
+      #467 metadata tag write → #292 measureLevels → #355 API server entry (`serve`) → #469 conditional rules →
+      row1 team-push → row2 heatmap-export → then app-service/orphan sweep pending decision #1. **PAUSE for #468.**
+      Then: OpenAPI/Swagger reconciliation + final docs/in-app help pass + CHANGELOG.
 
 ### Reconciliation register (verified vs code @ `2f58fc3`, 2026-08-04)
 
