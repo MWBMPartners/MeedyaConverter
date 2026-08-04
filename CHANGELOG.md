@@ -52,6 +52,32 @@
 
 ### Added
 
+- **Metadata / ID-tag passthrough guards + SUITE_CORE bindings tracking
+  (#478)** -- the cross-repo media-ID program's correctness obligation for
+  MeedyaConverter is that a conversion must NOT strip a file's external /
+  catalogue identifier tags (ISRC, UPC/ICPN, MusicBrainz IDs, ISWC, …).
+  Added argv-level guards in `ConverterEngineTests+FFmpegArguments.swift`
+  pinning the load-bearing property: a **default** encode emits
+  `-map_metadata 0` (copies the entire global metadata dictionary — every
+  tag family, not drop-unknown) and `-map_chapters 0`, and must not emit
+  `-map_metadata -1`; `copySourceMetadata = false` omits the copy-all
+  (negative control); and the `--no-copy-metadata` opt-out's trailing
+  `-map_metadata -1` is proven to come *after* the copy-all so ffmpeg's
+  last-arg-wins precedence genuinely strips. Added value-exact assertions
+  for `MetadataPassthroughBuilder` (`copyAll` == `-map_metadata 0`,
+  `strip` == `-map_metadata -1`) that close the positional wrong-but-green
+  gap in the pre-existing `contains(...)`-only tests. **Deliverable 1
+  (SUITE_CORE bindings) is tracking-only**: a note on `SuiteCoreMetadataAdapter`
+  records that the shared identifier vocabulary (MeedyaSuite-core's
+  `identifier_types` registry + `CommonTag`, MeedyaSuite-core#65) will reach
+  this app through that adapter once the core Swift bindings ship
+  (MeedyaSuite-core#28) — and that NO MeedyaConverter-local identifier model
+  should be added meanwhile (it would be throwaway). No dep bump; no new
+  identifier modelling. NOTE: this container has no Swift toolchain, so the
+  new tests were authored by source-review against the existing test idioms
+  and **compilation + `swift test` must be validated by CI** — not run
+  locally.
+
 - **`RenderFarmConfigurationLoader` consumes `RenderFarmSettingsTab`'s
   AppStorage settings (#346)** -- a new pure, Foundation-only
   `ConverterEngine.RenderFarmConfigurationLoader` reads the
