@@ -117,16 +117,21 @@ to `wip/alpha-consolidation`.
       #288, #278, #446, #482(r25 conflicts UI), #329, #333, #340, #353, #286, #331, #281, #241, #324, #352,
       #350, #338, #257, #323, #285.
 
-### DECISIONS — USER DECIDED 2026-08-04, NOW IMPLEMENTING (4 agents dispatched)
+### DECISIONS — USER DECIDED 2026-08-04, ALL 4 IMPLEMENTED ✅ — AUTONOMOUS QUEUE COMPLETE
+> #355 serve (`1773763`), #491 URL-import+scheme (`3147c8d`), #468 honest-minimal resumable (`444bde1`),
+> orphan-sweep batches 1+2 (`af83104`+`7f59196`, Build & Test GREEN). Only remainder = the documented
+> kept-for-safety orphan follow-up + long-horizon backlog issues. Nothing else queued.
 1. **Orphan-sweep** → IN PROGRESS. Fable delete-list DONE (verified; both ColorSpace spellings + their chains
    are production-dead). Orchestrator independently grep-confirmed. Execution in CI-gated batches:
    - **Batch 1 DONE+pushed (`af83104`):** deleted AudioMixer.swift, ClosedCaptionHandler.swift, SubtitleOCR.swift
      (0 refs in Sources AND Tests — no test trims needed).
-   - **Batch 2 RUNNING (Sonnet):** delete ~14 clearly-dead whole files (SubtitleConverter, Extended*×4,
-     EncodingReport, MediaInfoIntegration, MetadataPassthrough, MetadataTagger, MultiStreamSelector,
-     SmartCropIntegration, HDRPolicyEngine, ColourSpaceConverter, PQToHLGPipeline) + trim their mixed-scope
-     test sections + fix 3 false "live" comments (FFmpegBackend/Factory, RasterVectorConverter). Orchestrator
-     re-greps deleted type names = 0 in Sources+Tests before pushing; CI-gate.
+   - **Batch 2 DONE+pushed (`7f59196`) — Build & Test macOS GREEN:** deleted 14 clearly-dead whole files
+     (SubtitleConverter, Extended*×4, EncodingReport, MediaInfoIntegration, MetadataPassthrough, MetadataTagger,
+     MultiStreamSelector, SmartCropIntegration, HDRPolicyEngine, ColourSpaceConverter, PQToHLGPipeline) + trimmed
+     9 mixed-scope test files + fixed 3 false "live" comments. Independently verified: deleted-type grep=0 in
+     Sources+Tests, no deleted file extended a live type / defined a called free func, test files brace-balanced.
+     **Total sweep: 17 files / ~4,500 lines. #477 commented, left OPEN for the kept-for-safety remainder + the
+     3D/disc/DCP/app-service clusters (not in this pass).**
    - **EXCLUDED for safety (kept + documented for a future pass):** `ColorSpaceConverter.swift` (US — its
      ToneMapAlgorithm name-collides with the live nested `FFmpegArgumentBuilder.ToneMapAlgorithm`),
      `Backend/EncodingBackend.swift` (EncodingJob name-collision risk), `Models/FeatureGate.swift` + the
