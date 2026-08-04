@@ -27,6 +27,10 @@ import ConverterEngine
 /// Phase 11 — Smart Crop / Subject Detection (Issue #299)
 struct SmartCropView: View {
 
+    // MARK: - Environment
+
+    @Environment(AppViewModel.self) private var viewModel
+
     // MARK: - Aspect Ratio Options
 
     /// Predefined aspect ratio options for the crop selector.
@@ -75,6 +79,10 @@ struct SmartCropView: View {
 
     /// Error message from the most recent operation.
     @State private var errorMessage: String?
+
+    /// Whether the crop filter has been applied to the pending job (used for
+    /// confirmation feedback).
+    @State private var didApplyToJob = false
 
     // MARK: - Body
 
@@ -255,6 +263,11 @@ struct SmartCropView: View {
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
                 Spacer()
+                if didApplyToJob {
+                    Label("Applied", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .transition(.opacity)
+                }
                 Button("Apply to Job") {
                     applyCropToJob()
                 }
@@ -334,6 +347,7 @@ struct SmartCropView: View {
             detectedSubjects = []
             cropRect = nil
             cropFilterString = nil
+            didApplyToJob = false
         }
     }
 
@@ -345,6 +359,7 @@ struct SmartCropView: View {
         detectedSubjects = []
         cropRect = nil
         cropFilterString = nil
+        didApplyToJob = false
 
         let subjects = await SmartCropDetector.detectSubjects(imageURL: imageURL)
         detectedSubjects = subjects
@@ -376,9 +391,21 @@ struct SmartCropView: View {
         isDetecting = false
     }
 
-    /// Applies the crop filter to the current encoding job.
+    /// Applies the crop filter to the pending encoding job.
+    ///
+    /// Hands the computed filter string to `AppViewModel.pendingManualCropFilter`,
+    /// which `enqueueSelectedFile()` merges into the job's `videoFilterChain`
+    /// at enqueue time — the same mechanism used by automatic crop detection
+    /// (Issue #474).
     private func applyCropToJob() {
-        // Crop filter application would be handled by the parent view or view model
+        guard let filter = cropFilterString else { return }
+
+        viewModel.pendingManualCropFilter = filter
+        viewModel.appendLog(.info, "Smart Crop: filter \"\(filter)\" will be applied to the next queued job")
+
+        withAnimation {
+            didApplyToJob = true
+        }
     }
 
     // MARK: - Helpers

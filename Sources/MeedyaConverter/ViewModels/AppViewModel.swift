@@ -354,6 +354,17 @@ final class AppViewModel {
     /// Whether crop detection is currently running.
     var isDetectingCrop: Bool = false
 
+    /// A manually-computed Smart Crop filter string, set by
+    /// `SmartCropView.applyCropToJob()` (Issue #474).
+    ///
+    /// Mirrors `detectedCrop` above but comes from the standalone Smart
+    /// Crop tool rather than automatic source-file crop detection. When
+    /// present, it takes precedence over `detectedCrop`/`autoCropEnabled`
+    /// and is merged into `videoFilterChain` at enqueue exactly like the
+    /// auto-crop path, then cleared so it does not silently keep applying
+    /// to unrelated future jobs.
+    var pendingManualCropFilter: String?
+
     // MARK: - Hardware Encoding (Phase 3.10)
 
     /// Discovered hardware encoders on this system.
@@ -756,9 +767,15 @@ final class AppViewModel {
             overwriteExisting: overwriteExisting
         )
 
-        // Apply auto-crop filter if enabled and a crop was detected
+        // Apply a manually-selected Smart Crop filter (Issue #474) if one is
+        // pending, otherwise fall back to auto-crop if enabled and a crop
+        // was detected.
         var cropFilter: String? = nil
-        if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
+        if let manualCrop = pendingManualCropFilter {
+            cropFilter = manualCrop
+            appendLog(.info, "Smart Crop: applying manually selected crop (\(manualCrop))")
+            pendingManualCropFilter = nil
+        } else if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
             cropFilter = crop.recommendedCrop.filterString
             appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
         }
