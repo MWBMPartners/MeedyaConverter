@@ -44,7 +44,7 @@
 <meta charset="UTF-8">
 <title>MeedyaConverter API Explorer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Interactive API documentation for the MeedyaConverter CLI (meedya-convert) and the experimental HTTP API (#355).">
+<meta name="description" content="Interactive API documentation for the MeedyaConverter CLI (meedya-convert) and the alpha HTTP API served by 'meedya-convert serve'.">
 
 <!-- Swagger UI runtime — pinned CDN version. See the vendoring comment above to swap for local files. -->
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.32.11/swagger-ui.css">
@@ -59,7 +59,7 @@
     background: #fafafa;
   }
 
-  /* A small banner above Swagger UI's own topbar, since the fabricated
+  /* A small banner above Swagger UI's own topbar, since the two specs
      parts of the HTTP API are easy to miss once you're inside the
      "Try it out" flow for a given operation. Swagger UI itself already
      renders `deprecated: true` operations with strikethrough text and
@@ -115,11 +115,11 @@
   var SPEC_URLS = [
     {
       url: "../meedya-convert-api.yaml",
-      name: "meedya-convert CLI (accurate, refreshed 2026-07-28)"
+      name: "meedya-convert CLI (refreshed 2026-09-01)"
     },
     {
       url: "../meedya-http-api.yaml",
-      name: "HTTP API — EXPERIMENTAL, mostly not implemented (#355)"
+      name: "HTTP API — alpha, started by 'meedya-convert serve'"
     }
   ];
 
@@ -131,10 +131,12 @@
     if (match.url.indexOf("http-api") !== -1) {
       banner.className = "spec-http";
       banner.innerHTML =
-        "HTTP API spec selected — most operations here are " +
-        "<strong>NOT IMPLEMENTED</strong> (fabricated responses; see " +
-        "each operation's description). Tracked by " +
-        '<a href="https://github.com/MWBMPartners/MeedyaConverter/issues/355" target="_blank" rel="noopener">issue #355</a>.';
+        "HTTP API spec selected — all five routes call the real encoding " +
+        "engine. Start the server with <code>meedya-convert serve</code>; " +
+        "every request needs an <code>Authorization: Bearer</code> token. " +
+        "<strong>Note:</strong> POST /encode enqueues a job but nothing " +
+        "starts the queue runner, so jobs wait until something drives the " +
+        "queue.";
     } else {
       banner.className = "spec-cli";
       banner.innerHTML =

@@ -6,7 +6,7 @@ specs, plus a self-hostable Swagger UI to browse them interactively.
 ```
 docs/api/
 ├── meedya-convert-api.yaml   # the meedya-convert CLI, modelled as an OpenAPI doc
-├── meedya-http-api.yaml      # the experimental HTTP server (APIServer) — see below
+├── meedya-http-api.yaml      # the alpha-status HTTP server (APIServer) — see below
 ├── swagger-ui/
 │   └── index.html            # static Swagger UI, no build step, no server code
 └── README.md                 # this file
@@ -36,23 +36,39 @@ The `paths` in this spec are a documentation convention, not a real HTTP
 API — `servers` is set to `cli://meedya-convert` to make that explicit.
 Each "path" is a subcommand, each "parameter" a flag.
 
-### `meedya-http-api.yaml` — the HTTP server (experimental, #355)
+### `meedya-http-api.yaml` — the HTTP server (alpha, #355)
 
 Documents `APIServer` (`Sources/ConverterEngine/Server/APIServer.swift`), a
-real `NWListener`-based HTTP server you can start from the macOS app's API
-Server settings pane (there is no `meedya-convert serve` — the CLI cannot
-start this server). **Most of its endpoints are fabricated stubs, not
-working functionality**: `POST /encode` returns a canned "queued" response
-without ever creating a job, `POST /probe` only checks whether a path
-exists on disk, `GET /queue` always reports an empty queue, and
-`GET /profiles` returns four hardcoded fake profiles unrelated to the
-CLI/GUI's real 24 built-in profiles. This is tracked by reopened issue
-**#355**. The spec marks every fabricated operation with `deprecated: true`,
-an `x-status: not-implemented` extension, and a description that says so
-in plain language — read those before building anything against this API.
-`GET /status` and the bearer-token authentication are real, with two
-caveats noted in the spec (`version` and `uptime` in the status payload are
-hardcoded literals, not live values).
+real `NWListener`-based HTTP server backed by the real `EncodingEngine`. All
+five routes do genuine work: `POST /encode` enqueues onto the live
+`EncodingQueue`, `POST /probe` runs the real prober (FFprobe) via
+`EncodingEngine.probe(url:)`, `GET /queue` and `GET /profiles` read the
+engine's live queue and profile store, and `GET /status` returns the real
+app version and uptime. Bearer-token authentication, CORS preflight, and the
+404 fallback are also real.
+
+Start it with the `meedya-convert serve` subcommand:
+
+```sh
+meedya-convert serve --port 8484 --api-key "your-secret-key"
+```
+
+Every request must carry a matching `Authorization: Bearer <api-key>`
+header — `APIServer` has no unauthenticated mode. If `--api-key` is
+omitted, `serve` generates a random one-time key and prints it to stderr
+once at startup; it is not shown again. The listener binds all
+interfaces (there is no `--host`/bind-address option to restrict it to
+loopback), so treat the port as exposed on any network the machine is
+on. The GUI's `APIServerView` still exists but has no navigation entry —
+`meedya-convert serve` is currently the only way to start this server
+(tracked by #448).
+
+The one standing limitation is the queue runner: `POST /encode` enqueues
+the job but neither the endpoint nor `meedya-convert serve` starts
+anything to drive the queue, so a job sits in `queued` status until
+something else processes it (the desktop app's own "Start Queue" button,
+if the injected engine is the app's live one). The spec documents this on
+`POST /encode` and in `info.description`.
 
 ## Viewing the Swagger UI locally
 

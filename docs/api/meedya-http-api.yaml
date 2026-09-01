@@ -3,72 +3,82 @@
 # Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 #
 # ============================================================================
-#                     ****  EXPERIMENTAL / INCOMPLETE  ****
-#
-# This API is NOT production-ready. It is tracked by reopened issue #355.
+#                          ****  ALPHA STATUS  ****
 #
 # `APIServer` (Sources/ConverterEngine/Server/APIServer.swift) is a real
-# `NWListener`-based TCP/HTTP server, and it is reachable — it is started
-# from the macOS GUI app's "API Server" settings pane
-# (Sources/MeedyaConverter/Views/APIServerView.swift), not from the
-# `meedya-convert` CLI (there is no `serve` subcommand). Bearer-token
-# authentication and the 401/404/OPTIONS behaviour documented below are
-# real and correctly implemented.
+# `NWListener`-based TCP/HTTP server backed by the real `EncodingEngine`.
+# All five routes below do genuine work:
+#   - POST /encode calls `EncodingQueue.addJob` (handleEncode, :521). The
+#     returned `jobId` is the real job's ID and the job appears in
+#     GET /queue (and, if the injected engine is the app's live one, the
+#     Job Queue UI).
+#   - POST /probe awaits the real `EncodingEngine.probe(url:)`
+#     (handleProbe, :600) and returns real duration, container, stream
+#     counts, and HDR detection.
+#   - GET /status returns the real app version (`AppInfo.Version
+#     .displayString`) and a real uptime computed from the listener's
+#     start time (handleStatus, :656).
+#   - GET /queue reads `engine.queue.jobsSnapshot()` (handleQueue, :674).
+#   - GET /profiles reads `engine.profileStore.allProfiles()` — built-in
+#     AND user-created profiles (handleProfiles, :703).
+# Bearer-token authentication, CORS preflight, and the 404 fallback are
+# also real, as documented below.
 #
-# However, the endpoints that are supposed to do the actual work —
-# submitting an encode job, probing a file, listing the queue, and
-# listing profiles — are FABRICATED. They do not call into
-# `EncodingEngine`, `EncodingQueue`, `EncodingProfileStore`, or FFprobe
-# at all:
-#   - POST /encode returns an invented 202 `{"status":"queued", ...}`
-#     with a freshly-generated `jobId` and never enqueues anything —
-#     there is no `EncodingQueue` reference anywhere in `APIServer.swift`.
-#   - POST /probe only checks `FileManager.default.fileExists(atPath:)`
-#     and returns that boolean. It never runs FFprobe and never returns
-#     any actual media metadata (no streams, no codecs, no duration).
-#   - GET /queue always returns an empty, hardcoded queue
-#     (`jobs: [], totalJobs: 0, activeJobs: 0, pendingJobs: 0`)
-#     regardless of anything happening in the app.
-#   - GET /profiles returns four hardcoded fake profile objects
-#     ("default", "broadcast-h264", "hevc-hdr", "prores-422") that do
-#     NOT correspond to any of the 24 real profiles in
-#     `EncodingProfile.builtInProfiles` (e.g. "Web Standard",
-#     "4K HDR Master") and cannot be passed to `POST /encode`'s
-#     `profile` field to any effect (that field isn't validated either).
+# It is started with `meedya-convert serve --port <port> --api-key <key>`
+# (Sources/meedya-convert/Commands/ServeCommand.swift), the CLI's `serve`
+# subcommand, registered in `Sources/meedya-convert/MeedyaConvert.swift`.
+# This is currently the ONLY way to start the server — the GUI's
+# `APIServerView` (Sources/MeedyaConverter/Views/APIServerView.swift) has
+# no `NavigationItem` case and no `ContentView` detail arm, so it is
+# unreachable from the app's UI (tracked by #448, alongside #355).
 #
-# Every operation below that reflects this is marked `deprecated: true`
-# with an `x-status: not-implemented` extension AND a description that
-# states the fabrication plainly. Do not build anything that depends on
-# these endpoints actually encoding, probing, or queuing media until
-# issue #355 is resolved and this notice is removed.
+# Standing limitations (verified against source, not fixed by this doc):
+#   - **Queue runner not started.** POST /encode enqueues the job but
+#     nothing drives the queue — neither this endpoint nor
+#     `meedya-convert serve` starts a runner. Jobs sit in `queued` status
+#     until something else processes them (in the desktop app, that's
+#     `AppViewModel.startQueue()`). This mirrors the desktop app's own
+#     "Add to Queue" button without "Start Queue".
+#   - **All-interfaces bind.** `APIServer` has no `--host`/bind-address
+#     option; the listener accepts connections on every interface, not
+#     just loopback.
+#   - **`APIServerView` is orphaned.** See above — it still exists and
+#     still compiles, but nothing in the app's navigation can reach it.
 # ============================================================================
 #
-# Updated: 2026-07-28 — written from scratch against
-# Sources/ConverterEngine/Server/APIServer.swift and
-# Sources/MeedyaConverter/Views/APIServerView.swift on branch
-# wip/alpha-consolidation. No prior version of this document existed.
+# Updated: 2026-09-01 — reconciled against
+# Sources/ConverterEngine/Server/APIServer.swift.
 # ============================================================================
 
 openapi: 3.1.0
 info:
-  title: MeedyaConverter HTTP API (EXPERIMENTAL — see #355)
+  title: MeedyaConverter HTTP API (alpha — see #355)
   version: 0.0.0-experimental
   description: |
-    **EXPERIMENTAL AND INCOMPLETE. Tracked by reopened issue #355.**
+    **Alpha-quality but functionally real.** Lightweight REST API exposed
+    by `APIServer`, a hand-rolled `NWListener`-based HTTP/1.1 server used
+    for headless/remote control of MeedyaConverter. Start it with
+    `meedya-convert serve --port <port> --api-key <key>` — this is
+    currently the only way to start it; the GUI's `APIServerView` exists
+    but has no navigation entry, so it cannot be reached from the app
+    (tracked by #448).
 
-    Lightweight REST API exposed by `APIServer`, a hand-rolled
-    `NWListener`-based HTTP/1.1 server used for headless/remote control
-    of MeedyaConverter. It is started and stopped from the macOS GUI
-    app's API Server settings pane — there is no way to start it from
-    `meedya-convert` (the CLI) or from any command-line flag.
+    All five routes are backed by the real `EncodingEngine`: `POST /encode`
+    genuinely enqueues onto `EncodingQueue`, `POST /probe` genuinely runs
+    FFprobe via `EncodingEngine.probe(url:)`, `GET /queue` and
+    `GET /profiles` read the engine's live queue and profile store, and
+    `GET /status` returns the real app version and a real uptime.
+    Bearer-token authentication, CORS preflight, and the 404 fallback are
+    also real.
 
-    Of the five routes it exposes, only authentication, CORS preflight,
-    and the 404 fallback are real. `POST /encode`, `POST /probe`,
-    `GET /queue`, and `GET /profiles` return fabricated, hardcoded, or
-    non-functional data — see the file header above and each
-    operation's `deprecated` / `x-status` / description for specifics.
-    `GET /status` is real but returns two hardcoded fields
-    (`version`, `uptime`) that do not reflect actual state.
+    **Known limitations:**
+    - `POST /encode` enqueues the job but does not start the queue
+      runner — nothing currently does, from this API or from
+      `meedya-convert serve` itself — so a job sits in `queued` status
+      until something else drives the queue (see that operation's
+      description below).
+    - The listener binds all interfaces; `APIServer` has no
+      `--host`/bind-address option to restrict it to loopback.
 
     **Transport quirks (verified against source):**
     - Each accepted TCP connection is read with exactly one
@@ -96,39 +106,44 @@ info:
 servers:
   - url: "http://localhost:8484"
     description: >-
-      Default port (configurable in the GUI's API Server pane; the
-      `APIServer(port:apiKey:)` initialiser default is 8484). Only
-      reachable while a user has started the server from the GUI app —
-      nothing starts it automatically.
+      Default port (the `APIServer(port:apiKey:)` initialiser default is
+      8484; override with `meedya-convert serve --port <port>`). Only
+      reachable while a user has run `meedya-convert serve` — nothing
+      starts it automatically, and the listener binds all interfaces,
+      not just loopback.
 
 security:
   - bearerToken: []
 
 paths:
   # --------------------------------------------------------------------------
-  # POST /encode — FABRICATED, does not enqueue anything
+  # POST /encode — real: enqueues onto the live EncodingQueue
   # --------------------------------------------------------------------------
   /encode:
     post:
       operationId: httpEncode
-      summary: "NOT IMPLEMENTED — fabricated 202 response, no encoding job is ever created"
-      deprecated: true
-      x-status: not-implemented
+      summary: "Submit an encoding job to the real encoding queue"
       x-tracking-issue: "#355"
       description: |
-        **NOT IMPLEMENTED.** `handleEncode` in `APIServer.swift` validates
-        only that the JSON body has string `input` and `output` fields,
-        generates a fresh random `jobId` (`UUID().uuidString`, discarded
-        after the response — never stored anywhere), and returns a
-        canned `202` payload. It never touches `EncodingEngine`,
-        `EncodingQueue`, or the filesystem: the `input` path is not
-        checked for existence, the `profile` field is not validated
-        against any real profile, and no FFmpeg process is ever started.
-        There is no way, via this API, to later find out whether "the
-        job" succeeded, because no job was ever created — tracked in
-        issue #355.
+        Real behaviour. `handleEncode` validates that the JSON body has
+        string `input` and `output` fields and that `input` exists on
+        disk, resolves `profile` (by name, case-insensitively, against
+        `engine.profileStore.profile(named:)`) or defaults to the
+        built-in `Web Standard` profile, then calls
+        `EncodingQueue.addJob` on the real, injected `EncodingEngine`.
+        The returned `jobId` is that job's real ID: it appears in
+        `GET /queue` and, if the injected engine is the app's live one,
+        the Job Queue UI.
+
+        **Known limitation — the queue runner is not started.** This
+        endpoint (and `meedya-convert serve` itself) only enqueues the
+        job; nothing drives the queue to actually run FFmpeg on it. The
+        job sits in `queued` status until something else processes the
+        queue (in the desktop app, `AppViewModel.startQueue()`) — this
+        mirrors the desktop app's own "Add to Queue" button without
+        "Start Queue". The response's `note` field states this plainly.
       tags:
-        - "NOT IMPLEMENTED"
+        - Encoding
       requestBody:
         required: true
         content:
@@ -139,16 +154,21 @@ paths:
               properties:
                 input:
                   type: string
-                  description: Read as a plain string; never checked for existence or validity.
+                  description: Source file path. Must exist on disk — a missing file returns 400.
                 output:
                   type: string
-                  description: Read as a plain string; never validated or written to.
+                  description: Destination file path. Not validated or created by this call; only used to build the job config.
                 profile:
                   type: string
-                  description: "Defaults to the literal string \"default\" if omitted. Accepted as-is — never matched against any real `EncodingProfile`, built-in or otherwise."
+                  description: >-
+                    Encoding profile name, matched case-insensitively
+                    against `engine.profileStore.allProfiles()` (built-in
+                    and user-created — see `GET /profiles`). An unknown
+                    name returns 400. Defaults to the built-in
+                    `"Web Standard"` profile if omitted.
       responses:
         "202":
-          description: "Fabricated success response. No job was actually created or queued."
+          description: "Job accepted and enqueued onto the real encoding queue."
           content:
             application/json:
               schema:
@@ -157,7 +177,7 @@ paths:
                   jobId:
                     type: string
                     format: uuid
-                    description: Freshly generated and immediately discarded — not a real, trackable job identifier.
+                    description: The real, trackable job ID (`EncodingJobConfig.id`) — appears in `GET /queue`.
                   status:
                     type: string
                     enum: [queued]
@@ -167,8 +187,12 @@ paths:
                     type: string
                   profile:
                     type: string
+                    description: Name of the resolved profile actually attached to the job.
+                  note:
+                    type: string
+                    description: States the queue-runner limitation described above.
         "400":
-          description: "Real behaviour — returned when `input` or `output` is missing/non-string in the request body."
+          description: "`input`/`output` missing or non-string, `input` does not exist on disk, or `profile` does not match any known profile."
           content:
             application/json:
               schema:
@@ -177,30 +201,31 @@ paths:
           $ref: '#/components/responses/Unauthorized'
 
   # --------------------------------------------------------------------------
-  # POST /probe — FABRICATED, only checks file existence
+  # POST /probe — real: awaits EncodingEngine.probe(url:) (FFprobe)
   # --------------------------------------------------------------------------
   /probe:
     post:
       operationId: httpProbe
-      summary: "NOT IMPLEMENTED — only checks whether the path exists, does not probe media"
-      deprecated: true
-      x-status: not-implemented
+      summary: "Probe a media file for stream/container information via the real EncodingEngine"
       x-tracking-issue: "#355"
       description: |
-        **NOT IMPLEMENTED as a media probe.** `handleProbe` calls
-        `FileManager.default.fileExists(atPath:)` on the given `path`
-        and returns that boolean — it never runs FFprobe, never touches
-        `EncodingEngine.probe(url:)`, and never returns any of the
-        stream/codec/duration information that
-        `meedya-convert probe --format json` returns (compare against
-        `#/components/schemas/MediaFile` in `meedya-convert-api.yaml` —
-        none of those fields are produced here). Despite the name, this
-        endpoint answers only "does a file exist at this path on the
-        machine running the server", which also makes it a path-existence
-        oracle for anyone holding a valid bearer token. Tracked in issue
-        #355.
+        Real behaviour. `handleProbe` checks that `path` exists, then
+        awaits the real, `async` `EncodingEngine.probe(url:)` (FFprobe
+        under the hood) and returns its duration, container name, stream
+        counts, and HDR detection. This is a smaller field set than
+        `meedya-convert probe --format json` (compare
+        `#/components/schemas/MediaFile` in `meedya-convert-api.yaml`),
+        not a different, fabricated shape — it derives the counts from
+        the same `MediaFile` the CLI probe path produces.
+
+        If the injected `EncodingEngine` has not yet been `configure()`d
+        by whoever owns it (its FFmpeg/FFprobe binary locations), the
+        probe call throws and this endpoint honestly reports that as a
+        503 rather than guessing — see the handler's doc comment for why
+        it does not call `configure()` itself (a cross-actor race with
+        `AppViewModel.startQueue()` on the app's shared engine instance).
       tags:
-        - "NOT IMPLEMENTED"
+        - Encoding
       requestBody:
         required: true
         content:
@@ -213,13 +238,13 @@ paths:
                   type: string
       responses:
         "200":
-          description: "The file exists on disk. No media metadata is returned."
+          description: "The file exists and was probed successfully."
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProbeExistenceResponse'
+                $ref: '#/components/schemas/ProbeResult'
         "404":
-          description: "The file does not exist on disk. Also used generically — this is NOT the CLI's exit-code-4 \"probe failed\" (corrupt file, unreadable container); a corrupt-but-present file returns 200 with `status: \"ready\"`."
+          description: "The file does not exist on disk. This is NOT the CLI's exit-code-4 \"probe failed\" (corrupt file, unreadable container) — a corrupt-but-present file returns 503, not 404."
           content:
             application/json:
               schema:
@@ -232,31 +257,30 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "503":
+          description: "The file exists but the real prober failed — e.g. the injected engine has not been configured yet, or FFprobe rejected the file."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeFailedResponse'
 
   # --------------------------------------------------------------------------
-  # GET /status — real endpoint, but two fields are hardcoded/fake
+  # GET /status — real: live version and uptime
   # --------------------------------------------------------------------------
   /status:
     get:
       operationId: httpStatus
       summary: Server status and basic system information.
-      x-status: "partially-static — see description"
       description: |
-        This endpoint is real (it reaches `handleStatus` and returns
-        live values for `port`), but two of its five fields are
-        hardcoded literals, not live data:
-        - `version` is always the literal string `"1.0.0"` — it is NOT
-          read from `ConverterEngine.version` / the app's actual bundle
-          version, so it will not track the real product version.
-        - `uptime` is always the literal string `"active"` — it is NOT
-          a duration or timestamp; there is no way to learn how long the
-          server has actually been running from this field.
-
-        `server` (`"MeedyaConverter API"`) and `status` (`"running"`)
-        are also constants, but they are at least true whenever this
-        endpoint successfully responds at all (the server can't answer
-        HTTP requests while stopped). `port` genuinely reflects the
-        port this instance is bound to.
+        Real behaviour. `handleStatus` returns `AppInfo.Version
+        .displayString` for `version` (the actual app/CLI version, not a
+        hardcoded literal) and a real `uptimeSeconds` computed from the
+        `Date` captured when the listener started (`start()`'s
+        `startTime`, reset to `nil` by `stop()`). `server`
+        (`"MeedyaConverter API"`) and `status` (`"running"`) are
+        constants, but true whenever this endpoint successfully responds
+        at all (the server can't answer HTTP requests while stopped).
+        `port` reflects the port this instance is bound to.
       tags:
         - Server
       responses:
@@ -272,44 +296,42 @@ paths:
                     enum: ["MeedyaConverter API"]
                   version:
                     type: string
-                    enum: ["1.0.0"]
-                    description: Hardcoded literal — does not reflect the actual app/CLI version.
+                    description: Real app/CLI version string (`AppInfo.Version.displayString`).
                   status:
                     type: string
                     enum: [running]
                   port:
                     type: integer
                     description: The real TCP port this server instance is bound to.
-                  uptime:
-                    type: string
-                    enum: ["active"]
-                    description: Hardcoded literal string, not an actual uptime duration.
+                  uptimeSeconds:
+                    type: number
+                    description: Real elapsed seconds since `start()` began listening. Not named `uptime`.
         "401":
           $ref: '#/components/responses/Unauthorized'
 
   # --------------------------------------------------------------------------
-  # GET /queue — FABRICATED, always empty
+  # GET /queue — real: reads engine.queue.jobsSnapshot()
   # --------------------------------------------------------------------------
   /queue:
     get:
       operationId: httpQueue
-      summary: "NOT IMPLEMENTED — always returns an empty queue, regardless of real state"
-      deprecated: true
-      x-status: not-implemented
+      summary: "List the real encoding queue"
       x-tracking-issue: "#355"
       description: |
-        **NOT IMPLEMENTED.** `handleQueue` returns a hardcoded literal
-        (`jobs: [], totalJobs: 0, activeJobs: 0, pendingJobs: 0`) on
-        every call. It does not read `EncodingQueue` or any other
-        runtime state — even if the app is actively encoding files via
-        the GUI at the moment this is called, the response is identical.
-        There is currently no way to observe real encoding activity
-        through this API. Tracked in issue #355.
+        Real behaviour. `handleQueue` reads
+        `engine.queue.jobsSnapshot()` and maps each real job to its
+        `jobId`/`input`/`output`/`profile`/`status`/`progress`. Jobs
+        submitted via `POST /encode` — and, if the injected engine is
+        the app's live one, jobs added through the GUI — appear here.
+        `activeJobs` counts jobs with `status: "encoding"`; `pendingJobs`
+        counts jobs with `status: "queued"`. `totalJobs` includes those
+        plus any `paused`, `completed`, or `failed` jobs, so it need not
+        equal `activeJobs + pendingJobs`.
       tags:
-        - "NOT IMPLEMENTED"
+        - Encoding
       responses:
         "200":
-          description: "Fabricated — always the same empty payload."
+          description: "The real, current state of the encoding queue."
           content:
             application/json:
               schema:
@@ -317,51 +339,46 @@ paths:
                 properties:
                   jobs:
                     type: array
-                    items: {}
-                    enum: [[]]
+                    items:
+                      $ref: '#/components/schemas/QueueJob'
                   totalJobs:
                     type: integer
-                    enum: [0]
+                    description: Total number of jobs in the queue, in any status.
                   activeJobs:
                     type: integer
-                    enum: [0]
+                    description: Number of jobs with `status == "encoding"`.
                   pendingJobs:
                     type: integer
-                    enum: [0]
+                    description: Number of jobs with `status == "queued"`.
         "401":
           $ref: '#/components/responses/Unauthorized'
 
   # --------------------------------------------------------------------------
-  # GET /profiles — FABRICATED, hardcoded fake profiles
+  # GET /profiles — real: reads engine.profileStore.allProfiles()
   # --------------------------------------------------------------------------
   /profiles:
     get:
       operationId: httpProfiles
-      summary: "NOT IMPLEMENTED — returns four hardcoded fake profiles, disconnected from the real profile system"
-      deprecated: true
-      x-status: not-implemented
+      summary: "List real encoding profiles — built-in and user-created"
       x-tracking-issue: "#355"
       description: |
-        **NOT IMPLEMENTED.** `handleProfiles` returns four hardcoded
-        dictionaries (`name` values: `"default"`, `"broadcast-h264"`,
-        `"hevc-hdr"`, `"prores-422"`) baked directly into
-        `APIServer.swift`. It does not call
-        `EncodingProfile.builtInProfiles` or `EncodingProfileStore`, so
-        none of the 24 real built-in profiles that
-        `meedya-convert profiles --list` shows (e.g. `"Web Standard"`,
-        `"4K HDR Master"`, `"Remux to MKV"`) appear here, and the shape
-        is different too — `videoCodec`/`audioCodec` here are literal
-        FFmpeg encoder-binary names (`"libx264"`, `"aac"`) rather than
-        the `VideoCodec`/`AudioCodec` enum raw values
-        `meedya-convert-api.yaml` documents. None of these four names
-        can be passed to `POST /encode`'s `profile` field to any real
-        effect, since that field isn't validated either. Tracked in
-        issue #355.
+        Real behaviour. `handleProfiles` reads
+        `engine.profileStore.allProfiles()` — the same built-in and any
+        user-created profiles `meedya-convert profiles --list` and the
+        GUI's profile picker show (e.g. `"Web Standard"`,
+        `"4K HDR Master"`) — and maps each to
+        id/name/description/category/isBuiltIn/videoCodec/audioCodec/
+        containerFormat. `videoCodec`/`audioCodec`/`containerFormat` are
+        the `VideoCodec`/`AudioCodec`/`ContainerFormat` enum raw values
+        (e.g. `"h264"`, `"aac"`), the same values `meedya-convert-api.yaml`
+        documents — not literal FFmpeg encoder-binary names. A profile's
+        `name` can be passed straight to `POST /encode`'s `profile`
+        field.
       tags:
-        - "NOT IMPLEMENTED"
+        - Encoding
       responses:
         "200":
-          description: "Fabricated — always the same four hardcoded profiles."
+          description: "The real set of built-in and user-created profiles."
           content:
             application/json:
               schema:
@@ -370,21 +387,10 @@ paths:
                   profiles:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        description:
-                          type: string
-                        videoCodec:
-                          type: string
-                          description: A literal FFmpeg encoder name (e.g. "libx264"), not a VideoCodec enum value.
-                        audioCodec:
-                          type: string
-                          description: A literal FFmpeg encoder name (e.g. "aac"), not an AudioCodec enum value.
+                      $ref: '#/components/schemas/Profile'
                   count:
                     type: integer
-                    enum: [4]
+                    description: Number of profiles returned.
         "401":
           $ref: '#/components/responses/Unauthorized'
 
@@ -397,9 +403,11 @@ components:
         Real and correctly implemented. `Authorization: Bearer <apiKey>`
         is required on every route except `OPTIONS` preflight requests.
         The token is compared with `==` (not constant-time) against the
-        `apiKey` the server was started with (generated in the GUI, or
-        set by the user). A missing header, a non-"Bearer " prefix, or a
-        mismatched token all produce the same `401`.
+        `apiKey` the server was started with — either generated
+        automatically by `meedya-convert serve` (and printed once to
+        stderr) or supplied explicitly via `--api-key`. A missing
+        header, a non-"Bearer " prefix, or a mismatched token all
+        produce the same `401`.
 
   responses:
     Unauthorized:
@@ -423,20 +431,116 @@ components:
 
     ProbeExistenceResponse:
       type: object
-      description: "The full (and only) response shape from POST /probe — see the operation description for what this endpoint does NOT do."
+      description: "The 404 response shape from POST /probe, returned when the given path does not exist on disk."
       properties:
         path:
           type: string
           description: Echoed back verbatim from the request.
         exists:
           type: boolean
+          enum: [false]
         status:
           type: string
-          enum: [ready, file_not_found]
+          enum: [file_not_found]
+
+    ProbeResult:
+      type: object
+      description: "The 200 response shape from POST /probe — real media metadata from EncodingEngine.probe(url:) (FFprobe)."
+      properties:
+        path:
+          type: string
+          description: Echoed back verbatim from the request.
+        exists:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready]
+        durationSeconds:
+          type: number
+          description: "`mediaFile.duration`, or 0 if FFprobe could not determine it."
+        container:
+          type: string
+          description: "`mediaFile.containerFormatName` (raw ffprobe container name), or an empty string if unknown."
+        videoStreamCount:
+          type: integer
+        audioStreamCount:
+          type: integer
+        subtitleStreamCount:
+          type: integer
+        hasHDR:
+          type: boolean
+
+    ProbeFailedResponse:
+      type: object
+      description: "The 503 response shape from POST /probe, returned when the file exists but the real prober threw."
+      properties:
+        path:
+          type: string
+          description: Echoed back verbatim from the request.
+        exists:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [probe_failed]
+        message:
+          type: string
+          description: "`error.localizedDescription` from the thrown error."
+
+    QueueJob:
+      type: object
+      description: "One job as returned by GET /queue, mapped from a real `EncodingJob` via `engine.queue.jobsSnapshot()`."
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        input:
+          type: string
+          description: Source file path (`job.config.inputURL.path`).
+        output:
+          type: string
+          description: Destination file path (`job.config.outputURL.path`).
+        profile:
+          type: string
+          description: Name of the profile attached to the job.
+        status:
+          type: string
+          enum: [queued, encoding, paused, completed, failed]
+        progress:
+          type: number
+          description: "Real-time progress fraction (`job.progress`), 0.0–1.0."
+
+    Profile:
+      type: object
+      description: "One encoding profile as returned by GET /profiles, mapped from a real `EncodingProfile` via `engine.profileStore.allProfiles()`."
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [quick_start, streaming, disc, archival, custom]
+        isBuiltIn:
+          type: boolean
+          description: "`true` for the shipped built-in profiles, `false` for user-created ones."
+        videoCodec:
+          type: string
+          description: "`VideoCodec` enum raw value (e.g. \"h264\", \"h265\"), or an empty string if the profile has no fixed video codec."
+        audioCodec:
+          type: string
+          description: "`AudioCodec` enum raw value (e.g. \"aac\"), or an empty string if the profile has no fixed audio codec."
+        containerFormat:
+          type: string
+          description: "`ContainerFormat` enum raw value (e.g. \"mp4\", \"mkv\")."
 
     NotFound:
       type: object
-      description: "Returned for any method/path combination not in the four routes above (e.g. GET /encode, POST /status, DELETE anything)."
+      description: "Returned for any method/path combination not in the five routes above (e.g. GET /encode, POST /status, DELETE anything)."
       properties:
         error:
           type: string
