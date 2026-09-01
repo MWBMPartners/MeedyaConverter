@@ -52,9 +52,9 @@ phase-by-phase feature inventory; the table below is the headline list.
 | ✂️ **Trim** | Real trim of the source before encode |
 | 💽 **Disc Burning** | Burn disc images to physical media via cdrecord / growisofs / hdiutil |
 | 🖼️ **Image Conversion** | Bulk image format conversion |
-| 💻 **CLI Mode** | `meedya-convert` with `encode`/`probe`/`profiles`/`batch`/`manifest`/`validate` subcommands |
+| 💻 **CLI Mode** | `meedya-convert` with `encode`/`probe`/`profiles`/`batch`/`manifest`/`validate` subcommands (`serve` added later — see below) |
 
-#### Landing in the next alpha build (implemented on the dev branch, not yet in `v0.1.0-rc.3`)
+#### Shipped in the alpha channel (`v0.1.0-alpha.3`, 2026-08-04) — not yet in the `v0.1.0-rc.3` Direct download
 
 | Feature | Description |
 | ------- | ----------- |
@@ -76,9 +76,15 @@ phase-by-phase feature inventory; the table below is the headline list.
 | 🔧 **Settings, Queue & Tool Polish** | Dead Settings toggles wired up (auto-scroll log, default profile, custom ffmpeg/ffprobe paths, confirm-before-encoding); history-weighted queue ETA; QueueOptimizer's reorder now applies; SmartCrop "Apply to Job"; Help menu / Cmd+? opens the Help window (#475, #470, #448, #474, #481) |
 | 🖥️ **CLI Validation Hardening** | `encode`/`manifest` reject unrecognised `--video-codec`/`--audio-codec`/`--container` values (`copy` now accepted); `batch --job-file` exits non-zero on any job failure; `profiles`/`validate` resolve imported profiles from the store; `manifest --hdr` is rejected as unsupported (#466, #484, #489, #490) |
 
-> These are real, working code on `wip/alpha-consolidation` today, but they
-> have **not shipped in a release yet** — do not treat them as available in
-> the current `v0.1.0-rc.3` download.
+> These landed on the `alpha` branch in PR #472 (merge `f9943bf`) and shipped
+> in the pre-release [`v0.1.0-alpha.3`](https://github.com/MWBMPartners/MeedyaConverter/releases/tag/v0.1.0-alpha.3).
+> They are **not** in the `v0.1.0-rc.3` Direct download above, which predates
+> them — install the alpha pre-release if you want to test them.
+>
+> The `serve` subcommand is part of this set: `meedya-convert serve` starts the
+> real HTTP API (`POST /encode`, `POST /probe`, `GET /status`, `GET /queue`,
+> `GET /profiles`), bearer-token authenticated. See
+> [docs/api/README.md](docs/api/README.md).
 
 #### Planned / scaffolded (not yet wired into the app)
 
@@ -94,7 +100,7 @@ roadmap items, not working features, until their tracking issue closes.
 | 🔍 **Scene Detection** | The Scene Detection view builds FFmpeg arguments but never runs FFmpeg — it logs "requested" and returns; no scenes are ever actually detected (#288) |
 | 🔏 **Forensic Watermarking** | `ForensicWatermark` is orphaned (#477) |
 | 🎥 **3D / Stereoscopic (MV-HEVC / MV-H264)** | `Stereo3DConverter` / `Video3DConverter` have zero callers (#477) |
-| 🏷️ **Media Metadata Lookup / Auto-Tagging** | `AutoTagger` (automatic lookup against external metadata databases) is orphaned — a separate concern from the metadata tag editor, which now writes tags for real (#467, see "Landing in the next alpha build" above) (#205) |
+| 🏷️ **Media Metadata Lookup / Auto-Tagging** | Not implemented at all, in either direction. `Sources/ConverterEngine/Metadata/` contains no `URLSession`, `URLRequest` or `JSONDecoder`, so every provider client (MusicBrainz, TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles, OMDb) builds request URLs and nothing more; `AutoTagger` has no callers; and there is no lookup control anywhere in the UI. Distinct from the metadata tag **editor**, which does write tags for real (#467) (#205, #493) |
 | 👁️ **A/B Comparison** | `ComparisonView` is orphaned (#329) |
 | 🔎 **AI Upscaling** | `AIUpscaler` exists only as a comment reference (#236, #477) |
 | 💿 **Optical Disc Ripping & Authoring** | Disc readers/authors are orphaned — disc **burning** above is the one part of this pipeline that's real (#476) |
