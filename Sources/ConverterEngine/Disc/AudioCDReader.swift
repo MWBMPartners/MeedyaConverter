@@ -337,6 +337,11 @@ public struct AudioCDReader: Sendable {
     /// both files compile into the same target, so no access-level
     /// change was needed to reach it from here.
     ///
+    /// This is the web-service `discid` **lookup** endpoint, not the Solr
+    /// search service, so the "Search upgrades, Nov 30 2026" changes
+    /// (issue #493) do not affect it — it is keyed by discid and its
+    /// response is not parsed here.
+    ///
     /// - Parameter toc: TOC string from `buildMusicBrainzTOC`. Passed
     ///   through unencoded — MusicBrainz's `discid` lookup expects the
     ///   `+`-joined TOC literally, unlike the free-text search queries

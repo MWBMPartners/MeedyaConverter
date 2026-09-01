@@ -297,6 +297,19 @@ public struct TMDBClient: Sendable {
 ///
 /// Phase 15.2
 ///
+/// ## MusicBrainz "Search upgrades, Nov 30 2026" — verified unaffected
+///
+/// The Nov 30 2026 search-service upgrade (Solr 10; tickets SEARCH-444,
+/// SEARCH-642, SEARCH-666, SEARCH-752, SEARCH-764) was assessed against
+/// every MusicBrainz request this client builds. None apply: we use only
+/// the `recording`/`release` search entities (fields `recording`,
+/// `release`, `artist`) and the `recording/<mbid>` and `discid` lookups.
+/// We never search `area`/`url`/`cdstub`/`tag`, never use the `quality:`
+/// field, and parse no relationship `target` property. No migration is
+/// required (issue #493, Part B). If release-`quality` filtering is ever
+/// added, note that the field is queried by NUMERIC value
+/// (`0`=low, `1`=normal, `2`=high, `-1`=unknown), not by name.
+///
 /// ## Lucene query hardening (issue #493, Part A)
 ///
 /// MusicBrainz's `/recording` and `/release` search endpoints parse the

@@ -204,8 +204,11 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
   from the single `MetadataSource.musicBrainz.baseURL` source of truth. No API
   endpoints, parameters, or public signatures changed; new unit tests cover
   phrase-quoting and reserved-character escaping. (Preparatory hardening ahead
-  of the reported MusicBrainz search-API changes tracked in #493; the migration
-  itself, Part B, is blocked pending access to the announcement.)
+  of the reported MusicBrainz search-API changes tracked in #493. The Nov 30
+  2026 changes were subsequently assessed against every MusicBrainz call in the
+  codebase and require **no migration** -- none of the breaking tickets
+  (SEARCH-444/642/666/752/764) touch the entities, fields, or response
+  properties we use; see #493 Part B.)
 - **HDR PQ/HDR10 colour signalling now emitted, and a latent HLG-signalling
   regression fixed alongside it** -- `buildPQPreservationArguments()`
   existed but was never wired in, so PQ/HDR10/Dolby-Vision-base-layer
