@@ -146,6 +146,58 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+### 🔨 Batch A — IMPLEMENTED, build clean, reviews in progress (NOT yet committed)
+
+Workflow `wk2po9vjp` (`wf_22ba6021-5a0`). Four Sonnet implementers on disjoint files, then sequential
+Fable adversarial reviews. `swift build` shows **0 real errors** (only the 16 `#Preview` macro errors
++ their `emit-module` wrapper, which are the CommandLineTools-no-Xcode artefact).
+
+| Issue | Outcome |
+|---|---|
+| **#322** | Start button runs `buildDemuxerConcatArguments` through a real `FFmpegProcessController` and writes a joined file, existence-checked before reporting success. Crossfade (`buildFilterConcatArguments`, still 0 callers) left **visibly disabled with an honest label** rather than silently inert. |
+| **#288** | `detectScenes()` now spawns ffmpeg, drains progress, reads the metadata file and parses real timestamps. Orchestrator verified the pairing end-to-end: the 3-arg `buildDetectionArguments` emits `metadata=print:file=<path>`, and `parseSceneOutput` pairs `pts_time:` with `lavfi.scene_score=` — matching ffmpeg's actual output format. **`SceneDetector.swift` was NOT modified** (git diff empty), so both builder and parser pre-existed; nothing fabricated. "Apply to Job" is honestly disabled with a stated reason because `EncodingJobConfig` genuinely has no chapters field. |
+| **#451** | `DispatchSemaphore` + 60 s wait replaced with Cocoa Scripting's `NSScriptCommand.current()` / `suspendExecution()` / `resumeExecution(withResult:)`. The timeout outcome is preserved via a structured TaskGroup race. **The file's own existing comment — claiming this "would require restructuring as an NSScriptCommand subclass… out of scope" — was verified WRONG against the real SDK header.** Another false comment found. |
+| **#331** | Toolbar Import/Encode shortcuts now resolve through `shortcutManager.binding(for:)` with factory fallbacks. |
+
+**Orchestrator's own follow-up work on #331** (the implementer stopped at the two toolbar sites):
+- **Tooltips were still hard-coded** (`"(Cmd+O)"`), so rebinding would leave the help text advertising
+  a dead key. Now derived via a new `KeyboardShortcutManager.displayString(for:)`.
+- **Latent crash fixed:** `KeyEquivalent(Character(binding.key))` **traps** on an empty or
+  multi-character `key`, and `key` is decoded from `UserDefaults` JSON — i.e. a crash from data the
+  app itself persisted. `ShortcutBinding.keyEquivalent` is now failable and `binding(for:)` degrades
+  to the caller's fallback.
+- **Duplicate key tables consolidated.** The runtime switch (`makeKeyboardShortcut`) and the editor's
+  display switch (`KeyboardShortcutsView.shortcutDisplayString`) were separate copies in different
+  files that had to be kept in lockstep by hand. Both now derive from one `ShortcutBinding.namedKeys`
+  table.
+
+**Review findings acted on so far:**
+- *(#322, minor — real)* `errorMessage` was shared with the file-import alert, so a dismissed import
+  error lingered as red text in the Concatenate section, implying a failed join that never ran.
+  Fixed with a dedicated `concatErrorMessage`.
+- *(#331, minor — real, and it was MY bug)* `displayString(for:)` still rendered a binding that
+  `binding(for:)` rejects, so a corrupt persisted binding would show e.g. a bare `⌘` in the tooltip —
+  reintroducing the very drift the API exists to remove. Both methods now agree on usability.
+- *(#331, noted)* `MeedyaConverterApp.swift:112`'s File-menu "Import Media Files…" still hardcodes
+  ⌘O — assigned to Batch B, which owns that file.
+
+### 🔨 Batch B — RUNNING (workflow `w1g6hq1rp` / `wf_37984245-d28`)
+
+Sequential, because these all share files: **B1** #277 failure-path hooks + #475
+`useHardwareAcceleration` kill switch (`AppViewModel.swift`, `SettingsView.swift`) → **B2** #356
+non-profile URL routing + #281 menu-bar controller + #331 navigation commands
+(`MeedyaConverterApp.swift`, `URLSchemeHandler.swift`, `MenuBarController.swift`). Then sequential
+Fable review of both diffs.
+
+**Design decision recorded for #475:** the global toggle becomes a **kill switch**, not a duplicate of
+the per-profile `EncodingProfile.useHardwareEncoding` (which is real and already reaches the argument
+builder at `EncodingProfile.swift:303`). ON = today's behaviour, profile decides. OFF = force software.
+The override must sit **after** the conditional-rules block in the enqueue path, so a rule-selected
+profile cannot silently defeat a global kill switch.
+
+**Still queued:** Batch C (#286 bounded-concurrency queue, #329 A/B comparison — Opus), then the full
+issue re-sweep, docs sweep, `.claude/` refresh and round-2 proposals.
+
 ### 🗳️ RANKED NEW-WORK PROPOSALS — awaiting user selection (Fable, code-cited)
 
 Produced by the final sequential Fable pass over the reconciliation + a spot-audit of the 361 closed
