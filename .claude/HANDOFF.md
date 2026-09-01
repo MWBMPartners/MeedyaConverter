@@ -146,6 +146,71 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+### ✅ Batches A and B COMMITTED + PUSHED — 9 of the 11 selected items done
+
+| Commit | Items |
+|---|---|
+| `b845cf7` | **#322** concatenation Start · **#288** scene detection executes · **#451** ScriptingBridge semaphore · **#331** (toolbar shortcuts) |
+| `761101c` | **#277** failure-path hooks · **#475** hardware kill switch · **#356** URL-scheme routing · **#281** menu bar · **#331** (navigation commands) |
+
+**Issues:** #277, #475, #356 **CLOSED**. #322, #288, #451, #281, #331 updated and left open for their
+stated remaining scope. CI green at `b845cf7`; `761101c` in flight.
+
+#### Defects the adversarial reviews caught (all fixed before commit)
+
+These are the reason the review layer is worth its cost — several would have shipped:
+
+- **#475 default polarity — would have regressed every fresh install.** `UserDefaults.bool(forKey:)`
+  answers `false` for a key never written, so a kill switch defaulting to `false` would have been
+  **engaged out of the box**, silently downgrading the built-in `hardwareH264`/`hardwareH265`
+  profiles to software encoding. Default now `true`, read via `object(forKey:)`.
+- **#475 caption was false.** It claimed "forced off for every job" while the override lived in ONE
+  of **seven** `EncodingJobConfig` construction sites. Now centralised in
+  `Sources/MeedyaConverter/Services/HardwareAccelerationPreference.swift` and applied at all seven
+  app paths (incl. `FFmpegPreviewView`, because that view shows the command that WILL run). CLI and
+  HTTP API deliberately excluded, and the caption now says so.
+- **#281 menu-bar sync only worked while the main window existed** — useless in menu-bar-only mode,
+  the exact scenario the feature is for. Settings scene now carries the same sync.
+- **#281 "Open Main Window" matched ANY titled window**, so opening Settings from the status menu
+  broke it. Now matches the main window by `WindowGroup` identifier.
+- **#322 shared `errorMessage`** with the file-import alert — a dismissed import error lingered as red
+  text in the Concatenate section, implying a join failed that never ran. Dedicated state now.
+- **#331 `displayString(for:)` (orchestrator's own bug)** still rendered bindings `binding(for:)`
+  rejects, so a corrupt entry showed a bare `⌘` — reintroducing the drift the API exists to remove.
+
+#### Latent crash found and fixed
+
+`KeyEquivalent(Character(binding.key))` **traps** on an empty or multi-character key, and `key` is
+decoded from `UserDefaults` JSON — a crash from data the app itself persisted.
+`ShortcutBinding.keyEquivalent` is now failable.
+
+#### Two more false comments found (the recurring theme)
+
+- `ScriptingBridge.swift` claimed a non-blocking fix "would require restructuring as an
+  `NSScriptCommand` subclass… out of scope". **Verified wrong** against the installed SDK header.
+- The replacement comment then implied the suspend/resume path was live. It is not: the `.sdef` has
+  **no** `<cocoa>` mappings and nothing registers `ScriptingBridge.shared`, so OSA cannot dispatch
+  until **#302**. A precondition note now says so.
+- **#288 needed no engine code at all.** `SceneDetector.swift` diff is empty — builder and parser
+  already existed and already matched ffmpeg's `metadata=print` format. It was only ever missing a caller.
+
+### 🔨 Batch C — RUNNING (workflow `wa54ybaqj` / `wf_0a1094ac-2ba`)
+
+**#286 is deliberately gated behind a Fable go/no-go plan before any code is written.** `startQueue()`
+is ~470 lines with singular state throughout (`activeJobState`, `engine.queue.currentJob`,
+`activityIndicator.startTracking`, one sleep-prevention token, per-job log association) and
+pause/resume/cancel semantics that are undefined for N jobs. Tests **cannot** run here and CI cannot
+exercise a real multi-job encode either, so the planner was explicitly told that `do-not-proceed` or
+`proceed-reduced-scope` are acceptable answers and not to recommend the ambitious option to be
+helpful. If it says stop, we stop and report that to the user.
+
+**#329** runs in parallel (disjoint files): make the A/B capture → persist → compare loop real, so
+`ComparisonLibraryView.entries` — which today has **no writer anywhere** — stops being a permanently
+empty screen.
+
+Both are followed by sequential Fable adversarial review, with the #286 reviewer told that a real race
+or lost-update window is a **blocker**.
+
 ### 🔨 Batch A — IMPLEMENTED, build clean, reviews in progress (NOT yet committed)
 
 Workflow `wk2po9vjp` (`wf_22ba6021-5a0`). Four Sonnet implementers on disjoint files, then sequential
