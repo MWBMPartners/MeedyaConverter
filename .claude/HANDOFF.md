@@ -29,6 +29,85 @@ All PR CI green (Build & Test macOS, CodeQL, Dependency Review, actionlint, pin 
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
 
+## 🟢 ACTIVE session — 2026-09-01b (MusicBrainz Nov-30 re-verification with LIVE sources + full state sweep + docs)
+
+**User directive (this session):** (1) act on the MusicBrainz Nov-30-2026 search changes so nothing is lost or
+broken; (2) full sweep of ALL GitHub Issues (open + closed) reconciled against the ACTUAL codebase; (3) refresh
+all `.claude/` memory/context + this handoff; (4) ranked new-work proposals for the alpha cycle; (5) thorough
+documentation update (`.md` + in-app help + OpenAPI + Swagger UI). Analysis/planning via **sequential Fable**;
+implementation via **Sonnet/Haiku** (Opus only if genuinely complex). No PR stacking — everything commits to
+`wip/alpha-consolidation`.
+
+### State at session start
+- Branch `wip/alpha-consolidation` @ `b8ca922`, tree clean, **6 ahead / 0 behind `origin/alpha`**.
+- **89 open issues / 361 closed** (450 total).
+- Unmerged-on-branch work: `45f2706` (MB builder hardening), `46c1dfb` (MB verified-safe docs),
+  `bbb3c05` (standing tasks W3/W4/W8), `ece3b87` (handoff), `b8ca922` (#495 BIN/CUE serializer core).
+
+### 🔑 TWO ENVIRONMENT CHANGES vs every previous session — both material
+1. **Egress to MetaBrainz is OPEN.** `blog.metabrainz.org/2026/08/31/search-upgrades-nov-30-2026/` returns
+   **HTTP 200** (was 403 in every prior session, which is why #493 Part B was "blocked / user-supplied text").
+   The announcement AND all nine linked JIRA tickets (SEARCH-444/452/642/646/666/677/680/681/751/752/753/764)
+   were fetched **first-hand** this session via `tickets.metabrainz.org/rest/api/2/issue/<KEY>`. The prior
+   session's "verified safe" conclusion was reached from user-supplied text; it is now checkable against
+   primary sources. Ticket detail beyond the blog post: SEARCH-666 says `quality:low|normal|high` are
+   *currently broken* and only numeric `quality:0|1|2|-1` work — the fix makes names work; SEARCH-681 notes it
+   does **not** add genre as a search *field*, and that searching by genre **name** already works via the
+   `tag` field.
+2. **A Swift 6.3.3 toolchain IS present locally** (`/usr/bin/swift`, swiftlang-6.3.3.1.3).
+   - `swift build --target ConverterEngine` → **clean, 0 errors** (this verifies `b8ca922`'s #495 disc-imaging
+     code, which was committed with "not yet built/tested").
+   - `swift build` (whole package) fails **only** on `#Preview` macros — CommandLineTools has no
+     `PreviewsMacros` plugin. Environment limitation, not a code defect.
+   - `swift test` **cannot** run: no Xcode ⇒ no `XCTest` module. **CI remains the test gate.**
+
+### ⚠️ CI GAP FOUND (new, real)
+`.github/workflows/build.yml` triggers only on push/PR to `main`/`beta`/`alpha`. Since PR #472 merged, the
+`wip/alpha-consolidation` branch has had **no CI at all** — all 6 commits ahead of `alpha` are CI-unverified.
+Combined with the deliberate no-PR-stacking policy, the working branch accumulates unverified work by design.
+Fix queued: add `wip/**` to the `push` triggers so the working branch is continuously built and tested.
+
+### Progress (update as you go)
+- [x] Fetched + archived the MusicBrainz announcement and all linked tickets from primary sources.
+- [x] Confirmed local `swift build --target ConverterEngine` is clean at `b8ca922`.
+- [x] Dumped all 450 issues to the session scratchpad; sliced the 89 open issues 6 ways for evidence agents.
+- [x] **#496 CI gap FIXED + CLOSED** — `4c42111` adds `'wip/**'` to `build.yml` `push.branches`.
+      **CI run [33557525771](https://github.com/MWBMPartners/MeedyaConverter/actions/runs/33557525771)
+      = SUCCESS** at `4c42111`, the first `CI Build & Test` on this branch since 2026-08-04. That single run
+      also retro-verifies the five commits before it — including **`b8ca922` (#495), which was committed
+      with "not yet built/tested"**: `swift build` + `swift test --parallel` both pass over its ~1,350 lines
+      of disc-imaging code and 500 lines of new tests. #495 updated with a per-criterion status.
+- [x] Claude memory seeded at
+      `~/.claude/projects/…-MeedyaConverter/memory/` (3 files + `MEMORY.md`): local-toolchain reality,
+      the CI-trigger trap, and the now-open MetaBrainz egress.
+- [x] Docs-defect inventory built (for the docs pass): **10 modules deleted in the orphan sweep are still
+      documented as live** — `MetadataPassthrough`, `MetadataTagger`, `ColourSpaceConverter`,
+      `SubtitleConverter`, `EncodingReport`, `MultiStreamSelector`, `SmartCropIntegration`, `HDRPolicyEngine`,
+      `PQToHLGPipeline`, `ClosedCaptionHandler` — in `docs/Architecture.md` (presented as live architecture),
+      `FEATURES.md`, `PROJECT_STATUS.md`, `docs/MeedyaSuite-core-integration.md`,
+      `docs/migration/suite-core-cleanup.md`. Also: the CLI OpenAPI spec
+      (`docs/api/meedya-convert-api.yaml`) has **no `/serve` path** despite `serve` shipping in `1773763`,
+      and `Resources/Help/cli-reference.md` never mentions `serve`. Both OpenAPI specs parse clean (3.1.0);
+      the HTTP spec's 5 paths do match `APIServer.swift:458-466`. Swagger UI at `docs/api/swagger-ui/`
+      is present, static, CDN-pinned and shared-hosting-ready — W6 already satisfied there.
+      All 12 help `.md` files are registered in `HelpView.swift`'s `HelpTopicRegistry` (no orphans).
+- [~] Workflow `wpssl6pvl` RUNNING — 9 parallel Sonnet evidence agents (code-first, citation-only) then
+      4 **sequential** Fable analysis passes (MusicBrainz plan → issue reconciliation ×2 → ranked proposals).
+
+### Decisions surfaced to the user (per W8 — asked upfront, work continues meanwhile)
+1. **MusicBrainz scope.** Verified against code: **every** metadata provider in MeedyaConverter is
+   URL-builders only. `Sources/ConverterEngine/Metadata/` contains **zero** `URLSession` use, no response
+   parsing, and `MusicBrainzClient` has **no production callers** (tests only). So nothing can break on
+   Nov 30 — and equally, MusicBrainz lookup does not work today.
+   **Option A (recommended):** build it end-to-end (rate-limited client + lenient decoding + reachable
+   UI/CLI entry), Nov-30-safe by construction. **Option B:** builders-only + honest docs, confine the
+   Nov-30 work to MeedyaSuite-core (which does make real requests).
+2. **#494 GPL disc tools** — bundle cdrdao/ddrescue/wodim in Direct builds vs PATH-detect vs native
+   reimplementation. Licensing call; gates #492/#495 *packaging* only, not code.
+3. **Ranked new-work list** — to be presented from the Fable proposals pass; user picks.
+
+---
+
 ## 🟢 Current session — 2026-09-01 (MusicBrainz Nov-30-2026 search-upgrade readiness + disc-imaging issue + plugin/standing-tasks)
 
 **User directive:** ahead of MusicBrainz's reported Nov 30 2026 search upgrade,
