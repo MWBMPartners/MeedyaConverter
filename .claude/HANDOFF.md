@@ -94,6 +94,57 @@ Fix queued: add `wip/**` to the `push` triggers so the working branch is continu
 - [~] Workflow `wpssl6pvl` RUNNING — 9 parallel Sonnet evidence agents (code-first, citation-only) then
       4 **sequential** Fable analysis passes (MusicBrainz plan → issue reconciliation ×2 → ranked proposals).
 
+### Verified findings — orchestrator's own greps (independent of the agents, all re-checkable)
+
+**The entire metadata-LOOKUP subsystem is dead code.** Not "partially wired" — dead:
+- `Sources/ConverterEngine/Metadata/` contains **no** `URLSession` / `URLRequest` / `JSONDecoder` at all.
+  Every provider (TMDB, TVDB, MusicBrainz, Discogs, FanArt, OpenSubtitles, OMDb) is a URL **builder** only.
+- `MusicBrainzClient` — zero production callers; referenced only from
+  `Tests/ConverterEngineTests/ConverterEngineTests+CloudAndMetadataLookup.swift`.
+- `AutoTagger` / `AutoTagConfig` — **zero references outside `Sources/ConverterEngine/FFmpeg/AutoTagger.swift`**.
+- `MetadataEditorView` — orphaned (self-references only; no `NavigationItem` case, no `ContentView` arm).
+- The app's only metadata surface is `NavigationItem.metadataTags` →
+  `MetadataTagEditorView` (`ContentView.swift:119`), which **does** work (#467, `0f1dc0f`) but offers **no
+  lookup affordance whatsoever** — no "search", "fetch", "MusicBrainz" or "TMDB" string in the file.
+
+⇒ Nothing in MeedyaConverter can break on 30 November, because nothing calls MusicBrainz. The Nov-30
+work here is therefore *correctness-of-the-builders + honesty-of-the-docs*, not a migration. Building a
+real lookup client is NEW WORK and belongs in the ranked proposals for the user to choose, not smuggled
+in under a "don't break on Nov 30" directive.
+
+**Two false capability claims in shipped docs (fix in the docs pass):**
+- `docs/Home.md:92` — "MusicBrainz, TMDB, TVDB, Discogs, FanArt.tv integration". There is no integration.
+- `docs/FAQ.md:205` — "(optional, when you request metadata from MusicBrainz, TMDB, etc.)". You cannot.
+
+**`docs/Architecture.md` is the worst-affected doc.** It presents as live architecture:
+- **7 modules deleted in the orphan sweep** — `EncodingReport` (lines 74, 114, 123), `HDRPolicyEngine`
+  (115, 209), `MetadataPassthrough` (74 "MetaPassthru", 122), `MetadataTagger` (122), `PQToHLGPipeline`
+  (115), `SmartCropIntegration` (114), `SubtitleConverter` (116).
+- **6 modules that exist but have ZERO references outside their own file** — `ColorSpaceConverter`,
+  `HLGToDolbyVision`, `CodecMetadataPreserver`, `StreamingEnhancements`, `ForensicWatermark`,
+  `ContentAnalyzer`. Plus `AIUpscaler`, reachable only from the dead `FFmpegBackend`/`FFmpegBackendFactory`
+  scaffold (#477).
+
+**`FEATURES.md`'s dead-code table is stale in both directions:**
+- 5 rows describe files that no longer exist (`MultiStreamSelector`, `EncodingReport`,
+  `ColourSpaceConverter`, `HDRPolicyEngine`, `SmartCropIntegration`) as "exists but unwired".
+- 5 rows still say a feature does not work when the 2026-08-04 wave fixed it: #467 (`0f1dc0f`),
+  #355 (`1773763`), #277 (`3ee5072`), #469 (`27b42dd`), #468 (`444bde1`).
+
+**API docs:** `docs/api/meedya-convert-api.yaml` has paths for encode/probe/profiles/batch/manifest/validate
+but **no `/serve`**, though `ServeCommand` shipped in `1773763` and is registered at
+`Sources/meedya-convert/MeedyaConvert.swift:21-29`. `Resources/Help/cli-reference.md` never mentions
+`serve` either. Both specs parse clean as OpenAPI 3.1.0; `meedya-http-api.yaml`'s five paths **do** match
+`APIServer.swift:458-466`. All 12 help `.md` files are registered in `HelpView.swift`'s `HelpTopicRegistry`.
+
+**Cross-repo:** MeedyaSuite-core's `fix/musicbrainz-lucene-hardening` and
+`claude/branch-audit-musicbrainz-migration-l5h8zh` **no longer exist on the remote**. Per the GitHub API the
+repo now has `main`, `alpha`, `beta`, `feature/work-in-progress`. All the MusicBrainz commits are reachable
+from `feature/work-in-progress` (13 ahead of `main`, pushed) — consolidated, not lost. That consolidation
+was done by a **concurrent session** (commits authored 21:45–21:55 during this session), so **MeedyaSuite-core
+is read-only from here**. Its local checkout was left on `feature/work-in-progress` by that other session;
+do not "restore" it.
+
 ### Decisions surfaced to the user (per W8 — asked upfront, work continues meanwhile)
 1. **MusicBrainz scope.** Verified against code: **every** metadata provider in MeedyaConverter is
    URL-builders only. `Sources/ConverterEngine/Metadata/` contains **zero** `URLSession` use, no response
