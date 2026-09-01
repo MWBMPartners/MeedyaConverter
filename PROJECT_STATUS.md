@@ -457,21 +457,28 @@ carried over from an earlier draft):
   has zero instantiation call sites; `AccurateRipVerifier`'s API is only
   referenced from a doc comment in `SettingsView.swift`. Falls under the
   broader disc-ripping-is-orphaned finding below (#476)
-- **Colour space converter** -- `ColorSpaceConverter`/`ColourSpaceConverter`
-  are only called from `HDRPolicyEngine`, which itself has zero external
-  callers. The real, shipped HDR tone-mapping path runs through
-  `FFmpegArgumentBuilder.ToneMapAlgorithm` instead, a separate code path
-- **Multi-stream selector** -- `MultiStreamSelector` has no callers outside
-  its own file
-- **Encoding reports** -- `EncodingReport` has no callers outside its own
-  file (referenced only from a test)
+- **Colour space converter** -- `ColourSpaceConverter` and `HDRPolicyEngine`
+  were **deleted** from the source tree by the orphan sweep (`7f59196`).
+  `ColorSpaceConverter` (US spelling) survives with zero references outside
+  its own file, retained deliberately because its nested `ToneMapAlgorithm`
+  name-collides with the live `FFmpegArgumentBuilder.ToneMapAlgorithm`, which
+  is the real, shipped HDR tone-mapping path (#477)
+- **Multi-stream selector** -- `MultiStreamSelector` was **deleted**
+  (`7f59196`); it is no longer in the source tree (#477)
+- **Encoding reports** -- `EncodingReport` was **deleted** (`7f59196`); it is
+  no longer in the source tree (#477)
 - **Encoding pipelines** -- `PipelineEditorView`/`EncodingPipeline`/
   `PipelineExecutor`: the editor is presented from Output Settings with no
   `onSave` handler wired up, and `PipelineExecutor` (the generic multi-step
   runner) has zero callers anywhere in the app or engine
-- **Resumable jobs** -- no checkpoint writer; "resume" restarts at 0 (#468)
-- **REST API server mode** -- implemented and unit-tested, but has no
-  entry point; unreachable from the app or CLI (#355)
+- **Resumable jobs** -- superseded: the honest-minimal implementation shipped
+  in `444bde1` (checkpoint written on cancel/fail, view surfaced, "Resume"
+  relabelled "Re-queue"). True seek-resume remains future work (#468)
+- **REST API server mode** -- superseded: `meedya-convert serve` shipped in
+  `1773763` and starts the real `APIServer`, whose five routes all call the
+  real engine (`EncodingQueue.addJob`, `engine.probe`, `jobsSnapshot()`,
+  `profileStore.allProfiles()`). `APIServerView` is still orphaned — it has
+  no `NavigationItem` case — so the CLI is the only entry point (#355, #448)
 - **Profile share links** -- `ProfileSharing`'s share-link generation/
   consumption flow is unconsumable; not to be confused with plain JSON
   profile import via `profiles --import` / `--import`, which works, and
@@ -481,13 +488,18 @@ carried over from an earlier draft):
   "Landing in the next alpha build" above)
 - **3D / Stereoscopic** -- `Stereo3DConverter`/`Video3DConverter` have zero
   callers (#477)
-- **Media Metadata Lookup / Auto-Tagging** -- `AutoTagger` (automatic
-  lookup against external metadata databases) is orphaned; a separate
-  concern from the metadata tag editor, which now writes tags for real
-  (#467, see "Landing in the next alpha build" above) (#205)
+- **Media Metadata Lookup / Auto-Tagging** -- dead in full, not partially.
+  `Sources/ConverterEngine/Metadata/` contains no `URLSession`, `URLRequest`
+  or `JSONDecoder` at all, so every provider client (MusicBrainz, TMDB, TVDB,
+  Discogs, FanArt, OpenSubtitles, OMDb) is a URL **builder** with no request
+  and no response parsing; `AutoTagger` has zero references outside its own
+  file; `MetadataEditorView` is orphaned; and `MetadataTagEditorView` offers
+  no lookup control of any kind. A separate concern from the metadata tag
+  *editor*, which now writes tags for real (#467) (#205, #493)
 - **A/B Comparison** -- `ComparisonView` is orphaned (#329)
-- **AI Upscaling** -- `AIUpscaler` exists only as a comment reference
-  (#236, #477)
+- **AI Upscaling** -- `AIUpscaler` is named only in comments at
+  `FFmpegBackend.swift:52` and `FFmpegBackendFactory.swift:35`; it has no
+  call site (#236, #477)
 - **Forensic Watermarking** -- `ForensicWatermark` is orphaned (#477)
 - **DCP generator, VVC encoder, TrueHD-MP4 muxer, HLG→Dolby Vision (dup),
   surround upmixer, speech-to-text, audio fingerprinter, content

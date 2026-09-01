@@ -61,12 +61,19 @@ Remove:
 
 ## Safe-to-keep (do NOT remove under any circumstance)
 
+> **Superseded in part, 2026-09-01.** Two of the four files below no longer
+> exist: `MetadataTagger.swift` and `MetadataPassthrough.swift` were **deleted**
+> by the orphan sweep (`7f59196`) after this list was written, because both had
+> zero callers. Metadata *writing* now happens directly in
+> `MetadataTagEditorView` via ffmpeg (#467). Do not treat their absence as an
+> accident, and do not restore them.
+
 - `Sources/MeedyaConverter/Views/MetadataEditorView.swift` — app-specific UI
-- `Sources/MeedyaConverter/Views/MetadataTagEditorView.swift` — app-specific UI
-- `Sources/ConverterEngine/FFmpeg/MetadataTagger.swift` — FFmpeg
-  metadata-writing logic; unrelated to provider lookup
-- `Sources/ConverterEngine/FFmpeg/MetadataPassthrough.swift` — stream
-  metadata passthrough; unrelated to provider lookup
+  (note: currently orphaned — no `NavigationItem` case, no `ContentView` arm)
+- `Sources/MeedyaConverter/Views/MetadataTagEditorView.swift` — app-specific UI,
+  reachable via `NavigationItem.metadataTags`, and it really does write tags
+- ~~`Sources/ConverterEngine/FFmpeg/MetadataTagger.swift`~~ — **deleted** (`7f59196`)
+- ~~`Sources/ConverterEngine/FFmpeg/MetadataPassthrough.swift`~~ — **deleted** (`7f59196`)
 
 ## Acceptance criteria (from #374)
 

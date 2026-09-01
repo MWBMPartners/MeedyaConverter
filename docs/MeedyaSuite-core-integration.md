@@ -27,11 +27,20 @@ Replace in MeedyaConverter:
 - `MetadataProviders.swift` (TheTVDB client) -> use meedya-core TheTVDB provider
 - Remove inline API clients for TMDB, MusicBrainz, Discogs, etc.
 
+> **Context, verified 2026-09-01.** The "inline API clients" being replaced here
+> are URL **builders** only — `Sources/ConverterEngine/Metadata/` contains no
+> `URLSession`, `URLRequest` or `JSONDecoder`, and nothing in the app calls them.
+> Migrating them therefore removes no working behaviour; the lookup capability
+> arrives with meedya-core rather than being moved to it.
+
 ### Phase 4: Codec Integration
 Use meedya-core codec types in:
-- `CodecMetadataPreserver.swift`
-- `MetadataPassthrough.swift`
-- `StreamMetadataEditor.swift`
+- `CodecMetadataPreserver.swift` — still present, but dormant (zero references
+  outside its own file)
+- ~~`MetadataPassthrough.swift`~~ — **deleted** by the orphan sweep (`7f59196`);
+  drop it from this plan
+- `StreamMetadataEditor.swift` — the live equivalent is
+  `StreamMetadataEditorView` in `Sources/MeedyaConverter/Views/OutputSettingsView.swift`
 
 ## Files to Modify
 

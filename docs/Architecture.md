@@ -69,12 +69,12 @@ MeedyaConverter follows a three-layer architecture: a shared engine library, a c
 │  └─────────────┘  └──────────────┘  └─────────────────┘ │
 │                                                          │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│  │ Licensing    │  │ Metadata     │  │ Reports         │ │
-│  │              │  │              │  │                 │ │
-│  │ FeatureGate  │  │ Lookup       │  │ EncodingReport  │ │
-│  │ ProductCat.  │  │ Providers    │  │ QualityMetrics  │ │
-│  │ StoreManager │  │ AutoTagger   │  │                 │ │
-│  │ RevenueCat   │  │ MetaPassthru │  │                 │ │
+│  │ Licensing    │  │ Metadata     │  │ Quality         │ │
+│  │              │  │ (builders)   │  │                 │ │
+│  │ FeatureGate  │  │ Lookup       │  │ QualityMetrics  │ │
+│  │ ProductCat.  │  │ Providers    │  │                 │ │
+│  │ StoreManager │  │ AutoTagger*  │  │                 │ │
+│  │ RevenueCat   │  │              │  │                 │ │
 │  │ LicenseKey   │  │              │  │                 │ │
 │  │ Entitlement  │  │              │  │                 │ │
 │  └─────────────┘  └──────────────┘  └─────────────────┘ │
@@ -99,6 +99,9 @@ MeedyaConverter follows a three-layer architecture: a shared engine library, a c
 └──────────────────────────────────────────────────────────┘
 ```
 
+`*` marks a module that is present and compiles but has no call site — see
+[Dormant modules](#dormant-modules) below.
+
 ---
 
 ## Module Responsibilities
@@ -111,20 +114,45 @@ The shared core library. Contains no UI code. Targets both the CLI and GUI.
 | ------ | ------- |
 | **Models** | Data types: `MediaFile`, `MediaStream`, `VideoCodec`, `AudioCodec`, `ContainerFormat`, `SubtitleFormat`, `FeatureGate`, `PlatformFormatPolicy`, `SpatialAudioProcessor` |
 | **Encoding** | `EncodingJob` (job definition and state), `EncodingEngine` (orchestration), `EncodingProfile` (presets and custom profiles), `PerStreamSettings`, `EncodingStatistics`, `EncodingPipeline` (multi-step workflows), `ConditionalRule` (source-based auto-settings), `PostEncodeActions` (post-job automation), `EncodingCheckpoint` (resumable jobs), `ProfileSharing` (import/export) |
-| **FFmpeg** | `FFmpegArgumentBuilder` (settings to CLI args), `FFmpegProcessController` (start/pause/stop/progress), `FFmpegBundleManager` (binary discovery), `FFmpegProbe` (file inspection), `HardwareEncoderDetector`, `SceneDetector`, `CropDetector`, `SmartCropIntegration`, `ContentAnalyzer`, `FrameComparisonExtractor`, `QualityMetrics` (VMAF/SSIM), `AIUpscaler`, `WatchFolderManager`, `EncodingReport`, `ForensicWatermark` |
-| **HDR** | `HDRPolicyEngine` (automatic HDR handling decisions), `PQToHLGPipeline`, `HLGToDolbyVision`, `ColorSpaceConverter`, `CodecMetadataPreserver`, tone-mapping filter setup |
-| **Subtitles** | `SubtitleConverter` (format conversion), extended format support (SCC, EBU STL, MCC, Teletext) |
+| **FFmpeg** | `FFmpegArgumentBuilder` (settings to CLI args), `FFmpegProcessController` (start/pause/stop/progress), `FFmpegBundleManager` (binary discovery), `FFmpegProbe` (file inspection), `FFmpegBackend` / `FFmpegBackendFactory` (one-shot ffmpeg/ffprobe runs), `HardwareEncoderDetector`, `SceneDetector`, `CropDetector`, `FrameComparisonExtractor`, `QualityMetrics` (VMAF/SSIM), `WatchFolderManager`. **Dormant:** `ContentAnalyzer`, `AIUpscaler`, `ForensicWatermark`, `StreamingEnhancements` — see "Dormant modules" below. |
+| **HDR** | Handled inside `FFmpegArgumentBuilder`: `ToneMapAlgorithm` + `toneMap*` options build the `tonemap` filter chain, `preserveHDRMetadata` drives `buildHDR10MetadataArguments`, and `buildPQPreservationArguments` emits PQ colour signalling. **Dormant:** `HLGToDolbyVision`, `ColorSpaceConverter`, `CodecMetadataPreserver`. |
+| **Subtitles** | Handled inside `FFmpegArgumentBuilder` (copy / convert / burn-in decisions and per-stream `SubtitleStreamOverride`s) plus `SubtitleFormat` in **Models**. There is no separate subtitle-conversion module. |
 | **Manifest** | `ManifestGenerator` (HLS, DASH, and CMAF manifest creation), `StreamingEnhancements` |
 | **Audio** | `AudioProcessor` (normalization, downmix), `NormalizationPresets` (EBU R128, ReplayGain), `SurroundUpmixer`, `AudioFingerprinter`, `MatrixEncodingPreserver`, `SpatialAudioProcessor` (Atmos, Auro-3D, Ambisonics) |
 | **Disc** | `AudioCDReader`, `DVDReader`, `BlurayReader`, `DiscImager`, `DiscAuthor`, `DiscBurner`, `AccurateRipVerifier`, `AudioDiscFidelity`, `DiscModels` |
 | **Cloud** | `S3Uploader`, `CloudProviders` (12+ providers), `ExtendedCloudProviders`, `MediaServerNotifier`, `APIKeyManager`, `CloudUploadProtocol` |
 | **Licensing** | `EntitlementGating` (feature tier enforcement), `ProductCatalog` (purchasable items), `FreeGateProvider`, `RevenueCatProvider`, `LicenseKeyValidator` |
-| **Metadata** | `MetadataLookup` (MusicBrainz, TMDB, TVDB, Discogs), `MetadataProviders`, `AutoTagger`, `MetadataPassthrough`, `MetadataTagger` |
-| **Reports** | `EncodingReport` (post-encode statistics and quality analysis) |
-| **Backend** | `EncodingBackend` protocol — abstraction for FFmpeg subprocess vs. AVFoundation/FFmpegKit |
+| **Metadata** | `MetadataLookup` and `MetadataProviders` — **URL builders only**. Neither file performs HTTP, and nothing in `Sources/ConverterEngine/Metadata/` decodes a provider response; there is no `URLSession` in that directory. `AutoTagger` is dormant (zero references outside its own file). Metadata *writing* is real and lives elsewhere: `MetadataTagEditorView` invokes ffmpeg directly (#467). |
+| **Backend** | `Backend/EncodingBackend.swift` — an unused protocol scaffold retained deliberately (name-collision risk); the live abstraction is `FFmpeg/FFmpegBackend.swift` + `FFmpegBackendFactory`. Tracked by #477. |
 | **Native** | Native platform integrations (Intents, App Intents) |
 | **Platform** | `PlatformFormatPolicy` — platform-specific codec availability |
 | **Utilities** | Temp file management, disk space monitoring |
+
+#### Dormant modules
+
+Code in `ConverterEngine` that compiles and is unit-tested but has **no call site
+outside its own file**. It is listed here rather than omitted, so that this diagram
+is not read as a claim that the capability ships. Verified by grep against
+`wip/alpha-consolidation`; the same set is tracked in `FEATURES.md` and issue #477.
+
+| Module | Status |
+| ------ | ------ |
+| `ContentAnalyzer` | zero references outside its own file |
+| `AIUpscaler` | named only in two comments (`FFmpegBackend.swift:52`, `FFmpegBackendFactory.swift:35`) — no call site |
+| `ForensicWatermark` | zero references outside its own file |
+| `StreamingEnhancements` (incl. `HLSEncryption`, `ThumbnailSpriteGenerator`) | zero references outside its own file |
+| `HLGToDolbyVision` | zero references outside its own file |
+| `ColorSpaceConverter` | zero references outside its own file; the live tone-map path is `FFmpegArgumentBuilder.ToneMapAlgorithm` |
+| `CodecMetadataPreserver` | zero references outside its own file |
+| `AutoTagger` | zero references outside its own file — the metadata-lookup pipeline has no consumer |
+| `Backend/EncodingBackend.swift` | unused protocol scaffold, retained deliberately (name-collision risk, #477) |
+
+Modules that used to appear in this document and have since been **deleted** from the
+source tree in the orphan sweep (`af83104`, `7f59196`) are not listed above and are no
+longer referenced anywhere here: `EncodingReport`, `HDRPolicyEngine`, `MetadataPassthrough`,
+`MetadataTagger`, `PQToHLGPipeline`, `SmartCropIntegration`, `SubtitleConverter`,
+`MultiStreamSelector`, `ColourSpaceConverter`, `AudioMixer`, `ClosedCaptionHandler`,
+`SubtitleOCR`, `MediaInfoIntegration`.
 
 ### meedya-convert (CLI)
 
@@ -139,6 +167,7 @@ A thin command-routing layer built on Swift Argument Parser:
 | `ProfilesCommand.swift` | `profiles` subcommand — profile management |
 | `ManifestCommand.swift` | `manifest` subcommand — HLS/DASH/CMAF generation |
 | `ValidateCommand.swift` | `validate` subcommand — settings and manifest validation |
+| `ServeCommand.swift` | `serve` subcommand — starts `APIServer` (the only way to start the HTTP API) |
 | `CLIUtilities.swift` | Shared utilities: exit codes, stderr printing |
 
 ### MeedyaConverter (SwiftUI App)
@@ -206,7 +235,7 @@ The argument builder is the critical translation layer. It processes an `Encodin
 1. **Input mapping** — `-i <source>` with seek/duration if trimming.
 2. **Stream selection** — `-map` directives for included video, audio, and subtitle streams.
 3. **Video encoding** — Codec, CRF/bitrate, preset, pixel format, resolution, crop.
-4. **HDR policy** — Preserves metadata or inserts tone-mapping filter based on `HDRPolicyEngine` decisions.
+4. **HDR policy** — Preserves HDR10/PQ/HLG signalling, or inserts a `tonemap` filter chain, based on the builder's own `toneMap` / `convertPQToHLG` / `preserveHDRMetadata` flags.
 5. **Audio encoding** — Per-stream codec, bitrate, sample rate, channel layout, normalization.
 6. **Subtitle handling** — Copy, convert, or burn-in based on format and container compatibility.
 7. **Metadata** — Title, tags, chapter markers, cover art.
