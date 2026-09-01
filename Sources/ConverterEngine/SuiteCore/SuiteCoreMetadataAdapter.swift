@@ -145,6 +145,8 @@ public struct SuiteCoreMetadataAdapter: Sendable {
     ///   - source: The provider to query.
     ///   - query: The search parameters.
     /// - Returns: Zero or more matches; ordering is provider-defined.
+    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` whenever the
+    ///   request routes to the inline path, which has no implementation.
     /// - Throws: ``SuiteCoreBridgeError/notCompiledIn`` when the caller asked
     ///   for suite-core but it is not linked.
     public func search(
@@ -174,14 +176,36 @@ public struct SuiteCoreMetadataAdapter: Sendable {
         #endif
     }
 
+    /// Inline (non-suite-core) search path.
+    ///
+    /// **This is not implemented, and deliberately throws rather than
+    /// returning an empty result.**
+    ///
+    /// The previous implementation returned `[]` behind a comment claiming it
+    /// was "a pass-through" to `MetadataProviders.swift`. That comment was
+    /// false: no provider was ever called. Worse, `[]` is indistinguishable
+    /// from "the provider ran and found nothing", so a caller could report a
+    /// successful-but-empty lookup for a search that never happened.
+    ///
+    /// There is nothing to pass through to. Every inline provider client in
+    /// `Sources/ConverterEngine/Metadata/` — `MetadataLookup.swift` and
+    /// `MetadataProviders.swift`, covering TMDB, TheTVDB, MusicBrainz,
+    /// Discogs, FanArt.tv, OpenSubtitles and OMDb — builds request **URLs**
+    /// and nothing more. Neither file performs HTTP (there is no `URLSession`
+    /// anywhere in that directory) and neither decodes a provider response.
+    ///
+    /// Implementing this means either building a real HTTP + decoding layer
+    /// here, or completing the suite-core route (#373/#374) and letting the
+    /// Rust providers serve every source. The strategy recorded in
+    /// `docs/MeedyaSuite-core-integration.md` chooses the latter.
+    ///
+    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` — always.
     private func searchViaInline(
         source: MetadataSource,
         query: MetadataSearchQuery
     ) async throws -> [MetadataResult] {
-        // Inline fallback: the existing MetadataProviders.swift implementations
-        // remain in place for the providers MeedyaConverter already ships.
-        // This adapter is a pass-through for those; #374 will consolidate the
-        // implementations once suite-core is on by default.
-        return []
+        throw SuiteCoreBridgeError.notImplemented(
+            "Inline metadata search for \(source.displayName)"
+        )
     }
 }

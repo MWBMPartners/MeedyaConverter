@@ -299,16 +299,36 @@ public struct TMDBClient: Sendable {
 ///
 /// ## MusicBrainz "Search upgrades, Nov 30 2026" — verified unaffected
 ///
-/// The Nov 30 2026 search-service upgrade (Solr 10; tickets SEARCH-444,
-/// SEARCH-642, SEARCH-666, SEARCH-752, SEARCH-764) was assessed against
-/// every MusicBrainz request this client builds. None apply: we use only
-/// the `recording`/`release` search entities (fields `recording`,
-/// `release`, `artist`) and the `recording/<mbid>` and `discid` lookups.
-/// We never search `area`/`url`/`cdstub`/`tag`, never use the `quality:`
-/// field, and parse no relationship `target` property. No migration is
-/// required (issue #493, Part B). If release-`quality` filtering is ever
-/// added, note that the field is queried by NUMERIC value
-/// (`0`=low, `1`=normal, `2`=high, `-1`=unknown), not by name.
+/// The Nov 30 2026 search-service upgrade (Solr 9 to 10; breaking tickets
+/// SEARCH-444, SEARCH-642, SEARCH-666, SEARCH-752, SEARCH-764) was assessed
+/// against every MusicBrainz request this client builds, re-verified on
+/// 2026-09-01 against the announcement and all twelve linked tickets fetched
+/// first-hand. None apply: we use only the `recording`/`release` search
+/// entities (fields `recording`, `release`, `artist`) and the
+/// `recording/<mbid>` and `discid` lookups. We never search
+/// `area`/`url`/`cdstub`/`tag`, never use the `quality:` field, and parse no
+/// relationship `target` property — in fact this type parses no response at
+/// all. No migration is required (issue #493, Part B).
+///
+/// ### If `quality:` filtering is ever added — read this first
+///
+/// The working syntax **changes on 30 November 2026**, so which form is
+/// correct depends on when your code runs:
+///
+///   - **Before the upgrade:** only NUMERIC values work
+///     (`0`=low, `1`=normal, `2`=high, `-1`=unknown). `quality:low`,
+///     `quality:normal` and `quality:high` all return nothing — SEARCH-666
+///     records this as the bug being fixed, not as intended behaviour.
+///   - **From the upgrade onwards:** SEARCH-666 makes the NAMES the working
+///     form. Do not hard-code the numeric IDs against the new server.
+///
+/// ### New capability the upgrade brings (SEARCH-681)
+///
+/// The upgrade adds "Genre" as a *search target type*. It deliberately does
+/// **not** add genre as a search *field* — you still cannot search a
+/// recording by genre MBID. Searching by genre NAME already works today via
+/// the `tag` field, so any genre-filtering feature should use `tag:` and
+/// needs no upgrade to function.
 ///
 /// ## Lucene query hardening (issue #493, Part A)
 ///

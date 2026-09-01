@@ -62,6 +62,17 @@ public enum SuiteCoreBridgeError: Error, Sendable, LocalizedError {
     /// error code that cannot be mapped to a higher-level error.
     case unknownFailure(String)
 
+    /// Raised when a code path exists but has no implementation behind it, so
+    /// that callers cannot mistake "not built yet" for a legitimate empty
+    /// result. The associated value names the capability.
+    ///
+    /// Introduced because `SuiteCoreMetadataAdapter.searchViaInline` used to
+    /// `return []` while its comment claimed it was a pass-through to the
+    /// inline providers. An empty array is indistinguishable from "the
+    /// provider found nothing", which is exactly the fabricated-capability
+    /// pattern this codebase treats as a defect.
+    case notImplemented(String)
+
     public var errorDescription: String? {
         switch self {
         case .notCompiledIn:
@@ -69,6 +80,8 @@ public enum SuiteCoreBridgeError: Error, Sendable, LocalizedError {
                  + "Rebuild with SUITE_CORE=1 to enable this feature."
         case .unknownFailure(let detail):
             return "MeedyaSuite-core bridge error: \(detail)"
+        case .notImplemented(let capability):
+            return "\(capability) is not implemented in this build."
         }
     }
 }

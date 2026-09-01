@@ -148,6 +148,65 @@ extension ConverterEngineTests {
         XCTAssertEqual(json["language"] as? String, "en")
     }
 
+    /// The inline path must THROW, never return an empty array.
+    ///
+    /// Regression guard for the fabricated-capability defect fixed alongside
+    /// #493: `searchViaInline` used to `return []` behind a comment claiming
+    /// it was a pass-through to the inline `MetadataProviders` clients. No
+    /// provider was ever called, and `[]` is indistinguishable from a genuine
+    /// "no matches" result. There is nothing to pass through to — every inline
+    /// client builds URLs only, and `Sources/ConverterEngine/Metadata/`
+    /// contains no `URLSession`. If someone ever makes this return a value
+    /// again, it must be because a real lookup runs.
+    func test_suiteCoreMetadataAdapter_inlinePathThrowsRatherThanFakingEmptyResults() async {
+        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        let query = MetadataSearchQuery(mediaType: .music, title: "Bohemian Rhapsody", artist: "Queen")
+        do {
+            let results = try await adapter.search(source: .musicBrainz, query: query)
+            XCTFail(
+                "Expected .notImplemented; inline search returned \(results.count) result(s). "
+                + "Returning an empty array here would report a lookup that never happened."
+            )
+        } catch let error as SuiteCoreBridgeError {
+            guard case .notImplemented(let capability) = error else {
+                XCTFail("Expected .notImplemented, got \(error)")
+                return
+            }
+            XCTAssertTrue(
+                capability.contains("MusicBrainz"),
+                "The error should name the source that was asked for, got: \(capability)"
+            )
+        } catch {
+            XCTFail("Expected SuiteCoreBridgeError, got \(error)")
+        }
+    }
+
+    /// Every inline source throws — not just MusicBrainz.
+    func test_suiteCoreMetadataAdapter_everyInlineSourceThrowsNotImplemented() async {
+        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+        let query = MetadataSearchQuery(mediaType: .movie, title: "Dune")
+        for source in MetadataSource.allCases {
+            do {
+                _ = try await adapter.search(source: source, query: query)
+                XCTFail("\(source.rawValue): expected .notImplemented, got a result")
+            } catch let error as SuiteCoreBridgeError {
+                if case .notImplemented = error { continue }
+                XCTFail("\(source.rawValue): expected .notImplemented, got \(error)")
+            } catch {
+                XCTFail("\(source.rawValue): expected SuiteCoreBridgeError, got \(error)")
+            }
+        }
+    }
+
+    /// `.notImplemented` carries a readable description naming the capability.
+    func test_suiteCoreBridgeError_notImplementedDescribesTheCapability() {
+        let error = SuiteCoreBridgeError.notImplemented("Inline metadata search for MusicBrainz")
+        XCTAssertEqual(
+            error.errorDescription,
+            "Inline metadata search for MusicBrainz is not implemented in this build."
+        )
+    }
+
     /// The advertised provider list differs depending on backend selection.
     func test_suiteCoreMetadataAdapter_providerListDiffers() {
         let inline = SuiteCoreMetadataAdapter(backend: .inlineOnly)
