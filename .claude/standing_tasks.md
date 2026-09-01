@@ -4,7 +4,7 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-01
+> Last updated: 2026-09-01 (second pass — verification gates + read-only sibling repos added)
 
 ## Mandatory Post-Action Tasks
 
@@ -241,6 +241,47 @@ erode when incremental ticking is impractical.
   them at the *start* of the work, batched so the user can resolve them in one
   pass, rather than trickling them out as/when each arises mid-task. Then continue
   autonomously. (Per user directive 2026-09-01.)
+
+### W10. Verification gates — what CAN and CANNOT be checked locally
+
+Established 2026-09-01. Older notes saying "no local macOS build available" are
+**wrong** and should not be trusted.
+
+- **`swift build --target ConverterEngine` — RUN THIS BEFORE EVERY SWIFT COMMIT.**
+  A Swift 6.3.3 toolchain is present at `/usr/bin/swift`. This is a real compile
+  gate and catches the class of error that used to reach CI.
+- **`swift build` (whole package) fails on `#Preview` macros** — the active
+  developer directory is CommandLineTools, which has no `PreviewsMacros` plugin.
+  This is an environment limitation. **Do not "fix" the `#Preview` blocks.**
+- **`swift test` CANNOT run** — no Xcode, so no `XCTest` module. For a new or
+  changed test file, `swiftc -parse <file>` gives a syntax check; type-checking
+  and execution are **CI's** job. Never claim tests pass locally.
+- **SwiftLint CANNOT run locally** — it needs `sourcekitdInProc` from Xcode. CI
+  runs it (with `continue-on-error`). Note that `.swiftlint.yml` disables
+  `line_length`, `file_length`, `trailing_whitespace` and several others, so
+  long doc comments are fine.
+- **`actionlint` works locally** (`brew install actionlint`). CI runs it with
+  `SHELLCHECK_OPTS=--severity=error`, so the cosmetic SC2086/SC2129 findings in
+  `dev-build.yml` / `release.yml` / `testflight.yml` / `beta-alpha.yml` are
+  deliberately suppressed — do not "fix" them as part of unrelated work.
+- **CI now runs on every push to `wip/**`** (#496). `cancel-in-progress` is on,
+  so rapid pushes cancel superseded runs and only the branch tip is verified —
+  that is fine, but do not read a `cancelled` run as a failure.
+
+### W11. Sibling repos are read-only from a MeedyaConverter session
+
+The workspace holds `MeedyaConverter`, `MeedyaDL` and `MeedyaSuite-core` side by
+side, and **other Claude sessions work in them concurrently** — on 2026-09-01 a
+second session switched branches, merged, committed and pushed inside
+MeedyaSuite-core while this session was running, and deleted two remote branches.
+
+- **Do not edit, commit, branch, or "restore" state in `MeedyaDL` or
+  `MeedyaSuite-core`** from a MeedyaConverter session. Read them, cite them,
+  report findings, and let the user route the work.
+- Re-run `git fetch` + `git status` before citing anything there; prefer citing
+  **commits** over line numbers, which move under you.
+- Cross-repo work that genuinely belongs elsewhere goes in the handoff's
+  "cross-repo items" list for the user, not into a drive-by commit.
 
 ### W9. No PR stacking
 
