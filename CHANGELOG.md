@@ -837,7 +837,7 @@ All four deferred items from the #380 security + memory audit closed:
 - **Advanced features** -- Watch folders, A/B comparison, VMAF/SSIM, scene detection, AI upscaling, content-aware encoding, DCP creation, audio fingerprinting, media server notifications, preset sharing (Phase 7.10-7.20)
 - **Media Metadata Lookup** -- New Phase 14: MusicBrainz, TMDB, TVDB, IMDB, MeedyaDB, Discogs, FanArt.tv, OpenSubtitles integration
 - **Image Conversion** -- New Phase 15 (future version): Bulk image format conversion (JPEG, PNG, WebP, AVIF, HEIC, RAW, JPEG XL, etc.)
-- **Audio format compatibility guide** -- Comprehensive conversion matrix documentation ([help/audio-format-compatibility.md](help/audio-format-compatibility.md))
+- **Audio format compatibility guide** -- Comprehensive conversion matrix documentation (`Sources/MeedyaConverter/Resources/Help/audio-format-compatibility.md`)
 - **Platform-specific format policy** -- Support formats on platforms where libraries exist; regularly check for new availability (Phase 3.27)
 - **Feature gating system** -- Lightweight capability/tier architecture (free/pro/studio) in ConverterEngine (Phase 1.11)
 - **AI-Powered Features (wishlist)** -- Phase 18: AI captioning (with music/singing), AI audio translation, AI video upscaling, AI HDR enhancement. Aspirational -- may never be implemented

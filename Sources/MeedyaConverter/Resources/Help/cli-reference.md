@@ -17,7 +17,7 @@ The CLI is distributed as a separate signed + notarised tarball alongside the
 page.
 
 For the complete machine-readable specification (every option, JSON schema,
-and exit code) see [`docs/api/meedya-convert-api.yaml`](../docs/api/meedya-convert-api.yaml) —
+and exit code) see [`docs/api/meedya-convert-api.yaml`](https://github.com/MWBMPartners/MeedyaConverter/blob/main/docs/api/meedya-convert-api.yaml) —
 this document is the human-readable companion to that spec.
 
 ---
