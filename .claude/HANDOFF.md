@@ -94,6 +94,58 @@ Fix queued: add `wip/**` to the `push` triggers so the working branch is continu
 - [~] Workflow `wpssl6pvl` RUNNING — 9 parallel Sonnet evidence agents (code-first, citation-only) then
       4 **sequential** Fable analysis passes (MusicBrainz plan → issue reconciliation ×2 → ranked proposals).
 
+## 🟢 ACTIVE — 2026-09-01c (user selected 11 proposals; #494 decided)
+
+### ✅ #494 DECIDED — bundle GPL disc tools, Direct builds only
+
+Recorded as **`docs/decisions/0001-gpl-disc-tools.md` (DR-0001)**, commit `f9d06fe`, and on #494.
+
+**The reframing that settled it:** the App Store angle is **technical, not licensing**.
+`MeedyaConverter-AppStore.entitlements` declares `com.apple.security.app-sandbox` with only
+`network.client`, `files.user-selected.read-write`, `files.bookmarks.app-scope` and
+`files.downloads.read-write` — and the App Sandbox offers **no entitlement for raw optical-device
+access**. Disc imaging cannot work in an App Store build whatever licence the tools carry, so even a
+clean-room native MMC rewrite would not unlock it. That removed option C's entire rationale.
+
+**Binding consequences** (all in DR-0001): never link `libcdio`; ship licence texts; ship a written
+source offer + archive the tarballs; a build check must FAIL if a GPL `BundledTool` reaches an App
+Store bundle (mirror the ITMS-90236 guard at `testflight.yml:317`); hide-don't-break via the existing
+`isDirectBuild` flag; NRG stays clean-room.
+
+**Deliberate:** the `ToolBundleManifest` entries are drafted **in the decision record, NOT in
+`defaultManifest`** — that manifest describes tools the app actually ships, so listing unbundled
+binaries would be the fabricated-capability defect. They move across with the binaries. #494 stays
+OPEN for the packaging work.
+
+### ✅ 12 closed-in-error issues REOPENED (proposal #4 — done)
+
+Every claim re-verified by the orchestrator's own grep before acting. Open count **86 → 98**.
+
+| Issue | Evidence |
+|---|---|
+| #343 slate | `SlateGenerator`/`SlateGeneratorView` — 0 refs outside own files, no tests, no nav entry |
+| #63 sprites · #59 HLS AES | both in `StreamingEnhancements.swift`; refs only from that file + `ConverterEngineTests+Manifest.swift` |
+| #323 vidstab · #324 deinterlace | 0 refs outside own file, no tests |
+| #257 tool updates | 0 refs in `Sources/`; only URL-builder asserts in `ConverterEngineTests+Pipelines.swift:482,498` |
+| #285 drag-out | 0 callers; `SourceFileView.swift:132` has `handleDrop` only — drag **in**, not out |
+| #280 mini player · #330 settings undo · #361 notification actions | 0 callers each |
+| #303 localisation | 0 callers; only `en.lproj` exists despite a 6-language table in the manager's header |
+| #336 themes | persists accent/sidebar tint, but **no `.tint(...)` at app root** — saved then ignored |
+
+### 🔨 SELECTED WORK — user picked 11 items (2026-09-01)
+
+Ordered by the batching the orchestrator chose (file-collision aware — `AppViewModel.swift`,
+`MeedyaConverterApp.swift` and `SettingsView.swift` are each touched by more than one item, so those
+run sequentially):
+
+- **Batch A (parallel Sonnet, disjoint files) — RUNNING as workflow `wk2po9vjp`:**
+  #322 concatenation Start · #331 keyboard shortcuts apply · #288 scene detection executes ·
+  #451 ScriptingBridge semaphore. Each followed by a **sequential Fable** adversarial review.
+- **Batch B (sequential — shared files):** #277 failure-path hooks · #475 `useHardwareAcceleration` ·
+  #356 non-profile URL scheme · #281 menu-bar controller.
+- **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
+- Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
+
 ### 🗳️ RANKED NEW-WORK PROPOSALS — awaiting user selection (Fable, code-cited)
 
 Produced by the final sequential Fable pass over the reconciliation + a spot-audit of the 361 closed
