@@ -86,14 +86,23 @@ enum URLSchemeError: LocalizedError, Sendable {
 /// - `meedyaconverter://probe?file=/path/to/video.mov`
 /// - `meedyaconverter://open?view=queue`
 ///
-/// The handler parses incoming URLs, validates parameters, and routes
-/// actions to the appropriate `AppViewModel` methods. Invalid or
-/// malformed URLs produce descriptive errors.
+/// The handler parses incoming URLs and validates their parameters into a
+/// typed `URLSchemeAction`, exposed afterwards via `lastAction` (or
+/// `lastError` for an invalid/malformed URL, with a descriptive message).
+/// It deliberately does not depend on `AppViewModel` itself, so it stays
+/// usable and testable independently of the app layer — the caller is
+/// responsible for reading `lastAction`/`lastError` and acting on the
+/// live `AppViewModel` accordingly.
 ///
-/// Usage from the SwiftUI `App` struct:
+/// Usage from the SwiftUI `App` struct (see
+/// `MeedyaConverterApp.handleSchemeURL(_:)` for the real integration):
 /// ```swift
 /// .onOpenURL { url in
-///     urlSchemeHandler.handleURL(url)
+///     guard urlSchemeHandler.handleURL(url) else {
+///         // handle urlSchemeHandler.lastError
+///         return
+///     }
+///     // act on urlSchemeHandler.lastAction against AppViewModel
 /// }
 /// ```
 ///
@@ -228,34 +237,20 @@ final class URLSchemeHandler {
 
     // MARK: - Routing
 
-    /// Routes a parsed action to the appropriate application behaviour.
+    /// Intentionally a no-op.
     ///
-    /// In the current implementation, this method logs the action. When
-    /// integrated with `AppViewModel`, it will call the corresponding
-    /// methods to trigger encoding, probing, or navigation.
+    /// This type owns parsing and validation only (see the file overview
+    /// above) — it does not depend on `AppViewModel`, so it stays usable
+    /// and testable independently of the app layer. `handleURL(_:)`
+    /// publishes the parsed action via `lastAction` instead, and
+    /// `MeedyaConverterApp.performURLSchemeAction(_:)` (Issue #356) is
+    /// what actually triggers encoding, probing, or navigation against
+    /// the live `AppViewModel`. This method exists only so `handleURL(_:)`
+    /// has a single, linear call site for "an action was recognised";
+    /// it does not need to do anything further itself.
     ///
-    /// - Parameter action: The parsed URL scheme action to execute.
+    /// - Parameter action: The parsed URL scheme action (unused).
     private func routeAction(_ action: URLSchemeAction) {
-        switch action {
-        case .encode(let filePath, let profile):
-            // Integration point: trigger encoding via AppViewModel.
-            // viewModel.importFile(at: URL(fileURLWithPath: filePath))
-            // if let profile = profile {
-            //     viewModel.selectProfile(named: profile)
-            // }
-            // viewModel.startEncoding()
-            _ = (filePath, profile)
-
-        case .probe(let filePath):
-            // Integration point: trigger media probing via AppViewModel.
-            // viewModel.importFile(at: URL(fileURLWithPath: filePath))
-            // viewModel.selectedNavItem = .source
-            _ = filePath
-
-        case .open(let viewName):
-            // Integration point: navigate to the requested view.
-            // viewModel.selectedNavItem = NavigationItem(rawValue: viewName)
-            _ = viewName
-        }
+        // See the doc comment above — deliberately empty.
     }
 }

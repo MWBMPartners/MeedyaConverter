@@ -278,7 +278,9 @@ final class ScriptingBridge: NSObject {
             id: UUID(),
             inputURL: inputURL,
             outputURL: outputURL,
-            profile: encodingProfile
+            // Honour the global hardware-acceleration kill switch (#475) so a
+            // scripted encode matches what the same profile would do in the UI.
+            profile: HardwareAccelerationPreference.applying(to: encodingProfile)
         )
 
         // Add to the queue — encoding will start when the queue processes it

@@ -145,7 +145,8 @@ final class EncodeMediaActionHandler {
                 id: UUID(),
                 inputURL: inputURL,
                 outputURL: outputURL,
-                profile: profile
+                // Honour the global hardware-acceleration kill switch (#475).
+                profile: HardwareAccelerationPreference.applying(to: profile)
             )
 
             do {

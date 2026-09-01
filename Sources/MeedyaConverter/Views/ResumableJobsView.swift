@@ -175,7 +175,11 @@ struct ResumableJobsView: View {
         let config = EncodingJobConfig(
             inputURL: checkpoint.inputURL,
             outputURL: outputURL,
-            profile: checkpoint.profileSnapshot
+            // Honour the global hardware-acceleration kill switch (#475). The
+            // checkpoint's profile snapshot records what the job used when it
+            // was interrupted, which may pre-date the user turning the switch
+            // off — the current setting wins on a re-queue.
+            profile: HardwareAccelerationPreference.applying(to: checkpoint.profileSnapshot)
         )
 
         viewModel.engine.queue.addJob(config)

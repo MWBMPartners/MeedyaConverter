@@ -850,6 +850,28 @@ final class AppViewModel {
             appendLog(.info, "Conditional rule matched: using profile \"\(matchedProfile.name)\"", category: .encoding)
         }
 
+        // Global hardware-acceleration kill switch (Issue #475).
+        // `SettingsView.useHardwareAcceleration` (the "Prefer hardware
+        // acceleration" toggle) was declared and rendered but had no
+        // reader anywhere — flipping it changed nothing. Per-profile
+        // hardware selection (`EncodingProfile.useHardwareEncoding`,
+        // wired at `EncodingProfile.swift:303` into
+        // `FFmpegArgumentBuilder`, with dedicated `hardwareH264`/
+        // `hardwareH265` profiles) is real and already works, so this
+        // setting is deliberately NOT made a duplicate of it. It is a
+        // one-directional override: ON leaves the profile's own choice
+        // untouched; OFF forces software encoding regardless of what the
+        // profile wants. Applied *after* the conditional-rules block
+        // above (Issue #469), so a rule cannot silently defeat a global
+        // switch the user has turned off — that would be a worse lie
+        // than the dead toggle it replaces. The decision itself lives in
+        // `HardwareAccelerationPreference` so that every enqueue path in
+        // the app applies it identically; honouring it here alone would
+        // have left the setting false everywhere else.
+        if HardwareAccelerationPreference.apply(to: &effectiveProfile) {
+            appendLog(.info, "Hardware acceleration disabled globally — forcing software encoding for \"\(effectiveProfile.name)\"", category: .encoding)
+        }
+
         let outputExtension = effectiveProfile.containerFormat.fileExtensions.first ?? "mkv"
         let templateString = UserDefaults.standard.string(forKey: "filenameTemplate") ?? "{title}_converted"
         let template = FilenameTemplate(template: templateString)
@@ -1002,7 +1024,10 @@ final class AppViewModel {
             withIntermediateDirectories: true
         )
 
-        let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: profile)
+        // Honour the global hardware-acceleration kill switch (#475) so
+        // this path behaves like every other job the app enqueues.
+        let effectiveProfile = HardwareAccelerationPreference.applying(to: profile)
+        let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: effectiveProfile)
         engine.queue.addJob(jobConfig)
 
         // Record the watch-folder association so `startQueue()`'s
@@ -1430,6 +1455,42 @@ final class AppViewModel {
                     outputSizeBytes: 0,
                     errorMessage: error.localizedDescription
                 )
+
+                // Post-encode action hooks — failure path (Issue #277).
+                // The success branch above already wires
+                // `PostEncodeActionChain.execute` for successful jobs;
+                // `PostEncodeAction.runOnFailure` exists specifically so
+                // actions (failure notifications, cleanup scripts, etc.)
+                // can also run when the job fails, but nothing ever
+                // called `execute` on this path, so those actions were
+                // dead. Mirrors the success branch exactly: the same
+                // fresh-`UserDefaults` load via
+                // `PostEncodeActionsView.loadPersistedChain()` (an edit
+                // made mid-queue in Settings takes effect from the very
+                // next job), the same enabled-actions guard,
+                // `execute`'s own `isEnabled`/`runOnFailure` filtering
+                // inside the chain, and the same `Task.detached` with a
+                // `Sendable`-only capture list — deliberately no
+                // `[weak self]`, for the same reason documented on the
+                // success-branch call above. Failures are silently
+                // dropped, same as there: a hook that itself throws must
+                // never surface as a second, unrelated error on top of
+                // the encode failure already being handled here. Only
+                // `success: false` differs from the success-branch call,
+                // which is what `execute` uses to skip any action that
+                // lacks `runOnFailure`.
+                let postEncodeFailureChain = PostEncodeActionsView.loadPersistedChain()
+                if postEncodeFailureChain.actions.contains(where: \.isEnabled) {
+                    let inputURL = jobState.config.inputURL
+                    let outputURL = jobState.config.outputURL
+                    Task.detached {
+                        try? await postEncodeFailureChain.execute(
+                            inputURL: inputURL,
+                            outputURL: outputURL,
+                            success: false
+                        )
+                    }
+                }
             }
 
             // Deactivate system-level progress indicators (Issue #182)

@@ -148,7 +148,10 @@ struct FFmpegPreviewView: View {
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
-            profile: viewModel.selectedProfile,
+            // Apply the kill switch here too (#475) — this view exists to show
+            // the command that WILL run, so a preview that ignored the setting
+            // would display hardware arguments the encode then would not use.
+            profile: HardwareAccelerationPreference.applying(to: viewModel.selectedProfile),
             videoStreamIndex: viewModel.selectedVideoStreamIndex,
             audioStreamIndex: viewModel.selectedAudioStreamIndex,
             subtitleStreamIndex: viewModel.selectedSubtitleStreamIndex,

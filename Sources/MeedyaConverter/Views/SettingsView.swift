@@ -186,7 +186,7 @@ struct GeneralSettingsTab: View {
 struct EncodingSettingsTab: View {
     @Environment(AppViewModel.self) private var viewModel
     @AppStorage("defaultProfileName") private var defaultProfileName = "Web Standard"
-    @AppStorage("useHardwareAcceleration") private var useHardwareAcceleration = false
+    @AppStorage("useHardwareAcceleration") private var useHardwareAcceleration = true
     @AppStorage("overwriteExisting") private var overwriteExisting = false
     @AppStorage("deleteSourceAfterEncode") private var deleteSourceAfterEncode = false
 
@@ -199,8 +199,37 @@ struct EncodingSettingsTab: View {
                     }
                 }
 
+                // Global kill switch (Issue #475): per-profile hardware
+                // selection (the "Hardware Encoding" toggle in the
+                // profile editor, `EncodingProfile.useHardwareEncoding`)
+                // already decides whether a given profile *wants*
+                // VideoToolbox. This toggle does not duplicate that
+                // choice — when ON it changes nothing; when OFF it
+                // forces software encoding regardless of what the
+                // profile requests. The decision lives in
+                // `HardwareAccelerationPreference`, applied by every
+                // enqueue path in the app.
+                //
+                // The default is `true`, and must stay that way:
+                // `UserDefaults.bool(forKey:)` answers `false` for a key
+                // that was never written, so defaulting to `false` would
+                // engage the kill switch on every fresh install and
+                // silently downgrade the built-in hardwareH264 /
+                // hardwareH265 profiles to software encoding.
                 Toggle("Prefer hardware acceleration", isOn: $useHardwareAcceleration)
                     .accessibilityLabel("Use VideoToolbox hardware encoding when available")
+
+                if !useHardwareAcceleration {
+                    // Scope stated precisely. This governs jobs the app
+                    // enqueues; the `meedya-convert` CLI and the HTTP API
+                    // run with their own explicit options and are not
+                    // subject to a preference in the GUI's defaults domain.
+                    Text("Hardware encoding is forced off for jobs started in the app, "
+                         + "even for profiles that request it. The command-line tool and "
+                         + "the HTTP API are unaffected.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("File Handling") {

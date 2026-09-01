@@ -243,7 +243,8 @@ struct ScheduleView: View {
         let config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
-            profile: viewModel.selectedProfile
+            // Honour the global hardware-acceleration kill switch (#475).
+            profile: HardwareAccelerationPreference.applying(to: viewModel.selectedProfile)
         )
 
         let job = ScheduledJob(
