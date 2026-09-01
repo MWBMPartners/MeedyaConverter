@@ -1,14 +1,46 @@
 # MeedyaConverter — Project Brief
 
 > Saved for Claude AI context continuity across sessions.
-> Last updated: 2026-08-04
+> Last updated: 2026-09-01
 > **Live status lives in `.claude/HANDOFF.md`** — this brief is the durable overview.
 
 ## Project Summary
 
 MeedyaConverter is a cross-platform professional media conversion application by MWBM Partners Ltd. A modern HandBrake alternative with 100+ features including passthrough, adaptive streaming (HLS/MPEG-DASH), HDR preservation/tone-mapping, spatial audio, optical disc ripping/authoring, cloud upload, image conversion, video editing tools, and monetization infrastructure.
 
-## Current Status (2026-08-04)
+## Current Status (2026-09-01)
+
+The alpha-consolidation cycle's first PR is **done**: **PR #472 was merged** to `alpha` as `f9943bf`
+and shipped as pre-release **`v0.1.0-alpha.3`** (2026-08-04). `wip/alpha-consolidation` has since been
+reused for new work and is **~17 commits ahead of `alpha`**, awaiting a **fresh** PR — #472 must not be
+reopened or reused.
+
+- **Working branch**: `wip/alpha-consolidation`. `main` = trunk; `alpha`/`beta` = live pre-release
+  channel branches (a push mints a public pre-release — never delete).
+- **Issues**: **~89 open / ~361 closed**.
+- **Two environment facts that overturn older notes in this file:**
+  - **A Swift 6.3.3 toolchain IS available locally.** `swift build --target ConverterEngine` is clean
+    and should be run before every Swift commit. `swift build` for the whole package fails only on
+    `#Preview` macros (CommandLineTools has no `PreviewsMacros` plugin) — environment, not code.
+    `swift test` still cannot run (no Xcode ⇒ no XCTest), so **CI remains the test gate**.
+  - **MetaBrainz egress is open** (`blog.metabrainz.org`, `tickets.metabrainz.org` → HTTP 200). The
+    "#493 is blocked on egress" note is stale; primary sources are readable and should be re-fetched
+    rather than trusted from transcription.
+- **CI covers this branch again (#496).** `build.yml` used to trigger only on `main`/`beta`/`alpha`,
+  so the no-PR-stacking working branch had **no CI at all** between PRs. `'wip/**'` was added to the
+  push triggers; every push now builds and tests.
+- **The metadata-LOOKUP subsystem is dead in full.** `Sources/ConverterEngine/Metadata/` contains no
+  `URLSession`, `URLRequest` or `JSONDecoder`; every provider client (MusicBrainz, TMDB, TheTVDB,
+  Discogs, FanArt.tv, OpenSubtitles, OMDb) is a URL **builder**; `AutoTagger` has no callers; no UI
+  offers a lookup. Metadata *writing* is real (#467). Do not describe lookup as available.
+- **MusicBrainz "Search upgrades, Nov 30 2026": nothing breaks.** Verified against the announcement
+  and all twelve linked SEARCH tickets, fetched first-hand. Decision taken: **Option B** — keep the
+  builders, do not add an inline Swift client, because `docs/MeedyaSuite-core-integration.md` plans
+  to remove the inline clients in favour of MeedyaSuite-core anyway. A real lookup is NEW WORK.
+- **Sibling repos are edited by concurrent sessions** — MeedyaSuite-core and MeedyaDL. Treat both as
+  read-only from a MeedyaConverter session, and re-run `git status` before touching either.
+
+## Superseded status (2026-08-04) — kept for history
 
 The project is in an **alpha-consolidation cycle**: a single work-in-progress branch is
 accumulating "honesty fixes" (wiring up previously-dead/fabricated feature surfaces) plus the
