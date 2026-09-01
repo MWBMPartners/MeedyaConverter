@@ -49,6 +49,86 @@ struct ShortcutBinding: Identifiable, Codable, Sendable, Equatable {
         self.key = key
         self.modifiers = modifiers
     }
+
+    // MARK: - Key Parsing
+
+    /// The named keys this binding understands, mapped to the SwiftUI
+    /// `KeyEquivalent` and the symbol used to display them.
+    ///
+    /// Kept as one table so the runtime shortcut (`keyEquivalent`) and the
+    /// string the user is shown (`displayString`) can never drift apart —
+    /// previously the two switch statements lived in different files and had
+    /// to be maintained in lockstep by hand.
+    private static let namedKeys: [String: (equivalent: KeyEquivalent, symbol: String)] = [
+        "return":    (.return,     "\u{21A9}"),   // ↩
+        "enter":     (.return,     "\u{21A9}"),
+        "delete":    (.delete,     "\u{232B}"),   // ⌫
+        "backspace": (.delete,     "\u{232B}"),
+        "tab":       (.tab,        "\u{21E5}"),   // ⇥
+        "escape":    (.escape,     "\u{238B}"),   // ⎋
+        "space":     (.space,      "\u{2423}"),   // ␣
+        "up":        (.upArrow,    "\u{2191}"),   // ↑
+        "down":      (.downArrow,  "\u{2193}"),   // ↓
+        "left":      (.leftArrow,  "\u{2190}"),   // ←
+        "right":     (.rightArrow, "\u{2192}"),   // →
+    ]
+
+    /// The SwiftUI key for this binding, or `nil` if `key` cannot represent
+    /// one.
+    ///
+    /// **Why this is failable.** `key` is decoded from JSON in `UserDefaults`,
+    /// so it is not guaranteed to be a single character — a corrupted or
+    /// hand-edited defaults entry can supply `""` or `"ctrl+k"`. The previous
+    /// implementation built `KeyEquivalent(Character(binding.key))`
+    /// unconditionally, and `Character.init` **traps** on an empty string or
+    /// one holding more than a single grapheme cluster. That is a crash on
+    /// launch-time shortcut resolution, from data the app itself persisted.
+    /// Returning `nil` degrades to the caller's fallback instead.
+    var keyEquivalent: KeyEquivalent? {
+        if let named = Self.namedKeys[key.lowercased()] {
+            return named.equivalent
+        }
+        guard key.count == 1, let character = key.first else {
+            return nil
+        }
+        return KeyEquivalent(character)
+    }
+
+    /// The modifier set for this binding. Unrecognised modifier names are
+    /// ignored rather than failing the whole binding.
+    var eventModifiers: EventModifiers {
+        var result: EventModifiers = []
+        for mod in modifiers {
+            switch mod.lowercased() {
+            case "command", "cmd": result.insert(.command)
+            case "shift":          result.insert(.shift)
+            case "option", "alt":  result.insert(.option)
+            case "control", "ctrl": result.insert(.control)
+            default:               break
+            }
+        }
+        return result
+    }
+
+    /// A human-readable rendering such as `⌘1` or `⌘⇧O`, suitable for menu
+    /// titles, help tooltips and the shortcut editor.
+    ///
+    /// Derived from the same `namedKeys` table as `keyEquivalent`, so what the
+    /// user is shown always matches what the app actually binds.
+    var displayString: String {
+        var symbols: [String] = []
+        for mod in modifiers {
+            switch mod.lowercased() {
+            case "command", "cmd":  symbols.append("\u{2318}")   // ⌘
+            case "shift":           symbols.append("\u{21E7}")   // ⇧
+            case "option", "alt":   symbols.append("\u{2325}")   // ⌥
+            case "control", "ctrl": symbols.append("\u{2303}")   // ⌃
+            default:                break
+            }
+        }
+        let keyDisplay = Self.namedKeys[key.lowercased()]?.symbol ?? key.uppercased()
+        return symbols.joined() + keyDisplay
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +270,30 @@ final class KeyboardShortcutManager {
         return makeKeyboardShortcut(from: shortcut)
     }
 
+    /// Returns the human-readable rendering (e.g. `⌘O`) of the shortcut
+    /// currently bound to `action`, or `nil` if no usable binding matches.
+    ///
+    /// Use this for help tooltips and menu titles instead of hard-coding a
+    /// key combination in prose — otherwise a user who rebinds an action is
+    /// shown a shortcut that no longer works.
+    ///
+    /// **Returns `nil` for an unusable binding, not a partial rendering.**
+    /// A binding whose `key` cannot produce a `KeyEquivalent` (an empty or
+    /// multi-character string from hand-edited or corrupted `UserDefaults`)
+    /// is rejected by `binding(for:)`, so the caller falls back to its
+    /// factory shortcut. If this method still rendered that binding, it would
+    /// return something like a bare `⌘` and the tooltip would advertise a
+    /// combination the app has not bound — reintroducing exactly the drift
+    /// between displayed and bound shortcuts that this API exists to remove.
+    /// The two methods must agree on which bindings are usable.
+    func displayString(for action: String) -> String? {
+        guard let binding = bindings.first(where: { $0.action == action }),
+              binding.keyEquivalent != nil else {
+            return nil
+        }
+        return binding.displayString
+    }
+
     // MARK: - Conflict Detection
 
     /// Detects conflicting shortcut bindings where two or more actions
@@ -240,48 +344,13 @@ final class KeyboardShortcutManager {
     /// `EventModifiers`.
     ///
     /// - Parameter binding: The binding to convert.
-    /// - Returns: A SwiftUI `KeyboardShortcut`.
-    private func makeKeyboardShortcut(from binding: ShortcutBinding) -> KeyboardShortcut {
-        let keyEquivalent: KeyEquivalent
-        switch binding.key.lowercased() {
-        case "return", "enter":
-            keyEquivalent = .return
-        case "delete", "backspace":
-            keyEquivalent = .delete
-        case "tab":
-            keyEquivalent = .tab
-        case "escape":
-            keyEquivalent = .escape
-        case "space":
-            keyEquivalent = .space
-        case "up":
-            keyEquivalent = .upArrow
-        case "down":
-            keyEquivalent = .downArrow
-        case "left":
-            keyEquivalent = .leftArrow
-        case "right":
-            keyEquivalent = .rightArrow
-        default:
-            keyEquivalent = KeyEquivalent(Character(binding.key))
+    /// - Returns: A SwiftUI `KeyboardShortcut`, or `nil` when `binding.key`
+    ///   cannot represent one (see `ShortcutBinding.keyEquivalent` for why a
+    ///   persisted binding may be unusable).
+    private func makeKeyboardShortcut(from binding: ShortcutBinding) -> KeyboardShortcut? {
+        guard let keyEquivalent = binding.keyEquivalent else {
+            return nil
         }
-
-        var eventModifiers: EventModifiers = []
-        for mod in binding.modifiers {
-            switch mod.lowercased() {
-            case "command", "cmd":
-                eventModifiers.insert(.command)
-            case "shift":
-                eventModifiers.insert(.shift)
-            case "option", "alt":
-                eventModifiers.insert(.option)
-            case "control", "ctrl":
-                eventModifiers.insert(.control)
-            default:
-                break
-            }
-        }
-
-        return KeyboardShortcut(keyEquivalent, modifiers: eventModifiers)
+        return KeyboardShortcut(keyEquivalent, modifiers: binding.eventModifiers)
     }
 }

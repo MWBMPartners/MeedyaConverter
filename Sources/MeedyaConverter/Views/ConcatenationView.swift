@@ -18,6 +18,14 @@ import ConverterEngine
 /// duration slider (filter mode only), compatibility warnings for
 /// demuxer mode, and output path selection.
 ///
+/// A "Start" action runs the lossless demuxer-concat path
+/// (`VideoConcatenator.buildDemuxerConcatArguments`) through a real
+/// `FFmpegProcessController`, surfacing genuine progress and errors and
+/// verifying the joined output file on disk before reporting success. The
+/// re-encode filter path (with optional crossfade) is not yet wired to an
+/// executable action — its controls stay visible but disabled with an
+/// honest explanation rather than silently doing nothing.
+///
 /// Phase 9 — Video Concatenation and Joining (Issue #322)
 struct ConcatenationView: View {
 
@@ -51,6 +59,15 @@ struct ConcatenationView: View {
     /// Error message to display in an alert.
     @State private var errorMessage: String?
 
+    /// Error text for the Concatenate action specifically.
+    ///
+    /// Deliberately separate from `errorMessage`, which backs the file-import
+    /// alert. Sharing one property meant that dismissing an import alert left
+    /// `errorMessage` populated, and the Concatenate section then rendered it
+    /// as inline red text — implying the join had failed when it had never
+    /// been attempted.
+    @State private var concatErrorMessage: String?
+
     /// Whether the error alert is presented.
     @State private var showError = false
 
@@ -59,6 +76,42 @@ struct ConcatenationView: View {
 
     /// Whether a drag operation is hovering over this view.
     @State private var isDragTargeted = false
+
+    // MARK: - Concatenation Execution State (Issue #322)
+
+    /// Whether a concatenation operation is currently running.
+    @State private var isRunning = false
+
+    /// Success message to display after the concatenation genuinely
+    /// completes and the output file has been verified on disk.
+    @State private var successMessage: String?
+
+    /// Latest progress fraction (0.0 to 1.0) reported by FFmpeg while a
+    /// concatenation is running, if known.
+    @State private var progressFraction: Double?
+
+    /// The in-flight concatenation task, retained so it can be cancelled
+    /// when the user navigates away from this view while a join is
+    /// running. Mirrors `VideoTrimmerView.applyTask`.
+    @State private var concatTask: Task<Void, Never>?
+
+    /// The FFmpeg process controller for the pass currently running,
+    /// retained so `cancelConcatenation()` can stop the running process
+    /// rather than merely abandoning it.
+    @State private var currentController: FFmpegProcessController?
+
+    /// Whether the Start button should be disabled: while a join is
+    /// running, with fewer than two files, with no output path chosen,
+    /// while the re-encode filter path is selected (not yet wired — see
+    /// the Crossfade section), or while demuxer compatibility validation
+    /// reports a blocking problem.
+    private var startDisabled: Bool {
+        isRunning
+            || files.count < 2
+            || outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || method != .demuxer
+            || !compatibilityWarnings.isEmpty
+    }
 
     // MARK: - Body
 
@@ -83,6 +136,7 @@ struct ConcatenationView: View {
             }
         }
         .navigationTitle("Concatenation")
+        .onDisappear { cancelConcatenation() }
         // Drop video files to add to the concatenation list (Issue #366).
         .onDrop(
             of: [.fileURL, .movie, .video, .audio],
@@ -254,32 +308,47 @@ struct ConcatenationView: View {
                 }
             }
 
-            // Crossfade settings (filter mode only)
+            // Crossfade settings (filter mode only).
+            //
+            // Honesty note (Issue #322): `VideoConcatenator.buildFilterConcatArguments`
+            // (the crossfade/re-encode builder) has no caller anywhere in this
+            // app yet — only the demuxer path below is wired to a real FFmpeg
+            // invocation. Rather than let this control silently do nothing,
+            // it stays visible but disabled with an honest explanation.
             if method == .filter {
                 Section("Crossfade") {
                     Toggle("Enable Crossfade", isOn: $crossfadeEnabled)
+                        .disabled(true)
 
-                    if crossfadeEnabled {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Duration")
-                                Spacer()
-                                Text(
-                                    String(format: "%.1fs", crossfadeDuration)
-                                )
-                                .font(.body.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Duration")
+                            Spacer()
+                            Text(
+                                String(format: "%.1fs", crossfadeDuration)
+                            )
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        }
 
-                            Slider(
-                                value: $crossfadeDuration,
-                                in: 0.1...5.0,
-                                step: 0.1
-                            ) {
-                                Text("Crossfade Duration")
-                            }
+                        Slider(
+                            value: $crossfadeDuration,
+                            in: 0.1...5.0,
+                            step: 0.1
+                        ) {
+                            Text("Crossfade Duration")
                         }
                     }
+                    .disabled(true)
+
+                    Label(
+                        "Re-encode concatenation with crossfade is not yet "
+                        + "available — these controls have no effect. Select "
+                        + "\"Lossless (Demuxer)\" above to concatenate.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                 }
             }
 
@@ -292,6 +361,59 @@ struct ConcatenationView: View {
                     Button("Browse...") {
                         chooseOutputPath()
                     }
+                }
+            }
+
+            // Start action, progress, and results (Issue #322).
+            Section("Concatenate") {
+                if method == .filter {
+                    Text(
+                        "Re-encode concatenation is not yet available in "
+                        + "this build. Select \"Lossless (Demuxer)\" to "
+                        + "concatenate."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+
+                if isRunning {
+                    if let progressFraction {
+                        ProgressView(value: progressFraction)
+                    } else {
+                        ProgressView()
+                    }
+                }
+
+                if let concatErrorMessage {
+                    Text(concatErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                // Only ever set after the FFmpeg process genuinely
+                // completes and its output file has been verified to
+                // exist on disk (see `runDemuxerConcat`).
+                if let successMessage {
+                    Text(successMessage)
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+
+                HStack {
+                    Spacer()
+                    Button {
+                        startConcatenation()
+                    } label: {
+                        if isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.trailing, 4)
+                        }
+                        Text(isRunning ? "Concatenating…" : "Start")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(startDisabled)
+                    .accessibilityLabel("Start joining the input files into the output")
                 }
             }
         }
@@ -389,6 +511,159 @@ struct ConcatenationView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             outputPath = url.path
+        }
+    }
+
+    // MARK: - Concatenation Execution (Issue #322)
+
+    /// Starts the configured concatenation.
+    ///
+    /// Mirrors the execution pattern proven in
+    /// `VideoTrimmerView.applyTrim()` / `runSnipAndConcat()` (Issue #444):
+    /// locate FFmpeg via `FFmpegBundleManager`, build arguments with
+    /// `VideoConcatenator.buildDemuxerConcatArguments`, run them through
+    /// `FFmpegProcessController.startEncoding(arguments:)`, and only report
+    /// success once the process has genuinely exited zero *and* the output
+    /// file has been verified to exist on disk.
+    ///
+    /// Only the demuxer (lossless) method is wired to a real invocation —
+    /// `startDisabled` keeps the Start button disabled whenever the filter
+    /// (re-encode/crossfade) method is selected, so this guard is a
+    /// defence-in-depth check rather than the primary gate.
+    ///
+    /// `ConcatenationView` is a `struct: View`, so — like
+    /// `VideoTrimmerView` — its methods are implicitly main-actor isolated
+    /// via `View` conformance, and a plain `Task { }` here inherits that
+    /// isolation. Every value captured into the task (`files`, `outputPath`)
+    /// is `Sendable`, so nothing unsafe crosses the closure boundary. The
+    /// one genuinely blocking call — `FFmpegBundleManager.locateFFmpeg()` —
+    /// is pulled into a `Task.detached` that returns only a `Sendable`
+    /// `String` and never touches `self`/`@State`.
+    private func startConcatenation() {
+        guard files.count >= 2 else {
+            concatErrorMessage = "Add at least two files to concatenate."
+            return
+        }
+        let trimmedOutputPath = outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOutputPath.isEmpty else {
+            concatErrorMessage = "Choose an output location before starting."
+            return
+        }
+        guard method == .demuxer else {
+            concatErrorMessage = "Re-encode concatenation is not yet available. Select \"Lossless (Demuxer)\" to concatenate."
+            return
+        }
+        guard compatibilityWarnings.isEmpty else {
+            concatErrorMessage = "Resolve the compatibility warnings above before concatenating."
+            return
+        }
+
+        concatErrorMessage = nil
+        successMessage = nil
+        progressFraction = nil
+        isRunning = true
+
+        let filesToConcat = files
+        let outputPathCopy = trimmedOutputPath
+
+        concatTask = Task {
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                concatErrorMessage = "FFmpeg could not be found. Install FFmpeg or configure its location in Settings before concatenating."
+                isRunning = false
+                return
+            }
+
+            do {
+                try await runDemuxerConcat(
+                    ffmpegPath: ffmpegPath,
+                    files: filesToConcat,
+                    outputPath: outputPathCopy
+                )
+                successMessage = "Concatenation complete. Output written to \(outputPathCopy)."
+            } catch is CancellationError {
+                // Cancelled by the user (or the view disappeared) — no
+                // success/error banner; cancelConcatenation() already reset
+                // state.
+            } catch {
+                concatErrorMessage = "Concatenation failed: \(error.localizedDescription)"
+            }
+
+            currentController = nil
+            isRunning = false
+        }
+    }
+
+    /// Cancel an in-progress Start operation.
+    ///
+    /// Stops the currently-running FFmpeg process (if any) and cancels the
+    /// concatenation `Task` so no process or task is left running in the
+    /// background after the user navigates away from this view mid-join.
+    private func cancelConcatenation() {
+        currentController?.stopEncoding()
+        currentController = nil
+        concatTask?.cancel()
+        concatTask = nil
+        isRunning = false
+    }
+
+    /// Runs the lossless demuxer-concat path: writes the concat file list
+    /// produced by `VideoConcatenator.buildDemuxerConcatArguments` to a
+    /// scratch temp file, substitutes it into the argument template, and
+    /// runs a single FFmpeg pass to completion. Throws if FFmpeg exits
+    /// non-zero or no output file is actually written. The scratch
+    /// directory is always removed afterwards, whether the operation
+    /// succeeds or fails.
+    private func runDemuxerConcat(
+        ffmpegPath: String,
+        files: [URL],
+        outputPath: String
+    ) async throws {
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("concat_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+        let (concatListContent, argsTemplate) = VideoConcatenator.buildDemuxerConcatArguments(
+            files: files,
+            outputPath: outputPath
+        )
+
+        let listFileURL = scratchDir.appendingPathComponent("concat_list.txt")
+        try concatListContent.write(to: listFileURL, atomically: true, encoding: .utf8)
+
+        let arguments = argsTemplate.map {
+            $0 == "<CONCAT_LIST_FILE>" ? listFileURL.path : $0
+        }
+
+        if Task.isCancelled { throw CancellationError() }
+
+        let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+        currentController = controller
+
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await progress in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+            progressFraction = progress.fractionComplete
+        }
+        if Task.isCancelled { throw CancellationError() }
+
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
+
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: controller.exitCode ?? -1,
+                stderr: "FFmpeg reported success but no output file was found at \(outputPath)."
+            )
         }
     }
 }

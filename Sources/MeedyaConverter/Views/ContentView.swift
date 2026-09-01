@@ -22,6 +22,11 @@ struct ContentView: View {
 
     @Environment(AppViewModel.self) private var viewModel
 
+    /// The user's configured keyboard shortcuts, so that the toolbar's
+    /// live commands track any rebinding made in Settings → Keyboard
+    /// Shortcuts rather than staying hardcoded (Issue #331).
+    @Environment(KeyboardShortcutManager.self) private var shortcutManager
+
     // MARK: - State
 
     /// Whether a drag operation is currently hovering over the window.
@@ -193,8 +198,16 @@ struct ContentView: View {
             } label: {
                 Label("Import", systemImage: "plus")
             }
-            .keyboardShortcut("o", modifiers: .command)
-            .help("Import media files (Cmd+O)")
+            // Reflects the user's "file.import" binding from Settings →
+            // Keyboard Shortcuts, falling back to the factory Cmd+O when
+            // no binding is found (Issue #331).
+            .keyboardShortcut(
+                shortcutManager.binding(for: "file.import") ?? KeyboardShortcut("o", modifiers: .command)
+            )
+            // The tooltip must name the shortcut that is actually bound, not a
+            // hard-coded one — otherwise rebinding in Settings leaves the help
+            // text advertising a key combination that no longer works.
+            .help("Import media files (\(shortcutManager.displayString(for: "file.import") ?? "\u{2318}O"))")
             .accessibilityLabel("Import media files")
         }
 
@@ -205,9 +218,14 @@ struct ContentView: View {
             } label: {
                 Label("Encode", systemImage: "play.fill")
             }
-            .keyboardShortcut(.return, modifiers: .command)
+            // Reflects the user's "encode.start" binding from Settings →
+            // Keyboard Shortcuts, falling back to the factory Cmd+Return
+            // when no binding is found (Issue #331).
+            .keyboardShortcut(
+                shortcutManager.binding(for: "encode.start") ?? KeyboardShortcut(.return, modifiers: .command)
+            )
             .disabled(viewModel.selectedFile == nil)
-            .help("Add selected file to encoding queue (Cmd+Return)")
+            .help("Add selected file to encoding queue (\(shortcutManager.displayString(for: "encode.start") ?? "\u{2318}\u{21A9}"))")
             .accessibilityLabel("Add to encoding queue")
         }
 

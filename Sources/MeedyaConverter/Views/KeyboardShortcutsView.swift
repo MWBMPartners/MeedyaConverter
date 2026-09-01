@@ -148,53 +148,15 @@ struct KeyboardShortcutsView: View {
 
     /// Builds a human-readable display string for a shortcut binding.
     ///
-    /// Combines modifier symbols (Cmd, Shift, Opt, Ctrl) with the key
-    /// name into a compact representation like "⌘1" or "⌘⇧O".
+    /// Delegates to `ShortcutBinding.displayString`, which shares its key
+    /// table with `ShortcutBinding.keyEquivalent`. This used to be a private
+    /// copy of the same switch statement, which meant the symbol shown here
+    /// and the key actually bound at runtime were maintained separately and
+    /// could drift.
     ///
     /// - Parameter binding: The shortcut binding to display.
-    /// - Returns: A formatted shortcut string.
+    /// - Returns: A formatted shortcut string such as `⌘1` or `⌘⇧O`.
     private func shortcutDisplayString(for binding: ShortcutBinding) -> String {
-        var symbols: [String] = []
-
-        for mod in binding.modifiers {
-            switch mod.lowercased() {
-            case "command", "cmd":
-                symbols.append("\u{2318}")   // ⌘
-            case "shift":
-                symbols.append("\u{21E7}")   // ⇧
-            case "option", "alt":
-                symbols.append("\u{2325}")   // ⌥
-            case "control", "ctrl":
-                symbols.append("\u{2303}")   // ⌃
-            default:
-                break
-            }
-        }
-
-        let keyDisplay: String
-        switch binding.key.lowercased() {
-        case "return", "enter":
-            keyDisplay = "\u{21A9}"  // ↩
-        case "delete", "backspace":
-            keyDisplay = "\u{232B}"  // ⌫
-        case "tab":
-            keyDisplay = "\u{21E5}"  // ⇥
-        case "escape":
-            keyDisplay = "\u{238B}"  // ⎋
-        case "space":
-            keyDisplay = "\u{2423}"  // ␣
-        case "up":
-            keyDisplay = "\u{2191}"  // ↑
-        case "down":
-            keyDisplay = "\u{2193}"  // ↓
-        case "left":
-            keyDisplay = "\u{2190}"  // ←
-        case "right":
-            keyDisplay = "\u{2192}"  // →
-        default:
-            keyDisplay = binding.key.uppercased()
-        }
-
-        return symbols.joined() + keyDisplay
+        binding.displayString
     }
 }

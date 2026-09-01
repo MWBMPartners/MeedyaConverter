@@ -111,49 +111,78 @@ final class ScriptingBridge: NSObject {
 
     // MARK: - Synchronous probe/async bridge (Issue #451)
 
-    /// Thread-safe box carrying the probe reply string from the detached
-    /// probing task back to the semaphore-waiting caller in `probe(file:)`.
+    /// Thread-safe, single-write result box used only by the RunLoop-pump
+    /// fallback path inside `probe(file:)` — see that method's doc
+    /// comment for exactly when the fallback, rather than the primary
+    /// suspend/resume path, applies.
     ///
-    /// `probe(file:)` must return a `String` synchronously: it is invoked
-    /// directly by Cocoa's Open Scripting Architecture as a "direct
-    /// parameter" command (see `MeedyaConverter.sdef`, which declares no
-    /// `<cocoa class="...">` override for `probe`), so OSA dispatches it
-    /// on the main thread via ordinary message send and expects an
-    /// immediate reply. There is no async/completion-handler
-    /// accommodation for that dispatch style — a genuinely non-blocking
-    /// version of this command would require restructuring `probe` as an
-    /// `NSScriptCommand` subclass using `suspendExecution()` /
-    /// `resumeExecutionWithResult(_:)`, a materially larger architecture
-    /// change that is out of scope here. A `DispatchSemaphore` therefore
-    /// still bridges the synchronous return to the async `FFmpegProbe`
-    /// call, and the call still blocks the calling (main) thread for up
-    /// to the same 60-second cap as before — unchanged behaviour.
-    ///
-    /// What actually changes for Issue #451 is *how* the result crosses
-    /// that bridge. The previous implementation captured a
-    /// `nonisolated(unsafe) var` local variable by reference into a
-    /// `Task.detached` closure and mutated it there — a shape Swift 6
-    /// flags as risking a data race, because the compiler has no way to
-    /// see that the semaphore establishes a happens-before edge between
-    /// the write and the later read. `ProbeResultBox` replaces the bare
-    /// local var with an explicitly `Sendable` reference type — an
-    /// `NSLock`-protected box, the same pattern already proven safe by
-    /// `FFmpegProbe.ProbeRunState` in this codebase — so no
-    /// isolation-unsafe capture crosses the `Task.detached` boundary.
+    /// `_value` starts `nil` and is written at most once, by the detached
+    /// probing task, when `FFmpegProbe.analyze(url:)` finishes (or
+    /// fails). `probe(file:)`'s polling loop only ever reads `value`; it
+    /// never writes here itself, so there is no writer race to arbitrate
+    /// — this box only has to make that single write visible to the one
+    /// reader safely, which the `NSLock` (the same pattern already proven
+    /// safe by `FFmpegProbe.ProbeRunState` in this codebase) provides.
     private final class ProbeResultBox: @unchecked Sendable {
         private let lock = NSLock()
-        private var _value: String
+        private var _value: String?
 
-        init(_ initial: String) {
-            self._value = initial
-        }
-
-        var value: String {
+        /// The probe's finished JSON/error string, or `nil` while the
+        /// detached probing task is still running.
+        var value: String? {
             lock.withLock { _value }
         }
 
         func setValue(_ newValue: String) {
             lock.withLock { _value = newValue }
+        }
+    }
+
+    /// Run `FFmpegProbe.analyze(url:)` and format its outcome as the reply
+    /// string `probe(file:)` hands back, racing it against a 60-second
+    /// timeout entirely with structured concurrency.
+    ///
+    /// Both `probe(file:)` code paths (the primary suspend/resume path
+    /// and the RunLoop-pump fallback) call this from a single
+    /// `Task.detached`, so it is `nonisolated` and `static` — it must not
+    /// default to this type's `@MainActor` isolation, or awaiting it from
+    /// a detached task would hop straight back onto the main thread and
+    /// defeat the point of detaching in the first place.
+    ///
+    /// The probe and the timeout run as sibling child tasks in one
+    /// `TaskGroup`: whichever finishes first is returned, and
+    /// `cancelAll()` then cancels the other. This is the sole place the
+    /// 60-second cap is enforced, so there is exactly one winner by
+    /// construction — no separate gate or flag is needed to arbitrate a
+    /// race between independent top-level tasks.
+    nonisolated private static func runProbe(prober: FFmpegProbe, fileURL: URL) async -> String {
+        await withTaskGroup(of: String.self) { group in
+            group.addTask {
+                do {
+                    let mediaFile = try await prober.analyze(url: fileURL)
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    let data = try encoder.encode(mediaFile)
+                    return String(data: data, encoding: .utf8) ?? Self.formatError("Failed to encode JSON.")
+                } catch {
+                    // F-008: sanitise the localizedDescription before
+                    // returning. Foundation can include filesystem
+                    // paths (the resolved ffprobe binary location, the
+                    // input file path with its on-disk encoding) in
+                    // error messages; passing them through the
+                    // sanitiser strips any embedded control codes that
+                    // would otherwise allow log forgery from the
+                    // AppleScript caller's perspective.
+                    return Self.formatError("Probe failed — \(error.localizedDescription)")
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                return Self.formatError("Probe timed out. (Backstop fired at 65s; runProbe's own 60s cap normally wins first.)")
+            }
+            let first = await group.next() ?? Self.formatError("Probe did not complete.")
+            group.cancelAll()
+            return first
         }
     }
 
@@ -268,9 +297,63 @@ final class ScriptingBridge: NSObject {
     /// Uses FFprobe (via ConverterEngine) to analyse the file's streams,
     /// format, duration, codecs, and other technical metadata.
     ///
+    /// ### Precondition: AppleScript dispatch is not live yet (Issue #302)
+    /// Read this before trusting the paragraph below. Nothing in this target
+    /// registers `ScriptingBridge.shared` or assigns its `engine`/`queue`/
+    /// `profileStore`, and `MeedyaConverter.sdef` contains **no** `<cocoa>`
+    /// mapping elements at all (`grep -c "<cocoa" …` returns 0), so macOS
+    /// currently has no route to dispatch command code `MDYAprob` to this
+    /// selector. The suspend/resume design described next is therefore how
+    /// this method is *built to behave once #302 activates scripting* — it is
+    /// not a description of behaviour observable today. The fallback path at
+    /// the end of this method is what actually runs if anything calls
+    /// `probe(file:)` in the meantime.
+    ///
+    /// ### Why this no longer blocks the calling thread (Issue #451)
+    /// `FFmpegProbe.analyze(url:)` is `async`, but this method is designed to
+    /// be invoked by Cocoa's Open Scripting Architecture as a plain
+    /// Objective-C message send: `MeedyaConverter.sdef` declares no
+    /// `<cocoa class="...">` override for the `probe` command, so there
+    /// is no custom `NSScriptCommand` subclass anywhere in the dispatch
+    /// path to hook. Even without one, Cocoa Scripting still exposes the
+    /// hook this needs on the *generic* command object it builds for
+    /// every dispatch: `NSScriptCommand.current()` returns that in-flight
+    /// command from anywhere in the handler's call stack — including a
+    /// plain `@objc` method like this one — and calling
+    /// `suspendExecution()` on it tells Cocoa Scripting to hold the Apple
+    /// Event reply open. The eventual `resumeExecution(withResult:)` call
+    /// supplies the real return value later, from any thread, once the
+    /// async probe actually finishes (see `NSScriptCommand.h`: "This
+    /// method may be invoked in any thread, not just the one in which
+    /// the corresponding invocation of -suspendExecution occurred.").
+    /// That is the primary path below: the calling (main) thread is
+    /// released immediately after kicking off a single detached task,
+    /// never parked on a semaphore. That task's `resumeExecution
+    /// (withResult:)` call delivers whatever `runProbe(prober:fileURL:)`
+    /// comes back with — the real JSON/error reply, or the 60-second
+    /// timeout error if the probe itself didn't win that race — so a
+    /// probe that never returns still fails via the documented timeout
+    /// rather than hanging forever.
+    ///
+    /// The one caller shape that primary path cannot cover is
+    /// `probe(file:)` invoked directly in Swift rather than through a
+    /// live Apple Event dispatch — there, `NSScriptCommand.current()`
+    /// returns `nil` because there is no in-flight command to suspend,
+    /// and this method's own return value is genuinely the only result
+    /// that exists. Nothing in this target calls `probe(file:)` that way
+    /// today, but the fallback below still avoids `DispatchSemaphore`:
+    /// it polls a `ProbeResultBox` written once by the detached probe
+    /// task, pumping `RunLoop.current` between polls so the calling
+    /// thread keeps servicing timers, other Apple Events, and UI input
+    /// instead of blocking outright on a semaphore wait.
+    ///
     /// - Parameter file: Absolute POSIX path to the media file.
     /// - Returns: A JSON string containing the file's media information,
     ///   or an error message prefixed with "ERROR:" if probing fails.
+    ///   When invoked as a live scripting command, this return value is a
+    ///   placeholder that Cocoa Scripting discards once
+    ///   `resumeExecution(withResult:)` delivers the real reply — see
+    ///   above.
     @objc func probe(file: String) -> String {
         // F-008 length cap.
         if let err = Self.enforceLengthCap(file, label: "file") { return err }
@@ -284,58 +367,52 @@ final class ScriptingBridge: NSObject {
             return Self.formatError("File not found: \(file)")
         }
 
-        // Probing is async but AppleScript expects a synchronous return.
-        // We use FFmpegProbe directly via a synchronous Process invocation
-        // on a background queue, bridging back with a semaphore. The
-        // FFmpegProbe type is Sendable, so it can safely cross isolation.
         guard let ffprobePath = engine.ffprobeInfo?.path else {
             return Self.formatError("FFprobe not configured. Call configure() first.")
         }
 
-        // Run the probe synchronously using Process (FFmpegProbe.analyzeSync).
-        // Since FFmpegProbe's analyze(url:) is async, we invoke it from a
-        // detached task and collect the result via `ProbeResultBox`
-        // (Issue #451) — a thread-safe Sendable box, never a captured
-        // mutable local var — so the write-then-signal / wait-then-read
-        // handoff below is provably safe to the Swift 6 concurrency
-        // checker, not just safe in practice.
-        let resultBox = ProbeResultBox(Self.formatError("Probe did not complete."))
+        // FFmpegProbe is Sendable, so it can safely cross into the
+        // detached probing task started by either path below.
         let prober = FFmpegProbe(ffprobePath: ffprobePath)
-        let semaphore = DispatchSemaphore(value: 0)
 
-        Task.detached {
-            do {
-                let mediaFile = try await prober.analyze(url: fileURL)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let data = try encoder.encode(mediaFile)
-                resultBox.setValue(
-                    String(data: data, encoding: .utf8) ?? Self.formatError("Failed to encode JSON.")
-                )
-            } catch {
-                // F-008: sanitise the localizedDescription before
-                // returning. Foundation can include filesystem paths
-                // (the resolved ffprobe binary location, the input
-                // file path with its on-disk encoding) in error
-                // messages; passing them through the sanitiser
-                // strips any embedded control codes that would
-                // otherwise allow log forgery from the AppleScript
-                // caller's perspective.
-                resultBox.setValue(Self.formatError("Probe failed — \(error.localizedDescription)"))
+        if let currentCommand = NSScriptCommand.current() {
+            // Primary path (Issue #451): suspend the live command now
+            // and resume it later with the real result — see the doc
+            // comment above. A single detached task both runs the race
+            // in `runProbe` and delivers its outcome, so there is only
+            // one place capturing `currentCommand` to reason about.
+            currentCommand.suspendExecution()
+            Task.detached {
+                let result = await Self.runProbe(prober: prober, fileURL: fileURL)
+                currentCommand.resumeExecution(withResult: result)
             }
-            semaphore.signal()
+
+            return Self.formatError(
+                "Probe pending — Cocoa Scripting discards this placeholder once resumeExecution(withResult:) delivers the real reply."
+            )
         }
 
-        // Wait with a generous timeout (media probing can take a few seconds
-        // for large files on slow storage). Note: this blocks the main thread,
-        // which is acceptable for AppleScript's synchronous calling convention
-        // (see `ProbeResultBox` above for why this handoff can no longer race).
-        let timeout = semaphore.wait(timeout: .now() + 60)
-        if timeout == .timedOut {
-            return Self.formatError("Probe timed out after 60 seconds.")
+        // Fallback path: no live command to suspend (see doc comment
+        // above), so the value returned from this call really is the
+        // final result. Poll a single-write `ProbeResultBox`, pumping
+        // the run loop between polls rather than blocking it outright.
+        // `runProbe` already enforces the 60-second cap internally; the
+        // deadline below is only a defensive backstop in case that race
+        // is somehow delayed beyond its own timeout.
+        let resultBox = ProbeResultBox()
+        Task.detached {
+            let result = await Self.runProbe(prober: prober, fileURL: fileURL)
+            resultBox.setValue(result)
         }
 
-        return resultBox.value
+        let deadline = Date().addingTimeInterval(65)
+        while resultBox.value == nil {
+            if Date() >= deadline {
+                return Self.formatError("Probe timed out after 60 seconds.")
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return resultBox.value ?? Self.formatError("Probe did not complete.")
     }
 
     /// Return a list of all available encoding profile names.

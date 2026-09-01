@@ -35,12 +35,54 @@ struct SceneDetectorView: View {
     @State private var manualTimestamp: String = ""
     @State private var errorMessage: String?
 
+    /// Fractional progress (0.0–1.0) of the in-flight detection pass, taken
+    /// from `FFmpegProgressInfo.fractionComplete` as FFmpeg's `-progress`
+    /// output arrives. `nil` while no run is active, or before the first
+    /// progress tick with a known fraction arrives (an indeterminate
+    /// spinner is shown in that case instead).
+    @State private var detectionProgress: Double?
+
+    /// The in-flight detection task, retained so it can be cancelled if
+    /// the user clicks Cancel or navigates away mid-detection. Mirrors
+    /// `AnimatedImageView.generationTask`.
+    @State private var detectionTask: Task<Void, Never>?
+
+    /// The FFmpeg process currently running the scene-detection pass,
+    /// retained so `cancelDetection()` can stop it. Mirrors
+    /// `AnimatedImageView.currentController`.
+    @State private var currentController: FFmpegProcessController?
+
+    /// Why "Apply to Job" is permanently disabled (Issue #288).
+    ///
+    /// `EncodingJobConfig`/`EncodingProfile` (`ConverterEngine/Encoding
+    /// /EncodingJob.swift`, `EncodingProfile.swift`) have no field for
+    /// attaching an external chapters/FFmetadata file to a job — the
+    /// closest mechanisms are `EncodingJobConfig.extraArguments` /
+    /// `FFmpegArgumentBuilder.additionalInputs`, but `FFmpegArgumentBuilder
+    /// .build()` already hard-codes `-map_chapters 0` whenever
+    /// `copySourceMetadata` is true (its default), and nothing exposes an
+    /// override for that from `EncodingJobConfig`. There is also no
+    /// live "current job" object in `AppViewModel` for this view to reach
+    /// into: jobs are materialised only once, inside
+    /// `AppViewModel.enqueueSelectedFile()`, built fresh from
+    /// `selectedFile` + `selectedProfile` at that moment. Wiring this up
+    /// properly needs a staged value on `AppViewModel` — mirroring
+    /// `pendingManualCropFilter` — consumed there, which is out of this
+    /// view's scope. Rather than fake success (the original bug), the
+    /// button stays disabled and honestly labelled until that lands.
+    private let applyToJobUnavailableReason =
+        "Chapters can't be attached to a job yet — the encoding job model has no field for external chapter metadata. Use \"Export Chapters\" above and inject the file manually."
+
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
             // Detection controls
             controlsBar
+
+            if let errorMessage {
+                errorBanner(message: errorMessage)
+            }
 
             Divider()
 
@@ -60,6 +102,28 @@ struct SceneDetectorView: View {
             }
         }
         .navigationTitle("Scene Detection")
+        .onDisappear {
+            cancelDetection()
+        }
+    }
+
+    /// Banner shown when scene detection fails or finds nothing, mirroring
+    /// `BitrateHeatmapView.exportErrorBanner(message:)`.
+    private func errorBanner(message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Dismiss") {
+                errorMessage = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Controls Bar
@@ -98,13 +162,18 @@ struct SceneDetectorView: View {
 
             // Detect button
             Button {
-                Task { await detectScenes() }
+                detectionTask = Task { await detectScenes() }
             } label: {
                 Label("Detect Scenes", systemImage: "film.stack")
             }
             .buttonStyle(.borderedProminent)
             .disabled(viewModel.selectedFile == nil || isDetecting)
             .accessibilityLabel("Run scene detection on selected file")
+
+            if isDetecting {
+                Button("Cancel", action: cancelDetection)
+                    .accessibilityLabel("Cancel scene detection")
+            }
 
             Spacer()
 
@@ -135,8 +204,16 @@ struct SceneDetectorView: View {
 
     private var detectingView: some View {
         VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.large)
+            if let detectionProgress {
+                ProgressView(value: detectionProgress)
+                    .frame(maxWidth: 240)
+                Text("\(Int((detectionProgress * 100).rounded()))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+            }
             Text("Detecting scene changes...")
                 .font(.headline)
                 .foregroundStyle(.secondary)
@@ -150,24 +227,11 @@ struct SceneDetectorView: View {
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            ContentUnavailableView(
-                "No Scenes Detected",
-                systemImage: "film.stack",
-                description: Text("Select a video file and click \"Detect Scenes\" to identify scene changes and generate chapter markers.")
-            )
-
-            if let errorMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                .padding(.bottom)
-            }
-        }
+        ContentUnavailableView(
+            "No Scenes Detected",
+            systemImage: "film.stack",
+            description: Text("Select a video file and click \"Detect Scenes\" to identify scene changes and generate chapter markers.")
+        )
     }
 
     // MARK: - Scene List
@@ -337,15 +401,24 @@ struct SceneDetectorView: View {
 
                         Spacer()
 
+                        // Permanently disabled — see `applyToJobUnavailableReason`.
+                        // `EncodingJobConfig`/`EncodingProfile` have no field to
+                        // carry external chapter metadata into an encode, so this
+                        // is left honestly non-functional rather than logging a
+                        // fake "applied" message (the original issue #288 bug).
                         Button {
-                            applyChaptersToJob()
+                            // Intentionally empty: permanently disabled below.
                         } label: {
-                            Label("Apply to Job", systemImage: "checkmark.circle")
+                            Label("Apply to Job (Unavailable)", systemImage: "exclamationmark.circle")
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(detectedScenes.isEmpty)
-                        .accessibilityLabel("Inject detected chapters into the current encoding job")
+                        .disabled(true)
+                        .help(applyToJobUnavailableReason)
+                        .accessibilityLabel(applyToJobUnavailableReason)
                     }
+
+                    Text(applyToJobUnavailableReason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -376,18 +449,40 @@ struct SceneDetectorView: View {
 
     /// Run scene detection on the currently selected file.
     ///
-    /// Builds FFmpeg arguments via ``SceneDetector`` and delegates execution
-    /// to the engine layer. The detection result is stored in ``detectionResult``.
+    /// Builds FFmpeg arguments via ``SceneDetector/buildDetectionArguments(inputPath:threshold:outputPath:)``
+    /// and actually executes them through ``FFmpegProcessController`` —
+    /// the same runner/`AsyncStream`-draining pattern
+    /// `AnimatedImageView.generate()` / `BitrateHeatmapView.analyzeBitrate()`
+    /// use (see `runToCompletion(_:arguments:)` below). That builder's
+    /// filter chain (`select='gt(scene,T)',metadata=print:file=…`) is the
+    /// standard FFmpeg scene-detection idiom, and `SceneDetector
+    /// .parseSceneOutput(_:)` already parses exactly the `pts_time:` /
+    /// `lavfi.scene_score=` key/value pairs that filter writes to
+    /// `outputPath` — so once the process exits cleanly, that file is read
+    /// back and parsed straight into ``detectedScenes``. No changes to
+    /// `SceneDetector`'s argument-building or parsing were needed.
+    ///
+    /// A real failure (missing FFmpeg, non-zero exit, cancellation, or a
+    /// clean run that simply found nothing above `threshold`) is surfaced
+    /// via ``errorMessage`` instead of silently clearing the in-progress
+    /// flag, which was the original issue #288 bug.
+    ///
+    /// `SceneDetectorView` is a `struct: View`, so this `async` method
+    /// (and the `Task` that invokes it from `controlsBar`) is implicitly
+    /// main-actor isolated via `View` conformance — `@State` writes below
+    /// are direct property mutations, matching `AnimatedImageView.generate()`'s
+    /// shape.
     private func detectScenes() async {
         guard let file = viewModel.selectedFile else { return }
+        guard !isDetecting else { return }
 
         isDetecting = true
         errorMessage = nil
+        detectionProgress = nil
 
         let tempDir = FileManager.default.temporaryDirectory
-        let outputPath = tempDir
-            .appendingPathComponent("meedya_scenes_\(UUID().uuidString).txt")
-            .path
+        let outputURL = tempDir.appendingPathComponent("meedya_scenes_\(UUID().uuidString).txt")
+        let outputPath = outputURL.path
 
         let args = SceneDetector.buildDetectionArguments(
             inputPath: file.fileURL.path,
@@ -397,10 +492,118 @@ struct SceneDetectorView: View {
 
         viewModel.appendLog(
             .info,
-            "Scene detection requested for \(file.fileName) with threshold \(String(format: "%.2f", threshold)) and \(args.count) arguments",
+            "Scene detection started for \(file.fileName) with threshold \(String(format: "%.2f", threshold))",
             category: .general
         )
 
+        let ffmpegPath: String
+        do {
+            ffmpegPath = try await Task.detached {
+                try FFmpegBundleManager().locateFFmpeg().path
+            }.value
+        } catch {
+            // Surface the underlying FFmpegBundleError rather than a generic
+            // string — it distinguishes "no binary found" from "found but not
+            // executable" and from a version-detection failure, which is the
+            // difference between three quite different user actions. Logged as
+            // well, matching every other failure path in this method.
+            errorMessage = "FFmpeg could not be found: \(error.localizedDescription) "
+                + "Install FFmpeg or configure its location in Settings."
+            viewModel.appendLog(
+                .error,
+                "Scene detection could not start — FFmpeg lookup failed: \(error.localizedDescription)",
+                category: .general
+            )
+            isDetecting = false
+            return
+        }
+
+        let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+        controller.sourceDuration = file.duration
+        currentController = controller
+
+        do {
+            try await runToCompletion(controller, arguments: args)
+
+            guard FileManager.default.fileExists(atPath: outputPath) else {
+                throw FFmpegProcessError.processFailure(
+                    exitCode: controller.exitCode ?? -1,
+                    stderr: "FFmpeg reported success but wrote no scene metadata to \(outputPath)."
+                )
+            }
+
+            let output = try String(contentsOf: outputURL, encoding: .utf8)
+            let parsed = SceneDetector.parseSceneOutput(output)
+            try? FileManager.default.removeItem(at: outputURL)
+
+            detectedScenes = parsed
+
+            if parsed.isEmpty {
+                errorMessage = "No scene changes detected above threshold \(String(format: "%.2f", threshold)) for \(file.fileName). Try lowering the threshold."
+            } else {
+                viewModel.appendLog(
+                    .info,
+                    "Scene detection complete for \(file.fileName): \(parsed.count) scene(s) found at threshold \(String(format: "%.2f", threshold))",
+                    category: .general
+                )
+            }
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: outputURL)
+            viewModel.appendLog(.info, "Scene detection cancelled for \(file.fileName)", category: .general)
+        } catch {
+            try? FileManager.default.removeItem(at: outputURL)
+            errorMessage = "Scene detection failed for \(file.fileName): \(error.localizedDescription)"
+            viewModel.appendLog(
+                .error,
+                "Scene detection failed for \(file.fileName): \(error.localizedDescription)",
+                category: .general
+            )
+        }
+
+        currentController = nil
+        // Release the finished Task too. cancelDetection() clears it, but a run
+        // that completes normally otherwise leaves a dead Task retained until
+        // the next run — harmless, but it is state that no longer means
+        // anything, and a stale non-nil value invites a future reader to treat
+        // "detectionTask != nil" as "a detection is in flight".
+        detectionTask = nil
+        detectionProgress = nil
+        isDetecting = false
+    }
+
+    /// Runs an `FFmpegProcessController` detection pass to completion by
+    /// draining its progress `AsyncStream`, updating ``detectionProgress``
+    /// as fractions become available. Mirrors
+    /// `AnimatedImageView.runToCompletion(_:arguments:)`.
+    private func runToCompletion(
+        _ controller: FFmpegProcessController,
+        arguments: [String]
+    ) async throws {
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await progress in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+            if let fraction = progress.fractionComplete {
+                detectionProgress = fraction
+            }
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
+    }
+
+    /// Cancel an in-progress scene detection. Mirrors
+    /// `AnimatedImageView.cancelGeneration()`.
+    private func cancelDetection() {
+        detectionTask?.cancel()
+        currentController?.stopEncoding()
+        currentController = nil
+        detectionTask = nil
         isDetecting = false
     }
 
@@ -460,15 +663,6 @@ struct SceneDetectorView: View {
         } catch {
             errorMessage = "Failed to export chapters: \(error.localizedDescription)"
         }
-    }
-
-    /// Apply detected chapters to the current encoding job.
-    private func applyChaptersToJob() {
-        viewModel.appendLog(
-            .info,
-            "Applied \(detectedScenes.count) chapter markers to encoding job",
-            category: .metadata
-        )
     }
 
     // MARK: - Timestamp Parsing
