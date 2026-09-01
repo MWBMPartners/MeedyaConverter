@@ -22,6 +22,11 @@ public struct ComparisonEntry: Identifiable, Codable, Sendable, Hashable {
     /// The source media file path that was encoded.
     public let sourceFile: String
 
+    /// The encoded/distorted media file path this entry compares against
+    /// `sourceFile`. Kept so the full frame-by-frame `ComparisonView` can be
+    /// reopened later without asking the user to re-locate either file.
+    public let encodedFile: String
+
     /// The timestamp (in seconds) at which the frame was extracted.
     public let timestamp: TimeInterval
 
@@ -49,9 +54,18 @@ public struct ComparisonEntry: Identifiable, Codable, Sendable, Hashable {
     /// Optional VMAF score if quality analysis was performed.
     public let vmafScore: Double?
 
+    /// Optional SSIM score (0.0–1.0) between `sourceFile` and `encodedFile`,
+    /// computed via `FrameComparisonExtractor.buildSSIMArguments`.
+    public let ssimScore: Double?
+
+    /// Optional PSNR score (dB) between `sourceFile` and `encodedFile`,
+    /// computed via `FrameComparisonExtractor.buildPSNRArguments`.
+    public let psnrScore: Double?
+
     public init(
         id: UUID = UUID(),
         sourceFile: String,
+        encodedFile: String,
         timestamp: TimeInterval,
         profileName: String,
         codec: String,
@@ -60,10 +74,13 @@ public struct ComparisonEntry: Identifiable, Codable, Sendable, Hashable {
         framePath: String,
         fileSize: Int64,
         capturedAt: Date = Date(),
-        vmafScore: Double? = nil
+        vmafScore: Double? = nil,
+        ssimScore: Double? = nil,
+        psnrScore: Double? = nil
     ) {
         self.id = id
         self.sourceFile = sourceFile
+        self.encodedFile = encodedFile
         self.timestamp = timestamp
         self.profileName = profileName
         self.codec = codec
@@ -73,6 +90,8 @@ public struct ComparisonEntry: Identifiable, Codable, Sendable, Hashable {
         self.fileSize = fileSize
         self.capturedAt = capturedAt
         self.vmafScore = vmafScore
+        self.ssimScore = ssimScore
+        self.psnrScore = psnrScore
     }
 
     /// The source file name without path components.

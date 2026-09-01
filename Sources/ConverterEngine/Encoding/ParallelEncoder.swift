@@ -142,6 +142,51 @@ public struct ParallelEncoder: Sendable {
         return max(1, recommended)
     }
 
+    // MARK: - Concurrency Resolution
+
+    /// The `UserDefaults` key holding the user's chosen maximum number of
+    /// concurrent encoding jobs (Issue #286).
+    ///
+    /// Written by `ParallelEncodingView`'s Max Concurrent Jobs slider and
+    /// read by `AppViewModel.startQueue()`'s runner on every slot top-up.
+    /// An absent key means "1" — i.e. the strictly sequential behaviour the
+    /// queue had before bounded concurrency existed. That is deliberate:
+    /// this key is the rollback switch for the whole feature.
+    public static let maxConcurrentJobsDefaultsKey = "parallelMaxConcurrentJobs"
+
+    /// Resolves the number of encoding jobs that may run at once from the
+    /// user's requested value, their entitlement, and the hardware ceiling.
+    ///
+    /// Pure function of its inputs (the hardware ceiling is injectable) so
+    /// the clamping rules are testable without a real machine or a real
+    /// entitlement provider.
+    ///
+    /// Rules, in order:
+    ///   * Not entitled to `.parallelEncoding` → always `1`. Free-tier
+    ///     installs can never reach the concurrent path.
+    ///   * `requested` below 1 (absent, zero, or negative `UserDefaults`
+    ///     value) → `1`.
+    ///   * Otherwise clamped to twice the hardware recommendation, so a
+    ///     wildly over-subscribed slider value cannot spawn unbounded
+    ///     FFmpeg processes.
+    ///
+    /// - Parameters:
+    ///   - requested: The user's requested concurrency.
+    ///   - entitled: Whether the user is entitled to `.parallelEncoding`.
+    ///   - hardwareCeiling: The recommended concurrency for this machine.
+    ///     Defaults to `determineMaxConcurrent()`.
+    /// - Returns: The effective concurrency, always at least 1.
+    public static func resolveConcurrency(
+        requested: Int,
+        entitled: Bool,
+        hardwareCeiling: Int? = nil
+    ) -> Int {
+        guard entitled else { return 1 }
+        guard requested > 1 else { return 1 }
+        let ceiling = max(1, (hardwareCeiling ?? determineMaxConcurrent()) * 2)
+        return min(requested, ceiling)
+    }
+
     // MARK: - Job Partitioning
 
     /// Partitions encoding jobs into batches that can run concurrently

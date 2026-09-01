@@ -299,11 +299,17 @@ public final class EncodingJobState: ObservableObject, @unchecked Sendable {
 
 // MARK: - EncodingQueue
 
-/// Manages a queue of encoding jobs for sequential processing.
+/// Manages a queue of encoding jobs.
 ///
-/// Jobs are processed one at a time in priority order (highest first),
-/// then by creation time (oldest first). The queue provides add, remove,
-/// reorder, and cancel operations.
+/// Jobs are handed out in priority order (highest first), then by creation
+/// time (oldest first). The queue provides add, remove, reorder, and cancel
+/// operations.
+///
+/// How many jobs run at once is the *consumer's* decision, not the queue's:
+/// `AppViewModel.startQueue()` runs a bounded-concurrency runner whose width
+/// defaults to 1, which reproduces the strictly sequential behaviour this
+/// queue was originally written for. `claimNextPendingJob()` is the
+/// atomic take-and-mark that makes a width above 1 safe (Issue #286).
 public final class EncodingQueue: ObservableObject, @unchecked Sendable {
 
     // MARK: - Properties
@@ -311,7 +317,18 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
     /// All jobs in the queue (in display order).
     @Published public private(set) var jobs: [EncodingJobState] = []
 
-    /// The currently encoding job, if any.
+    /// One representative job that is currently encoding, if any.
+    ///
+    /// A single optional, so it cannot describe more than one job. Since
+    /// Issue #286 the runner maintains it as the *first* job still in
+    /// flight — re-pointed at another running job as jobs finish, and
+    /// cleared only when nothing is left encoding. With the default
+    /// concurrency of 1 that is simply "the job being encoded".
+    ///
+    /// Consumers that must account for every in-flight job (rather than
+    /// show one) should use `activeJobsSnapshot()` instead. The AppleScript
+    /// `queueStatus` contract deliberately still reports this single
+    /// representative job.
     @Published public var currentJob: EncodingJobState?
 
     /// Whether the queue is currently processing jobs.
@@ -418,10 +435,46 @@ public final class EncodingQueue: ObservableObject, @unchecked Sendable {
     }
 
     /// Get the next queued job to process.
+    ///
+    /// Purely a read — the caller is responsible for marking the returned
+    /// job `.encoding`. Safe only while exactly one consumer is pulling
+    /// from the queue; a bounded-concurrency runner filling several slots
+    /// must use `claimNextPendingJob()` instead so the same job cannot be
+    /// handed out twice.
     public func nextPendingJob() -> EncodingJobState? {
         lock.lock()
         defer { lock.unlock() }
         return jobs.first { $0.status == .queued }
+    }
+
+    /// Atomically take the next `.queued` job and mark it `.encoding`
+    /// (Issue #286).
+    ///
+    /// The find-and-mark happens under `lock` as one step, so two callers
+    /// topping up concurrent encoding slots can never be handed the same
+    /// job: the first claim flips the status, and the second sees it as no
+    /// longer `.queued`.
+    ///
+    /// - Returns: The claimed job, already marked `.encoding`, or `nil`
+    ///   when nothing is queued.
+    public func claimNextPendingJob() -> EncodingJobState? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let job = jobs.first(where: { $0.status == .queued }) else { return nil }
+        job.status = .encoding
+        return job
+    }
+
+    /// A lock-protected snapshot of the jobs currently in flight — those
+    /// `.encoding` or `.paused` (Issue #286).
+    ///
+    /// Mirrors `jobsSnapshot()` above: existing UI call sites read `jobs`
+    /// directly (safe because they are all `@MainActor`), while off-main
+    /// readers need one that genuinely takes `lock`.
+    public func activeJobsSnapshot() -> [EncodingJobState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return jobs.filter { $0.status == .encoding || $0.status == .paused }
     }
 
     /// Clear completed, failed, and cancelled jobs from the queue.

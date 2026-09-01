@@ -398,6 +398,23 @@ final class AppViewModel {
     /// System-level encoding activity indicator (menu bar + dock tile).
     let activityIndicator = EncodingActivityIndicator()
 
+    // MARK: - Completion Serialisation (Issue #286)
+
+    /// Serialises statistics writes across concurrently finishing jobs.
+    ///
+    /// `EncodingStatisticsStore` does a load-append-atomic-rewrite of one
+    /// JSON file and its lock only guards a single instance, so two jobs
+    /// completing together used to lose one of the two entries. Every write
+    /// in `runJob(_:)` goes through this one actor instead.
+    let statisticsRecorder = EncodingStatisticsRecorder()
+
+    /// Serialises post-encode action chains across concurrently finishing
+    /// jobs, so a user's shell scripts and uploads still run one at a time
+    /// no matter how many encodes are in flight. The serialisation comes
+    /// from the runner chaining executions, not from actor isolation —
+    /// actors are reentrant and would not have provided it.
+    let postEncodeHookRunner = PostEncodeHookRunner()
+
     // MARK: - Analytics (Phase 12 / Issue #183)
 
     /// Privacy-respecting, opt-in analytics engine.
@@ -523,9 +540,9 @@ final class AppViewModel {
         // Previously this only called `addJob(config)` and logged
         // "Scheduled job started" — but nothing ever called `startQueue()`,
         // so a scheduled job just sat in `.queued` state until a human
-        // happened to open Queue and press Start. `nextPendingJob()` picks
-        // up newly-added jobs automatically once the queue loop is
-        // running, so if the queue is already going we only need to
+        // happened to open Queue and press Start. The queue runner's
+        // `claimNextPendingJob()` picks up newly-added jobs automatically
+        // once it is running, so if the queue is already going we only need to
         // enqueue; otherwise we start it — mirroring the
         // `Task { await viewModel.startQueue() }` pattern
         // `JobQueueView`'s Start Queue button already uses. The log
@@ -1068,13 +1085,36 @@ final class AppViewModel {
     /// Whether the queue is currently processing jobs sequentially.
     var isQueueRunning = false
 
-    /// The currently encoding job state (for UI binding).
-    var activeJobState: EncodingJobState?
-
-    /// Start processing the encoding queue sequentially.
+    /// Every job currently in flight, in claim order (Issue #286).
     ///
-    /// Picks the next queued job, encodes it, then moves to the next
-    /// until no queued jobs remain or the queue is stopped.
+    /// Maintained exclusively by `startQueue()`'s runner, on the
+    /// `@MainActor`: appended on claim, pruned when a job leaves
+    /// `.encoding`/`.paused`. Stored (not computed) so `@Observable`
+    /// tracks it and the UI updates as slots fill and drain.
+    ///
+    /// With the default concurrency of 1 this holds at most one element,
+    /// which is exactly what `activeJobState` used to be.
+    var activeJobStates: [EncodingJobState] = []
+
+    /// The first in-flight job, for UI that can only show one.
+    ///
+    /// Kept as a computed property so every existing reader
+    /// (`TouchBarProvider`, `JobQueueView`) compiles and behaves unchanged.
+    /// New code that must cover concurrent encodes should read
+    /// `activeJobStates` instead.
+    var activeJobState: EncodingJobState? { activeJobStates.first }
+
+    /// Start processing the encoding queue.
+    ///
+    /// Claims queued jobs and runs them through `runJob(_:)`, keeping up to
+    /// `currentConcurrencyWidth()` of them in flight at a time, until no
+    /// queued jobs remain or the queue is stopped.
+    ///
+    /// That width defaults to **1**, which makes this a strictly sequential
+    /// claim -> run -> await -> claim loop — the behaviour this method had
+    /// before Issue #286, reproduced by construction rather than by
+    /// promise. Values above 1 additionally require the `.parallelEncoding`
+    /// entitlement.
     func startQueue() async {
         guard !isQueueRunning else { return }
         isQueueRunning = true
@@ -1096,409 +1136,79 @@ final class AppViewModel {
             reason: "MeedyaConverter is encoding media"
         )
 
-        while isQueueRunning, let jobState = engine.queue.nextPendingJob() {
-            activeJobState = jobState
-            jobState.status = .encoding
-            jobState.startedAt = Date()
-            engine.queue.currentJob = jobState
+        // ------------------------------------------------------------------
+        // Bounded-concurrency runner (Issue #286)
+        // ------------------------------------------------------------------
+        // Replaces the former `while ... nextPendingJob()` loop. The width
+        // is re-read on every top-up from `resolveConcurrency`, so dragging
+        // the Max Concurrent Jobs slider takes effect as slots free up
+        // without restarting the queue.
+        //
+        // At width 1 — the default, and what every unentitled install is
+        // clamped to — the group holds at most one child task and the
+        // sequence is claim -> run -> await -> claim: exactly the old loop,
+        // with the same single registered controller, the same pause/cancel
+        // target, and the same completion ordering.
+        //
+        // Queue-scoped concerns deliberately stay OUT of `runJob(_:)`: the
+        // sleep-prevention activity token, the activity indicator's
+        // lifecycle, `EncodingQueue.currentJob`, and the queue-finished
+        // summary/notification/email/webhook below. Moving any of them into
+        // the per-job body would fire them once per job.
+        await withTaskGroup(of: Void.self) { group in
+            var inFlight = 0
 
-            // Activate system-level progress indicators (Issue #182)
-            activityIndicator.startTracking(jobState: jobState)
-
-            appendLog(.info, "Encoding: \(jobState.config.inputURL.lastPathComponent)",
-                      category: .encoding, jobID: jobState.config.id)
-
-            // Track encode start — codec and container only, never file names (Issue #183)
-            var encodeProps: [String: String] = [
-                "container": jobState.config.profile.containerFormat.rawValue
-            ]
-            if let codec = jobState.config.profile.videoCodec {
-                encodeProps["codec"] = codec.rawValue
-            }
-            analytics.track(.encodeStart, properties: encodeProps)
-
-            // Track profile usage for built-in profiles only (Issue #183)
-            let builtInProfileNames: Set<String> = [
-                "Web Standard", "Archive", "Quick Convert", "Apple ProRes",
-                "HDR Passthrough", "Audio Only"
-            ]
-            if builtInProfileNames.contains(jobState.config.profile.name) {
-                analytics.track(.profileUsed, properties: ["profile": jobState.config.profile.name])
-            }
-
-            // Per-job encoding statistics collector (Issue #284, re #448).
-            // EncodingStatisticsCollector already existed in ConverterEngine
-            // but was referenced nowhere in the pipeline, so
-            // EncodingGraphsView (wired in #448) was always empty. This is
-            // the insertion point: create one collector per job, feed it
-            // from the existing `progressInfo` closure below, and persist
-            // it via `EncodingStatisticsStore` on completion.
-            let statsCollector = EncodingStatisticsCollector(
-                jobID: jobState.config.id,
-                jobName: jobState.config.inputURL.lastPathComponent
-            )
-            statsCollector.setInputMetadata(
-                fileSize: fileSizeInBytes(atPath: jobState.config.inputURL.path),
-                duration: nil,
-                videoCodec: jobState.config.profile.videoCodec?.rawValue,
-                audioCodec: jobState.config.profile.audioCodec?.rawValue,
-                profileName: jobState.config.profile.name,
-                containerFormat: jobState.config.profile.containerFormat.fileExtensions.first ?? "mkv"
-            )
-
-            do {
-                try await engine.encode(job: jobState.config) { progressInfo in
-                    Task { @MainActor [weak self] in
-                        jobState.progress = progressInfo.fractionComplete ?? 0
-                        jobState.speed = progressInfo.speed
-                        jobState.currentBitrate = progressInfo.bitrate
-                        jobState.currentFrame = progressInfo.frame
-
-                        // Calculate ETA (Issue #470). Default to the naive
-                        // linear extrapolation from observed progress
-                        // (unchanged formula — this is also the fallback
-                        // for a cold `ETAPredictor` with no matching
-                        // history), then supersede it with
-                        // `ETAPredictor.predictETA`'s history-weighted
-                        // estimate whenever it has matching data for this
-                        // codec/preset/resolution/hw-accel combination.
-                        // `progressInfo.currentTime` and `fraction` are
-                        // both derived by FFmpegProcessController from the
-                        // same known source duration, so `currentTime /
-                        // fraction` recovers that duration exactly —
-                        // stashed on `jobState` so the completion branch
-                        // below can feed it back into `recordEncode`.
-                        if let fraction = progressInfo.fractionComplete, fraction > 0,
-                           let startedAt = jobState.startedAt {
-                            let elapsed = Date().timeIntervalSince(startedAt)
-                            let totalEstimated = elapsed / fraction
-                            jobState.eta = totalEstimated - elapsed
-
-                            if let currentTime = progressInfo.currentTime, currentTime > 0 {
-                                let inputDuration = currentTime / fraction
-                                jobState.lastKnownInputDuration = inputDuration
-
-                                if let prediction = self?.etaPredictor.predictETA(
-                                    codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
-                                    preset: jobState.config.profile.videoPreset ?? "default",
-                                    resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
-                                    inputDuration: inputDuration,
-                                    hwAccel: jobState.config.profile.useHardwareEncoding
-                                ) {
-                                    jobState.eta = max(0, prediction.estimate - elapsed)
-                                }
-                            }
-                        }
-
-                        // Update system-level activity indicators (Issue #182)
-                        self?.activityIndicator.updateProgress(
-                            fraction: jobState.progress,
-                            speed: jobState.speed,
+            while true {
+                while isQueueRunning,
+                      inFlight < currentConcurrencyWidth(),
+                      let jobState = engine.queue.claimNextPendingJob() {
+                    activeJobStates.append(jobState)
+                    // One representative job for consumers that can only
+                    // express a single "current" job (AppleScript's
+                    // `queueStatus`, the Touch Bar). Re-pointed at another
+                    // in-flight job as jobs finish; nil only when the queue
+                    // drains.
+                    engine.queue.currentJob = activeJobStates.first
+                    if !activityIndicator.isTracking {
+                        activityIndicator.beginQueueTracking(
                             fileName: jobState.config.inputURL.lastPathComponent
                         )
+                    }
+                    refreshAggregateActivityIndicator()
 
-                        // Log raw FFmpeg output
-                        if let raw = progressInfo.rawLine, !raw.isEmpty {
-                            self?.appendLog(.debug, raw, source: .ffmpeg,
-                                            category: .progress, rawOutput: raw,
-                                            jobID: jobState.config.id)
-                        }
-
-                        // Record a statistics data point (Issue #284).
-                        // `FFmpegProgressInfo` has no `fps` field, so it is
-                        // recovered from FFmpeg's own raw "fps=" line via
-                        // `EncodingStatisticsCollector.fps(fromRawProgressLine:)`
-                        // rather than changing `FFmpegProcessController`'s
-                        // parser. `recordProgress` self-throttles to its
-                        // configured sample interval, so calling it on
-                        // every tick here is intentional, not wasteful.
-                        statsCollector.recordProgress(
-                            fps: EncodingStatisticsCollector.fps(fromRawProgressLine: progressInfo.rawLine),
-                            bitrate: progressInfo.bitrate,
-                            encodedSeconds: progressInfo.currentTime ?? 0,
-                            frameNumber: progressInfo.frame ?? 0,
-                            outputSizeBytes: progressInfo.totalSize.map { Int64($0) },
-                            speed: progressInfo.speed
-                        )
+                    inFlight += 1
+                    // `self` is an implicitly-`Sendable` `@MainActor` type
+                    // and `runJob(_:)` is `@MainActor`, so this plain
+                    // `@Sendable` child task hops straight back onto the
+                    // main actor to run the job — no `nonisolated(unsafe)`
+                    // and no unchecked conformance anywhere. (Spelling the
+                    // closure `{ @MainActor in ... }` instead trips a
+                    // region-based-isolation checker crash in this Swift.)
+                    group.addTask {
+                        await self.runJob(jobState)
                     }
                 }
 
-                jobState.status = .completed
-                jobState.progress = 1.0
-                jobState.completedAt = Date()
+                if inFlight == 0 { break }
 
-                let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
-                appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
-                          category: .encoding, jobID: jobState.config.id)
-
-                // Record this encode for ETAPredictor (Issue #470) so
-                // future jobs with a similar codec/preset/resolution/
-                // hw-accel combination get a history-weighted estimate
-                // instead of only the naive in-job linear one.
-                // `lastKnownInputDuration` is only set once a progress
-                // tick reports a `currentTime`; a job that fails before
-                // its first tick (or one FFmpeg reports no progress for)
-                // simply isn't recorded, same as it wouldn't have had a
-                // meaningful speed factor anyway.
-                if let inputDuration = jobState.lastKnownInputDuration,
-                   let encodeDuration = jobState.elapsedTime, encodeDuration > 0 {
-                    etaPredictor.recordEncode(EncodeHistoryEntry(
-                        codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
-                        preset: jobState.config.profile.videoPreset ?? "default",
-                        resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
-                        inputDuration: inputDuration,
-                        encodeDuration: encodeDuration,
-                        hardwareAccelerated: jobState.config.profile.useHardwareEncoding
-                    ))
-                }
-
-                // Finalise and persist this job's statistics (Issue #284).
-                // `EncodingStatisticsStore` reads/writes its JSON history
-                // file synchronously in `init()`/`addStatistics(_:)`, so —
-                // mirroring `EncodingGraphsView`'s own handling of the same
-                // store — that disk I/O runs via `Task.detached` rather
-                // than blocking this `@MainActor`-isolated method. Only the
-                // `Sendable` `EncodingStatistics` snapshot crosses into the
-                // detached task, never `self`/`jobState`.
-                if let outputSize = fileSizeInBytes(atPath: jobState.config.outputURL.path) {
-                    statsCollector.setOutputFileSize(outputSize)
-                }
-                statsCollector.markComplete()
-                let finalStatistics = statsCollector.currentStatistics
-                await Task.detached {
-                    EncodingStatisticsStore().addStatistics(finalStatistics)
-                }.value
-
-                // Track encode completion with duration category (Issue #183)
-                let durationCategory: String
-                if let duration = jobState.elapsedTime {
-                    if duration < 60 { durationCategory = "short" }
-                    else if duration < 600 { durationCategory = "medium" }
-                    else { durationCategory = "long" }
-                } else {
-                    durationCategory = "unknown"
-                }
-                analytics.track(.encodeComplete, properties: ["duration": durationCategory])
-
-                sendNotification(
-                    title: "Encoding Complete",
-                    body: "\(jobState.config.inputURL.lastPathComponent) finished in \(elapsed)",
-                    settingKey: "notifyOnCompletion"
-                )
-
-                let outputSizeBytes = fileSizeInBytes(atPath: jobState.config.outputURL.path)
-                let outputSizeLabel = outputSizeBytes
-                    .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown"
-                sendCompletionEmail(
-                    settingKey: "emailOnComplete",
-                    fileName: jobState.config.inputURL.lastPathComponent,
-                    profile: jobState.config.profile.name,
-                    duration: elapsed,
-                    outputSize: outputSizeLabel,
-                    success: true
-                )
-
-                sendWebhookNotification(
-                    settingKey: "webhookOnComplete",
-                    event: "encode_complete",
-                    status: "success",
-                    fileName: jobState.config.inputURL.lastPathComponent,
-                    profile: jobState.config.profile.name,
-                    durationSeconds: jobState.elapsedTime ?? 0,
-                    outputSizeBytes: outputSizeBytes ?? 0
-                )
-
-                // Media server auto-scan (Issue #295 / #203). The setting's
-                // own label is "Auto-scan after successful encode" (not
-                // "at queue end"), so this fires per successful job here,
-                // matching the wording exactly.
-                if UserDefaults.standard.bool(forKey: "mediaServerAutoScan") {
-                    triggerMediaServerAutoScan()
-                }
-
-                // Post-encode action hooks (Issue #277). The chain engine
-                // itself (`PostEncodeActionChain.execute`) is real —
-                // scp/cloud/scripts/trash/notify all genuinely execute —
-                // but `PostEncodeActionsView` previously only invoked it
-                // from its own dry-run Test button, never from a real
-                // job. Loaded fresh from `UserDefaults` on every
-                // completion (mirrors `sendCompletionEmail`'s /
-                // `sendWebhookNotification`'s own config-loading pattern
-                // above), so an edit made mid-queue in Settings takes
-                // effect starting with the very next job.
-                let postEncodeChain = PostEncodeActionsView.loadPersistedChain()
-                if postEncodeChain.actions.contains(where: \.isEnabled) {
-                    let inputURL = jobState.config.inputURL
-                    let outputURL = jobState.config.outputURL
-
-                    // `PostEncodeActionChain` is a plain `Sendable`
-                    // struct with no `@MainActor` state to race on (see
-                    // its own concurrency doc comment in
-                    // PostEncodeActions.swift), and `execute` already
-                    // hops to `@MainActor` itself internally only where
-                    // it must (`.openInFinder`/`.sendNotification`) —
-                    // everything else, including `.runShellScript`'s
-                    // blocking `Process.waitUntilExit()`, runs off the
-                    // main actor by design. Mirroring `sendCompletionEmail`'s
-                    // `Task.detached` above, this captures only
-                    // `Sendable` values (`postEncodeChain`, the two
-                    // `URL`s) — deliberately NOT `[weak self]`: unlike
-                    // `sendWebhookNotification`'s non-detached
-                    // `Task { @MainActor [weak self] in }`, sending a
-                    // `@MainActor`-isolated `self` into a genuinely
-                    // detached, non-isolated context is the exact
-                    // "sending 'self' risks data races" Swift 6 error
-                    // `StoreManager.listenForTransactions()` already hit
-                    // and documents. Failures are silently dropped here,
-                    // same as `sendCompletionEmail`'s own fire-and-forget
-                    // behaviour — never surfaced as a job failure, since
-                    // the encode itself already succeeded.
-                    Task.detached {
-                        try? await postEncodeChain.execute(
-                            inputURL: inputURL,
-                            outputURL: outputURL,
-                            success: true
-                        )
-                    }
-                }
-
-                // Watch-folder post-action (Issue #277).
-                // `WatchFolderConfig.postAction` (the move/delete-after-
-                // encode picker in `WatchFolderView`) was persisted but
-                // never read back. `watchFolderJobs` only has an entry
-                // for jobs enqueued via `enqueueWatchFolderFile(_:config:)`
-                // — every other job (manual enqueue, multi-output, etc.)
-                // leaves this a no-op. `removeValue` both looks up and
-                // clears the association so it never leaks.
-                if let watchFolderConfig = watchFolderJobs.removeValue(forKey: jobState.config.id) {
-                    applyWatchFolderPostAction(watchFolderConfig, sourceURL: jobState.config.inputURL)
-                }
-
-                // Delete source file after successful encode, if enabled
-                // (SettingsView.deleteSourceAfterEncode — previously
-                // persisted but never read). Deliberately last in this
-                // success block: every other completion action above has
-                // already had its chance to read `jobState.config` before
-                // anything gets deleted.
-                if UserDefaults.standard.bool(forKey: "deleteSourceAfterEncode") {
-                    deleteSourceFileIfSafe(job: jobState.config)
-                }
-
-            } catch {
-                jobState.status = .failed
-                jobState.errorMessage = error.localizedDescription
-                jobState.completedAt = Date()
-
-                // Clear any watch-folder association without applying its
-                // `postAction` (Issue #277) — `PostProcessingAction` only
-                // ever fires after a *successful* encode (see its own doc
-                // comment); a failed job's source file should stay put
-                // for the user to retry or inspect. Still removed here so
-                // the side table never leaks an entry for a job that will
-                // never reach the success path.
-                watchFolderJobs.removeValue(forKey: jobState.config.id)
-
-                // Persist failed-job statistics so the Dashboard success rate is real (Issue #284).
-                statsCollector.markFailed()
-                let failedStatistics = statsCollector.currentStatistics
-                await Task.detached { EncodingStatisticsStore().addStatistics(failedStatistics) }.value
-
-                // Save a resume checkpoint (honest-minimal resumable jobs)
-                // so ResumableJobsView has real interrupted-job data to
-                // list. NOTE this is "honest-minimal": there is no seek-
-                // resume yet — ResumableJobsView.resumeCheckpoint(_:)
-                // re-queues the job from scratch (0%), it does not resume
-                // mid-file. `lastGoodTimestamp` is recorded here for a
-                // future true seek-resume but isn't consumed by anything
-                // yet. Best-effort like the other persistence above —
-                // failures are silently dropped rather than surfaced as a
-                // second error on top of the encode failure itself.
-                let failureCheckpoint = EncodingCheckpoint(
-                    jobId: jobState.config.id,
-                    inputURL: jobState.config.inputURL,
-                    outputURL: jobState.config.outputURL,
-                    profileSnapshot: jobState.config.profile,
-                    lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
-                    progressFraction: jobState.progress
-                )
-                try? CheckpointManager().saveCheckpoint(failureCheckpoint)
-
-                // Track encode failure (Issue #183)
-                analytics.track(.encodeFailed)
-
-                appendLog(.error, "Failed: \(jobState.config.inputURL.lastPathComponent) — \(error.localizedDescription)",
-                          category: .encoding, jobID: jobState.config.id)
-
-                sendNotification(
-                    title: "Encoding Failed",
-                    body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
-                    settingKey: "notifyOnFailure"
-                )
-
-                sendCompletionEmail(
-                    settingKey: "emailOnFailure",
-                    fileName: jobState.config.inputURL.lastPathComponent,
-                    profile: jobState.config.profile.name,
-                    duration: jobState.elapsedTime.map { formatDuration($0) } ?? "unknown",
-                    outputSize: "—",
-                    success: false,
-                    errorMessage: error.localizedDescription
-                )
-
-                sendWebhookNotification(
-                    settingKey: "webhookOnFailure",
-                    event: "encode_failed",
-                    status: "failure",
-                    fileName: jobState.config.inputURL.lastPathComponent,
-                    profile: jobState.config.profile.name,
-                    durationSeconds: jobState.elapsedTime ?? 0,
-                    outputSizeBytes: 0,
-                    errorMessage: error.localizedDescription
-                )
-
-                // Post-encode action hooks — failure path (Issue #277).
-                // The success branch above already wires
-                // `PostEncodeActionChain.execute` for successful jobs;
-                // `PostEncodeAction.runOnFailure` exists specifically so
-                // actions (failure notifications, cleanup scripts, etc.)
-                // can also run when the job fails, but nothing ever
-                // called `execute` on this path, so those actions were
-                // dead. Mirrors the success branch exactly: the same
-                // fresh-`UserDefaults` load via
-                // `PostEncodeActionsView.loadPersistedChain()` (an edit
-                // made mid-queue in Settings takes effect from the very
-                // next job), the same enabled-actions guard,
-                // `execute`'s own `isEnabled`/`runOnFailure` filtering
-                // inside the chain, and the same `Task.detached` with a
-                // `Sendable`-only capture list — deliberately no
-                // `[weak self]`, for the same reason documented on the
-                // success-branch call above. Failures are silently
-                // dropped, same as there: a hook that itself throws must
-                // never surface as a second, unrelated error on top of
-                // the encode failure already being handled here. Only
-                // `success: false` differs from the success-branch call,
-                // which is what `execute` uses to skip any action that
-                // lacks `runOnFailure`.
-                let postEncodeFailureChain = PostEncodeActionsView.loadPersistedChain()
-                if postEncodeFailureChain.actions.contains(where: \.isEnabled) {
-                    let inputURL = jobState.config.inputURL
-                    let outputURL = jobState.config.outputURL
-                    Task.detached {
-                        try? await postEncodeFailureChain.execute(
-                            inputURL: inputURL,
-                            outputURL: outputURL,
-                            success: false
-                        )
-                    }
-                }
+                await group.next()
+                inFlight -= 1
+                pruneFinishedActiveJobs()
             }
-
-            // Deactivate system-level progress indicators (Issue #182)
-            activityIndicator.stopTracking()
-
-            engine.queue.currentJob = nil
-            activeJobState = nil
         }
+
+        // The group has drained, so by definition nothing is in flight.
+        // Clearing explicitly rather than relying on the last prune keeps a
+        // job left `.paused` by `cancelCurrentJob()` from lingering in the
+        // Queue view's progress maths after the queue has stopped.
+        activeJobStates.removeAll()
+        engine.queue.currentJob = nil
+
+        // Deactivate system-level progress indicators (Issue #182). Queue
+        // level, not job level: the first job to finish used to tear the
+        // menu bar item and dock tile down while later jobs were still
+        // encoding.
+        activityIndicator.stopTracking()
 
         ProcessInfo.processInfo.endActivity(activity)
         isQueueRunning = false
@@ -1547,42 +1257,566 @@ final class AppViewModel {
         )
     }
 
-    /// Stop the queue after the current job finishes.
+
+    /// Encode one claimed job to completion, then run every per-job
+    /// completion side effect for it (Issue #286).
+    ///
+    /// Extracted verbatim from `startQueue()`'s former `while` loop body so
+    /// that several jobs can be in flight at once. Everything here is
+    /// parameterised solely on `jobState` — it never reads
+    /// `activeJobState`/`activeJobStates`, never touches
+    /// `EncodingQueue.currentJob`, never starts or stops the activity
+    /// indicator, and never begins or ends the sleep-prevention activity.
+    /// Those are all queue-scoped and stay in `startQueue()`.
+    ///
+    /// ### Isolation
+    /// Deliberately `@MainActor`, and it must stay that way. Every mutation
+    /// it makes to view-model state — `watchFolderJobs`, the log buffer, the
+    /// analytics engine, `etaPredictor` — is `@MainActor`-isolated with no
+    /// other synchronisation, so completion handling running off the main
+    /// actor would corrupt it. This costs nothing: the awaits inside
+    /// (`engine.encode`, the statistics recorder) release the main actor for
+    /// their entire duration, which is where all the time goes.
+    ///
+    /// The two genuinely shared side effects are serialised by actors rather
+    /// than by the queue's old one-at-a-time shape:
+    /// `statisticsRecorder.record(_:)` (load-append-rewrite of one JSON
+    /// file) and `postEncodeHookRunner.run(...)` (the user's own scripts and
+    /// uploads, which may not be reentrant).
+    @MainActor
+    private func runJob(_ jobState: EncodingJobState) async {
+        // `status` was already flipped to `.encoding` by
+        // `claimNextPendingJob()` — atomically, under the queue's lock,
+        // so two slots cannot claim the same job (Issue #286).
+        jobState.startedAt = Date()
+
+        appendLog(.info, "Encoding: \(jobState.config.inputURL.lastPathComponent)",
+                  category: .encoding, jobID: jobState.config.id)
+
+        // Track encode start — codec and container only, never file names (Issue #183)
+        var encodeProps: [String: String] = [
+            "container": jobState.config.profile.containerFormat.rawValue
+        ]
+        if let codec = jobState.config.profile.videoCodec {
+            encodeProps["codec"] = codec.rawValue
+        }
+        analytics.track(.encodeStart, properties: encodeProps)
+
+        // Track profile usage for built-in profiles only (Issue #183)
+        let builtInProfileNames: Set<String> = [
+            "Web Standard", "Archive", "Quick Convert", "Apple ProRes",
+            "HDR Passthrough", "Audio Only"
+        ]
+        if builtInProfileNames.contains(jobState.config.profile.name) {
+            analytics.track(.profileUsed, properties: ["profile": jobState.config.profile.name])
+        }
+
+        // Per-job encoding statistics collector (Issue #284, re #448).
+        // EncodingStatisticsCollector already existed in ConverterEngine
+        // but was referenced nowhere in the pipeline, so
+        // EncodingGraphsView (wired in #448) was always empty. This is
+        // the insertion point: create one collector per job, feed it
+        // from the existing `progressInfo` closure below, and persist
+        // it via `EncodingStatisticsStore` on completion.
+        let statsCollector = EncodingStatisticsCollector(
+            jobID: jobState.config.id,
+            jobName: jobState.config.inputURL.lastPathComponent
+        )
+        statsCollector.setInputMetadata(
+            fileSize: fileSizeInBytes(atPath: jobState.config.inputURL.path),
+            duration: nil,
+            videoCodec: jobState.config.profile.videoCodec?.rawValue,
+            audioCodec: jobState.config.profile.audioCodec?.rawValue,
+            profileName: jobState.config.profile.name,
+            containerFormat: jobState.config.profile.containerFormat.fileExtensions.first ?? "mkv"
+        )
+
+        do {
+            try await engine.encode(job: jobState.config) { progressInfo in
+                Task { @MainActor [weak self] in
+                    jobState.progress = progressInfo.fractionComplete ?? 0
+                    jobState.speed = progressInfo.speed
+                    jobState.currentBitrate = progressInfo.bitrate
+                    jobState.currentFrame = progressInfo.frame
+
+                    // Calculate ETA (Issue #470). Default to the naive
+                    // linear extrapolation from observed progress
+                    // (unchanged formula — this is also the fallback
+                    // for a cold `ETAPredictor` with no matching
+                    // history), then supersede it with
+                    // `ETAPredictor.predictETA`'s history-weighted
+                    // estimate whenever it has matching data for this
+                    // codec/preset/resolution/hw-accel combination.
+                    // `progressInfo.currentTime` and `fraction` are
+                    // both derived by FFmpegProcessController from the
+                    // same known source duration, so `currentTime /
+                    // fraction` recovers that duration exactly —
+                    // stashed on `jobState` so the completion branch
+                    // below can feed it back into `recordEncode`.
+                    if let fraction = progressInfo.fractionComplete, fraction > 0,
+                       let startedAt = jobState.startedAt {
+                        let elapsed = Date().timeIntervalSince(startedAt)
+                        let totalEstimated = elapsed / fraction
+                        jobState.eta = totalEstimated - elapsed
+
+                        if let currentTime = progressInfo.currentTime, currentTime > 0 {
+                            let inputDuration = currentTime / fraction
+                            jobState.lastKnownInputDuration = inputDuration
+
+                            if let prediction = self?.etaPredictor.predictETA(
+                                codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                                preset: jobState.config.profile.videoPreset ?? "default",
+                                resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                                inputDuration: inputDuration,
+                                hwAccel: jobState.config.profile.useHardwareEncoding
+                            ) {
+                                jobState.eta = max(0, prediction.estimate - elapsed)
+                            }
+                        }
+                    }
+
+                    // Update system-level activity indicators (Issue
+                    // #182). Aggregated across every in-flight job
+                    // rather than pushed straight from this one
+                    // (Issue #286): with two jobs encoding, each
+                    // pushing its own fraction made the dock ring and
+                    // menu bar flicker between them.
+                    self?.refreshAggregateActivityIndicator()
+
+                    // Log raw FFmpeg output
+                    if let raw = progressInfo.rawLine, !raw.isEmpty {
+                        self?.appendLog(.debug, raw, source: .ffmpeg,
+                                        category: .progress, rawOutput: raw,
+                                        jobID: jobState.config.id)
+                    }
+
+                    // Record a statistics data point (Issue #284).
+                    // `FFmpegProgressInfo` has no `fps` field, so it is
+                    // recovered from FFmpeg's own raw "fps=" line via
+                    // `EncodingStatisticsCollector.fps(fromRawProgressLine:)`
+                    // rather than changing `FFmpegProcessController`'s
+                    // parser. `recordProgress` self-throttles to its
+                    // configured sample interval, so calling it on
+                    // every tick here is intentional, not wasteful.
+                    statsCollector.recordProgress(
+                        fps: EncodingStatisticsCollector.fps(fromRawProgressLine: progressInfo.rawLine),
+                        bitrate: progressInfo.bitrate,
+                        encodedSeconds: progressInfo.currentTime ?? 0,
+                        frameNumber: progressInfo.frame ?? 0,
+                        outputSizeBytes: progressInfo.totalSize.map { Int64($0) },
+                        speed: progressInfo.speed
+                    )
+                }
+            }
+
+            jobState.status = .completed
+            jobState.progress = 1.0
+            jobState.completedAt = Date()
+
+            let elapsed = jobState.elapsedTime.map { formatDuration($0) } ?? "unknown"
+            appendLog(.info, "Completed: \(jobState.config.inputURL.lastPathComponent) in \(elapsed)",
+                      category: .encoding, jobID: jobState.config.id)
+
+            // Record this encode for ETAPredictor (Issue #470) so
+            // future jobs with a similar codec/preset/resolution/
+            // hw-accel combination get a history-weighted estimate
+            // instead of only the naive in-job linear one.
+            // `lastKnownInputDuration` is only set once a progress
+            // tick reports a `currentTime`; a job that fails before
+            // its first tick (or one FFmpeg reports no progress for)
+            // simply isn't recorded, same as it wouldn't have had a
+            // meaningful speed factor anyway.
+            if let inputDuration = jobState.lastKnownInputDuration,
+               let encodeDuration = jobState.elapsedTime, encodeDuration > 0 {
+                etaPredictor.recordEncode(EncodeHistoryEntry(
+                    codec: jobState.config.profile.videoCodec?.rawValue ?? "passthrough",
+                    preset: jobState.config.profile.videoPreset ?? "default",
+                    resolution: AppViewModel.etaResolutionLabel(for: jobState.config.profile),
+                    inputDuration: inputDuration,
+                    encodeDuration: encodeDuration,
+                    hardwareAccelerated: jobState.config.profile.useHardwareEncoding
+                ))
+            }
+
+            // Finalise and persist this job's statistics (Issue #284).
+            // `EncodingStatisticsStore` reads/writes its JSON history
+            // file synchronously in `init()`/`addStatistics(_:)`, so that
+            // disk I/O must not block this `@MainActor`-isolated method.
+            // It goes through `statisticsRecorder`, an actor: the await
+            // releases the main actor for the write, and — the reason the
+            // actor exists (Issue #286) — the load-append-rewrite is
+            // serialised against any other job finishing at the same
+            // moment, which a fresh store per write was not. Only the
+            // `Sendable` `EncodingStatistics` snapshot crosses the
+            // isolation boundary, never `self`/`jobState`.
+            if let outputSize = fileSizeInBytes(atPath: jobState.config.outputURL.path) {
+                statsCollector.setOutputFileSize(outputSize)
+            }
+            statsCollector.markComplete()
+            let finalStatistics = statsCollector.currentStatistics
+            await statisticsRecorder.record(finalStatistics)
+
+            // Track encode completion with duration category (Issue #183)
+            let durationCategory: String
+            if let duration = jobState.elapsedTime {
+                if duration < 60 { durationCategory = "short" }
+                else if duration < 600 { durationCategory = "medium" }
+                else { durationCategory = "long" }
+            } else {
+                durationCategory = "unknown"
+            }
+            analytics.track(.encodeComplete, properties: ["duration": durationCategory])
+
+            sendNotification(
+                title: "Encoding Complete",
+                body: "\(jobState.config.inputURL.lastPathComponent) finished in \(elapsed)",
+                settingKey: "notifyOnCompletion"
+            )
+
+            let outputSizeBytes = fileSizeInBytes(atPath: jobState.config.outputURL.path)
+            let outputSizeLabel = outputSizeBytes
+                .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown"
+            sendCompletionEmail(
+                settingKey: "emailOnComplete",
+                fileName: jobState.config.inputURL.lastPathComponent,
+                profile: jobState.config.profile.name,
+                duration: elapsed,
+                outputSize: outputSizeLabel,
+                success: true
+            )
+
+            sendWebhookNotification(
+                settingKey: "webhookOnComplete",
+                event: "encode_complete",
+                status: "success",
+                fileName: jobState.config.inputURL.lastPathComponent,
+                profile: jobState.config.profile.name,
+                durationSeconds: jobState.elapsedTime ?? 0,
+                outputSizeBytes: outputSizeBytes ?? 0
+            )
+
+            // Media server auto-scan (Issue #295 / #203). The setting's
+            // own label is "Auto-scan after successful encode" (not
+            // "at queue end"), so this fires per successful job here,
+            // matching the wording exactly.
+            if UserDefaults.standard.bool(forKey: "mediaServerAutoScan") {
+                triggerMediaServerAutoScan()
+            }
+
+            // Post-encode action hooks (Issue #277). The chain engine
+            // itself (`PostEncodeActionChain.execute`) is real —
+            // scp/cloud/scripts/trash/notify all genuinely execute —
+            // but `PostEncodeActionsView` previously only invoked it
+            // from its own dry-run Test button, never from a real
+            // job. Loaded fresh from `UserDefaults` on every
+            // completion (mirrors `sendCompletionEmail`'s /
+            // `sendWebhookNotification`'s own config-loading pattern
+            // above), so an edit made mid-queue in Settings takes
+            // effect starting with the very next job.
+            let postEncodeChain = PostEncodeActionsView.loadPersistedChain()
+            if postEncodeChain.actions.contains(where: \.isEnabled) {
+                let inputURL = jobState.config.inputURL
+                let outputURL = jobState.config.outputURL
+
+                // `PostEncodeActionChain` is a plain `Sendable`
+                // struct with no `@MainActor` state to race on (see
+                // its own concurrency doc comment in
+                // PostEncodeActions.swift), and `execute` already
+                // hops to `@MainActor` itself internally only where
+                // it must (`.openInFinder`/`.sendNotification`) —
+                // everything else, including `.runShellScript`'s
+                // blocking `Process.waitUntilExit()`, runs off the
+                // main actor by design.
+                //
+                // Execution is routed through `postEncodeHookRunner`,
+                // which chains each run behind the previous one so they
+                // execute strictly one at a time even when several jobs
+                // finish together (Issue #286). Note that being an actor
+                // is NOT what provides that — actors are reentrant, so an
+                // isolated method whose whole body is one `await` gives no
+                // mutual exclusion at all. See the type's own doc comment.
+                // The reason serialisation is wanted here: the
+                // chain engine is reentrant-safe, but a user's own
+                // shell scripts and uploads — written against a queue
+                // that only ever ran one job — may not be. The task
+                // captures only `Sendable` values (the runner, the
+                // chain, the two `URL`s) and is deliberately never
+                // awaited, so a slow hook delays later hooks but never
+                // the encoding queue. Failures are silently dropped,
+                // matching `sendCompletionEmail`'s own fire-and-forget
+                // behaviour — never surfaced as a job failure, since
+                // the encode itself already succeeded.
+                Task { [postEncodeHookRunner] in
+                    await postEncodeHookRunner.run(
+                        chain: postEncodeChain,
+                        inputURL: inputURL,
+                        outputURL: outputURL,
+                        success: true
+                    )
+                }
+            }
+
+            // Watch-folder post-action (Issue #277).
+            // `WatchFolderConfig.postAction` (the move/delete-after-
+            // encode picker in `WatchFolderView`) was persisted but
+            // never read back. `watchFolderJobs` only has an entry
+            // for jobs enqueued via `enqueueWatchFolderFile(_:config:)`
+            // — every other job (manual enqueue, multi-output, etc.)
+            // leaves this a no-op. `removeValue` both looks up and
+            // clears the association so it never leaks.
+            if let watchFolderConfig = watchFolderJobs.removeValue(forKey: jobState.config.id) {
+                applyWatchFolderPostAction(watchFolderConfig, sourceURL: jobState.config.inputURL)
+            }
+
+            // Delete source file after successful encode, if enabled
+            // (SettingsView.deleteSourceAfterEncode — previously
+            // persisted but never read). Deliberately last in this
+            // success block: every other completion action above has
+            // already had its chance to read `jobState.config` before
+            // anything gets deleted.
+            if UserDefaults.standard.bool(forKey: "deleteSourceAfterEncode") {
+                deleteSourceFileIfSafe(job: jobState.config)
+            }
+
+        } catch {
+            jobState.status = .failed
+            jobState.errorMessage = error.localizedDescription
+            jobState.completedAt = Date()
+
+            // Clear any watch-folder association without applying its
+            // `postAction` (Issue #277) — `PostProcessingAction` only
+            // ever fires after a *successful* encode (see its own doc
+            // comment); a failed job's source file should stay put
+            // for the user to retry or inspect. Still removed here so
+            // the side table never leaks an entry for a job that will
+            // never reach the success path.
+            watchFolderJobs.removeValue(forKey: jobState.config.id)
+
+            // Persist failed-job statistics so the Dashboard success rate is real (Issue #284).
+            statsCollector.markFailed()
+            let failedStatistics = statsCollector.currentStatistics
+            await statisticsRecorder.record(failedStatistics)
+
+            // Save a resume checkpoint (honest-minimal resumable jobs)
+            // so ResumableJobsView has real interrupted-job data to
+            // list. NOTE this is "honest-minimal": there is no seek-
+            // resume yet — ResumableJobsView.resumeCheckpoint(_:)
+            // re-queues the job from scratch (0%), it does not resume
+            // mid-file. `lastGoodTimestamp` is recorded here for a
+            // future true seek-resume but isn't consumed by anything
+            // yet. Best-effort like the other persistence above —
+            // failures are silently dropped rather than surfaced as a
+            // second error on top of the encode failure itself.
+            let failureCheckpoint = EncodingCheckpoint(
+                jobId: jobState.config.id,
+                inputURL: jobState.config.inputURL,
+                outputURL: jobState.config.outputURL,
+                profileSnapshot: jobState.config.profile,
+                lastGoodTimestamp: jobState.progress * (jobState.lastKnownInputDuration ?? 0),
+                progressFraction: jobState.progress
+            )
+            try? CheckpointManager().saveCheckpoint(failureCheckpoint)
+
+            // Track encode failure (Issue #183)
+            analytics.track(.encodeFailed)
+
+            appendLog(.error, "Failed: \(jobState.config.inputURL.lastPathComponent) — \(error.localizedDescription)",
+                      category: .encoding, jobID: jobState.config.id)
+
+            sendNotification(
+                title: "Encoding Failed",
+                body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
+                settingKey: "notifyOnFailure"
+            )
+
+            sendCompletionEmail(
+                settingKey: "emailOnFailure",
+                fileName: jobState.config.inputURL.lastPathComponent,
+                profile: jobState.config.profile.name,
+                duration: jobState.elapsedTime.map { formatDuration($0) } ?? "unknown",
+                outputSize: "—",
+                success: false,
+                errorMessage: error.localizedDescription
+            )
+
+            sendWebhookNotification(
+                settingKey: "webhookOnFailure",
+                event: "encode_failed",
+                status: "failure",
+                fileName: jobState.config.inputURL.lastPathComponent,
+                profile: jobState.config.profile.name,
+                durationSeconds: jobState.elapsedTime ?? 0,
+                outputSizeBytes: 0,
+                errorMessage: error.localizedDescription
+            )
+
+            // Post-encode action hooks — failure path (Issue #277).
+            // The success branch above already wires
+            // `PostEncodeActionChain.execute` for successful jobs;
+            // `PostEncodeAction.runOnFailure` exists specifically so
+            // actions (failure notifications, cleanup scripts, etc.)
+            // can also run when the job fails, but nothing ever
+            // called `execute` on this path, so those actions were
+            // dead. Mirrors the success branch exactly: the same
+            // fresh-`UserDefaults` load via
+            // `PostEncodeActionsView.loadPersistedChain()` (an edit
+            // made mid-queue in Settings takes effect from the very
+            // next job), the same enabled-actions guard,
+            // `execute`'s own `isEnabled`/`runOnFailure` filtering
+            // inside the chain, and the same fire-and-forget `Task`
+            // through `postEncodeHookRunner` (which serialises by
+            // chaining, not by actor isolation — see its doc comment)
+            // with a `Sendable`-only capture list, for the reasons
+            // documented on the success-branch call above. Failures are silently
+            // dropped, same as there: a hook that itself throws must
+            // never surface as a second, unrelated error on top of
+            // the encode failure already being handled here. Only
+            // `success: false` differs from the success-branch call,
+            // which is what `execute` uses to skip any action that
+            // lacks `runOnFailure`.
+            let postEncodeFailureChain = PostEncodeActionsView.loadPersistedChain()
+            if postEncodeFailureChain.actions.contains(where: \.isEnabled) {
+                let inputURL = jobState.config.inputURL
+                let outputURL = jobState.config.outputURL
+                Task { [postEncodeHookRunner] in
+                    await postEncodeHookRunner.run(
+                        chain: postEncodeFailureChain,
+                        inputURL: inputURL,
+                        outputURL: outputURL,
+                        success: false
+                    )
+                }
+            }
+        }
+    }
+
+    /// The number of jobs that may encode simultaneously right now
+    /// (Issue #286).
+    ///
+    /// Re-read on every slot top-up, so the Max Concurrent Jobs slider
+    /// applies mid-queue. Absent key, zero, or a negative value all mean 1
+    /// — the sequential behaviour the queue had before this existed — and
+    /// an install without the `.parallelEncoding` entitlement is clamped to
+    /// 1 unconditionally. See `ParallelEncoder.resolveConcurrency`.
+    private func currentConcurrencyWidth() -> Int {
+        ParallelEncoder.resolveConcurrency(
+            requested: UserDefaults.standard.integer(
+                forKey: ParallelEncoder.maxConcurrentJobsDefaultsKey
+            ),
+            entitled: FeatureGateManager.shared.isEntitled(to: .parallelEncoding)
+        )
+    }
+
+    /// Drop finished jobs from `activeJobStates` and re-point
+    /// `EncodingQueue.currentJob` at a job that is still running.
+    private func pruneFinishedActiveJobs() {
+        activeJobStates.removeAll { $0.status != .encoding && $0.status != .paused }
+        engine.queue.currentJob = activeJobStates.first
+        refreshAggregateActivityIndicator()
+    }
+
+    /// Push a single aggregate progress reading to the menu bar and dock
+    /// indicators, covering every job currently in flight (Issue #286).
+    ///
+    /// `EncodingActivityIndicator` is one per-app indicator; there is no
+    /// honest way to show N jobs in one ring, so it shows the mean of their
+    /// fractions, the summed speed (throughput really is additive), and
+    /// either the single file's name or a "N files" count. With one job in
+    /// flight this is identical to the old per-job push.
+    func refreshAggregateActivityIndicator() {
+        let active = activeJobStates
+        guard !active.isEmpty else { return }
+
+        let meanProgress = active.reduce(0.0) { $0 + $1.progress } / Double(active.count)
+        let speeds = active.compactMap(\.speed)
+        let combinedSpeed = speeds.isEmpty ? nil : speeds.reduce(0, +)
+        let label = active.count == 1
+            ? active[0].config.inputURL.lastPathComponent
+            : "\(active.count) files"
+
+        // ETA: the queue is not done until its slowest in-flight job is, so
+        // the longest remaining time is the honest figure to show. Bitrate:
+        // summed, because that is the combined write rate the user's disk
+        // actually sees. With one job — the default width — both reduce to
+        // that job's own values, which is exactly what the popover showed
+        // before the runner took over driving this indicator.
+        let longestETA = active.compactMap(\.eta).max()
+        let bitrates = active.compactMap(\.currentBitrate)
+        let combinedBitrate = bitrates.isEmpty ? nil : bitrates.reduce(0, +)
+
+        activityIndicator.updateProgress(
+            fraction: meanProgress,
+            speed: combinedSpeed,
+            fileName: label,
+            eta: longestETA,
+            bitrate: combinedBitrate
+        )
+    }
+
+    /// Stop claiming new jobs; the queue drains once the jobs already in
+    /// flight finish.
     func stopQueue() {
         isQueueRunning = false
         appendLog(.info, "Queue stopping after current job")
     }
 
-    /// Pause the currently encoding job.
+    /// Pause every job currently encoding.
+    ///
+    /// Explicitly queue-wide (Issue #286). "The current job" stopped being
+    /// well-defined once more than one job could be in flight, so rather
+    /// than pausing an arbitrary one, `engine.pauseEncoding()` signals every
+    /// registered FFmpeg process and every in-flight job state is marked
+    /// `.paused`. With the default concurrency of 1 this is identical to
+    /// the previous single-job behaviour, which is why `JobQueueView` and
+    /// `TouchBarProvider` still call it unchanged.
     func pauseCurrentJob() {
         engine.pauseEncoding()
-        activeJobState?.status = .paused
+        for jobState in activeJobStates where jobState.status == .encoding {
+            jobState.status = .paused
+        }
         appendLog(.info, "Encoding paused")
     }
 
-    /// Resume the currently paused job.
+    /// Resume every paused job. Queue-wide, mirroring `pauseCurrentJob()`.
     func resumeCurrentJob() {
         engine.resumeEncoding()
-        activeJobState?.status = .encoding
+        for jobState in activeJobStates where jobState.status == .paused {
+            jobState.status = .encoding
+        }
         appendLog(.info, "Encoding resumed")
     }
 
-    /// Cancel the currently encoding job and stop the queue.
+    /// Cancel every job currently encoding and stop the queue.
+    ///
+    /// Queue-wide (Issue #286): every registered FFmpeg process is stopped,
+    /// every in-flight job is marked `.cancelled`, and a resume checkpoint
+    /// is written for each one — previously only a single checkpoint was
+    /// written while `engine.stopEncoding()` could kill a different job
+    /// than the one being marked.
     func cancelCurrentJob() {
         engine.stopEncoding()
-        activeJobState?.status = .cancelled
-        activeJobState?.completedAt = Date()
+
+        // Snapshot first: `runJob(_:)`'s catch block will start finishing
+        // these jobs as their `encode()` calls throw, and the runner prunes
+        // them out of `activeJobStates` as it observes them finish.
+        let cancelled = activeJobStates
+
+        for jobState in cancelled {
+            jobState.status = .cancelled
+            jobState.completedAt = Date()
+        }
+
         activityIndicator.stopTracking()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
 
-        // Save a resume checkpoint (honest-minimal resumable jobs) — see
-        // the matching save in startQueue()'s failure branch for the
-        // "re-queues from 0, does not seek-resume" caveat. `startQueue()`'s
-        // own catch block may also fire once `engine.stopEncoding()` makes
+        // Save a resume checkpoint per cancelled job (honest-minimal
+        // resumable jobs) — see the matching save in `runJob(_:)`'s failure
+        // branch for the "re-queues from 0, does not seek-resume" caveat.
+        // That catch block may also fire once `engine.stopEncoding()` makes
         // the in-flight `encode()` throw — that's fine, it just overwrites
-        // this same checkpoint file with an equivalent snapshot.
-        if let jobState = activeJobState {
+        // the same per-job checkpoint file with an equivalent snapshot.
+        for jobState in cancelled {
             let cancelCheckpoint = EncodingCheckpoint(
                 jobId: jobState.config.id,
                 inputURL: jobState.config.inputURL,

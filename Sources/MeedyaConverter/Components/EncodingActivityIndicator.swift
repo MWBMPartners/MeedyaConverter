@@ -77,7 +77,42 @@ final class EncodingActivityIndicator {
 
     // MARK: - Lifecycle
 
-    /// Begin tracking an encoding job, activating menu bar and dock indicators.
+    /// Begin tracking the encoding queue as a whole, activating the menu
+    /// bar and dock indicators (Issue #286).
+    ///
+    /// The queue-level counterpart to `startTracking(jobState:)`. Identical
+    /// setup, minus the per-job Combine observation: progress arrives
+    /// exclusively through `updateProgress(fraction:speed:fileName:)`
+    /// pushes from `AppViewModel.refreshAggregateActivityIndicator()`, which
+    /// aggregates across every job in flight. Observing one job's
+    /// `objectWillChange` would tie these app-wide indicators to whichever
+    /// job happened to be claimed first.
+    ///
+    /// Called once when the first job is claimed; `stopTracking()` is
+    /// called once when the queue drains. Jobs starting and finishing in
+    /// between no longer tear the menu bar item down and rebuild it.
+    ///
+    /// - Parameter fileName: Name to show until the first progress push.
+    func beginQueueTracking(fileName: String) {
+        guard !isTracking else { return }
+        isTracking = true
+        currentProgress = 0.0
+        currentSpeed = nil
+        currentETA = nil
+        currentBitrate = nil
+        currentFileName = fileName
+
+        setupMenuBarItem()
+        setupDockProgress()
+    }
+
+    /// Begin tracking a single encoding job, activating menu bar and dock
+    /// indicators and observing that job for progress updates.
+    ///
+    /// Superseded by `beginQueueTracking(fileName:)` for the encoding queue
+    /// itself, which cannot bind its app-wide indicators to one job's
+    /// lifetime once several jobs may be in flight (Issue #286). Retained
+    /// for single-job callers.
     ///
     /// - Parameter jobState: The encoding job state to observe for progress updates.
     func startTracking(jobState: EncodingJobState) {
@@ -115,10 +150,28 @@ final class EncodingActivityIndicator {
     ///   - fraction: Progress fraction from 0.0 to 1.0.
     ///   - speed: Optional encoding speed multiplier.
     ///   - fileName: The name of the file being encoded.
-    func updateProgress(fraction: Double, speed: Double?, fileName: String) {
+    ///   - eta: Optional estimated time remaining, in seconds.
+    ///   - bitrate: Optional current bitrate, in kb/s.
+    ///
+    /// `eta` and `bitrate` are carried here because the queue runner drives
+    /// this indicator directly rather than through
+    /// `startTracking(jobState:)`'s Combine sink. That sink used to be the
+    /// only writer of `currentETA` / `currentBitrate`, so without these
+    /// parameters the menu-bar popover's ETA and Bitrate rows would sit
+    /// permanently empty — a visible regression against the single-job
+    /// behaviour the width-1 default is supposed to reproduce exactly.
+    func updateProgress(
+        fraction: Double,
+        speed: Double?,
+        fileName: String,
+        eta: TimeInterval? = nil,
+        bitrate: Double? = nil
+    ) {
         currentProgress = fraction
         currentSpeed = speed
         currentFileName = fileName
+        currentETA = eta
+        currentBitrate = bitrate
 
         // Update menu bar progress ring
         progressRingView?.progress = fraction

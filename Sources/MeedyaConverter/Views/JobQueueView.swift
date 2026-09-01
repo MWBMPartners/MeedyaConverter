@@ -57,7 +57,7 @@ struct JobQueueView: View {
             }
             Button("Continue Encoding", role: .cancel) {}
         } message: {
-            Text("This will stop the current encoding job. The partial output file will be deleted.")
+            Text("This will stop every encoding job in flight and halt the queue. Partial output files will be deleted.")
         }
         .alert("Start Encoding?", isPresented: $showStartConfirmation) {
             Button("Start Encoding") {
@@ -171,9 +171,13 @@ struct JobQueueView: View {
 
                 let total = viewModel.engine.queue.totalCount
                 let completed = viewModel.engine.queue.completedCount
-                let currentProgress = viewModel.activeJobState?.progress ?? 0
+                // Sum of every in-flight job's fraction, not just one job's
+                // (Issue #286). With the default concurrency of 1 there is
+                // exactly one term and this is the previous expression.
+                let currentProgress = viewModel.activeJobStates
+                    .reduce(0.0) { $0 + $1.progress }
                 let overallProgress = total > 0
-                    ? (Double(completed) + currentProgress) / Double(total)
+                    ? min(1.0, (Double(completed) + currentProgress) / Double(total))
                     : 0
 
                 ProgressView(value: overallProgress)
@@ -189,7 +193,10 @@ struct JobQueueView: View {
     private var queueControls: some View {
         if viewModel.isQueueRunning {
             // Pause/Resume
-            if viewModel.activeJobState?.status == .paused {
+            // Pause/Resume and Cancel are queue-wide: they act on every
+            // job in flight, not just one (Issue #286). At the default
+            // concurrency of 1 that is a single job, as before.
+            if viewModel.activeJobStates.contains(where: { $0.status == .paused }) {
                 Button("Resume", systemImage: "play.fill") {
                     viewModel.resumeCurrentJob()
                 }
@@ -198,14 +205,14 @@ struct JobQueueView: View {
                 Button("Pause", systemImage: "pause.fill") {
                     viewModel.pauseCurrentJob()
                 }
-                .help("Pause current encoding")
+                .help("Pause every encoding job in flight")
             }
 
             // Cancel
             Button("Cancel", systemImage: "stop.fill") {
                 showCancelConfirmation = true
             }
-            .help("Cancel current encoding")
+            .help("Cancel every encoding job in flight and stop the queue")
         } else {
             // Start Queue
             Button("Start Queue", systemImage: "play.fill") {

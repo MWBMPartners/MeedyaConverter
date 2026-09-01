@@ -102,8 +102,23 @@ public final class EncodingEngine: @unchecked Sendable {
     /// Cached FFprobe binary info.
     public private(set) var ffprobeInfo: FFmpegBinaryInfo?
 
-    /// The currently active process controller (for the running job).
-    private var activeController: FFmpegProcessController?
+    /// The process controllers for every FFmpeg pass currently in flight,
+    /// keyed by the ID of the `EncodingJobConfig` that owns the pass
+    /// (Issue #286).
+    ///
+    /// Previously a single `activeController` optional. That was correct
+    /// only while exactly one job could ever be running: with two jobs in
+    /// flight, whichever pass registered last owned the whole engine, so
+    /// `stopEncoding()` killed an arbitrary job and the first pass to
+    /// finish cleared the *other* job's controller — after which that job
+    /// could no longer be paused or stopped at all. Keying by job ID makes
+    /// every control operation route to the right process, and makes the
+    /// pass-end teardown remove only its own entry.
+    ///
+    /// A single job's multipass encode registers and unregisters one
+    /// controller per pass under the same key, so at most one entry per
+    /// job exists at a time.
+    private var activeControllers: [UUID: FFmpegProcessController] = [:]
 
     /// Lock for thread-safe state access.
     private let lock = NSLock()
@@ -261,6 +276,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 pass: nil,
                 multipassLogPath: nil,
                 sourceDuration: sourceDuration,
+                jobID: job.id,
                 onProgress: { _ in } // Silent extraction
             )
             do {
@@ -379,6 +395,7 @@ public final class EncodingEngine: @unchecked Sendable {
                         pass: nil,
                         multipassLogPath: nil,
                         sourceDuration: sourceDuration,
+                        jobID: job.id,
                         onProgress: { _ in } // Silent extraction
                     )
                 }
@@ -411,6 +428,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 pass: 1,
                 multipassLogPath: tempDir.appendingPathComponent("multipass/pass").path,
                 sourceDuration: sourceDuration,
+                jobID: job.id,
                 onProgress: { info in
                     // Scale pass 1 progress to 0-50%
                     var scaled = info
@@ -426,6 +444,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 pass: 2,
                 multipassLogPath: tempDir.appendingPathComponent("multipass/pass").path,
                 sourceDuration: sourceDuration,
+                jobID: job.id,
                 onProgress: { info in
                     // Scale pass 2 progress to 50-100%
                     var scaled = info
@@ -441,6 +460,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 pass: nil,
                 multipassLogPath: nil,
                 sourceDuration: sourceDuration,
+                jobID: job.id,
                 onProgress: onProgress
             )
         }
@@ -463,6 +483,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 arguments: extractArgs,
                 pass: nil, multipassLogPath: nil,
                 sourceDuration: nil,
+                jobID: job.id,
                 onProgress: { _ in }
             )
 
@@ -490,6 +511,7 @@ public final class EncodingEngine: @unchecked Sendable {
                 arguments: remuxArgs,
                 pass: nil, multipassLogPath: nil,
                 sourceDuration: nil,
+                jobID: job.id,
                 onProgress: { _ in }
             )
 
@@ -541,6 +563,7 @@ public final class EncodingEngine: @unchecked Sendable {
                     arguments: extractArgs,
                     pass: nil, multipassLogPath: nil,
                     sourceDuration: nil,
+                    jobID: job.id,
                     onProgress: { _ in }
                 )
 
@@ -568,6 +591,7 @@ public final class EncodingEngine: @unchecked Sendable {
                     arguments: remuxArgs,
                     pass: nil, multipassLogPath: nil,
                     sourceDuration: nil,
+                    jobID: job.id,
                     onProgress: { _ in }
                 )
             } catch {
@@ -725,40 +749,94 @@ public final class EncodingEngine: @unchecked Sendable {
 
     // MARK: - Process Control
 
-    /// Pause the currently running encoding process.
+    /// Pause every encoding process currently in flight.
+    ///
+    /// With a single job running — the only case before Issue #286 — this
+    /// is byte-identical to the previous single-controller behaviour.
     public func pauseEncoding() {
-        lock.lock()
-        defer { lock.unlock() }
-        activeController?.pauseEncoding()
+        for controller in currentControllers() {
+            controller.pauseEncoding()
+        }
     }
 
-    /// Resume a paused encoding process.
+    /// Resume every paused encoding process.
     public func resumeEncoding() {
-        lock.lock()
-        defer { lock.unlock() }
-        activeController?.resumeEncoding()
+        for controller in currentControllers() {
+            controller.resumeEncoding()
+        }
     }
 
-    /// Cancel/stop the currently running encoding process.
+    /// Cancel/stop every encoding process currently in flight.
     public func stopEncoding() {
-        lock.lock()
-        defer { lock.unlock() }
-        activeController?.stopEncoding()
+        for controller in currentControllers() {
+            controller.stopEncoding()
+        }
     }
 
-    /// Whether an encoding process is currently running.
+    /// Pause only the pass belonging to `jobID`. A no-op when that job has
+    /// no pass in flight.
+    public func pauseEncoding(jobID: UUID) {
+        controller(forJobID: jobID)?.pauseEncoding()
+    }
+
+    /// Resume only the pass belonging to `jobID`. A no-op when that job has
+    /// no pass in flight.
+    public func resumeEncoding(jobID: UUID) {
+        controller(forJobID: jobID)?.resumeEncoding()
+    }
+
+    /// Stop only the pass belonging to `jobID`. A no-op when that job has
+    /// no pass in flight.
+    public func stopEncoding(jobID: UUID) {
+        controller(forJobID: jobID)?.stopEncoding()
+    }
+
+    /// Whether at least one encoding process is currently running.
     public var isEncoding: Bool {
+        currentControllers().contains { $0.isRunning }
+    }
+
+    /// The number of FFmpeg passes currently registered with the engine.
+    ///
+    /// Exposed for tests and diagnostics — the runner in `AppViewModel`
+    /// tracks its own in-flight count and does not consult this.
+    public var activeControllerCount: Int {
         lock.lock()
         defer { lock.unlock() }
-        return activeController?.isRunning ?? false
+        return activeControllers.count
     }
 
     // MARK: - Private Helpers
 
-    /// Thread-safe setter for the active controller (avoids NSLock in async context).
-    private nonisolated func setActiveController(_ controller: FFmpegProcessController?) {
+    /// A lock-protected snapshot of every registered controller.
+    ///
+    /// Taken as a snapshot so the (potentially blocking) signal calls above
+    /// happen with `lock` released — a controller's own `pauseEncoding()`
+    /// takes its own lock, and holding both would invite a deadlock.
+    private func currentControllers() -> [FFmpegProcessController] {
         lock.lock()
-        activeController = controller
+        defer { lock.unlock() }
+        return Array(activeControllers.values)
+    }
+
+    /// The controller registered for `jobID`, if any.
+    private func controller(forJobID jobID: UUID) -> FFmpegProcessController? {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeControllers[jobID]
+    }
+
+    /// Thread-safe registration of a job's active controller (avoids NSLock in async context).
+    private nonisolated func setActiveController(
+        _ controller: FFmpegProcessController?,
+        forJobID jobID: UUID
+    ) {
+        lock.lock()
+        if let controller {
+            activeControllers[jobID] = controller
+        } else {
+            activeControllers.removeValue(forKey: jobID)
+        }
         lock.unlock()
     }
 
@@ -766,8 +844,15 @@ public final class EncodingEngine: @unchecked Sendable {
     ///
     /// Used by the CLI manifest command and other tools that need to execute
     /// FFmpeg directly with custom arguments (e.g., variant encoding).
+    ///
+    /// - Parameter jobID: Key under which the pass registers its process
+    ///   controller, so `pauseEncoding(jobID:)`/`stopEncoding(jobID:)` can
+    ///   target it. Defaults to a fresh UUID, which keeps every existing
+    ///   caller compiling and behaving exactly as before (the pass is still
+    ///   reachable via the un-keyed `stopEncoding()`, which signals all).
     public func runFFmpeg(
         arguments: [String],
+        jobID: UUID = UUID(),
         onProgress: @escaping @Sendable (FFmpegProgressInfo) -> Void
     ) async throws {
         guard let ffmpegPath = ffmpegInfo?.path else {
@@ -779,26 +864,33 @@ public final class EncodingEngine: @unchecked Sendable {
             pass: nil,
             multipassLogPath: nil,
             sourceDuration: nil,
+            jobID: jobID,
             onProgress: onProgress
         )
     }
 
     /// Run a single FFmpeg pass (or the entire encode for single-pass).
+    ///
+    /// `jobID` scopes the pass's process controller so that concurrent jobs
+    /// (Issue #286) cannot clear each other's registration on pass end.
     private func runFFmpegPass(
         ffmpegPath: String,
         arguments: [String],
         pass: Int?,
         multipassLogPath: String?,
         sourceDuration: TimeInterval?,
+        jobID: UUID,
         onProgress: @escaping @Sendable (FFmpegProgressInfo) -> Void
     ) async throws {
         let controller = FFmpegProcessController(binaryPath: ffmpegPath)
         controller.sourceDuration = sourceDuration
 
-        setActiveController(controller)
+        setActiveController(controller, forJobID: jobID)
 
         defer {
-            setActiveController(nil)
+            // Remove only THIS job's entry — a sibling job's controller
+            // must survive this pass ending (Issue #286).
+            setActiveController(nil, forJobID: jobID)
         }
 
         // Modify arguments for multipass if needed
