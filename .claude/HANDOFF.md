@@ -110,6 +110,31 @@ Fix queued: add `wip/**` to the `push` triggers so the working branch is continu
 `75fd2ad` green; later pushes in flight. `swift build --target ConverterEngine` verified clean locally
 before each Swift commit; `swiftc -parse` used on the new test file (no local XCTest — CI is the test gate).
 
+### Issue sweep — reconciliation pass 1 of 2 APPLIED (#147-#346, 45 issues)
+
+Fable reconciled all 45 open issues in slices 1-3 against the code. Outcome:
+**21 partially-done · 13 inert-fabricated · 11 not-started · 0 to close.**
+25 needed no change; **20 evidence-cited comments were posted** to
+#163 #178 #205 #275 #277 #278 #281 #283 #286 #288 #294 #298 #302 #320 #322 #326 #329 #331 #335 #346.
+
+Quality is high — the pass corrected the *issue bodies* where they were wrong, not just their status.
+Four claims were independently spot-verified by the orchestrator before/after posting and all held:
+- **#163** — the issue asks for `buildInvalidationXML`; no such method exists. The real one is
+  `buildInvalidationBody` (`ExtendedCloudProviders.swift:35`). Confirmed by grep.
+- **#281** — `MenuBarController` is complete (NSStatusItem, menu, Dock toggle) but is **never
+  instantiated**; the only other mentions are two comments in `ControlCenterModule.swift`. Confirmed.
+- **#286** — `AppViewModel.startQueue()` is sequential by construction, per its own doc comment at
+  `AppViewModel.swift:1049`. Confirmed.
+- **#302** — the AppleScript `.sdef` really is bundled (`Package.swift:404`). Confirmed.
+
+One posted comment was **patched before sending**: #205's text described
+`SuiteCoreMetadataAdapter.searchViaInline` as returning `[]` — true when the audit ran, fixed since in
+`6baf46a`. It now describes the throw, and says the lookup capability itself is still absent.
+
+Every comment carries a footer marking it as a W1 code-first reconciliation.
+
+**Pass 2 (#353-#495, 44 issues) still running.**
+
 ### MusicBrainz Nov-30 — Fable verdict (pass 1 complete, primary-source-backed)
 
 **Nothing in the Meedya suite breaks on 30 November 2026.** Per-ticket:
