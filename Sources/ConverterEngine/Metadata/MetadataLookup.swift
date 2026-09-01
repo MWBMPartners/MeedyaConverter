@@ -296,31 +296,176 @@ public struct TMDBClient: Sendable {
 /// Builds MusicBrainz API request URLs for music metadata lookup.
 ///
 /// Phase 15.2
+///
+/// ## Lucene query hardening (issue #493, Part A)
+///
+/// MusicBrainz's `/recording` and `/release` search endpoints parse the
+/// `query` parameter as a Lucene query string
+/// (https://musicbrainz.org/doc/MusicBrainz_API/Search,
+/// https://lucene.apache.org/core/.../QueryParserSyntax.html). Building
+/// that string by raw interpolation is unsafe on two independent axes:
+///
+///   1. **Lucene syntax** — a bare, unquoted multi-word value only binds
+///      its first token to the field (`recording:Bohemian Rhapsody`
+///      parses as `recording:Bohemian` AND an unfielded `Rhapsody`
+///      clause), and characters such as `: ( ) [ ] { } ~ * ? ^ " \` are
+///      Lucene operators when they appear outside of a quoted phrase.
+///   2. **URL syntax** — characters such as `& + = ? # / ; : @ $ ,` are
+///      significant in a URL's query-string encoding (`&` separates
+///      parameters, `+` decodes to a space, etc.), so passing them
+///      through unescaped can corrupt the request even before Lucene
+///      ever sees it.
+///
+/// `luceneClause(field:value:)` and `safeQueryValueCharacters` address
+/// each axis independently: the former produces a phrase-quoted,
+/// Lucene-escaped clause; the latter percent-encodes that clause so it
+/// survives transport as a single query-string value. Percent-encoding
+/// is fully transparent to MusicBrainz — the server percent-decodes the
+/// query string before handing it to the Lucene parser — so it is
+/// always safe to encode a character even when Lucene would have
+/// accepted it literally (e.g. the `:` in `field:"value"`).
 public struct MusicBrainzClient: Sendable {
 
+    // MARK: - Lucene Query Escaping
+
+    /// Escape a raw string for safe embedding inside a double-quoted
+    /// Lucene phrase.
+    ///
+    /// Per Lucene's escaping rules, a backslash-escape sequence is
+    /// introduced with `\`, so any literal backslash in the value must
+    /// be escaped to `\\` *before* the phrase-terminating `"` character
+    /// is escaped to `\"` — doing it in the other order would
+    /// re-escape the backslashes just inserted for the quote, corrupting
+    /// the value. Once quoted, Lucene treats every other special
+    /// character (`: ( ) [ ] { } ~ * ? ^` and friends) as a literal
+    /// part of the phrase rather than an operator, so no further
+    /// escaping is required.
+    ///
+    /// - Parameter value: The raw, unescaped field value (e.g. a track
+    ///   title or artist name) as supplied by the caller.
+    /// - Returns: `value` with `\` and `"` backslash-escaped, ready to
+    ///   be wrapped in double quotes by `luceneClause(field:value:)`.
+    private static func escapeLucenePhraseValue(_ value: String) -> String {
+        // Order matters — see the doc comment above.
+        var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "\\\"")
+        return escaped
+    }
+
+    /// Build a single, safely phrase-quoted Lucene field clause of the
+    /// form `field:"<escaped value>"`.
+    ///
+    /// Wrapping `value` in double quotes turns the whole value into one
+    /// Lucene "phrase" term. This both keeps multi-word values attached
+    /// to `field` (rather than the trailing words leaking into an
+    /// unfielded default clause) and neutralises Lucene's special
+    /// characters within the value, since they only carry syntactic
+    /// meaning *outside* of a quoted phrase.
+    ///
+    /// `field` is assumed to be a literal, developer-controlled constant
+    /// (`"recording"`, `"release"`, `"artist"`) and is emitted verbatim,
+    /// unquoted and unescaped, exactly as MusicBrainz's field-search
+    /// syntax requires. Only `value` — which may originate from
+    /// arbitrary file- or user-derived input — is escaped and quoted.
+    ///
+    /// - Parameters:
+    ///   - field: The Lucene/MusicBrainz field name, e.g. `"recording"`.
+    ///   - value: The raw value to search for within that field.
+    /// - Returns: A Lucene clause, e.g. `recording:"Bohemian Rhapsody"`.
+    private static func luceneClause(field: String, value: String) -> String {
+        "\(field):\"\(escapeLucenePhraseValue(value))\""
+    }
+
+    // MARK: - Percent-Encoding
+
+    /// Characters considered safe to leave un-encoded when embedding an
+    /// assembled Lucene query string as the value of a URL query
+    /// parameter.
+    ///
+    /// `CharacterSet.urlQueryAllowed` is too permissive for this
+    /// specific use: it treats `& + = ? # / ; : @ $ ,` as "safe" because
+    /// those characters are legal *somewhere* in a URL query component
+    /// in general, but several of them are reserved for our own use of
+    /// the query string and must not appear un-encoded inside the
+    /// `query=` value itself:
+    ///   - `&` separates the `query=`, `fmt=`, and `limit=` parameters —
+    ///     an un-encoded `&` inside a title/artist would prematurely end
+    ///     the `query` value and inject bogus parameters into the URL.
+    ///   - `+` decodes to a literal space in query-string encoding,
+    ///     which would corrupt word boundaries in the value.
+    ///   - `= ? # ; : @ $ ,` are either parameter/fragment delimiters or
+    ///     characters best kept encoded to avoid any ambiguity with the
+    ///     surrounding URL structure.
+    /// We also explicitly exclude the space character, which
+    /// `.urlQueryAllowed` already disallows, but calling it out keeps
+    /// this set self-documenting.
+    ///
+    /// We start from the standard "allowed in a URL query" set and
+    /// *remove* the characters known to be unsafe for this specific
+    /// usage, rather than enumerating an "allowed" set from scratch —
+    /// this avoids accidentally permitting something Foundation already
+    /// excludes (such as `%` itself).
+    private static let safeQueryValueCharacters: CharacterSet = {
+        var set = CharacterSet.urlQueryAllowed
+        set.remove(charactersIn: "&+=?#/;:@$, ")
+        return set
+    }()
+
+    /// Percent-encode an assembled Lucene query string for safe use as
+    /// the value of a URL query parameter.
+    ///
+    /// See `safeQueryValueCharacters` for the rationale behind the
+    /// specific character set used here instead of `.urlQueryAllowed`.
+    ///
+    /// - Parameter query: The raw (unencoded) Lucene query string, e.g.
+    ///   `recording:"Bohemian Rhapsody" AND artist:"Queen"`.
+    /// - Returns: The percent-encoded query, safe to interpolate as a
+    ///   single `query=` parameter value.
+    private static func percentEncodeQueryValue(_ query: String) -> String {
+        query.addingPercentEncoding(withAllowedCharacters: safeQueryValueCharacters) ?? query
+    }
+
+    // MARK: - URL Builders
+
     /// Build a MusicBrainz recording search URL.
+    ///
+    /// The `title` (and, if present, `artist`) are each wrapped as a
+    /// phrase-quoted, Lucene-escaped field clause via `luceneClause`
+    /// before the whole query is percent-encoded — see the type-level
+    /// doc comment for why both steps are necessary.
     public static func buildRecordingSearchURL(
         title: String,
         artist: String? = nil
     ) -> String {
-        var query = "recording:\(title)"
-        if let art = artist { query += " AND artist:\(art)" }
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        var query = luceneClause(field: "recording", value: title)
+        if let art = artist {
+            query += " AND \(luceneClause(field: "artist", value: art))"
+        }
+        let encoded = percentEncodeQueryValue(query)
         return "\(MetadataSource.musicBrainz.baseURL)/recording?query=\(encoded)&fmt=json&limit=10"
     }
 
     /// Build a MusicBrainz release (album) search URL.
+    ///
+    /// See `buildRecordingSearchURL(title:artist:)` — the same
+    /// phrase-quoting and percent-encoding treatment applies here.
     public static func buildReleaseSearchURL(
         album: String,
         artist: String? = nil
     ) -> String {
-        var query = "release:\(album)"
-        if let art = artist { query += " AND artist:\(art)" }
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        var query = luceneClause(field: "release", value: album)
+        if let art = artist {
+            query += " AND \(luceneClause(field: "artist", value: art))"
+        }
+        let encoded = percentEncodeQueryValue(query)
         return "\(MetadataSource.musicBrainz.baseURL)/release?query=\(encoded)&fmt=json&limit=10"
     }
 
     /// Build a MusicBrainz lookup URL by recording ID.
+    ///
+    /// `recordingId` is a MusicBrainz Identifier (MBID) — a UUID — so it
+    /// contains no characters that require Lucene escaping or
+    /// percent-encoding, unlike the free-text search builders above.
     public static func buildRecordingLookupURL(
         recordingId: String
     ) -> String {

@@ -216,10 +216,19 @@ extension ConverterEngineTests {
     }
 
     /// Verifies MusicBrainz lookup URL.
+    ///
+    /// Issue #493 (Part A) centralized the MusicBrainz base URL onto
+    /// `MetadataSource.musicBrainz.baseURL` (previously duplicated here
+    /// as a second hard-coded string), so this now asserts against the
+    /// exact `.../ws/2/discid/-?toc=` shape that the centralized base
+    /// URL produces, not just a loose substring match.
     func test_audioCDReader_musicBrainzURL() {
         let url = AudioCDReader.buildMusicBrainzLookupURL(toc: "1+10+200000+150")
         XCTAssertTrue(url.contains("musicbrainz.org"))
         XCTAssertTrue(url.contains("toc="))
+        XCTAssertTrue(url.contains("musicbrainz.org/ws/2/discid/-?toc="),
+                      "Expected the centralized MetadataSource.musicBrainz.baseURL to produce this exact path: \(url)")
+        XCTAssertEqual(url, "https://musicbrainz.org/ws/2/discid/-?toc=1+10+200000+150&fmt=json")
     }
 
     /// Verifies AccurateRip disc ID calculation.

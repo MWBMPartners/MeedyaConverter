@@ -329,10 +329,21 @@ public struct AudioCDReader: Sendable {
 
     /// Build a MusicBrainz disc lookup URL.
     ///
-    /// - Parameter toc: TOC string from `buildMusicBrainzTOC`.
+    /// Uses `MetadataSource.musicBrainz.baseURL` (declared in
+    /// `Metadata/MetadataLookup.swift`, same `ConverterEngine` module)
+    /// rather than a second hard-coded copy of the MusicBrainz host, so
+    /// the API base URL has exactly one source of truth (issue #493,
+    /// Part A). `MetadataSource` and `baseURL` are already `public`, and
+    /// both files compile into the same target, so no access-level
+    /// change was needed to reach it from here.
+    ///
+    /// - Parameter toc: TOC string from `buildMusicBrainzTOC`. Passed
+    ///   through unencoded — MusicBrainz's `discid` lookup expects the
+    ///   `+`-joined TOC literally, unlike the free-text search queries
+    ///   in `MusicBrainzClient`.
     /// - Returns: MusicBrainz lookup URL.
     public static func buildMusicBrainzLookupURL(toc: String) -> String {
-        return "https://musicbrainz.org/ws/2/discid/-?toc=\(toc)&fmt=json"
+        return "\(MetadataSource.musicBrainz.baseURL)/discid/-?toc=\(toc)&fmt=json"
     }
 
     // MARK: - AccurateRip

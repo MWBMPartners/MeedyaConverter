@@ -190,6 +190,22 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
 
 ### Fixed
 
+- **MusicBrainz search queries now Lucene-escaped and phrase-quoted, base URL
+  centralised (#493, Part A)** -- `MusicBrainzClient.buildRecordingSearchURL` /
+  `buildReleaseSearchURL` previously interpolated titles/artists raw into the
+  Lucene `query=` parameter, so multi-word values only bound their first token
+  to the field (`recording:Bohemian Rhapsody` searched only `Bohemian`), Lucene
+  special characters (`: ( ) " \` …) corrupted the query, and URL-reserved
+  characters (`& + / :`) could break the request under the permissive
+  `.urlQueryAllowed` set. Each field value is now emitted as a phrase-quoted,
+  backslash-escaped Lucene clause (`field:"value"`) and percent-encoded with a
+  tightened character set. The MusicBrainz base URL, previously duplicated as a
+  hard-coded literal in `AudioCDReader.buildMusicBrainzLookupURL`, now resolves
+  from the single `MetadataSource.musicBrainz.baseURL` source of truth. No API
+  endpoints, parameters, or public signatures changed; new unit tests cover
+  phrase-quoting and reserved-character escaping. (Preparatory hardening ahead
+  of the reported MusicBrainz search-API changes tracked in #493; the migration
+  itself, Part B, is blocked pending access to the announcement.)
 - **HDR PQ/HDR10 colour signalling now emitted, and a latent HLG-signalling
   regression fixed alongside it** -- `buildPQPreservationArguments()`
   existed but was never wired in, so PQ/HDR10/Dolby-Vision-base-layer

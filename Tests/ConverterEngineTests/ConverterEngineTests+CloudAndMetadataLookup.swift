@@ -480,7 +480,83 @@ extension ConverterEngineTests {
         )
         XCTAssertTrue(url.contains("musicbrainz.org/ws/2/recording"))
         XCTAssertTrue(url.contains("fmt=json"))
+        XCTAssertTrue(url.contains("limit=10"))
         XCTAssertTrue(url.contains("Bohemian"))
+
+        // Issue #493 (Part A): each field's value must be phrase-quoted,
+        // not interpolated raw — otherwise a multi-word value like
+        // "Bohemian Rhapsody" only binds its first token to `recording:`
+        // and the rest leaks into an unfielded Lucene clause. Quotes are
+        // percent-encoded as `%22` and the field-name colon as `%3A`.
+        XCTAssertTrue(url.contains("recording%3A%22"),
+                      "Expected the recording field value to be phrase-quoted: \(url)")
+        XCTAssertTrue(url.contains("Bohemian%20Rhapsody%22"),
+                      "Expected the full title phrase (not just the first word) inside the quotes: \(url)")
+        XCTAssertTrue(url.contains("artist%3A%22Queen%22"),
+                      "Expected the artist field value to be phrase-quoted too: \(url)")
+    }
+
+    /// Verifies MusicBrainz release (album) search URL. Added alongside
+    /// the recording-search hardening in issue #493 (Part A) — there was
+    /// previously no coverage for `buildReleaseSearchURL` at all.
+    func test_musicBrainzClient_releaseSearch() {
+        let url = MusicBrainzClient.buildReleaseSearchURL(
+            album: "A Night at the Opera", artist: "Queen"
+        )
+        XCTAssertTrue(url.contains("musicbrainz.org/ws/2/release?query="))
+        XCTAssertTrue(url.contains("fmt=json"))
+        XCTAssertTrue(url.contains("limit=10"))
+        XCTAssertTrue(url.contains("release%3A%22"),
+                      "Expected the release field value to be phrase-quoted: \(url)")
+        XCTAssertTrue(url.contains("Night%20at%20the%20Opera%22"),
+                      "Expected the full album phrase inside the quotes: \(url)")
+        XCTAssertTrue(url.contains("artist%3A%22Queen%22"),
+                      "Expected the artist field value to be phrase-quoted too: \(url)")
+    }
+
+    /// Verifies that Lucene/URL-reserved characters in a search value
+    /// (`" & / :`) are safely Lucene-escaped and percent-encoded rather
+    /// than corrupting the query string — issue #493 (Part A). Before
+    /// this hardening, a title like this would inject a bare `&` that
+    /// splits the query parameter, a bare `/` and `:` that confuse
+    /// Lucene's unquoted-token parser, and an unescaped `"` that could
+    /// prematurely close a quoted phrase.
+    func test_musicBrainzClient_recordingSearch_escapesReservedCharacters() {
+        let dangerousTitle = "AC/DC: Live & Loud \"Special\""
+        let url = MusicBrainzClient.buildRecordingSearchURL(title: dangerousTitle, artist: nil)
+
+        // Isolate the `query=` parameter's value (up to the next
+        // parameter) so we can assert about it precisely rather than
+        // just scanning the whole URL.
+        guard let queryStart = url.range(of: "query=")?.upperBound,
+              let queryEnd = url.range(of: "&fmt=json")?.lowerBound,
+              queryStart <= queryEnd else {
+            return XCTFail("Expected a single `query=...&fmt=json` parameter in: \(url)")
+        }
+        let queryValue = String(url[queryStart..<queryEnd])
+
+        // None of the raw reserved characters may appear un-encoded
+        // inside the query value — each must have been percent-encoded.
+        XCTAssertFalse(queryValue.contains("&"), "Un-encoded & would split the query parameter: \(queryValue)")
+        XCTAssertFalse(queryValue.contains("/"), "Un-encoded / was not percent-encoded: \(queryValue)")
+        XCTAssertFalse(queryValue.contains("\""), "Un-encoded \" was not percent-encoded: \(queryValue)")
+        XCTAssertTrue(queryValue.contains("%2F"), "Expected / to be percent-encoded as %2F: \(queryValue)")
+        XCTAssertTrue(queryValue.contains("%26"), "Expected & to be percent-encoded as %26: \(queryValue)")
+        XCTAssertTrue(queryValue.contains("%22"), "Expected the phrase quotes to be percent-encoded as %22: \(queryValue)")
+
+        // Round-tripping the percent-decoding must recover a properly
+        // phrase-quoted, Lucene-escaped clause — confirming the escaping
+        // and encoding steps compose correctly rather than merely
+        // "looking safe" in isolation.
+        guard let decoded = queryValue.removingPercentEncoding else {
+            return XCTFail("Query value should be valid percent-encoded UTF-8: \(queryValue)")
+        }
+        XCTAssertEqual(decoded, "recording:\"AC/DC: Live & Loud \\\"Special\\\"\"")
+
+        // The overall URL must still be a single, well-formed request:
+        // exactly one `query=` parameter followed by `fmt=json&limit=10`.
+        XCTAssertTrue(url.contains("musicbrainz.org/ws/2/recording?query="))
+        XCTAssertTrue(url.contains("&fmt=json&limit=10"))
     }
 
     /// Verifies MusicBrainz User-Agent.
