@@ -1101,6 +1101,76 @@ paths:
         "422":
           description: "Exit 6 — Validation failed (errors found, or warnings with --strict)."
 
+  /serve:
+    post:
+      operationId: serve
+      summary: Run the REST API server for headless/remote encoding control.
+      description: |
+        Starts `APIServer` and blocks, exposing the HTTP API documented in
+        `meedya-http-api.yaml` on the given port, backed by a real
+        `EncodingEngine`. Implemented by `Sources/meedya-convert/Commands/ServeCommand.swift`
+        and registered in the command tree at
+        `Sources/meedya-convert/MeedyaConvert.swift`.
+
+        **Usage:**
+        ```
+        meedya-convert serve [--port <n>] [--api-key <key>]
+        ```
+
+        **Authentication is mandatory.** `APIServer`'s bearer token is a
+        required, non-optional initialiser argument — there is no
+        unauthenticated mode. Every request must carry
+        `Authorization: Bearer <api-key>`. If `--api-key` is omitted, a random
+        one-time key is generated and printed **to stderr** at startup; it is
+        never shown again, and the server cannot be reached without it.
+
+        **Binding:** the listener accepts on all interfaces. `APIServer` has no
+        host-binding option, so there is no way to restrict it to loopback from
+        the CLI. Do not expose the port to an untrusted network.
+
+        **Known limitation, surfaced honestly:** `POST /encode` enqueues jobs
+        onto the real encoding queue but does **not** start the queue runner,
+        and `serve` does not start one either — so encoding will not begin until
+        something else drives the queue. This mirrors the desktop app's
+        "Add to Queue" without "Start Queue".
+
+        **Lifetime:** `APIServer.start()` binds the listener and returns
+        immediately; connections are serviced on the server's own dispatch
+        queue. The command then sleeps indefinitely to keep the process alive
+        and exits on SIGINT (Ctrl+C). There is no graceful-shutdown signal
+        handler, so `APIServer.stop()` is never called.
+
+        **Exit codes:** does not return under normal operation. 1 if the
+        listener fails to bind (for example, the port is already in use);
+        2 for an invalid `--port` or an empty `--api-key`; 130 on Ctrl+C.
+      tags:
+        - Server
+      parameters:
+        - name: --port
+          in: query
+          required: false
+          description: "TCP port to listen on. Validated to be within 1-65535; anything else is a usage error (exit 2)."
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            default: 8484
+
+        - name: --api-key
+          in: query
+          required: false
+          description: "Bearer token clients must send as `Authorization: Bearer <key>`. Must not be empty or whitespace-only (exit 2). If omitted, a random UUID key is generated and printed once to stderr."
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: "Server started. The process blocks until interrupted; the HTTP surface it exposes is documented in `meedya-http-api.yaml`."
+        "400":
+          description: "Exit 2 — invalid `--port` (outside 1-65535) or an empty `--api-key`."
+        "500":
+          description: "Exit 1 — the API server failed to start (for example, the port is already in use)."
+
 # ============================================================================
 # Schemas — JSON output formats and job file structures
 # ============================================================================

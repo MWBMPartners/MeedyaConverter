@@ -30,8 +30,9 @@ meedya-convert --help
 meedya-convert --version
 ```
 
-The six subcommands are: `encode`, `probe`, `profiles`, `batch`, `manifest`,
-and `validate`. Every subcommand also accepts `--help` for its own usage text.
+The seven subcommands are: `encode`, `probe`, `profiles`, `batch`, `manifest`,
+`validate`, and `serve`. Every subcommand also accepts `--help` for its own
+usage text.
 
 ---
 
@@ -260,6 +261,45 @@ HDR codec support, CRF range (0–63), hardware-encoder-with-CRF mismatches, and
 bitrate/CRF conflicts.
 
 **Exit codes:** `0` valid (warnings allowed unless `--strict`) · `6` validation failed (errors, or warnings under `--strict`).
+
+### `serve` — Run the REST API Server
+
+Starts the HTTP API server for headless or remote control, backed by a real
+encoding engine. The command blocks until interrupted.
+
+```bash
+meedya-convert serve [--port <n>] [--api-key <key>]
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `--port <n>` | TCP port to listen on. Must be 1–65535. Default `8484`. |
+| `--api-key <key>` | Bearer token clients must send. Must not be empty. If omitted, a random one-time key is generated and printed to **stderr** at startup. |
+
+**Authentication is mandatory.** There is no unauthenticated mode. Every
+request must carry an `Authorization: Bearer <api-key>` header, or it is
+rejected with `401`. If you let the command generate the key, capture it from
+stderr on the first run — it is not printed again.
+
+**The listener accepts on all interfaces** and there is no host-binding
+option, so do not expose the port to an untrusted network. Put it behind a
+reverse proxy or a firewall rule if it needs to be reachable off-box.
+
+**Known limitation.** `POST /encode` adds jobs to the real queue but does not
+start the queue runner, and `serve` does not start one either — so jobs are
+accepted and then sit there until something else drives the queue. This is the
+same behaviour as pressing "Add to Queue" in the app without pressing "Start
+Queue". Treat `serve` as an alpha-quality remote *submission* endpoint, not an
+unattended encoding daemon.
+
+Endpoints exposed: `POST /encode`, `POST /probe`, `GET /status`, `GET /queue`,
+`GET /profiles`. They are documented in full, with request and response
+schemas, in `docs/api/meedya-http-api.yaml` — browsable through the bundled
+Swagger UI at `docs/api/swagger-ui/index.html`.
+
+**Exit codes:** does not return under normal operation · `1` the listener
+failed to bind (for example, the port is in use) · `2` invalid `--port` or an
+empty `--api-key` · `130` Ctrl+C.
 
 ---
 
