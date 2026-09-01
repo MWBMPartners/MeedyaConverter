@@ -133,7 +133,57 @@ One posted comment was **patched before sending**: #205's text described
 
 Every comment carries a footer marking it as a W1 code-first reconciliation.
 
-**Pass 2 (#353-#495, 44 issues) still running.**
+### Issue sweep — reconciliation pass 2 APPLIED (#353-#495, 44 issues) — SWEEP COMPLETE
+
+**16 partially-done · 15 not-started · 6 inert-fabricated · 3 obsolete · 3 fully-done · 1 done-on-branch.**
+**27 comments posted**; **3 issues CLOSED**, each independently re-verified by the orchestrator first:
+
+- **#390** (ITMS-90236 ICNS) — `scripts/generate-app-icns.sh:102` maps `icon_1024x1024.png` to
+  `icon_512x512@2x.png`, the exact slot the rejection names, then runs `iconutil`. Invoked by
+  `release.yml:380` and `testflight.yml:230`, and `testflight.yml:317` **fails the build** if the
+  `.icns` is missing. Verified.
+- **#448** (placeholder UIs) — all five checklist items verified executing: DualDynamicHDR
+  (`DualDynamicHDRView.swift:538` → executor → `HDR10PlusToolWrapper.runAsync` → real `Process()` at
+  `:330`), BitrateHeatmap (`:475 try await backend.runFFprobe(... timeout: 300)`), AnimatedImage
+  (the `"<source>"` placeholder is gone repo-wide; real `FFmpegProcessController`), EncodingGraphs
+  (`currentStatistics` computed from `statisticsStore.allStatistics`), CloudSync (`:362`
+  `viewModel.engine.profileStore.profiles` → `manager.uploadProfiles`).
+  ⚠️ **A caveat comment was posted BEFORE closing**, because the title is broader than the checklist:
+  Watermark (#298), Pipeline editor (#278), Keyboard shortcuts (#331), Scene detect (#288),
+  Comparison (#329) and Vector (#473) are all still reachable-but-inert, and `MetadataEditorView` /
+  `APIServerView` / `SlateGeneratorView` are still orphaned. The close must not be read as
+  "no placeholder UIs remain".
+- **#471** (IntAppsAPI) — `RemoteFeatureGateProvider` is a live `AppViewModel` property (`:300`),
+  refreshed at launch from `MeedyaConverterApp.swift`. Verified.
+
+**Rescope-not-close** (comment posted, title deliberately left alone so issue identity is stable):
+**#451** (only `ScriptingBridge.swift:304`'s `DispatchSemaphore` + 60 s wait at `:333` remains),
+**#468** (checkpoints write on fail/cancel only — no periodic write, and Resume re-queues from 0%),
+**#475** (7 of 8 toggles now wired; only `useHardwareAcceleration` is still read nowhere).
+
+**#494** left for the user — the GPL disc-tools licensing decision. `ToolBundleManifest` still carries
+**zero** GPL entries (MIT/MPL-2.0/BSD-2-Clause/LGPL-2.1 only), and no decision document exists.
+
+Two comments were **patched before posting** because the audit's snapshot had been overtaken by this
+session's own commits: #205 (`searchViaInline` now throws, per `6baf46a`) and #477 (the stale doc
+mentions were fixed in `75fd2ad`).
+
+**Issue count: 89 open → 86 open.** (#496 and #497 were opened and closed within the session.)
+
+### NEW verified defects found this session, not previously tracked as such
+
+- **#331 keyboard shortcuts are a no-op.** `KeyboardShortcutManager.binding(for:)`
+  (`Services/KeyboardShortcutManager.swift:186`) — the only method converting a saved binding into a
+  SwiftUI `KeyboardShortcut` — has **zero callers**. Settings rebinds 7 actions
+  (`navigate.source/output/queue/dashboard/settings`, `encode.start`, `file.import`), detects
+  conflicts and persists to `UserDefaults`, while all **34** real shortcuts stay hardcoded — e.g.
+  `MeedyaConverterApp.swift:112` pins ⌘O regardless of `file.import`. Contained fix.
+- **#298 watermark never applied.** `WatermarkView` is a live sidebar destination ("Add watermark
+  overlay") that renders only an "FFmpeg Filter Preview" text box.
+  `buildVideoWatermarkArguments` / `buildImageWatermarkArguments` have **zero callers**.
+- **#278 pipeline editor discards its work.** `OutputSettingsView.swift:83` presents
+  `PipelineEditorView()` with no `onSave`.
+
 
 ### MusicBrainz Nov-30 — Fable verdict (pass 1 complete, primary-source-backed)
 
