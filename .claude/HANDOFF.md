@@ -94,6 +94,62 @@ Fix queued: add `wip/**` to the `push` triggers so the working branch is continu
 - [~] Workflow `wpssl6pvl` RUNNING — 9 parallel Sonnet evidence agents (code-first, citation-only) then
       4 **sequential** Fable analysis passes (MusicBrainz plan → issue reconciliation ×2 → ranked proposals).
 
+### Work landed this session (all on `wip/alpha-consolidation`, all pushed)
+
+| Commit | What |
+|---|---|
+| `4c42111` | **#496** CI trigger — `'wip/**'` added to `build.yml` `push.branches`. **Issue CLOSED.** |
+| `a239e5f` | handoff: session start state |
+| `8f74e0d` | handoff: verified findings |
+| `1887353` | **#497-F** `/serve` in the CLI OpenAPI spec + `Resources/Help/cli-reference.md` |
+| `75fd2ad` | **#497-C/D/E** Architecture.md / FEATURES.md / PROJECT_STATUS.md / Home.md / FAQ.md / both migration docs |
+| `6baf46a` | **#493** inline metadata search throws instead of faking `[]`; SEARCH-666 quality guidance corrected |
+| `a8fb62a` | **#497-A/B** HTTP API spec + `docs/api/README.md` + **swagger-ui banner** — stop calling working endpoints fabricated. **Issue #497 CLOSED.** |
+
+**CI:** every push now triggers `Build & Test (macOS)` on this branch (that was the point of #496).
+`75fd2ad` green; later pushes in flight. `swift build --target ConverterEngine` verified clean locally
+before each Swift commit; `swiftc -parse` used on the new test file (no local XCTest — CI is the test gate).
+
+### MusicBrainz Nov-30 — Fable verdict (pass 1 complete, primary-source-backed)
+
+**Nothing in the Meedya suite breaks on 30 November 2026.** Per-ticket:
+- **SEARCH-444** (area/url `relation-list`) — no. No repo searches `area`/`url`.
+- **SEARCH-642** (drop cdstub/tag `id`) — no. The string `cdstub` appears in no source file in any repo;
+  suite-core's `MbTag` reads only `name`/`count`.
+- **SEARCH-666** (quality names replace numeric) — no. No repo emits a `quality:` clause or reads a
+  `quality` property.
+- **SEARCH-752** (`target` removed) — no. MeedyaConverter parses no MusicBrainz JSON at all; suite-core's
+  structs have no `relations`/`target`; **MeedyaDL** reads `target` only as a *legacy fallback* on
+  lookup/browse responses (never search), preferring `target-type` — already correct.
+- **SEARCH-764** (Solr 10) — mirror owners only; no repo runs a mirror or any Solr config.
+
+**Decision taken: Option B.** Keep MeedyaConverter builders-only; do not build an inline Swift MusicBrainz
+client. Reasons, all evidence-backed: (1) `docs/MeedyaSuite-core-integration.md:28` plans to **remove** the
+inline clients in favour of suite-core, so a new Swift client is built-to-be-deleted duplication of the Rust
+provider that already exists; (2) the SUITE_CORE path is aspirational on both ends — `SuiteCoreMetadataAdapter`
+calls `MeedyaCore.metadataSearch` but MeedyaSuite-core's `bindings/swift` contains only a README, so
+"just flip `SUITE_CORE=1`" would not produce a working lookup; (3) Option A is ~5-7 files / 1000+ LOC for a
+capability Nov 30 does not threaten. **A real end-to-end lookup is therefore NEW WORK and goes on the ranked
+proposals list for the user to choose — it is not smuggled in under a "don't break on Nov 30" directive.**
+
+**Existing hardening confirmed CORRECT** on inspection in both repos: backslash escaped before quote
+(`MetadataLookup.swift:363-365`; suite-core `lucene.rs` `quote_phrase`), phrase-quoting correctly leaves other
+Lucene specials literal, the percent-encode set correctly strips `&+=?#/;:@$` and space from
+`.urlQueryAllowed`, and the base URL is single-sourced.
+
+### ⚠️ CROSS-REPO ITEMS THE USER MUST DECIDE OR DO (we are NOT touching those repos)
+
+1. **MeedyaSuite-core: the hardening is on an unmerged branch only.** `97ba626` and `a7354d3` are verified
+   **not** ancestors of `main`. `main`'s provider still builds queries by **raw interpolation** — i.e. the
+   real Lucene-injection bugs are what ships from `main` today. Everything Nov-30-relevant lives on
+   `feature/work-in-progress`. **Merge it before 30 November**, or `main` keeps the bugs and gains no
+   forward-compat test.
+2. **MeedyaDL has uncommitted work at risk.** Branch `alpha` holds a staged rename
+   (`musicbrainz_service.rs` → `musicbrainz_service/mod.rs`) plus **two untracked files**
+   (`relations.rs`, `search.rs`). Untracked files are one `git clean` from gone.
+3. Both sibling repos are being edited by **concurrent sessions**; treat line-number citations as
+   time-sensitive and re-run `git status` before touching either.
+
 ### Verified findings — orchestrator's own greps (independent of the agents, all re-checkable)
 
 **The entire metadata-LOOKUP subsystem is dead code.** Not "partially wired" — dead:
