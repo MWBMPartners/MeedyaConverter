@@ -134,6 +134,39 @@ public struct DiscInfo: Codable, Sendable {
     }
 }
 
+// MARK: - TrackMode
+
+/// The physical sector encoding of a CD track, per the Red Book (CD-DA) and
+/// Yellow Book (CD-ROM) specifications, and as named by the CUE sheet
+/// `TRACK NN <mode>` directive (see `CueSheetWriter`/`CueSheetParser` in
+/// `Disc/Imaging/`).
+///
+/// - `audio`: Red Book CD-DA — 2352-byte sector, 16-bit stereo PCM at
+///   44.1kHz. No error correction beyond the audio codec's own CIRC.
+/// - `mode1`: Yellow Book Mode 1 — a 2352-byte raw sector containing a
+///   12-byte sync pattern, 4-byte header, 2048 bytes of user data, and
+///   288 bytes of EDC/ECC. This is the standard encoding for ISO 9660 data
+///   discs, and is what `MODE1/2352` in a CUE sheet refers to.
+/// - `mode2Form1`: Yellow Book Mode 2 Form 1 — a 2336-byte sub-header +
+///   user-data region (2048 bytes of user data + its own EDC/ECC) within
+///   the same 2352-byte raw sector, used for CD-ROM XA data with error
+///   correction.
+/// - `mode2Form2`: Yellow Book Mode 2 Form 2 — like Form 1, but trades the
+///   EDC/ECC for 2324 bytes of user data with no error correction; used for
+///   streaming content such as Video CD (VCD) and CD-i.
+/// - `mode2Raw`: A Mode 2 sector whose Form 1/Form 2 designation is not
+///   known or not distinguished (e.g. a raw XA dump where the sub-header
+///   form byte has not been inspected). CUE sheets cannot distinguish any
+///   of the three Mode 2 variants in their raw `MODE2/2352` sector form, so
+///   `CueSheetParser` maps `MODE2/2352` back to this case by default.
+public enum TrackMode: String, Codable, Sendable, CaseIterable {
+    case audio
+    case mode1
+    case mode2Form1
+    case mode2Form2
+    case mode2Raw
+}
+
 // MARK: - DiscTrack
 
 /// A track on an audio CD.
@@ -162,6 +195,22 @@ public struct DiscTrack: Codable, Sendable {
     /// Pre-emphasis flag.
     public var hasPreEmphasis: Bool
 
+    /// International Standard Recording Code for this track, if known.
+    /// A 12-character alphanumeric code (e.g. "USRC17607839"); dashes, when
+    /// present in source metadata, are preserved as given rather than
+    /// normalized here.
+    public var isrc: String?
+
+    /// The CD session this track belongs to. Single-session discs (the
+    /// overwhelming majority) use `1`. Multi-session discs (CD-Extra,
+    /// Mixed Mode, PhotoCD, etc.) number sessions sequentially from `1`;
+    /// see `DiscTableOfContents.sessions`.
+    public var sessionNumber: Int
+
+    /// The physical sector encoding used for this track — Red Book audio,
+    /// or one of the Yellow Book Mode 1/Mode 2 data encodings.
+    public var trackMode: TrackMode
+
     public init(
         number: Int,
         title: String? = nil,
@@ -170,7 +219,10 @@ public struct DiscTrack: Codable, Sendable {
         startSector: Int = 0,
         sectorCount: Int = 0,
         isData: Bool = false,
-        hasPreEmphasis: Bool = false
+        hasPreEmphasis: Bool = false,
+        isrc: String? = nil,
+        sessionNumber: Int = 1,
+        trackMode: TrackMode? = nil
     ) {
         self.number = number
         self.title = title
@@ -180,6 +232,12 @@ public struct DiscTrack: Codable, Sendable {
         self.sectorCount = sectorCount
         self.isData = isData
         self.hasPreEmphasis = hasPreEmphasis
+        self.isrc = isrc
+        self.sessionNumber = sessionNumber
+        // Existing call sites only ever specified `isData`, so when no
+        // explicit mode is given we derive a sensible default from it
+        // rather than requiring every caller to be updated.
+        self.trackMode = trackMode ?? (isData ? .mode1 : .audio)
     }
 
     /// Sector size for audio CD (2352 bytes per sector).

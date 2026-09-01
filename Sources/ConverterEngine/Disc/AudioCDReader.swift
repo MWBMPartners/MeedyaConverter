@@ -29,13 +29,31 @@ public struct CDTextInfo: Codable, Sendable {
     /// Disc ID / UPC.
     public var discId: String?
 
+    /// Songwriter CD-TEXT pack, disc-level. Written by `CueSheetWriter` as
+    /// the CUE sheet's disc-level `SONGWRITER` directive.
+    public var songwriter: String?
+
+    /// Composer CD-TEXT pack. Part of the Red Book CD-TEXT specification;
+    /// not currently emitted by `CueSheetWriter` (the CUE sheet dialect it
+    /// targets has no standard `COMPOSER` directive), but retained here so
+    /// it survives round-trips through disc-reading and other metadata
+    /// paths that do carry it (e.g. a future CD-TEXT pack reader).
+    public var composer: String?
+
+    /// Free-form CD-TEXT message pack, disc-level. Same caveat as
+    /// `composer` regarding CUE sheet serialization.
+    public var message: String?
+
     public init(
         albumTitle: String? = nil,
         albumArtist: String? = nil,
         trackTitles: [Int: String] = [:],
         trackArtists: [Int: String] = [:],
         genre: String? = nil,
-        discId: String? = nil
+        discId: String? = nil,
+        songwriter: String? = nil,
+        composer: String? = nil,
+        message: String? = nil
     ) {
         self.albumTitle = albumTitle
         self.albumArtist = albumArtist
@@ -43,6 +61,9 @@ public struct CDTextInfo: Codable, Sendable {
         self.trackArtists = trackArtists
         self.genre = genre
         self.discId = discId
+        self.songwriter = songwriter
+        self.composer = composer
+        self.message = message
     }
 }
 

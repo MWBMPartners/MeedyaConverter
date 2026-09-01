@@ -53,6 +53,36 @@ public struct TrackIndex: Codable, Sendable {
     }
 }
 
+// MARK: - DiscSession
+
+/// One session on a multi-session CD (CD-Extra / "Blue Book", Mixed Mode,
+/// PhotoCD, or any disc written in more than one recording pass).
+///
+/// Each session has its own lead-in/lead-out and contiguous track range.
+/// A single-session disc (the common case) does not need any `DiscSession`
+/// entries — `DiscTableOfContents.sessions` defaults to empty, and every
+/// track implicitly belongs to session 1 via `DiscTrack.sessionNumber`.
+public struct DiscSession: Codable, Sendable, Equatable {
+    /// Session number (1-based).
+    public let number: Int
+
+    /// First track number in this session.
+    public let firstTrack: Int
+
+    /// Last track number in this session.
+    public let lastTrack: Int
+
+    /// This session's lead-out sector (LBA).
+    public let leadOutSector: Int
+
+    public init(number: Int, firstTrack: Int, lastTrack: Int, leadOutSector: Int) {
+        self.number = number
+        self.firstTrack = firstTrack
+        self.lastTrack = lastTrack
+        self.leadOutSector = leadOutSector
+    }
+}
+
 // MARK: - DiscTableOfContents
 
 /// Complete table of contents for an audio disc.
@@ -90,6 +120,15 @@ public struct DiscTableOfContents: Codable, Sendable {
     /// CD-TEXT metadata.
     public var cdText: CDTextInfo?
 
+    /// Session table for multi-session discs. Empty for ordinary
+    /// single-session discs (the vast majority).
+    public var sessions: [DiscSession]
+
+    /// Whether the captured image carries interleaved P–W subchannel data
+    /// (96 bytes/sector) alongside the 2352-byte main channel, i.e. whether
+    /// raw sectors are 2448 bytes rather than 2352. See `SubchannelCodec`.
+    public var hasSubchannel: Bool
+
     public init(
         discType: String = "Audio CD",
         tracks: [DiscTrack] = [],
@@ -100,7 +139,9 @@ public struct DiscTableOfContents: Codable, Sendable {
         cddbDiscId: String? = nil,
         musicBrainzDiscId: String? = nil,
         catalogNumber: String? = nil,
-        cdText: CDTextInfo? = nil
+        cdText: CDTextInfo? = nil,
+        sessions: [DiscSession] = [],
+        hasSubchannel: Bool = false
     ) {
         self.discType = discType
         self.tracks = tracks
@@ -112,6 +153,8 @@ public struct DiscTableOfContents: Codable, Sendable {
         self.musicBrainzDiscId = musicBrainzDiscId
         self.catalogNumber = catalogNumber
         self.cdText = cdText
+        self.sessions = sessions
+        self.hasSubchannel = hasSubchannel
     }
 
     /// Total disc duration in seconds.
