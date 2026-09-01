@@ -4,7 +4,7 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-08-04
+> Last updated: 2026-09-01
 
 ## Mandatory Post-Action Tasks
 
@@ -179,20 +179,30 @@ erode when incremental ticking is impractical.
 - Update `.claude/HANDOFF.md` **as you go**, not only at the end, so any session
   can resume exactly where the last left off after any interruption.
 
-### W3. Deep analysis & planning → Fable 5 (sequential); implementation → Sonnet/Haiku
+### W3. Analysis & planning → Fable (sequential); implementation → Sonnet
 
-- Perform **deep analysis and deep planning** using **sequential (never parallel)
-  Fable 5 agents**. If Fable 5 is unavailable, fall back to Opus for that run and
-  **retry Fable 5** on the next deep-analysis/planning run.
-- Carry out **implementation** with **Sonnet or Haiku**, whichever fits. Use
-  **Opus only when the implementation is genuinely complex**.
+- Perform **ALL analysis and planning — including deep planning** — using
+  **sequential (never parallel) Fable agents** (Fable 5). Run analysis/planning
+  agents strictly one at a time; do NOT fan them out in parallel. If Fable is
+  unavailable, fall back to Opus for that run and **retry Fable** on the next
+  analysis/planning run.
+- Carry out **implementation** with **Sonnet**. (Haiku is acceptable for trivial
+  mechanical edits; use **Opus only when the implementation is genuinely
+  complex**.)
 - Philosophy: **GIRFT — Get It Right First Time.** Spend tokens/credits
   efficiently while still producing top-quality, correct code.
+- Reaffirmed and broadened per user directive 2026-09-01: previously scoped to
+  *deep* analysis/planning; now applies to **all** analysis and planning, with
+  implementation on **Sonnet**.
 
 ### W4. Use available plugins
 
-- Use `dev-team-plugins` (and other configured plugins/skills) to help perform,
-  manage, or propose any of this work where they add leverage.
+- Use the **dev-team plugin** (<https://github.com/MWBMPartners/dev-team-plugin>)
+  to help perform, manage, or propose development **throughout this project repo
+  and its development** — planning, orchestration, review, security, CI, docs, and
+  shipping. Use its skills / commands / agents wherever they add leverage.
+- Also use any other configured plugins/skills where they help.
+- Explicit plugin reference added per user directive 2026-09-01.
 
 ### W5. Steps after EACH task
 
@@ -227,6 +237,10 @@ erode when incremental ticking is impractical.
   decision or action from the user** is required — state, in the simplest wording,
   exactly what is needed and why — then **continue autonomously** with the rest of
   the queue without waiting.
+- **Surface clarification / decision questions UPFRONT** — gather them and present
+  them at the *start* of the work, batched so the user can resolve them in one
+  pass, rather than trickling them out as/when each arises mid-task. Then continue
+  autonomously. (Per user directive 2026-09-01.)
 
 ### W9. No PR stacking
 
