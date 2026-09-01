@@ -190,6 +190,28 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
 
 ### Fixed
 
+- **Inline metadata search no longer fabricates an empty result (#493)** --
+  `SuiteCoreMetadataAdapter.searchViaInline` returned `[]` behind a comment
+  claiming it was "a pass-through" to the `MetadataProviders` implementations.
+  The comment was false -- no provider was ever called -- and an empty array is
+  indistinguishable from "the provider ran and found nothing", so any caller
+  would have reported a successful lookup that never happened. There is nothing
+  to pass through to: every inline client in `Sources/ConverterEngine/Metadata/`
+  builds request URLs only, and that directory contains no `URLSession`, no
+  `URLRequest` and no `JSONDecoder` for any of TMDB, TheTVDB, MusicBrainz,
+  Discogs, FanArt.tv, OpenSubtitles or OMDb. The method now throws a new
+  `SuiteCoreBridgeError.notImplemented(_:)` naming the requested source. No
+  production code calls the adapter and no test asserted the old behaviour, so
+  nothing regresses; three regression tests were added.
+- **CI now runs on the working branch (#496)** -- `build.yml` triggered only on
+  push/PR to `main`/`beta`/`alpha`. Because the project deliberately avoids PR
+  stacking and keeps all work on one long-lived `wip/**` branch, the moment a PR
+  merged that branch lost every trigger: six commits accumulated with no build
+  and no test run, including ~1,350 lines of disc-imaging code whose own commit
+  message said "not yet built/tested". `'wip/**'` added to the push branch list;
+  the first run retro-verified all six. CodeQL and Dependency Review still gate
+  only the eventual PR, deliberately.
+
 - **MusicBrainz search queries now Lucene-escaped and phrase-quoted, base URL
   centralised (#493, Part A)** -- `MusicBrainzClient.buildRecordingSearchURL` /
   `buildReleaseSearchURL` previously interpolated titles/artists raw into the
@@ -402,6 +424,58 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
   to match (re #428).
 
 ### Documentation
+
+- **The HTTP API is no longer documented as fabricated (#497)** --
+  `docs/api/meedya-http-api.yaml`, its README section and the Swagger UI banner
+  were written on 2026-07-28, when `APIServer`'s endpoints really were stubs.
+  They were wired to the real engine afterwards and the documents were never
+  updated, so anyone opening the bundled Swagger UI saw four of five routes
+  struck through as `deprecated` with summaries beginning "NOT IMPLEMENTED --
+  fabricated". All five routes in fact call the real engine
+  (`EncodingQueue.addJob`, `EncodingEngine.probe(url:)`, `jobsSnapshot()`,
+  `profileStore.allProfiles()`, real version and uptime). `deprecated` and
+  `x-status: not-implemented` removed; response schemas corrected against the
+  handlers' actual output (`/probe` had reused one existence-only schema for
+  both 200 and 404 and omitted its 503 branch entirely; `/status` documented
+  `uptime` where the handler emits `uptimeSeconds`; `/profiles` documented
+  FFmpeg binary names where the handler emits Swift enum raw values). The one
+  genuine limitation -- `POST /encode` enqueues but nothing starts the queue
+  runner -- is now documented in its place.
+- **`meedya-convert serve` documented (#497)** -- the subcommand shipped in
+  `1773763` but appeared in neither the CLI OpenAPI spec nor the in-app CLI
+  reference, so `--help` was the only way to find it. Both now cover `--port`,
+  `--api-key`, the mandatory bearer token, the all-interfaces bind, the queue
+  runner limitation and the exit codes. Three documents also claimed "there is
+  no `meedya-convert serve` -- the CLI cannot start this server"; in fact
+  `APIServerView` has no `NavigationItem` case, so the CLI is the *only* way to
+  start it -- the exact inverse of what was written.
+- **Architecture and feature docs reconciled with the source tree (#497)** --
+  `docs/Architecture.md` was presenting seven modules deleted by the orphan
+  sweep as live architecture (`EncodingReport`, `HDRPolicyEngine`,
+  `MetadataPassthrough`, `MetadataTagger`, `PQToHLGPipeline`,
+  `SmartCropIntegration`, `SubtitleConverter`), and listed six more that exist
+  but have no call site. Deleted entries removed, the HDR/Subtitles/Metadata/
+  Backend rows rewritten to describe the paths that actually run, and a new
+  "Dormant modules" subsection added so the diagram cannot be read as a claim
+  that dormant capabilities ship. `FEATURES.md` and `PROJECT_STATUS.md`
+  dead-code tables were stale in both directions -- five rows described files
+  that no longer exist, five more still called a feature dead after the
+  2026-08-04 wave fixed it -- and are now correct.
+- **Two false capability claims removed (#497)** -- `docs/Home.md` advertised
+  "MusicBrainz, TMDB, TVDB, Discogs, FanArt.tv integration" and `docs/FAQ.md`
+  listed metadata lookup among the reasons the app touches the network. Neither
+  is possible. The FAQ's network list now names only what genuinely makes
+  requests, each checked for a live caller.
+- **MusicBrainz Nov 30 2026 re-verified against primary sources (#493)** -- the
+  announcement and all twelve linked SEARCH tickets were fetched first-hand
+  this session (MetaBrainz egress, previously HTTP 403, now returns 200), so
+  the "verified safe" conclusion no longer rests on transcribed text. Two
+  ticket details not present in the announcement are now recorded in
+  `MusicBrainzClient`'s doc comment: SEARCH-666 shows `quality:low|normal|high`
+  are broken *today* and only the numeric forms work, with the fix making the
+  names correct -- the previous comment told a future implementer the opposite;
+  and SEARCH-681 adds Genre as a search *target type*, not a search *field*,
+  with genre-name search already available through `tag`.
 
 - **README / PROJECT_STATUS / FEATURES honesty reconciliation** -- audited
   every user-facing feature claim in README.md, PROJECT_STATUS.md, and
