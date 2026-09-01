@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-08-04 · VERSION 0.1.0
+**Last updated:** 2026-09-01 · VERSION 0.1.0
 
 ## 🎉 SESSION OUTCOME — MERGED & RELEASED (2026-08-04)
 
@@ -28,6 +28,60 @@ All PR CI green (Build & Test macOS, CodeQL, Dependency Review, actionlint, pin 
 
 
 > **Location note:** this doc lives at `.claude/HANDOFF.md` (moved from repo root 2026-07-22).
+
+## 🟢 Current session — 2026-09-01 (MusicBrainz Nov-30-2026 search-upgrade readiness + disc-imaging issue + plugin/standing-tasks)
+
+**User directive:** ahead of MusicBrainz's reported Nov 30 2026 search upgrade,
+ensure no functionality is lost/broken (autonomously). Plus: file a disc-backup-
+imaging feature issue; refresh standing tasks; adopt the dev-team plugin.
+Analysis/planning via **sequential Fable** agents; implementation via **Sonnet**.
+
+**MusicBrainz Nov-30-2026 — VERIFIED SAFE (no migration required).** The
+announcement (Solr 9→10; breaking tickets SEARCH-444/642/666/752/764) was
+assessed against every MusicBrainz call in both repos. We use only
+recording/release **search** (fields `recording`/`release`/`artist`) plus
+`recording/<mbid>` and `discid` **lookups** (MeedyaConverter — no HTTP, no
+parsing) and `recording`/`work` search (MeedyaSuite-core). We never query
+`area`/`url`/`cdstub`/`tag`, never use the `quality:` field, never read a
+relationship `target` property, and are not a Solr mirror; suite-core serde is
+lenient (no `deny_unknown_fields`, all `Option`) so additive fields are safe.
+Tracked in #493. **ENV NOTE:** the announcement is UNREACHABLE from this egress
+environment (HTTP 403 on all metabrainz.org hosts) — content was supplied by
+the user; validate against beta.musicbrainz.org if egress is ever opened.
+
+**Work landed this session:**
+- **MeedyaConverter `wip/alpha-consolidation`** (pushed; now 4 ahead of `alpha`,
+  0 behind — clean unmerged work for a future wip→alpha PR):
+  - `bbb3c05` — `.claude/standing_tasks.md` W3/W4/W8 refreshed (ALL analysis +
+    planning → sequential Fable; implementation → Sonnet; dev-team plugin URL +
+    scope; surface questions upfront).
+  - `45f2706` — MusicBrainz builder hardening: Lucene escaping + phrase-quoting
+    + safe percent-encoding + centralised base URL + tests (#493 Part A).
+  - `46c1dfb` — "verified-safe" docs (CHANGELOG + `MusicBrainzClient` /
+    `AudioCDReader` doc comments) for the Nov-30 change (#493 Part B).
+- **MeedyaSuite-core branch `fix/musicbrainz-lucene-hardening`** (PUSHED, no PR
+  per user; separate MIT/Rust repo attached with push access this session):
+  - `a7354d3` — Lucene hardening port (shared `lucene.rs`; phrase-quote
+    recording/artistname; escape isrc/iswc normalised).
+  - `2d847b0` — reqwest 30s timeouts; populate `ProviderResult.musicbrainz_id`;
+    `release:`/`date:` clauses from album/year (#493 robustness follow-ups).
+  - `bc13f21` — populate `ProviderResult.genre` from MB genres/tags (#73).
+  - `cargo build/test/clippy --all-features` green (138 tests).
+
+**Issues:**
+- **#492** — cross-platform disc-backup imaging (Audio CD/mixed-mode/eCD/CD+G;
+  BIN/CUE + NRG + subchannel-carrying formats; ISRC/CD-Text/indexes/pre-emphasis).
+  Feature is NOT built (orphaned scaffold, umbrella #476); reconciled the wrongly-
+  "completed" #238/#143/#118/#108/#135 per W1. QUEUED (not implemented).
+- **#493** — MusicBrainz: Part A (hardening) done+pushed; Part B (Nov-30 migration)
+  verified safe / not required; Part C (suite-core) done on branch.
+- **MeedyaSuite-core #73** (genre — implemented on branch, closes on merge),
+  **#74** (deferred robustness: rate-limiter wiring + earliest-dated release).
+
+**Tooling:** dev-team plugin cloned + registered
+(github.com/MWBMPartners/dev-team-plugin).
+
+---
 
 ## 🟡 Current session — 2026-08-04 (project-state reconciliation + new-work proposals + docs)
 
