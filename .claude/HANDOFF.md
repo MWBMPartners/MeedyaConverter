@@ -94,6 +94,111 @@ Fix queued: add `wip/**` to the `push` triggers so the working branch is continu
 - [~] Workflow `wpssl6pvl` RUNNING — 9 parallel Sonnet evidence agents (code-first, citation-only) then
       4 **sequential** Fable analysis passes (MusicBrainz plan → issue reconciliation ×2 → ranked proposals).
 
+### 🗳️ RANKED NEW-WORK PROPOSALS — awaiting user selection (Fable, code-cited)
+
+Produced by the final sequential Fable pass over the reconciliation + a spot-audit of the 361 closed
+issues. Every `why` cites a real code fact. Ranks 1-4 spot-verified by the orchestrator.
+
+| # | Size/Risk | Proposal | Issue |
+|---|---|---|---|
+| 1 | XS/low | Fire post-encode hooks on the failure path so runOnFailure actions can actually run | 277 |
+| 2 | XS/low | Route non-profile meedyaconverter:// URLs into the already-written URLSchemeHandler | 356 |
+| 3 | XS/low | Wire useHardwareAcceleration into encode arguments (or delete the toggle) | 475 |
+| 4 | XS/low | Reopen 11 closed-in-error issues: shipped-as-done features that are orphaned code with zero callers | new |
+| 5 | S/low | Populate estimatedSourceDuration at enqueue so 3 of 7 queue-optimizer strategies stop being no-ops | 326 |
+| 6 | S/low | Give ConcatenationView a Start action that actually joins files | 322 |
+| 7 | S/low | Apply saved keyboard shortcuts — derive live bindings from KeyboardShortcutManager | 331 |
+| 8 | S/low | Instantiate MenuBarController at app start, gated on the showMenuBarStatus toggle | 281 |
+| 9 | M/low | Execute scene detection: run the built ffmpeg args and populate detectedScenes | 288 |
+| 10 | S/medium | Rescope #451 to the one remaining seam: eliminate ScriptingBridge's 60-second semaphore block | 451 |
+| 11 | S/medium | Activate AppleScript/JXA: register OSA keys and configure ScriptingBridge.shared at launch | 302 |
+| 12 | M/medium | Vector conversion screens: wire input picker + Convert action, or hide both nav entries | 473 |
+| 13 | M/low | Periodic checkpointing during healthy encodes (crash-safe resume data) | 468 |
+| 14 | M/medium | Team profiles: implement the local-vs-remote conflict diff and add TeamProfileManager tests | 482 |
+| 15 | M/medium | Apply watermarks for real: persist WatermarkConfig on the profile and inject the filter at encode | 298 |
+| 16 | M/medium | Multi-output encoding executes: run tee or enqueue per-output sequential jobs | 335 |
+| 17 | L/high | Strategic: bounded-concurrency queue — replace the sequential startQueue loop with a TaskGroup sized by ParallelEncoder | 286 |
+| 18 | L/medium | Strategic: A/B comparison capture → persist → compare loop (with real SSIM/PSNR) | 329 |
+
+**Detail** (files + acceptance criteria are in `<session scratchpad>/proposals.json` and in the workflow journal for run `wf_2db8de65-437`):
+
+**1. Fire post-encode hooks on the failure path so runOnFailure actions can actually run** — `XS`/low risk · issue 277  
+  PostEncodeActionChain supports runOnFailure (Sources/ConverterEngine/Encoding/PostEncodeActions.swift:280) and the Hooks tab lets users configure failure actions, but the queue's failure branch (Sources/MeedyaConverter/ViewModels/AppViewModel.swift:1400-1432) never invokes the chain — only the success handler at AppViewModel.swift:1332-1337 does. Every failure-triggered webhook/script a user configures silently never fires.  
+  *Files:* Sources/MeedyaConverter/ViewModels/AppViewModel.swift (failure branch ~1400-1432); Sources/ConverterEngine/Encoding/PostEncodeActions.swift (read-only)
+
+**2. Route non-profile meedyaconverter:// URLs into the already-written URLSchemeHandler** — `XS`/low risk · issue 356  
+  The scheme is registered (Sources/MeedyaConverter/Resources/Info.plist:41-50) and .onOpenURL is live (MeedyaConverterApp.swift:101), but the handler only recognises profile-share URLs (MeedyaConverterApp.swift:202-233) and silently drops everything else. URLSchemeHandler.handleURL (Sources/MeedyaConverter/Services/URLSchemeHandler.swift:131, actions at :22-42) implements encode/probe/open fully and has zero callers — the feature is one call away from working.  
+  *Files:* Sources/MeedyaConverter/MeedyaConverterApp.swift (~101, 202-233); Sources/MeedyaConverter/Services/URLSchemeHandler.swift
+
+**3. Wire useHardwareAcceleration into encode arguments (or delete the toggle)** — `XS`/low risk · issue 475  
+  The Settings toggle useHardwareAcceleration is read nowhere outside its declaration and Toggle (SettingsView.swift:189, 202 — repo-wide grep confirms zero other readers). It is the last of #475's eight dead toggles; flipping it changes nothing about encoding, a straight lie to the user.  
+  *Files:* Sources/MeedyaConverter/Views/SettingsView.swift:189,202; Sources/MeedyaConverter/ViewModels/AppViewModel.swift (enqueue/arg construction)
+
+**4. Reopen 11 closed-in-error issues: shipped-as-done features that are orphaned code with zero callers** — `XS`/low risk · issue new  
+  Spot-audit of the 361 closed issues found 11 whose capability never executes: #343 SlateGeneratorView+SlateGenerator (zero references anywhere outside their own files), #63/#59 StreamingEnhancements.swift (sprites + HLS AES — zero refs outside own file), #323 VideoStabilizer (zero callers), #324 DeinterlaceConfig (zero callers), #257 ToolUpdateChecker (referenced only from Tests/ConverterEngineTests/ConverterEngineTests+Pipelines.swift), #285 DraggableFileView (zero callers; SourceFileView.swift:132 handles drop-in only), #280 MiniPlayerWindow (zero callers), #330 SettingsUndoManager (zero cal  
+  *Files:* GitHub bookkeeping + evidence comments; code files as cited per issue
+
+**5. Populate estimatedSourceDuration at enqueue so 3 of 7 queue-optimizer strategies stop being no-ops** — `S`/low risk · issue 326  
+  QueueOptimizerView genuinely reorders the live queue (QueueOptimizerView.swift:230 → EncodingQueue.reorder, EncodingJob.swift:384), but shortestFirst/longestFirst/estimatedTime read EncodingJobConfig.estimatedSourceDuration (SmartQueueOptimizer.swift:192-206) which nothing ever sets — grep for '.estimatedSourceDuration =' returns zero — so the stable sort silently leaves order unchanged. The duration is already known from the probe step; one assignment at enqueue activates three strategies.  
+  *Files:* Sources/MeedyaConverter/ViewModels/AppViewModel.swift (enqueue path ~822); Sources/ConverterEngine/Encoding/EncodingJob.swift:128 (priority default, optional follow-up)
+
+**6. Give ConcatenationView a Start action that actually joins files** — `S`/low risk · issue 322  
+  The dedicated join screen has reorder, method picker, crossfade slider and live compatibility warnings (ConcatenationView.swift:377) but its only buttons are OK/Browse/Add Files (:109/:292/:340) — no Concatenate action and zero process invocation, so it can never produce output. The demuxer argument builder already works and is executed elsewhere (VideoConcatenator.buildDemuxerConcatArguments run from VideoTrimmerView.swift:746), so the execution pattern exists to copy.  
+  *Files:* Sources/MeedyaConverter/Views/ConcatenationView.swift; Sources/ConverterEngine/Utilities/VideoConcatenator.swift (read-only); VideoTrimmerView.swift:746 (pattern)
+
+**7. Apply saved keyboard shortcuts — derive live bindings from KeyboardShortcutManager** — `S`/low risk · issue 331  
+  KeyboardShortcutManager persists bindings and detects conflicts (KeyboardShortcutManager.swift:118-125, 199-216) with a working editor, but binding(for:) (:186-191) has zero callers; the only live shortcuts are hardcoded Cmd+O and Cmd+Return (ContentView.swift:196/208). Remapping in Settings changes nothing — a settings screen that lies.  
+  *Files:* Sources/MeedyaConverter/Views/ContentView.swift:196,208; Sources/MeedyaConverter/Services/KeyboardShortcutManager.swift:131-160,186-191
+
+**8. Instantiate MenuBarController at app start, gated on the showMenuBarStatus toggle** — `S`/low risk · issue 281  
+  MenuBarController is a complete NSStatusItem implementation (status item MenuBarController.swift:108-124, menu :165-222, Dock toggle :238-243) that is never constructed — grep for 'MenuBarController(' returns nothing — and the SettingsView showMenuBarStatus toggle (SettingsView.swift:152/171) is itself unread. One wiring fixes two user-visible lies: a documented menu-bar feature that never appears and a toggle that does nothing.  
+  *Files:* Sources/MeedyaConverter/MeedyaConverterApp.swift; Sources/MeedyaConverter/Components/MenuBarController.swift; Sources/MeedyaConverter/Views/SettingsView.swift:152,171
+
+**9. Execute scene detection: run the built ffmpeg args and populate detectedScenes** — `M`/low risk · issue 288  
+  detectScenes() (SceneDetectorView.swift:381-403) builds arguments via SceneDetector.buildDetectionArguments (SceneDetector.swift:216-256), logs a line, and never spawns a process; detectedScenes is only populated by manual markers (:405-421), and applyChaptersToJob (:465-471) only logs. The downstream half is already real — OGM/XML/FFmetadata generation (SceneDetector.swift:448-524) and NSSavePanel export (:429-463) work — so wiring detection completes an almost-finished feature.  
+  *Files:* Sources/MeedyaConverter/Views/SceneDetectorView.swift:381-403,465-471; Sources/ConverterEngine/FFmpeg/SceneDetector.swift
+
+**10. Rescope #451 to the one remaining seam: eliminate ScriptingBridge's 60-second semaphore block** — `S`/medium risk · issue 451  
+  All other #451 sites are remediated (TeamProfileView.swift:273-313 uses the safe Task pattern; BurnSettingsView/ImageConversionView have zero remaining nonisolated(unsafe)/DispatchSemaphore), but DispatchSemaphore(value: 0) at ScriptingBridge.swift:304 with a 60s wait at :333 still blocks the calling thread — the issue's named worst offender and its third acceptance criterion.  
+  *Files:* Sources/MeedyaConverter/Scripting/ScriptingBridge.swift:304,333
+
+**11. Activate AppleScript/JXA: register OSA keys and configure ScriptingBridge.shared at launch** — `S`/medium risk · issue 302  
+  The .sdef is bundled (Package.swift:404) and ScriptingBridge implements encode/probe/listProfiles/queueStatus (ScriptingBridge.swift:198/274/345/364), but .shared.engine/.queue/.profileStore are never assigned anywhere and Info.plist lacks NSAppleScriptEnabled/OSAScriptingDefinition, so macOS has no route to dispatch to the class — every command would return 'not configured' even if it could.  
+  *Files:* Sources/MeedyaConverter/Resources/Info.plist; Sources/MeedyaConverter/MeedyaConverterApp.swift; Sources/MeedyaConverter/Scripting/ScriptingBridge.swift
+
+**12. Vector conversion screens: wire input picker + Convert action, or hide both nav entries** — `M`/medium risk · issue 473  
+  VectorConversionView and ProResVectorView are reachable (SidebarView.swift:71-72; ContentView.swift:109/:111) yet contain no fileImporter/NSOpenPanel, no Convert action and no Process() — users land on settings-only forms that cannot convert anything. RasterVectorConverter has zero callers outside its own file; ProResToVectorConverter's only external use is a size-estimate helper (ProResVectorView.swift:321-330).  
+  *Files:* Sources/MeedyaConverter/Views/VectorConversionView.swift; Sources/MeedyaConverter/Views/ProResVectorView.swift; Sources/ConverterEngine/FFmpeg/RasterVectorConverter.swift; SidebarView.swift:71-72
+
+**13. Periodic checkpointing during healthy encodes (crash-safe resume data)** — `M`/low risk · issue 468  
+  saveCheckpoint now fires on failure (AppViewModel.swift:1399) and cancel (:1533), but nothing writes during a healthy encode, so a crash or force-quit mid-encode leaves no checkpoint — the exact scenario resumability exists for. ResumableJobsView is reachable (ContentView.swift:93) and re-queues honestly (ResumableJobsView.swift:165-190), so the missing piece is just the periodic writer.  
+  *Files:* Sources/MeedyaConverter/ViewModels/AppViewModel.swift (progress handler in startQueue); Sources/ConverterEngine (CheckpointManager)
+
+**14. Team profiles: implement the local-vs-remote conflict diff and add TeamProfileManager tests** — `M`/medium risk · issue 482  
+  The fabricated-success push is fixed (real URLSession + 2xx check, TeamProfileManager.swift:188), but conflictedProfiles is only ever assigned [] (TeamProfileView.swift:64 and :354) — no diff logic exists anywhere, so the Conflicts section (TeamProfileView.swift:191-211) can never render — and zero tests under Tests/ reference TeamProfileManager or pushProfiles.  
+  *Files:* Sources/MeedyaConverter/Services/TeamProfileManager.swift; Sources/MeedyaConverter/Views/TeamProfileView.swift:64,191-211,354; Tests/ (new file)
+
+**15. Apply watermarks for real: persist WatermarkConfig on the profile and inject the filter at encode** — `M`/medium risk · issue 298  
+  WatermarkOverlay builds runnable argument arrays (buildVideoWatermarkArguments WatermarkOverlay.swift:204, buildImageWatermarkArguments :247) but the view only calls the filter-string builders for a read-only preview (WatermarkView.swift:194-196); the runnable builders have zero callers and EncodingProfile has no watermark field — a reachable configuration screen whose output is never used.  
+  *Files:* Sources/ConverterEngine/Models/EncodingProfile.swift (new field + codable migration); Sources/ConverterEngine/FFmpeg/WatermarkOverlay.swift; Sources/MeedyaConverter/Views/WatermarkView.swift; argument-construction path i
+
+**16. Multi-output encoding executes: run tee or enqueue per-output sequential jobs** — `M`/medium risk · issue 335  
+  MultiOutputEncoder builds a correct tee-muxer set (buildTeeArguments MultiOutputEncoder.swift:108), sequential per-output arrays (:162) and a real canUseTee check (:207), but MultiOutputView calls them only to render a command preview (argumentsText, MultiOutputView.swift:199) — the file has no Start button and no process reference, so the screen never produces output.  
+  *Files:* Sources/MeedyaConverter/Views/MultiOutputView.swift; Sources/ConverterEngine/Encoding/MultiOutputEncoder.swift
+
+**17. Strategic: bounded-concurrency queue — replace the sequential startQueue loop with a TaskGroup sized by ParallelEncoder** — `L`/high risk · issue 286  
+  AppViewModel.startQueue() (AppViewModel.swift:1053) awaits one job at a time by construction; ParallelEncoder's real concurrency/resource maths (determineMaxConcurrent ParallelEncoder.swift:129, partitionJobs :159) is called only from ParallelEncodingView, whose activeJobs state (:90) is never fed from the live queue — the parallel dashboard's slider and gauges are pure decoration. This is the single most tester-visible performance feature in the backlog, with the hard math already written and unit-tested.  
+  *Files:* Sources/MeedyaConverter/ViewModels/AppViewModel.swift:1053+ (queue loop, completion/failure handlers, stats collector); Sources/ConverterEngine/Encoding/ParallelEncoder.swift; Sources/MeedyaConverter/Views/ParallelEncodi
+
+**18. Strategic: A/B comparison capture → persist → compare loop (with real SSIM/PSNR)** — `L`/medium risk · issue 329  
+  ComparisonCapture/FrameComparisonExtractor build correct capture and SSIM/PSNR/VMAF arguments (ComparisonCapture.swift:232-250) but their only external reference is a comment; ComparisonView is never instantiated and its frames array (:33) never assigned; ComparisonLibraryView is reachable (ContentView.swift:156-157) but entries (:27) has no writer anywhere — a permanently empty screen shipped to testers. QualityMetricsView proves the execution pattern (real process runs) to reuse.  
+  *Files:* Sources/ConverterEngine/Utilities/ComparisonCapture.swift; Sources/MeedyaConverter/Views/ComparisonView.swift; Sources/MeedyaConverter/Views/ComparisonLibraryView.swift; new ComparisonEntry persistence store
+
+**Orchestrator spot-verification of the top items (all held):**
+- **#1** — the post-encode chain is invoked only in the success branch (`AppViewModel.swift:~1304`); the failure branch (`:1393-1410`) writes a checkpoint, tracks analytics, logs and notifies but **never calls the chain**, so `runOnFailure` actions cannot run.
+- **#2** — `URLSchemeHandler` has **zero references outside its own file**; `onOpenURL` handles only profile-share links inline.
+- **#4** — `SlateGenerator`, `VideoStabilizer`, `DeinterlaceConfig` and `ToolUpdateChecker` each have **0** references outside their own file, yet their issues are CLOSED.
+
 ### Work landed this session (all on `wip/alpha-consolidation`, all pushed)
 
 | Commit | What |
