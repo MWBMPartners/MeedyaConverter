@@ -17,9 +17,16 @@ name: CI Build & Test
 # ---------------------------------------------------------------------------
 # This workflow runs on:
 #   - Direct pushes to main, beta, or alpha branches
-#   - Pull requests targeting any of those branches
-# This ensures that both feature branches (via PRs) and direct commits are
-# validated before code lands on a release-track branch.
+#   - Direct pushes to any wip/** working branch
+#   - Pull requests targeting main, beta, or alpha
+#
+# The wip/** trigger exists because this project deliberately avoids PR
+# stacking (standing task W9): all work accumulates on a single long-lived
+# working branch (currently wip/alpha-consolidation) that is merged to alpha
+# via ONE pull request at the end. Without a push trigger for that branch,
+# every commit between merges would be completely unverified -- which is
+# exactly what happened after PR #472 merged. Building and testing each push
+# to wip/** restores a continuous correctness gate without opening a PR.
 # ---------------------------------------------------------------------------
 on:
   push:
@@ -27,6 +34,7 @@ on:
       - main
       - beta
       - alpha
+      - 'wip/**'
   pull_request:
     branches:
       - main
