@@ -173,6 +173,9 @@ jobs:
           RESOURCE_BUNDLE=".build/release/MeedyaConverter_MeedyaConverterCore.bundle"
           if [ -d "${RESOURCE_BUNDLE}" ]; then
             cp -R "${RESOURCE_BUNDLE}" "${APP}/Contents/Resources/"
+            # Stage the AppleScript .sdef at Contents/Resources so the
+            # OSAScriptingDefinition Info.plist key (#302) can resolve it.
+            cp Sources/MeedyaConverter/Scripting/MeedyaConverter.sdef "${APP}/Contents/Resources/MeedyaConverter.sdef"
           else
             echo "::error::SwiftPM resource bundle missing at ${RESOURCE_BUNDLE}"
             exit 1

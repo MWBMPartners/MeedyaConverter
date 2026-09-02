@@ -364,6 +364,18 @@ jobs:
             exit 1
           fi
 
+          # Stage the AppleScript scripting definition at the top level of
+          # Contents/Resources so the OSAScriptingDefinition Info.plist key
+          # (#302) resolves it — inside the SwiftPM resource bundle it is nested
+          # too deep for OSA to find. Fail closed if it is missing.
+          SDEF_SRC="Sources/${APP_NAME}/Scripting/MeedyaConverter.sdef"
+          if [ -f "${SDEF_SRC}" ]; then
+            cp "${SDEF_SRC}" "${APP_BUNDLE}/Contents/Resources/MeedyaConverter.sdef"
+          else
+            echo "::error::AppleScript .sdef missing at ${SDEF_SRC}"
+            exit 1
+          fi
+
           # Copy Info.plist verbatim, then drive the version keys with
           # PlistBuddy. The old sed-based substitution silently no-op'd
           # the first time the template's placeholder didn't match

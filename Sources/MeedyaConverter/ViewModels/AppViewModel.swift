@@ -516,6 +516,17 @@ final class AppViewModel {
             ffprobePath: (customFFprobePath?.isEmpty == false) ? customFFprobePath : nil
         )
         self.engine = engine
+
+        // Wire the AppleScript/JXA bridge to the live engine (#302). The
+        // `.sdef` verbs dispatch through the NSScriptCommand subclasses in
+        // ScriptingCommands.swift to `ScriptingBridge.shared`, which is inert
+        // until these references are set — this is that "set during application
+        // launch" step. Uses the local `engine` (not `self.engine`) so it does
+        // not read `self` before two-phase init completes.
+        ScriptingBridge.shared.engine = engine
+        ScriptingBridge.shared.queue = engine.queue
+        ScriptingBridge.shared.profileStore = engine.profileStore
+
         self.updateChecker = AppUpdateChecker()
         self.storeManager = StoreManager()
 

@@ -29,6 +29,17 @@
     <string>MeedyaConverter</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- AppleScript / JXA scriptability (#302). NSAppleScriptEnabled makes the
+         app respond to Apple Events; OSAScriptingDefinition names the .sdef
+         (staged at Contents/Resources/MeedyaConverter.sdef by the app-packaging
+         step in release.yml / dev-build.yml) that maps the scripting verbs to
+         the NSScriptCommand subclasses in ScriptingCommands.swift, which
+         dispatch to ScriptingBridge.shared (wired to the live engine/queue in
+         AppViewModel.init). -->
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>OSAScriptingDefinition</key>
+    <string>MeedyaConverter.sdef</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>

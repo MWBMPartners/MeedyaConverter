@@ -26,6 +26,7 @@
              ============================================================ -->
         <command name="encode" code="MDYAencd"
                  description="Encode a media file using a specified profile.">
+            <cocoa class="MDYAEncodeCommand"/>
             <direct-parameter type="text"
                               description="Absolute POSIX path to the input media file."/>
             <parameter name="using profile" code="prof" type="text"
@@ -41,6 +42,7 @@
              ============================================================ -->
         <command name="probe" code="MDYAprob"
                  description="Analyse a media file and return its metadata as JSON.">
+            <cocoa class="MDYAProbeCommand"/>
             <direct-parameter type="text"
                               description="Absolute POSIX path to the media file."/>
             <result type="text"
@@ -52,6 +54,7 @@
              ============================================================ -->
         <command name="list profiles" code="MDYAlprf"
                  description="List all available encoding profile names.">
+            <cocoa class="MDYAListProfilesCommand"/>
             <result type="text"
                     description="Newline-separated list of profile names."/>
         </command>

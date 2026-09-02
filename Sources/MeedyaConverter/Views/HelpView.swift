@@ -317,6 +317,12 @@ enum HelpTopicRegistry {
             summary: "Command-line usage for the meedya-convert tool.",
             sortOrder: 90
         ),
+        "applescript-scripting.md": Metadata(
+            title: "AppleScript & JXA",
+            systemImage: "applescript",
+            summary: "Automate encoding from AppleScript, JXA, or osascript.",
+            sortOrder: 95
+        ),
         "faq.md": Metadata(
             title: "FAQ",
             systemImage: "questionmark.circle",
