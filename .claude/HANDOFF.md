@@ -281,6 +281,15 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   disabled "Apply to Job" → working "Embed in Next Encode" (writes FFmetadata, stages it).
   `ExternalChaptersArgumentTests`. Epic OPEN — timeline thumbnails, drag markers, batch detect remain.
 
+- **CI fix — pre-existing test failures cleared** (`317e571`). CI on `wip/alpha-consolidation` had been
+  RED since #468 over two `CheckpointManagerTests` using a non-existent `inputURL` (`listResumable
+  Checkpoints()` filters checkpoints whose source file is gone — correct behaviour), plus my new
+  `EncodingPipelineExecutorTests` "no copy" assertion catching `-c:s copy`. All three were TEST bugs
+  (production code correct); fixed. **CI Build & Test is now GREEN on `wip/alpha-consolidation`
+  (run 33652516255, commit 317e571)** — all round-2 tests + the fixed ones pass. Lesson recorded in
+  [[verification-gates-and-what-cannot-be-tested]]: always check `gh run` after pushing test-bearing
+  commits, since `swift test` can't run locally.
+
 **Round-2 register: COMPLETE.** All eight worked this session — #482 conflicts, #286 throughput, #298
 watermarks, #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript/JXA, #288 chapters.
 Six are epics left OPEN with detailed acceptance-criteria checklists in their issue comments (the
