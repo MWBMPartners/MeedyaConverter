@@ -126,6 +126,30 @@ struct MetadataTagEditorView: View {
         .onDisappear {
             cancelWrite()
         }
+        // Read path (#320): the editor previously started EMPTY and could only
+        // OVERWRITE tags. Seed the table from the selected file's already
+        // ffprobe-parsed metadata (MediaFile.metadata) so existing tags are
+        // visible and editable, not silently discarded. Reseed when the file
+        // changes; on first appearance only if the user has not already started.
+        .onAppear {
+            if tags.isEmpty { seedTagsFromSelectedFile() }
+        }
+        .onChange(of: viewModel.selectedFile?.fileURL) { _, _ in
+            seedTagsFromSelectedFile()
+        }
+    }
+
+    /// Populate the tag table from `viewModel.selectedFile.metadata` (the
+    /// ffprobe-parsed tags), sorted by key for a stable display. No selected
+    /// file clears the table.
+    private func seedTagsFromSelectedFile() {
+        guard let metadata = viewModel.selectedFile?.metadata else {
+            tags = []
+            return
+        }
+        tags = metadata
+            .sorted { $0.key.lowercased() < $1.key.lowercased() }
+            .map { MediaTag(key: $0.key, value: $0.value) }
     }
 
     // MARK: - Controls Bar

@@ -98,14 +98,33 @@ public struct MetadataTagEditor: Sendable {
     ) -> [String] {
         var args: [String] = []
 
-        // Add metadata tags
-        for tag in tags where !tag.key.isEmpty && !tag.value.isEmpty {
-            args += ["-metadata", "\(tag.key)=\(tag.value)"]
+        // Artwork, when present, is added as the SECOND input (index 1), emitted
+        // BEFORE any output option so the input indices are unambiguous
+        // regardless of where the caller splices this array (the caller wraps it
+        // as `["-i", source] + args + [output]`, making the source input 0).
+        if let artworkPath = artworkPath {
+            args += ["-i", artworkPath]
         }
 
-        // Embed artwork if provided
-        if let artworkPath = artworkPath {
-            args += buildArtworkEmbedArguments(artworkPath: artworkPath)
+        // Copy every source stream unchanged. A tag/artwork edit must never
+        // re-encode the media or drop streams. This fixes two real bugs:
+        //   * metadata-only writes had no `-c copy`, so ffmpeg re-encoded the
+        //     entire file (slow + lossy) just to change a title tag;
+        //   * an artwork write mapped ONLY `1:v:0` (the cover), so with an
+        //     explicit `-map` present ffmpeg dropped the source audio/video
+        //     entirely — the output was just the still image. `-map 0` keeps
+        //     the source streams alongside the artwork.
+        args += ["-map", "0", "-c", "copy"]
+
+        // Embed artwork if provided (its input was added first, above).
+        if artworkPath != nil {
+            args += buildArtworkEmbedArguments()
+        }
+
+        // Metadata tags (applied to the output container; `-c copy` still lets
+        // metadata change).
+        for tag in tags where !tag.key.isEmpty && !tag.value.isEmpty {
+            args += ["-metadata", "\(tag.key)=\(tag.value)"]
         }
 
         return args
@@ -137,25 +156,20 @@ public struct MetadataTagEditor: Sendable {
     ///
     /// Supported image formats: JPEG, PNG, BMP.
     ///
-    /// - Parameter artworkPath: Absolute path to the cover art image file.
-    /// - Returns: FFmpeg argument array for artwork embedding.
-    public static func buildArtworkEmbedArguments(artworkPath: String) -> [String] {
-        var args: [String] = []
-
-        // Add artwork as an additional input
-        args += ["-i", artworkPath]
-
-        // Map the artwork stream and set its disposition to attached_pic.
-        // The artwork input index depends on context; callers should adjust
-        // the map index if multiple inputs are used. This uses a
-        // placeholder index that assumes artwork is the second input.
-        args += ["-map", "1:v:0"]
-        args += ["-c:v:1", "copy"]
-        args += ["-disposition:v:1", "attached_pic"]
-
-        // Set the MIME type metadata for the artwork stream
-        args += ["-metadata:s:v:1", "mimetype=image/jpeg"]
-
-        return args
+    /// Returns only the **mapping/disposition** options for a cover image that
+    /// the caller has ALREADY added as input index 1 (with the source as input
+    /// 0, mapped and copied via `-map 0 -c copy`). It does not add the `-i`
+    /// itself — `buildWriteArguments` owns input ordering so the source streams
+    /// are preserved. Callers that build their own command must add
+    /// `-i <artwork>` as input 1 and `-map 0 -c copy` for the source first.
+    ///
+    /// - Returns: FFmpeg argument array mapping input-1 as attached cover art.
+    public static func buildArtworkEmbedArguments() -> [String] {
+        [
+            "-map", "1:v:0",                        // the cover image (input 1)
+            "-c:v:1", "copy",
+            "-disposition:v:1", "attached_pic",
+            "-metadata:s:v:1", "mimetype=image/jpeg",
+        ]
     }
 }
