@@ -422,6 +422,11 @@ final class AppViewModel {
     /// Floating mini player controller for compact encoding progress display.
     let miniPlayer = MiniPlayerController()
 
+    /// Undo/redo for settings changes (#330). Registered at user-initiated
+    /// mutation sites (currently profile selection); driven by the Edit menu's
+    /// Undo/Redo command group.
+    let settingsUndoManager = SettingsUndoManager()
+
     // MARK: - Keyboard Shortcuts (Issue #331)
 
     /// Manager for user-assignable keyboard shortcuts.

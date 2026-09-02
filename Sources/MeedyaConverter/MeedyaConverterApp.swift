@@ -196,6 +196,24 @@ public struct MeedyaConverterApp: App {
         }
         .defaultSize(width: 1100, height: 700)
         .commands {
+            // Edit menu — Undo/Redo for settings changes (#330). The
+            // SettingsUndoManager engine existed but had no menu commands, so
+            // Cmd+Z / Cmd+Shift+Z did nothing for settings. `replacing:` swaps
+            // out SwiftUI's default (no-op here) undo items.
+            CommandGroup(replacing: .undoRedo) {
+                Button(appViewModel.settingsUndoManager.undoActionName.map { "Undo \($0)" } ?? "Undo") {
+                    appViewModel.settingsUndoManager.undo()
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!appViewModel.settingsUndoManager.canUndo)
+
+                Button(appViewModel.settingsUndoManager.redoActionName.map { "Redo \($0)" } ?? "Redo") {
+                    appViewModel.settingsUndoManager.redo()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!appViewModel.settingsUndoManager.canRedo)
+            }
+
             // File menu — Import
             CommandGroup(after: .newItem) {
                 // Resolve through the shortcut manager like every other

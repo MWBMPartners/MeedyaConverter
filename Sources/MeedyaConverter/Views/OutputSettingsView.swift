@@ -236,9 +236,27 @@ struct OutputSettingsView: View {
     // MARK: - Profile Picker
 
     private var profilePicker: some View {
-        @Bindable var vm = viewModel
+        // A custom binding so a user picking a profile registers an undoable
+        // change (#330). Undo restores the previous profile via the manager's
+        // key-path write, which does NOT come back through this setter, so
+        // there is no re-registration loop.
+        let selection = Binding<EncodingProfile>(
+            get: { viewModel.selectedProfile },
+            set: { newProfile in
+                let old = viewModel.selectedProfile
+                guard old != newProfile else { return }
+                viewModel.selectedProfile = newProfile
+                viewModel.settingsUndoManager.registerUndo(
+                    for: \.selectedProfile,
+                    on: viewModel,
+                    oldValue: old,
+                    newValue: newProfile,
+                    description: "Profile Change"
+                )
+            }
+        )
 
-        return Picker("Profile", selection: $vm.selectedProfile) {
+        return Picker("Profile", selection: selection) {
             ForEach(ProfileCategory.allCases, id: \.self) { category in
                 let categoryProfiles = viewModel.engine.profileStore.profiles.filter {
                     $0.category == category
