@@ -38,6 +38,9 @@
   throughput tiles** (#286).
 - CLI `batch --dir --output-mode mirror` mirrors the source folder tree (#275).
 - Team-profile pull now surfaces real local-vs-remote **conflicts** (#482).
+- Team Profile's **Git Repository sync now runs real git** — clone/fetch/
+  checkout/commit/push against your own credentials — instead of writing a
+  loose file to the "repository" path (#345).
 - **Filter Graph editor** can now **attach its composed filter to the next
   encode** ("Apply to Next Encode" — video composed after any crop, audio into
   `-af`), not just copy to the clipboard.

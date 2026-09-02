@@ -39,11 +39,19 @@ struct TeamProfileView: View {
     /// The currently selected synchronisation method.
     @State private var syncMethod: SyncMethod = .iCloudSharedFolder
 
-    /// The server URL string for HTTP/Git sync.
+    /// The server URL string for HTTP sync.
     @State private var serverURLString = ""
 
     /// The shared folder path for iCloud sync.
     @State private var sharedFolderPath = ""
+
+    /// The git remote for Git sync — persisted so it isn't retyped every
+    /// launch. Any form `git clone` accepts (`https://…`, scp-style
+    /// `git@host:owner/repo.git`, or a local path).
+    @AppStorage("teamProfiles.gitRemote") private var gitRemote = ""
+
+    /// The tracked branch for Git sync — persisted alongside `gitRemote`.
+    @AppStorage("teamProfiles.gitBranch") private var gitBranch = "main"
 
     /// Whether a sync operation is currently in progress.
     @State private var isSyncing = false
@@ -109,17 +117,33 @@ struct TeamProfileView: View {
                     }
                 }
 
-            case .gitRepository, .httpServer:
+            case .gitRepository:
                 TextField(
-                    syncMethod == .gitRepository ? "Repository URL" : "Server URL",
-                    text: $serverURLString
+                    "Repository (https://…, git@host:owner/repo.git, or a local path)",
+                    text: $gitRemote
                 )
                 .textFieldStyle(.roundedBorder)
+                TextField("Branch", text: $gitBranch)
+                    .textFieldStyle(.roundedBorder)
+
+            case .httpServer:
+                TextField("Server URL", text: $serverURLString)
+                    .textFieldStyle(.roundedBorder)
             }
         } header: {
             Text("Repository Configuration")
         } footer: {
-            Text("Configure how team encoding profiles are shared between machines.")
+            if syncMethod == .gitRepository {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Push commits the profile file to the tracked branch; pull fetches it back. Both use your own git credentials — SSH agent, keychain-stored HTTPS tokens, or a configured credential helper — MeedyaConverter never stores or transmits a token itself.")
+                    if GitProfileSync.isRunningInAppSandbox() {
+                        Text("This App Store build runs inside the App Sandbox and cannot reach your SSH keys or ~/.gitconfig, so only public HTTPS remotes can be pulled here — private repositories and any push will fail.")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            } else {
+                Text("Configure how team encoding profiles are shared between machines.")
+            }
         }
     }
 
@@ -265,6 +289,8 @@ struct TeamProfileView: View {
         TeamProfileRepository(
             serverURL: URL(string: serverURLString),
             sharedFolderPath: sharedFolderPath.isEmpty ? nil : URL(fileURLWithPath: sharedFolderPath),
+            gitRemote: gitRemote.isEmpty ? nil : gitRemote,
+            gitBranch: gitBranch.isEmpty ? nil : gitBranch,
             syncMethod: syncMethod
         )
     }
@@ -277,16 +303,19 @@ struct TeamProfileView: View {
     /// inherits that isolation, so `@State` mutations below are direct
     /// property writes rather than `MainActor.run` hops, and `self` never
     /// crosses an isolation boundary. `TeamProfileManager.pushProfiles(_:to:)`
-    /// — whose `.iCloudSharedFolder`/`.gitRepository` cases still perform
-    /// genuinely blocking synchronous file I/O, and whose `.httpServer`
-    /// case now really awaits the PUT via `URLSession` (Issue #482) — is
-    /// pulled into a `Task.detached` that captures and returns only
-    /// `Sendable` values (`profiles`, `repository`) and never touches
-    /// `self`. Only on genuine success (the `do` block completing without
-    /// throwing, meaning the HTTP push got a 2xx or the file write
-    /// succeeded) are `lastSyncDate`/`statusMessage` updated to report
-    /// success; any thrown error — including a non-2xx HTTP response — is
-    /// surfaced via `statusMessage`/`isError` in the `catch` below instead.
+    /// — whose `.iCloudSharedFolder` case still performs genuinely blocking
+    /// synchronous file I/O, whose `.gitRepository` case now awaits a real
+    /// git clone/fetch/checkout/commit/push sequence via `GitProfileSync`
+    /// (Issue #345), and whose `.httpServer` case really awaits the PUT via
+    /// `URLSession` (Issue #482) — is pulled into a `Task.detached` that
+    /// captures and returns only `Sendable` values (`profiles`,
+    /// `repository`) and never touches `self`. Only on genuine success (the
+    /// `do` block completing without throwing, meaning the HTTP push got a
+    /// 2xx, the git push succeeded (or found nothing to push), or the file
+    /// write succeeded) are `lastSyncDate`/`statusMessage` updated to report
+    /// success; any thrown error — including a non-2xx HTTP response or a
+    /// failed git command — is surfaced via `statusMessage`/`isError` in
+    /// the `catch` below instead.
     private func pushProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -316,9 +345,14 @@ struct TeamProfileView: View {
     /// Pull profiles from the configured repository.
     ///
     /// Mirrors `pushProfiles()` above: a plain `Task { }` inherits this
-    /// view's main-actor isolation, and only the blocking
-    /// `TeamProfileManager.pullProfiles(from:)` I/O call is isolated in a
-    /// `Task.detached` returning a `Sendable` `[EncodingProfile]`.
+    /// view's main-actor isolation. `TeamProfileManager.pullProfiles(from:)`
+    /// is itself `async throws` now — its `.iCloudSharedFolder` case still
+    /// performs a blocking synchronous file read, its `.gitRepository` case
+    /// awaits a real git fetch + checkout sequence via `GitProfileSync`
+    /// (Issue #345), and its `.httpServer` case still performs a blocking
+    /// synchronous URL read (see that case's own doc comment) — the call is
+    /// isolated in a `Task.detached` returning a `Sendable`
+    /// `[EncodingProfile]`.
     private func pullProfiles() {
         isSyncing = true
         statusMessage = nil
@@ -330,7 +364,7 @@ struct TeamProfileView: View {
             do {
                 let pulled = try await Task.detached {
                     let mgr = TeamProfileManager(repository: repository)
-                    return try mgr.pullProfiles(from: repository)
+                    return try await mgr.pullProfiles(from: repository)
                 }.value
                 remoteProfiles = pulled
                 // Compute the real conflict set (#482): remote profiles that

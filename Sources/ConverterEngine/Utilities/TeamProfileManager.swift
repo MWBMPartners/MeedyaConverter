@@ -47,6 +47,17 @@ public struct TeamProfileRepository: Codable, Sendable {
     /// Only used when `syncMethod` is `.iCloudSharedFolder`.
     public var sharedFolderPath: URL?
 
+    /// The git remote to clone/fetch/push for `.gitRepository` sync.
+    ///
+    /// `String`, not `URL`: scp-style remotes (`git@host:owner/repo.git`)
+    /// have no URL scheme. Only used when `syncMethod` is `.gitRepository`.
+    public var gitRemote: String?
+
+    /// The branch team profiles live on, for `.gitRepository` sync.
+    /// `nil`/blank normalises to `"main"`. Only used when `syncMethod` is
+    /// `.gitRepository`.
+    public var gitBranch: String?
+
     /// The synchronisation method for this repository.
     public var syncMethod: SyncMethod
 
@@ -56,18 +67,24 @@ public struct TeamProfileRepository: Codable, Sendable {
     /// Creates a new team profile repository configuration.
     ///
     /// - Parameters:
-    ///   - serverURL: The remote server URL (for HTTP/Git sync).
+    ///   - serverURL: The remote server URL (for HTTP sync).
     ///   - sharedFolderPath: The shared folder path (for iCloud sync).
+    ///   - gitRemote: The git remote (for Git sync).
+    ///   - gitBranch: The tracked branch (for Git sync).
     ///   - syncMethod: The synchronisation method to use.
     ///   - lastSync: The date of the last sync, defaults to `nil`.
     public init(
         serverURL: URL? = nil,
         sharedFolderPath: URL? = nil,
+        gitRemote: String? = nil,
+        gitBranch: String? = nil,
         syncMethod: SyncMethod,
         lastSync: Date? = nil
     ) {
         self.serverURL = serverURL
         self.sharedFolderPath = sharedFolderPath
+        self.gitRemote = gitRemote
+        self.gitBranch = gitBranch
         self.syncMethod = syncMethod
         self.lastSync = lastSync
     }
@@ -111,31 +128,76 @@ public final class TeamProfileManager: @unchecked Sendable {
         return dec
     }()
 
+    /// Injectable git transport for `.gitRepository` sync. `nil` (the
+    /// default) resolves a real `ProcessGitRunner` via
+    /// `ProcessGitRunner.locate()` at sync time; tests inject a `GitRunning`
+    /// mock so no real git binary or network access is needed.
+    private let gitRunner: (any GitRunning)?
+
+    /// Injectable cache root for `.gitRepository`'s disposable working
+    /// copies. `nil` (the default) uses `GitProfileSync.defaultCacheRoot()`;
+    /// tests inject a temp directory.
+    private let gitCacheRoot: URL?
+
     // MARK: - Initialisation
 
     /// Creates a new team profile manager.
     ///
-    /// - Parameter repository: An optional initial repository configuration.
-    public init(repository: TeamProfileRepository? = nil) {
+    /// - Parameters:
+    ///   - repository: An optional initial repository configuration.
+    ///   - gitRunner: Injectable git transport for `.gitRepository` sync;
+    ///     see `gitRunner` above.
+    ///   - gitCacheRoot: Injectable cache root for `.gitRepository` sync;
+    ///     see `gitCacheRoot` above.
+    public init(
+        repository: TeamProfileRepository? = nil,
+        gitRunner: (any GitRunning)? = nil,
+        gitCacheRoot: URL? = nil
+    ) {
         self._repository = repository
+        self.gitRunner = gitRunner
+        self.gitCacheRoot = gitCacheRoot
     }
 
     // MARK: - Public Interface
 
     /// Whether the manager has a valid repository configured.
     ///
-    /// Returns `true` when the repository has at least a server URL or
-    /// shared folder path appropriate for its sync method.
+    /// Returns `true` when the repository has at least a shared folder
+    /// path, a non-blank git remote, or a server URL — whichever field is
+    /// appropriate for its sync method.
     public var isConfigured: Bool {
         queue.sync {
             guard let repo = _repository else { return false }
             switch repo.syncMethod {
             case .iCloudSharedFolder:
                 return repo.sharedFolderPath != nil
-            case .gitRepository, .httpServer:
+            case .gitRepository:
+                return !(repo.gitRemote ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .httpServer:
                 return repo.serverURL != nil
             }
         }
+    }
+
+    /// Builds a `GitProfileSync` for `repository`'s `.gitRepository` sync
+    /// method.
+    ///
+    /// - Throws: `TeamProfileError.noGitRemote` if `repository.gitRemote`
+    ///   is `nil` or blank; `TeamProfileError.gitNotFound` if no git binary
+    ///   can be located and no `gitRunner` was injected into this manager.
+    private func makeGitSync(for repository: TeamProfileRepository) throws -> GitProfileSync {
+        let remote = (repository.gitRemote ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remote.isEmpty else {
+            throw TeamProfileError.noGitRemote
+        }
+        let runner = try gitRunner ?? ProcessGitRunner.locate()
+        return GitProfileSync(
+            remote: remote,
+            branch: repository.gitBranch ?? "main",
+            runner: runner,
+            cacheRoot: gitCacheRoot ?? GitProfileSync.defaultCacheRoot()
+        )
     }
 
     /// Push local profiles to the team repository.
@@ -144,17 +206,22 @@ public final class TeamProfileManager: @unchecked Sendable {
     /// configured repository location. For iCloud shared folders this
     /// writes directly to the folder; for HTTP servers it sends an HTTP
     /// PUT to the server endpoint via `URLSession` and requires a 2xx
-    /// response; for Git it writes to the repository working tree.
+    /// response; for Git it clones/fetches a disposable working copy via
+    /// `GitProfileSync`, commits the serialised JSON, and pushes it to the
+    /// configured branch — see `GitProfileSync.push(_:message:)`.
     ///
     /// - Parameters:
     ///   - profiles: The encoding profiles to push.
     ///   - repository: The target repository configuration.
-    /// - Throws: An error if serialisation, file I/O, or the HTTP push fails
-    ///   — mirrors the "never fabricate success" contract `WebhookSender`
-    ///   and `MediaServerIntegration` already establish elsewhere in this
-    ///   module: a non-2xx (or non-HTTP) response throws
-    ///   ``TeamProfileError/httpError(statusCode:body:)`` rather than
-    ///   silently reporting success.
+    /// - Throws: An error if serialisation, file I/O, the git command
+    ///   sequence, or the HTTP push fails — mirrors the "never fabricate
+    ///   success" contract `WebhookSender` and `MediaServerIntegration`
+    ///   already establish elsewhere in this module: a non-2xx (or
+    ///   non-HTTP) response throws
+    ///   ``TeamProfileError/httpError(statusCode:body:)``, and a git
+    ///   command outside its allowed exit codes throws
+    ///   ``TeamProfileError/gitCommandFailed(command:exitCode:stderr:)``,
+    ///   rather than either silently reporting success.
     public func pushProfiles(
         _ profiles: [EncodingProfile],
         to repository: TeamProfileRepository
@@ -170,11 +237,10 @@ public final class TeamProfileManager: @unchecked Sendable {
             try data.write(to: fileURL, options: .atomic)
 
         case .gitRepository:
-            guard let repoURL = repository.serverURL else {
-                throw TeamProfileError.noServerURL
-            }
-            let fileURL = repoURL.appendingPathComponent("team_profiles.json")
-            try data.write(to: fileURL, options: .atomic)
+            _ = try await makeGitSync(for: repository).push(
+                data,
+                message: "Update team profiles (\(profiles.count) profile(s))"
+            )
 
         case .httpServer:
             guard let serverURL = repository.serverURL else {
@@ -199,6 +265,8 @@ public final class TeamProfileManager: @unchecked Sendable {
             _repository = TeamProfileRepository(
                 serverURL: repository.serverURL,
                 sharedFolderPath: repository.sharedFolderPath,
+                gitRemote: repository.gitRemote,
+                gitBranch: repository.gitBranch,
                 syncMethod: repository.syncMethod,
                 lastSync: Date()
             )
@@ -208,14 +276,21 @@ public final class TeamProfileManager: @unchecked Sendable {
     /// Pull profiles from the team repository.
     ///
     /// Reads encoding profiles from the configured repository location
-    /// and deserialises them from JSON.
+    /// and deserialises them from JSON. For Git, this awaits
+    /// `GitProfileSync.pull()` — a real fetch + checkout against the
+    /// configured branch, not a plain file read.
     ///
     /// - Parameter repository: The source repository configuration.
-    /// - Returns: An array of encoding profiles from the repository.
-    /// - Throws: An error if file I/O or deserialisation fails.
+    /// - Returns: An array of encoding profiles from the repository. For
+    ///   Git, an empty array (not an error) when the configured branch
+    ///   doesn't exist on the remote yet, or exists but has no
+    ///   `team_profiles.json` on it — a brand-new team repository with no
+    ///   profiles pushed yet.
+    /// - Throws: An error if file I/O, the git command sequence, or
+    ///   deserialisation fails.
     public func pullProfiles(
         from repository: TeamProfileRepository
-    ) throws -> [EncodingProfile] {
+    ) async throws -> [EncodingProfile] {
         let data: Data
 
         switch repository.syncMethod {
@@ -227,11 +302,10 @@ public final class TeamProfileManager: @unchecked Sendable {
             data = try Data(contentsOf: fileURL)
 
         case .gitRepository:
-            guard let repoURL = repository.serverURL else {
-                throw TeamProfileError.noServerURL
+            guard let pulled = try await makeGitSync(for: repository).pull() else {
+                return []
             }
-            let fileURL = repoURL.appendingPathComponent("team_profiles.json")
-            data = try Data(contentsOf: fileURL)
+            data = pulled
 
         case .httpServer:
             guard let serverURL = repository.serverURL else {
@@ -247,6 +321,8 @@ public final class TeamProfileManager: @unchecked Sendable {
             _repository = TeamProfileRepository(
                 serverURL: repository.serverURL,
                 sharedFolderPath: repository.sharedFolderPath,
+                gitRemote: repository.gitRemote,
+                gitBranch: repository.gitBranch,
                 syncMethod: repository.syncMethod,
                 lastSync: Date()
             )
@@ -357,6 +433,18 @@ public enum TeamProfileError: LocalizedError, Sendable {
     /// as UTF-8 text.
     case httpError(statusCode: Int, body: String?)
 
+    /// No git remote was configured for `.gitRepository` sync.
+    case noGitRemote
+
+    /// No usable git binary could be located on this machine — none of
+    /// `ProcessGitRunner.searchPaths` was executable.
+    case gitNotFound
+
+    /// A git command exited with a code `GitProfileSync` did not allow for
+    /// that command. `stderr` is the command's own error output, never
+    /// fabricated.
+    case gitCommandFailed(command: String, exitCode: Int32, stderr: String)
+
     /// A human-readable description of the error.
     public var errorDescription: String? {
         switch self {
@@ -368,6 +456,12 @@ public enum TeamProfileError: LocalizedError, Sendable {
             return "Failed to decode team profiles: \(detail)"
         case .httpError(let statusCode, let body):
             return "Team profile push failed with HTTP \(statusCode)\(body.map { ": \($0)" } ?? "")"
+        case .noGitRemote:
+            return "No git remote is configured for team profile sync."
+        case .gitNotFound:
+            return "No git installation could be found on this machine. Install Xcode's Command Line Tools or Homebrew's git."
+        case .gitCommandFailed(let command, let exitCode, let stderr):
+            return "git \(command) failed (exit \(exitCode))\(stderr.isEmpty ? "" : ": \(stderr)")"
         }
     }
 }
