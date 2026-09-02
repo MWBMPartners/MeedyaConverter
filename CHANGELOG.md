@@ -13,6 +13,55 @@
 
 ## [Unreleased]
 
+> NOTE for the release cut: fold these into a dated `[0.1.0-rc.4]` block AND
+> correct the existing rc.4 "Vector Conversion / ProRes to Vector are now
+> first-class sidebar entries" highlight — those views are now HIDDEN
+> (`NavigationItem.unavailable`, #473) because their converters can't execute
+> yet. This backfill assumes `wip/alpha-consolidation` merges to `main` first.
+
+### Added
+
+- **Video stabilization** (two-pass vid.stab: detect → transform) with Light/
+  Medium/Heavy presets and a progress/cancel UI (#323).
+- **Deinterlacing** at encode — a per-profile Off/Fast(yadif)/Quality(bwdif)
+  picker applied as the first `-vf` stage (#324).
+- **Watermarks are now applied at encode** (text via drawtext, image via the
+  `movie` source filter) and persist on the encoding profile (#298).
+- **Scene-detected chapters embed into the output** encode (#288).
+- **Multi-output** enqueues one full-fidelity job per output through the queue
+  (#335); **encoding pipelines execute** and persist, with a Run action (#278).
+- **AppleScript / JXA scripting** activated (encode / probe / list profiles),
+  with a Help page (#302).
+- **Settings undo/redo** (⌘Z / ⌘⇧Z) for profile changes (#330), a working
+  **keyboard-shortcut recorder** (#331), a **live mini-player** (#280), an
+  honest **menu-bar status** dropdown (#281), and live **parallel-encoding
+  throughput tiles** (#286).
+- CLI `batch --dir --output-mode mirror` mirrors the source folder tree (#275).
+- Team-profile pull now surfaces real local-vs-remote **conflicts** (#482).
+
+### Changed
+
+- The app module was split into a thin `MeedyaConverter` executable plus a
+  testable `MeedyaConverterCore` library (#499), giving app-module code unit
+  tests for the first time.
+
+### Fixed
+
+- **ffmpeg resolution** in Image conversion, Voice Isolation and the Media
+  Browser now goes through the bundled binary (Contents/Helpers) instead of
+  PATH/Homebrew, so those features work in a Finder-launched notarized app.
+- **Disc burn "Simulate"** no longer writes a real disc on the hdiutil/growisofs
+  paths (only the Audio-CD `-dummy` path is a genuine dry run); "Verification
+  passed" is reported only when a verify actually ran.
+- **Video Trimmer** now seeds the timeline from the real file duration (was a
+  hardcoded 120 s); **metadata tag editor** reads existing tags and writes
+  losslessly without dropping the audio/video when embedding artwork (#320).
+- Queue drag-reorder moves the correct job when finished jobs are present; a
+  zero-condition conditional rule can no longer be saved (it matched everything);
+  CMX3600 EDL export no longer emits garbage columns (dangling-pointer UB).
+- Hidden dead-end surfaces: Vector Conversion / ProRes-to-Vector (#473) and
+  iCloud Cloud Sync (no iCloud entitlement in Direct).
+
 ### Security
 
 - **F-002 defence-in-depth complete -- remaining user-derived path

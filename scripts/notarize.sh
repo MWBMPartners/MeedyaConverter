@@ -39,7 +39,7 @@ log_error() { echo -e "${RED}[notarize]${NC} $*" >&2; }
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-NOTARIZATION_TIMEOUT=900  # 15 minutes in seconds
+NOTARIZATION_TIMEOUT=1800  # 30 minutes — a fresh team's first submission can exceed 15m
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -93,8 +93,9 @@ SUBMISSION_OUTPUT=$(xcrun notarytool submit "$SUBMIT_PATH" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_PASSWORD" \
     --team-id "$APPLE_TEAM_ID" \
-    --output-format json \
-    2>&1)
+    --output-format json)
+# NOTE: stdout only — merging stderr (2>&1) into the JSON corrupts the parse
+# below; notarytool errors still surface on stderr in the CI log.
 
 # Extract the submission ID from the JSON output
 SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | python3 -c "
@@ -124,8 +125,8 @@ WAIT_OUTPUT=$(xcrun notarytool wait "$SUBMISSION_ID" \
     --password "$APPLE_PASSWORD" \
     --team-id "$APPLE_TEAM_ID" \
     --timeout "$NOTARIZATION_TIMEOUT" \
-    --output-format json \
-    2>&1)
+    --output-format json)
+# stdout only — see the submit step above.
 
 # Extract the status from the JSON output
 NOTARIZATION_STATUS=$(echo "$WAIT_OUTPUT" | python3 -c "

@@ -120,7 +120,7 @@ writing:
   `CFBundleVersion`).
 - **App bundle assembly** — copies the universal binary into
   `MeedyaConverter.app/Contents/MacOS/`, then copies the SwiftPM
-  resource bundle `MeedyaConverter_MeedyaConverter.bundle` (Assets,
+  resource bundle `MeedyaConverter_MeedyaConverterCore.bundle` (Assets,
   the AppleScript `.sdef`, bundled Help Markdown) into
   `Contents/Resources` — **fail-closed** if it's missing, added for
   #429 after a prior release silently shipped without it. Generates

@@ -177,7 +177,7 @@ jobs:
     # -----------------------------------------------------------------------
     # Timeout: release builds and packaging should complete well within this
     # -----------------------------------------------------------------------
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       # ---------------------------------------------------------------------
@@ -252,6 +252,20 @@ jobs:
       - name: Build (release, universal arm64 + x86_64)
         run: |
           set -euo pipefail
+          # Sync the CLI's compiled-in version fallback to the tag BEFORE
+          # building: `meedya-convert --version` reads AppInfo.fallbackNumber
+          # (the CLI has no Info.plist to read at runtime), so without this it
+          # would report the placeholder. Anchored on the fallbackNumber line
+          # (see the `// sync-app-info-version` marker in AppInfo.swift). BSD
+          # sed (macOS runner) needs the empty `-i ''` argument.
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          sed -i '' -E "s|(public static let fallbackNumber = )\"[^\"]*\"|\1\"${TAG_VERSION}\"|" Sources/ConverterEngine/AppInfo.swift
+          grep -n 'fallbackNumber =' Sources/ConverterEngine/AppInfo.swift
+          # DIRECT must stay UNSET: it links Sparkle.framework, which the .app
+          # assembly below never bundles (no Contents/Frameworks, no rpath) →
+          # dyld crash at launch. The v0.1.x update path is the GitHubRelease
+          # checker, compiled unconditionally. Do not add DIRECT=1 until Sparkle
+          # framework embedding + rpath + signing land (#416).
           swift build -c release --arch arm64 --arch x86_64
           SWIFT_BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
           echo "SWIFT_BIN=${SWIFT_BIN}" >> "$GITHUB_ENV"
@@ -453,7 +467,8 @@ jobs:
             chmod +x scripts/codesign.sh
             ./scripts/codesign.sh "${SWIFT_BIN}/meedya-convert"
           else
-            echo "::warning::CLI binary not found, skipping CLI signing."
+            echo "::error::CLI binary not found at ${SWIFT_BIN}/meedya-convert — the meedya-convert product failed to build. Failing the release rather than shipping without the CLI tarball."
+            exit 1
           fi
 
       # ---------------------------------------------------------------------

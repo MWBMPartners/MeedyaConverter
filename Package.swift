@@ -376,8 +376,9 @@ let package = Package(
         // `@testable import MeedyaConverterCore` (SwiftPM cannot import an
         // executable target). The runnable app is the thin `MeedyaConverter`
         // executable below, which just calls `MeedyaConverterApp.main()`.
-        // NOTE: the SwiftPM resource bundle is named after this target, so it
-        // is `MeedyaConverterCore_MeedyaConverterCore.bundle` — the .app
+        // NOTE: the SwiftPM resource bundle is named `<PackageName>_<TargetName>`
+        // — here `MeedyaConverter_MeedyaConverterCore.bundle` (package `MeedyaConverter`,
+        // target `MeedyaConverterCore`), verified against the built artifact — the .app
         // assembly in release.yml / dev-build.yml copies it by that name.
         .target(
             name: "MeedyaConverterCore",

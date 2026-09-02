@@ -314,7 +314,7 @@ Audio CD, SACD, Hybrid SACD, SHM-SACD, SHM-CD, Blu-spec CD, HDCD, DTS CD, CD-MID
 | Language | Swift 6.3 |
 | macOS UI | SwiftUI |
 | Media Engine | Hybrid — FFmpeg subprocess (Direct distribution) + AVFoundation/FFmpegKit (App Store) |
-| HDR Tools | dovi_tool, DDVT (bundled) |
+| HDR Tools | dovi_tool, hdr10plus_tool (NOT bundled — install via Homebrew for Dual Dynamic HDR) |
 | Package Manager | Swift Package Manager |
 | CI/CD | GitHub Actions |
 | Auto-Update | Sparkle 2 (Direct distribution, v0.2.0+); Apple-managed (App Store) |
@@ -331,7 +331,7 @@ MeedyaConverter/
 │   └── MeedyaConverter/     # macOS SwiftUI app (bundles in-app help under Resources/Help/)
 ├── Tests/                   # Unit & integration tests
 ├── Resources/               # Built-in encoding profiles
-├── Tools/                   # Bundled third-party executables
+├── (Contents/Helpers)       # ffmpeg/ffprobe bundled into the .app at release time
 ├── branding/                # Brand assets (logos, icons)
 ├── docs/                    # Extended documentation
 ├── .github/                 # CI/CD workflows & issue templates

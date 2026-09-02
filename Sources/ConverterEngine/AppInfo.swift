@@ -71,12 +71,14 @@ public enum AppInfo {
     ///     is loaded by `swift test` or the `meedya-convert` CLI without a
     ///     packaged `.app` bundle).
     ///
-    /// Both sinks are kept in sync by `Scripts/build/sync-app-info-version.sh`,
-    /// which CI invokes before every build. Run it manually after editing
-    /// `VERSION`:
-    /// ```
-    /// ./Scripts/build/sync-app-info-version.sh
-    /// ```
+    /// The packaged `.app` reads its version from `Info.plist` at runtime, so
+    /// the GUI/About panel always shows the real (tag-driven) version. The
+    /// `meedya-convert` CLI has no `Info.plist`, so it uses `fallbackNumber`.
+    /// For a RELEASE build, `release.yml` rewrites the `fallbackNumber` line
+    /// below (anchored by the `// sync-app-info-version: fallbackNumber`
+    /// marker) to the tag version BEFORE compiling, so the CLI reports the
+    /// release version too. For dev/test builds `fallbackNumber` is a
+    /// placeholder and the CLI reports it verbatim.
     ///
     /// The historical hard-coded `"Alpha"` development-status suffix has been
     /// removed; pre-release status (e.g. `0.1.0-alpha`, `0.1.0-beta.3`) should
@@ -88,9 +90,9 @@ public enum AppInfo {
         /// Fallback semantic version (X.Y.Z[-pre]) used when
         /// `CFBundleShortVersionString` is unavailable from `Bundle.main`.
         ///
-        /// **Keep this in sync with `VERSION`** — `sync-app-info-version.sh`
-        /// rewrites this line automatically; the marker comment below is the
-        /// anchor the script greps for.
+        /// For release builds `release.yml` rewrites this line to the tag
+        /// version before compiling; the marker comment below is the anchor it
+        /// seds on. Edit both this value and `VERSION` together for dev builds.
         // sync-app-info-version: fallbackNumber
         public static let fallbackNumber = "0.1.0"
 
