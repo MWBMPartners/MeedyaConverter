@@ -146,6 +146,31 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 2026-09-02 — pre-release FEATURE BUILD (autonomous, Fable-plan → Sonnet-impl)
+
+**User directive:** before the first Direct release, build a set of partial/dead features autonomously
+(sequential Fable for analysis/deep-planning, Sonnet for implementation), NO pausing, all decisions
+surfaced upfront. Commit each change, update the GitHub issue, update THIS handoff per piece (crash-safe).
+
+**Decisions locked (user, via AskUserQuestion):**
+- Direct **licensing → DEFER** (StoreKit can't work in Direct); **Subscription tab hidden**.
+- Metadata backend → **native-Swift** (no upstream Rust dep; the MeedyaSuite-core option aliases native).
+- Vector tracers → **wire execution AND build+bundle GPL binaries** (cross-repo into MeedyaDL-Tools, like ffmpeg).
+- Distributed Render Farm → **DEFER** (config-only + disclosed).
+- Plus (my defaults, unobjected): MusicBrainz-keyless metadata lookup; remove the fake Voice "Vision Sound
+  Analysis" option; the small view fixes as scoped.
+
+**BUILD LIST:** Filter Graph (attach to encode), Dual HDR wrappers (search Contents/Helpers), Smart Crop
+(video-based crop), Background Removal (single-image save), Voice Isolation (drop fake ML option), Storage
+Analysis (real ffprobe), Team Profile (real git), native metadata backend + MusicBrainz lookup, vector
+tracers (exec + bundle binaries).
+
+**Progress:**
+- `<pending commit>` — **DEFERRALS**: hid the Subscription + Plugins Settings tabs (SettingsView); updated
+  `rc4-known-limitations.md` (Subscription/Plugins hidden, render-farm/licensing deferred). App target builds
+  clean.
+- (further entries appended per feature as they land)
+
 ## 🟢 2026-09-02 — pre-release hardening for the first Direct test build (autonomous)
 
 **User directive:** prep the first Direct-distribution test build; first do any *recommended pre-build

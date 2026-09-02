@@ -20,6 +20,11 @@ actual code (a pre-release readiness pass), not comments.
 - **Cloud Sync (iCloud)** — the Direct build carries no iCloud entitlement, so
   it could only fail; hidden. Cloud **Storage** (below) is unaffected.
 - **YouTube / Vimeo upload** — disabled pending OAuth app registration.
+- **Subscription / licensing** — hidden: StoreKit in-app purchase only works for
+  App-Store distribution, so it can't function in a Direct build; a Direct
+  licensing system is a separate effort. All features are free in this build.
+- **Plugins** — hidden: the plugin host does not yet load or run third-party
+  plugins (#353).
 
 ## Requires separately-installed tools
 
@@ -44,7 +49,6 @@ actual code (a pre-release readiness pass), not comments.
   active yet (the tab says so).
 - **Filter Graph editor** produces a filter string to copy — it does not yet
   attach to encodes.
-- **Plugins** — the plugin host does not yet load or run third-party plugins.
 - **Resumable jobs** re-queue from 0% (restart, not seek-resume).
 - **Parallel encoding** is limited to 1 concurrent job in unlicensed builds.
 - **Media metadata *lookup* / auto-tagging** (MusicBrainz, TMDB, …) is not in

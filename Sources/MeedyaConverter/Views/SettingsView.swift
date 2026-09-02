@@ -118,17 +118,17 @@ struct SettingsView: View {
                     AnalyticsSettingsView()
                 }
 
-                Tab("Plugins", systemImage: "puzzlepiece") {
-                    PluginManagerView()
-                }
+                // Plugins tab hidden for the Direct test build: the plugin host
+                // does not yet load or run third-party plugins (#353 deferred).
+                // Restore this Tab when the host is real.
             }
 
             // -- Account & Info --------------------------------------------
             TabSection("Account") {
-                Tab("Subscription", systemImage: "creditcard") {
-                    SubscriptionSettingsTab()
-                }
-
+                // Subscription tab hidden for the Direct test build: StoreKit
+                // in-app purchase only works for App-Store distribution, and
+                // Direct licensing is deferred to its own effort. Restore/replace
+                // when a Direct licensing mechanism ships.
                 Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
                     UpdateSettingsTab()
                 }
