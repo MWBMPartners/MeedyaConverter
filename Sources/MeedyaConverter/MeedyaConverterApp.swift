@@ -66,6 +66,14 @@ struct MeedyaConverterApp: App {
     /// (Issue #281).
     @State private var menuBarController = MenuBarController()
 
+    /// The single, app-wide colour theme (Issue #336). One shared instance so
+    /// that a change made in Settings is observed everywhere: it is injected
+    /// into every scene's environment AND applied as the root `.tint`. Before
+    /// this, `ThemeSettingsView` owned a private `ThemeManager`, so its accent
+    /// colour was persisted to `UserDefaults` and then read by nothing — no
+    /// `.tint` existed at the app root, so choosing a theme changed nothing.
+    @State private var themeManager = ThemeManager()
+
     /// Opens app windows (e.g. the Help window) via SwiftUI's native
     /// window-opening action. Replaces a dead `meedyaconverter://help`
     /// URL-scheme round-trip that had no `onOpenURL` handler to catch it
@@ -111,6 +119,8 @@ struct MeedyaConverterApp: App {
                 .environment(appViewModel)
                 .environment(appViewModel.storeManager)
                 .environment(appViewModel.shortcutManager)
+                .environment(themeManager)
+                .tint(themeManager.accentColor)
                 .preferredColorScheme(currentColorScheme)
                 .onAppear {
                     requestNotificationPermission()
@@ -277,6 +287,8 @@ struct MeedyaConverterApp: App {
                 .environment(appViewModel)
                 .environment(appViewModel.storeManager)
                 .environment(appViewModel.shortcutManager)
+                .environment(themeManager)
+                .tint(themeManager.accentColor)
                 .preferredColorScheme(currentColorScheme)
                 // The same sync as the main window's (Issue #281). It has to
                 // exist in BOTH scenes: the main window's `.onChange` only
@@ -295,6 +307,8 @@ struct MeedyaConverterApp: App {
         // Help Window
         Window("Help", id: "help") {
             HelpView()
+                .environment(themeManager)
+                .tint(themeManager.accentColor)
                 .preferredColorScheme(currentColorScheme)
         }
         .defaultSize(width: 750, height: 500)

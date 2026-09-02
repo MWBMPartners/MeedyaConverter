@@ -27,6 +27,10 @@ struct ContentView: View {
     /// Shortcuts rather than staying hardcoded (Issue #331).
     @Environment(KeyboardShortcutManager.self) private var shortcutManager
 
+    /// The shared colour theme (Issue #336), so the optional sidebar tint is
+    /// applied to the navigation column rather than persisted and ignored.
+    @Environment(ThemeManager.self) private var themeManager
+
     // MARK: - State
 
     /// Whether a drag operation is currently hovering over the window.
@@ -37,6 +41,10 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView()
+                // Apply the user's optional sidebar tint (Issue #336). When
+                // none is chosen the accent tint inherited from the root is
+                // used, so this changes nothing until the user opts in.
+                .tint(themeManager.sidebarTint ?? themeManager.accentColor)
         } detail: {
             detailView
         }

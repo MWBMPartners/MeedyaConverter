@@ -21,7 +21,10 @@ struct ThemeSettingsView: View {
     // MARK: - Environment
 
     /// The shared theme manager that holds and persists theme state.
-    @State private var themeManager = ThemeManager()
+    /// The shared, app-wide theme (Issue #336). Read from the environment
+    /// rather than owned locally, so edits here reach the root `.tint` and the
+    /// rest of the app instead of dying in a private instance.
+    @Environment(ThemeManager.self) private var themeManager
 
     // MARK: - State
 
