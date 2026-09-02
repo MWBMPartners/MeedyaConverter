@@ -166,10 +166,70 @@ Analysis (real ffprobe), Team Profile (real git), native metadata backend + Musi
 tracers (exec + bundle binaries).
 
 **Progress:**
-- `<pending commit>` — **DEFERRALS**: hid the Subscription + Plugins Settings tabs (SettingsView); updated
+- `beaf3cc` — **DEFERRALS**: hid the Subscription + Plugins Settings tabs (SettingsView); updated
   `rc4-known-limitations.md` (Subscription/Plugins hidden, render-farm/licensing deferred). App target builds
-  clean.
-- (further entries appended per feature as they land)
+  clean. (CI green.)
+- **`9511291` — DONE + CI GREEN (run 33681466109)** — three features in one sub-batch (Fable-planned,
+  implemented directly after the parallel Sonnet agents stalled):
+  - **Filter Graph → attach to encode.** `FilterGraphEditorView` split its node string into
+    `toVideoFilterString`/`toAudioFilterString` + an "Apply to Next Encode" button that stages onto
+    `AppViewModel.pendingFilterGraphVideo/Audio`; `enqueueSelectedFile()` consumes them (video composed
+    AFTER crop via **new `FilterChainComposer.compose`**, audio into `-af`), with passthrough guards. Was
+    clipboard-only before.
+  - **Dual HDR wrappers.** `DoviToolWrapper` / `HDR10PlusToolWrapper` now resolve their binary via
+    `BundledToolLocator` (Contents/Helpers → Homebrew → PATH → which) instead of a hardcoded 3-path list that
+    never checked the bundled tools; dead which-fallback helpers removed; `FFmpegBundleManager`'s false
+    "stages the HDR helpers" comment corrected.
+  - **Voice Isolation.** Removed the fake "ML Sound Analysis" method (ran the identical bandpass as basic) +
+    the dead centre-channel toggle + `VoiceIsolator.isMLAvailable()`.
+  - Tests: `FilterGraphStagingTests`, `HDRToolWrapperDiscoveryTests`, `VoiceIsolationMethodTests`.
+
+### ⏸️ RESUME HERE — remaining pre-release feature build (2026-09-02, session paused mid-batch)
+
+State at pause: branch `wip/alpha-consolidation` @ **`9511291`, tree CLEAN, CI GREEN**. `main` branch =
+default for PRs; working branch is 6+ ahead of `alpha` (no PR stacking — commit straight to wip). No agents
+running. Next session: pick up the list below in order. Each piece: verify vs code → implement → compile
+gate (`swift build --target ConverterEngine` + the `#Preview`-filtered whole-package build) → write test →
+commit → update its GitHub issue → append here → push → **watch CI green before the next push** (§15).
+
+**A. Three remaining quick-fixes (precise findings already captured — implement directly):**
+1. **Background Removal — single-image save (Issue #300).** `BackgroundRemovalView` single-image path
+   (`processImages()`, `selectedImageURLs.count == 1`) sets `processedImage` (preview) but offers **no way to
+   save it to disk**; the batch path already saves to a chosen dir. `UniformTypeIdentifiers` is already
+   imported. Plan: add `@State processedImageData: Data?` (+ source URL for a default filename), set it
+   alongside `processedImage` in the single branch, reset it wherever `processedImage` resets
+   (`chooseSingleImage`/`chooseBatchImages`), add a "Save…" button in the `GroupBox("Result")` (shown when
+   data != nil) → `NSSavePanel` with the correct default extension + `allowedContentTypes` (png/jpeg/tiff via
+   `config.outputFormat`) writing the raw `data` (don't re-encode the NSImage). `processImage(...)` returns
+   `Data` in `config.outputFormat`; `ImageFormat.fileExtension` maps png→png, jpeg→**jpg**, tiff→tiff.
+   **Also fix a false comment:** `BackgroundRemover.swift:~237-240` (inside `batchRemoveBackgrounds`) says the
+   sanitisation "mirrors the fix already applied to the single-image path in `BackgroundRemovalView`" — there
+   is no single-image save path in the view; the sanitisation is in the view's **batch** path (`batchProcess`,
+   `\(baseName)_nobg.\(ext)`). Reword to reference the batch path (and note `batchRemoveBackgrounds` has no
+   caller — the view calls `removeBackground` per file).
+2. **Storage Analysis — real ffprobe.** (Fable-specced in the earlier plan: `StorageAnalyzer.analysis(from:base:)`
+   + `probeFiles(_:ffprobePath:maxConcurrency:progress:)` async; `StorageAnalysisView` `probeProgress`.)
+   Replace filename-guess sizing with real `ffprobe` (resolve via `FFmpegBundleManager().locateFFprobe().path`).
+3. **Smart Crop — video-based crop.** (Fable-specced: `SmartCropView` rewrite + `SmartCropDetector.fitCropRect`
+   helper + `extractFrame` helper.) Currently still-image only; make it detect a crop rect from sampled video
+   frames and stage it like the manual crop filter (`pendingManualCropFilter`) for the next encode.
+
+**B. Team Profile — real git (Issue #345). FULL PLAN COMPLETE & SAVED:**
+`.claude/plans/team-profile-git-plan.md` (Fable deep plan, git sequence empirically verified). New
+`GitProfileSync.swift` (injectable `GitRunning` seam) + `TeamProfileManager`/`TeamProfileView` edits +
+`GitProfileSyncTests` (18 cases) + CHANGELOG line. Implement straight from that file.
+
+**C. Not yet planned (Fable plan still to run each):**
+- **Native-Swift metadata backend + MusicBrainz metadata lookup / auto-tagging** (decision locked: native
+  Swift, keyless MusicBrainz; see [[metadata-lookup-is-dead-in-full]], [[musicbrainz-nov30-2026-option-b]] —
+  keep URL builders, no Swift client; every provider is currently a dead URL builder).
+- **Vector tracers (#473/#494):** wire `RasterVectorConverter`/`ProResToVectorConverter` execution + un-hide
+  the nav entries (`NavigationItem.unavailable` currently includes `.vectorConversion`/`.proresVector`) +
+  build & bundle GPL binaries (potrace/vtracer) into `MeedyaDL-Tools` via a PR (mirror has no macOS compile
+  runner yet) + a MeedyaConverter bundle step. Cross-repo; the biggest remaining item.
+
+**Deferred/disclosed (NOT to build this pass):** Direct licensing (Subscription hidden ✓), Distributed
+Render Farm (config-only + disclosed).
 
 ## 🟢 2026-09-02 — pre-release hardening for the first Direct test build (autonomous)
 
