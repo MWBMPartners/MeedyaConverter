@@ -63,13 +63,13 @@ struct SidebarView: View {
                 sidebarLabel(for: .duplicateFinder)
             }
 
-            // Images & Audio section — image/vector conversion, cropping,
-            // background removal, and voice isolation.
+            // Images & Audio section — image conversion, cropping,
+            // background removal, and voice isolation. (Vector Conversion and
+            // ProRes-to-Vector are hidden until their converters can execute —
+            // NavigationItem.unavailable, Issue #473.)
             Section("Images & Audio") {
                 sidebarLabel(for: .images)
                 sidebarLabel(for: .animatedImage)
-                sidebarLabel(for: .vectorConversion)
-                sidebarLabel(for: .proresVector)
                 sidebarLabel(for: .smartCrop)
                 sidebarLabel(for: .backgroundRemoval)
                 sidebarLabel(for: .voiceIsolation)

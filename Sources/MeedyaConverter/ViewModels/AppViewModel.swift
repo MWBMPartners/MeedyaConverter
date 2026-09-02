@@ -161,6 +161,18 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Features whose UI exists but whose engine-side execution is not yet
+    /// wired: `RasterVectorConverter`/`ProResToVectorConverter` are
+    /// argument-builders only, and the tracing tools they need (potrace /
+    /// vtracer / rsvg-convert) are GPL and not yet bundled, with no process
+    /// runner. Hidden from the sidebar and not selectable until that wiring
+    /// lands, so a user can't open a settings-only form that can never convert
+    /// (Issue #473). Re-list them here — nowhere else — to bring them back.
+    static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector]
+
+    /// Whether this item is currently reachable (see `unavailable`).
+    var isAvailable: Bool { !NavigationItem.unavailable.contains(self) }
+
     /// SF Symbol name for sidebar icon.
     var systemImage: String {
         switch self {
@@ -273,7 +285,18 @@ final class AppViewModel {
     // MARK: - Navigation State
 
     /// The currently selected sidebar item.
-    var selectedNavItem: NavigationItem? = .source
+    ///
+    /// Snaps back to `.source` if something selects a currently-unavailable
+    /// item (Issue #473) — the sidebar already hides those, this guards the
+    /// programmatic paths. Setting `.source` (which is available) re-enters
+    /// `didSet` but makes no further change, so there is no recursion.
+    var selectedNavItem: NavigationItem? = .source {
+        didSet {
+            if let item = selectedNavItem, !item.isAvailable {
+                selectedNavItem = .source
+            }
+        }
+    }
 
     // MARK: - Engine
 
