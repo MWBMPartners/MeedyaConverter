@@ -233,8 +233,17 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   passthrough-skip, threading, Codable back-compat. Epic OPEN — tiled/custom-XY/rotation/font-config/
   rendered-preview remain.
 
-**Round-2 remaining (ranked):** #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript
-activation, #288 chapters. (Done this pass: #482 conflicts, #286 throughput tiles, #298 watermarks.)
+- **#335 multi-output — DONE (epic left OPEN)** (`e4a87bb`). `MultiOutputView` previewed FFmpeg args
+  but had no run action — nothing executed. Wired via the existing queue rather than the simplified
+  `MultiOutputEncoder` arg arrays: new `AppViewModel.enqueueMultiOutput(_:)` enqueues one full-fidelity
+  `EncodingJobConfig` per enabled output → independent per-output progress + per-output status from the
+  existing `EncodingJobState`, and #286 runs them in parallel. New "Add N Outputs to Queue" button.
+  Global HW kill switch honoured per output. No ConverterEngine change; verified by inspection+compile
+  (AppViewModel construction too side-effectful for a hermetic test). Epic OPEN — single-pass `tee`
+  shared-decode needs a distinct one-process/many-outputs job+backend model.
+
+**Round-2 remaining (ranked):** #473 vector, #278 pipeline editor, #302 AppleScript activation, #288
+chapters. (Done this pass: #482 conflicts, #286 throughput, #298 watermarks, #335 multi-output.)
 
 ---
 
