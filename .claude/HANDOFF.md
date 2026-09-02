@@ -146,6 +146,58 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 2026-09-02 — #494 packaging + disc-imaging scope clarification
+
+### #494 — user answered the four follow-on decisions; packaging begun
+
+User decisions (recorded in DR-0001, `docs/decisions/0001-gpl-disc-tools.md`):
+1. Keep #494 **open** until packaging is complete.
+2. Host GPL **source + binaries in `MeedyaSuite/MeedyaDL-Tools`**, with per-tool source archival + CI updated.
+3. **Build our own**, per platform, like ffmpeg.
+4. Q "why not all tools at once?" → **all in the mirror this round; none in the app yet** — because the
+   disc-imaging *executor* does not exist (`RawCDReadPlanner`/`DiscImagingController`/`CdrdaoTocParser`/
+   `BundledToolLocator` all absent; cdrdao/wodim/cdparanoia have zero callers). Bundling one would be a
+   fabricated capability. They enter the app with #495's executor.
+
+**Done + pushed (MeedyaConverter, `f453856` on `wip/alpha-consolidation`):**
+- `BundledTool.isGPLFamily` (SPDX-aware, excludes LGPL) + `ToolBundleManifest.gplTools`/`isAppStoreSafe`.
+- Regression test: fails CI if any GPL tool enters `defaultManifest` (which ships to App Store).
+- `scripts/verify-no-gpl-in-appstore.sh` — scans an assembled `.app` for GPL binaries; exit 7 if found;
+  self-tested; wired into `testflight.yml` pre-signing validation.
+- DR-0001 finalised with all four decisions + the guards.
+- NOT done, deliberately (fabricated-capability): no GPL tool in `defaultManifest`, none in the DMG.
+
+**Done + pushed (mirror `MeedyaSuite/MeedyaDL-Tools`, branch `feat/gpl-disc-tools`, PR #25):**
+- versions.json + env pins for ddrescue/cdrdao/cdparanoia/wodim.
+- **ddrescue** built from source (Linux x86_64) + **source tarball archived** to the release — the
+  working template (GPLv3 corresponding-source obligation met from the mirror's own release).
+- **Follow-ups documented in that repo's DEV_Status.md, NOT done blind:** cdrdao/cdparanoia/wodim Linux
+  builds (finicky deps) and the **macOS-universal builds** — the mirror has **no macOS compile runner**
+  today (macOS assets are downloaded, not compiled), so "build our own for macOS" needs a new
+  `macos-latest` job. PR #25 is unlabelled; labelling it `update-tools` runs CI validation without
+  publishing.
+
+### ⚠️ DISC-IMAGING SCOPE CLARIFIED + a DRM DECISION SURFACED (issue #492 comment)
+
+User clarified #492 is **bit-for-bit** copies across the full optical range — Audio CD, CD-G, mixed-mode/
+eCD, CD, DVD, HD DVD, Blu-ray, 3D BD, **4K UHD Blu-ray** — with output to **ISO, CUE/BIN, NRG, MDX** and
+compatible formats. Posted a detailed media→tool→format matrix on #492. Key facts recorded there:
+- The GPL supply chain (cdrdao/ddrescue/cdparanoia/wodim) covers **reading** every media type; the
+  container **formats** (ISO/BIN-CUE/NRG/MDX) are **our own clean-room serialisers**, not external tools.
+  BIN/CUE writer already exists (#495 P1); NRG/MDX are clean-room to write.
+
+**🔴 DECISION THE USER STILL OWES (surfaced on #492 and to the user directly):** the **DRM boundary**.
+4K UHD BD (AACS 2.0), commercial BD/3D BD (AACS) and DVD (CSS) are protected, and the app's FAQ says it
+does not circumvent DRM. Two readings:
+- ✅ **Raw imaging** — copy the bits including encryption; a protected disc images as an *encrypted* file.
+  Backup/preservation, NOT circumvention. This is the default and the ONLY thing I will build.
+- ❌ **Decrypting** protected content to a playable copy = DRM circumvention. Conflicts with the app's
+  policy, unlawful under DMCA §1201 / EU Copyright Directive Art. 6, and I will **not** implement it.
+Need explicit confirmation the feature is **raw-imaging-only**. Caveats even then: 4K UHD BD may be
+un-raw-readable without a "friendly" drive / at all; restore/burn-back is realistically CD/BD-R only.
+
+---
+
 ## 🟢 SESSION COMPLETE — 2026-09-02 · all queued work done
 
 ### ✅ Final state
