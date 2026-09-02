@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import Combine
 import ConverterEngine
 
 // ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ struct ParallelEncodingView: View {
                 concurrencyConfigSection
                 resourceAllocationSection
                 activeJobsSection
-                throughputSection
+                ThroughputTilesView(jobs: activeJobs)
             }
             .padding(20)
         }
@@ -267,20 +268,48 @@ struct ParallelEncodingView: View {
         }
     }
 
-    // MARK: - Throughput
+}
 
-    /// Aggregate throughput across the jobs in flight.
-    ///
-    /// "Combined Speed" is the sum of the encoder's own realtime-speed
-    /// multipliers, which is the one genuinely additive throughput figure
-    /// available: `EncodingJobState` carries no per-job frame rate, so a
-    /// total-FPS tile could only have been invented.
-    private var throughputSection: some View {
+// ---------------------------------------------------------------------------
+// MARK: - ThroughputTilesView
+// ---------------------------------------------------------------------------
+/// Aggregate throughput across the jobs in flight — Combined Speed, Active
+/// count, and Avg Progress.
+///
+/// `EncodingJobState` is a Combine `ObservableObject`, so its `@Published`
+/// `progress`/`speed` only notify views that actually subscribe to it. The
+/// per-job `ActiveJobRow` does that with `@ObservedObject`; these *aggregate*
+/// tiles cannot (there is no property wrapper for observing a whole
+/// *collection* of observable objects), so on their own they would compute
+/// once and freeze — refreshing only when a job entered or left the array,
+/// never as the encoders' numbers advanced.
+///
+/// The fix is one merged subscription: `.onReceive` over the
+/// `objectWillChange` of every in-flight job bumps a token, invalidating this
+/// view so it re-reads each job's freshly-committed `progress`/`speed`. That
+/// is the same mechanism `@ObservedObject` uses, applied to the set at once;
+/// when `jobs` changes, the merged publisher's identity changes and SwiftUI
+/// rewires `.onReceive` to the new set.
+///
+/// "Combined Speed" is the sum of the encoders' own realtime-speed
+/// multipliers — the one genuinely additive throughput figure available:
+/// `EncodingJobState` carries no per-job frame rate, so a total-FPS tile
+/// could only have been invented.
+private struct ThroughputTilesView: View {
+
+    let jobs: [EncodingJobState]
+
+    /// Bumped whenever any in-flight job publishes a change. Written but not
+    /// read on purpose: mutating owned `@State` invalidates the view, which
+    /// is exactly the re-render these aggregate tiles need.
+    @State private var refreshToken = 0
+
+    var body: some View {
         GroupBox("Throughput") {
             HStack(spacing: 32) {
                 VStack {
-                    let speeds = activeJobs.compactMap(\.speed)
-                    Text(speeds.isEmpty ? "—" : String(format: "%.1fx", speeds.reduce(0, +)))
+                    let speeds = jobs.compactMap(\.speed)
+                    Text(speeds.isEmpty ? "\u{2014}" : String(format: "%.1fx", speeds.reduce(0, +)))
                         .font(.title.bold().monospaced())
                     Text("Combined Speed")
                         .font(.caption)
@@ -288,7 +317,7 @@ struct ParallelEncodingView: View {
                 }
 
                 VStack {
-                    Text("\(activeJobs.count)")
+                    Text("\(jobs.count)")
                         .font(.title.bold().monospaced())
                     Text("Active")
                         .font(.caption)
@@ -296,9 +325,9 @@ struct ParallelEncodingView: View {
                 }
 
                 VStack {
-                    let avgProgress = activeJobs.isEmpty
+                    let avgProgress = jobs.isEmpty
                         ? 0.0
-                        : activeJobs.reduce(0.0) { $0 + $1.progress } / Double(activeJobs.count)
+                        : jobs.reduce(0.0) { $0 + $1.progress } / Double(jobs.count)
                     Text("\(Int(avgProgress * 100))%")
                         .font(.title.bold().monospaced())
                     Text("Avg Progress")
@@ -308,6 +337,9 @@ struct ParallelEncodingView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(12)
+        }
+        .onReceive(Publishers.MergeMany(jobs.map(\.objectWillChange))) { _ in
+            refreshToken &+= 1
         }
     }
 }
