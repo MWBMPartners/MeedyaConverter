@@ -43,8 +43,17 @@ import ConverterEngine
 // ---------------------------------------------------------------------------
 // MARK: - MeedyaConverterApp
 // ---------------------------------------------------------------------------
-@main
-struct MeedyaConverterApp: App {
+// The app lives in the `MeedyaConverterCore` LIBRARY target so its internals are
+// unit-testable via `@testable import MeedyaConverterCore` (an executable target
+// cannot be imported). The `@main` entry point is a one-line `MeedyaConverterApp.main()`
+// in the thin `MeedyaConverter` executable target instead — see
+// `Sources/MeedyaConverterMain/main.swift`. The struct is therefore `public`
+// (so the executable can reach `main()`); its state stays private.
+public struct MeedyaConverterApp: App {
+
+    /// Entry point invoked from the thin executable target's `main.swift`.
+    public init() {}
+
 
     // -----------------------------------------------------------------
     // MARK: - Application State
@@ -111,7 +120,7 @@ struct MeedyaConverterApp: App {
     // -----------------------------------------------------------------
     // MARK: - Scene Declaration
     // -----------------------------------------------------------------
-    var body: some Scene {
+    public var body: some Scene {
         // Primary Window Group
         //
         // Given an explicit `id` (Issue #281) so `AppMenuActions.onOpenMainWindow`

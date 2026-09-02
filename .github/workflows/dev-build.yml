@@ -163,13 +163,14 @@ jobs:
           # SwiftPM emits the MeedyaConverter target's declared resources
           # (Assets.xcassets, the MeedyaConverter.sdef AppleScript definition,
           # and the bundled Help Markdown) into a SEPARATE
-          # MeedyaConverter_MeedyaConverter.bundle alongside the binary — NOT
+          # MeedyaConverter_MeedyaConverterCore.bundle alongside the binary (the
+          # app code lives in the MeedyaConverterCore library target) — NOT
           # into the executable. Because this step hand-builds the .app, that
           # bundle must be copied into Contents/Resources or the shipped app
           # has no resources: AppleScript/Automator integration and the in-app
           # Help would be dead-on-arrival in Direct builds. Fail closed if the
           # bundle is missing (e.g. a Package.swift resources regression).
-          RESOURCE_BUNDLE=".build/release/MeedyaConverter_MeedyaConverter.bundle"
+          RESOURCE_BUNDLE=".build/release/MeedyaConverter_MeedyaConverterCore.bundle"
           if [ -d "${RESOURCE_BUNDLE}" ]; then
             cp -R "${RESOURCE_BUNDLE}" "${APP}/Contents/Resources/"
           else

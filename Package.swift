@@ -372,8 +372,15 @@ let package = Package(
         // project. SPM handles the Info.plist and entitlements via the
         // Resources directory.
         // =================================================================
-        .executableTarget(
-            name: "MeedyaConverter",
+        // The app is a LIBRARY target so its internals are unit-testable via
+        // `@testable import MeedyaConverterCore` (SwiftPM cannot import an
+        // executable target). The runnable app is the thin `MeedyaConverter`
+        // executable below, which just calls `MeedyaConverterApp.main()`.
+        // NOTE: the SwiftPM resource bundle is named after this target, so it
+        // is `MeedyaConverterCore_MeedyaConverterCore.bundle` — the .app
+        // assembly in release.yml / dev-build.yml copies it by that name.
+        .target(
+            name: "MeedyaConverterCore",
             dependencies: [
                 "ConverterEngine",
                 // Uncomment when dependencies are integrated:
@@ -404,6 +411,34 @@ let package = Package(
                 .process("Scripting/MeedyaConverter.sdef"),
             ],
             swiftSettings: baseMeedyaConverterSwiftSettings
+        ),
+
+        // =================================================================
+        // MeedyaConverter (thin executable)
+        // =================================================================
+        // The runnable macOS app. Contains ONLY a one-line entry point
+        // (`MeedyaConverterApp.main()`); all app code lives in the
+        // `MeedyaConverterCore` library so it can be unit-tested. Kept named
+        // "MeedyaConverter" so the built binary is `.build/<config>/MeedyaConverter`,
+        // unchanged for the .app-assembly and codesigning steps.
+        .executableTarget(
+            name: "MeedyaConverter",
+            dependencies: ["MeedyaConverterCore"],
+            path: "Sources/MeedyaConverterMain"
+        ),
+
+        // =================================================================
+        // MeedyaConverterCoreTests (Unit Tests for the app module)
+        // =================================================================
+        // The app module previously had NO testable surface — an executable
+        // target cannot be `@testable import`ed. Several of this codebase's
+        // subtle defects lived here (the failable KeyEquivalent crash, the
+        // HardwareAccelerationPreference default-polarity trap). This target
+        // gives them a home.
+        .testTarget(
+            name: "MeedyaConverterCoreTests",
+            dependencies: ["MeedyaConverterCore", "ConverterEngine"],
+            path: "Tests/MeedyaConverterCoreTests"
         ),
 
         // =================================================================
