@@ -174,6 +174,20 @@ outstanding elements. Done:
   `OutputPathResolver.resolveOutputDirectory`. `OutputPathResolverMirrorTests`. Remaining AC (persist GUI
   outputMode, WatchFolderManager honour it, collision prompt) tracked on the issue.
 
+- **#322 concat re-encode + crossfade fix — DONE (epic OPEN)** (`13ae775`, CI green). Demuxer path worked;
+  the re-encode filter path was dead (`buildFilterConcatArguments` zero callers, UI-gated) and
+  `buildCrossfadeFilterComplex` hardcoded `offset=0` (crossfade fired at t=0). Fixed the offset math
+  (durations-based cumulative), added explicit codecs, wired `runFilterConcat` for differing-codec joins.
+  Crossfade UI still gated on the view probing durations. `VideoConcatenatorFilterTests`.
+- **#324 deinterlace — DONE (epic OPEN)** (`b8817e8`, CI green pending). `DeinterlaceConfig`/Presets had
+  zero callers. Wired like #298: `FFmpegArgumentBuilder.deinterlace` (first -vf stage), `EncodingProfile
+  .deinterlace` (back-compat, config now Hashable), `OutputSettingsView` Deinterlace picker (Off/Fast/
+  Quality; nnedi omitted — needs external weights). `DeinterlaceWiringTests`.
+
+**CI discipline note:** pushing again while a run is in-flight triggers concurrency-cancel on the prior run
+(lost 9f5e123's validation). RULE: watch each push fully to green BEFORE the next push. All pushes here
+were watched; #323/#320/#275 validated by 288cbcc (green), #322 by 13ae775 (green), #324 by b8817e8.
+
 **Next candidates (from the triage, executableNow, not yet done):** #322 concat (S), #324 deinterlace (M),
 #280 mini-player progress (M, XS core), #331 shortcuts (M), #330 undo/redo (L), #477 dead-cluster sweep (L),
 #281 menu-bar drag+status (M). #283 and #374 need a user decision / upstream tag first.
