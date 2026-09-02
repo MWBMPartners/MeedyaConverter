@@ -109,8 +109,9 @@ struct ConcatenationView: View {
         isRunning
             || files.count < 2
             || outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || method != .demuxer
-            || !compatibilityWarnings.isEmpty
+            // Compatibility warnings only block the lossless demuxer path; the
+            // re-encode filter path tolerates differing codecs (#322).
+            || (method == .demuxer && !compatibilityWarnings.isEmpty)
     }
 
     // MARK: - Body
@@ -310,11 +311,13 @@ struct ConcatenationView: View {
 
             // Crossfade settings (filter mode only).
             //
-            // Honesty note (Issue #322): `VideoConcatenator.buildFilterConcatArguments`
-            // (the crossfade/re-encode builder) has no caller anywhere in this
-            // app yet — only the demuxer path below is wired to a real FFmpeg
-            // invocation. Rather than let this control silently do nothing,
-            // it stays visible but disabled with an honest explanation.
+            // Honesty note (Issue #322): the re-encode filter path IS now wired
+            // (Start runs `VideoConcatenator.buildFilterConcatArguments` via
+            // `runFilterConcat`), so differing-codec joins work. Crossfade
+            // specifically stays disabled: correct `xfade` offsets need each
+            // clip's duration, which this URL-only view does not yet probe.
+            // Rather than emit transitions at the wrong offsets, the crossfade
+            // controls remain visible-but-disabled with an honest explanation.
             if method == .filter {
                 Section("Crossfade") {
                     Toggle("Enable Crossfade", isOn: $crossfadeEnabled)
@@ -342,13 +345,14 @@ struct ConcatenationView: View {
                     .disabled(true)
 
                     Label(
-                        "Re-encode concatenation with crossfade is not yet "
-                        + "available — these controls have no effect. Select "
-                        + "\"Lossless (Demuxer)\" above to concatenate.",
-                        systemImage: "exclamationmark.triangle"
+                        "Re-encode joining is available — press Start to "
+                        + "concatenate clips of differing codecs. Crossfade "
+                        + "transitions are the remaining piece: they need each "
+                        + "clip's duration and are coming in a follow-up.",
+                        systemImage: "info.circle"
                     )
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -549,13 +553,13 @@ struct ConcatenationView: View {
             concatErrorMessage = "Choose an output location before starting."
             return
         }
-        guard method == .demuxer else {
-            concatErrorMessage = "Re-encode concatenation is not yet available. Select \"Lossless (Demuxer)\" to concatenate."
-            return
-        }
-        guard compatibilityWarnings.isEmpty else {
-            concatErrorMessage = "Resolve the compatibility warnings above before concatenating."
-            return
+        // The re-encode filter path (below) tolerates differing codecs, so the
+        // compatibility warnings only block the lossless demuxer path (#322).
+        if method == .demuxer {
+            guard compatibilityWarnings.isEmpty else {
+                concatErrorMessage = "Resolve the compatibility warnings above before concatenating."
+                return
+            }
         }
 
         concatErrorMessage = nil
@@ -579,11 +583,19 @@ struct ConcatenationView: View {
             }
 
             do {
-                try await runDemuxerConcat(
-                    ffmpegPath: ffmpegPath,
-                    files: filesToConcat,
-                    outputPath: outputPathCopy
-                )
+                if method == .demuxer {
+                    try await runDemuxerConcat(
+                        ffmpegPath: ffmpegPath,
+                        files: filesToConcat,
+                        outputPath: outputPathCopy
+                    )
+                } else {
+                    try await runFilterConcat(
+                        ffmpegPath: ffmpegPath,
+                        files: filesToConcat,
+                        outputPath: outputPathCopy
+                    )
+                }
                 successMessage = "Concatenation complete. Output written to \(outputPathCopy)."
             } catch is CancellationError {
                 // Cancelled by the user (or the view disappeared) — no
@@ -639,6 +651,52 @@ struct ConcatenationView: View {
         let arguments = argsTemplate.map {
             $0 == "<CONCAT_LIST_FILE>" ? listFileURL.path : $0
         }
+
+        if Task.isCancelled { throw CancellationError() }
+
+        let controller = FFmpegProcessController(binaryPath: ffmpegPath)
+        currentController = controller
+
+        let progressStream = try controller.startEncoding(arguments: arguments)
+        for await progress in progressStream {
+            if Task.isCancelled {
+                controller.stopEncoding()
+                break
+            }
+            progressFraction = progress.fractionComplete
+        }
+        if Task.isCancelled { throw CancellationError() }
+
+        if let code = controller.exitCode, code != 0 {
+            throw FFmpegProcessError.processFailure(exitCode: code, stderr: controller.errorOutput)
+        }
+
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            throw FFmpegProcessError.processFailure(
+                exitCode: controller.exitCode ?? -1,
+                stderr: "FFmpeg reported success but no output file was found at \(outputPath)."
+            )
+        }
+    }
+
+    /// Runs the re-encode filter-concat path (#322): a single FFmpeg pass with
+    /// the `concat` filter that joins clips of DIFFERING codecs (the demuxer
+    /// path requires identical codecs). No scratch list file is needed —
+    /// `buildFilterConcatArguments` returns a complete command. Crossfade is
+    /// intentionally not passed here: it needs each clip's duration to place the
+    /// transitions, which this URL-only view does not yet probe. ffmpeg's
+    /// `concat` filter still requires the clips to share resolution/SAR; a
+    /// mismatch surfaces as its own error via the controller's stderr.
+    private func runFilterConcat(
+        ffmpegPath: String,
+        files: [URL],
+        outputPath: String
+    ) async throws {
+        let arguments = VideoConcatenator.buildFilterConcatArguments(
+            files: files,
+            outputPath: outputPath,
+            crossfade: nil
+        )
 
         if Task.isCancelled { throw CancellationError() }
 

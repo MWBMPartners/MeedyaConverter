@@ -154,8 +154,11 @@ public struct VideoConcatenator: Sendable {
     /// - Returns: FFmpeg argument array.
     public static func buildFilterConcatArguments(
         files: [URL],
+        durations: [TimeInterval] = [],
         outputPath: String,
-        crossfade: TimeInterval?
+        crossfade: TimeInterval?,
+        videoCodec: String = "libx264",
+        audioCodec: String = "aac"
     ) -> [String] {
         guard !files.isEmpty else { return [] }
 
@@ -168,11 +171,13 @@ public struct VideoConcatenator: Sendable {
 
         let n = files.count
 
-        if let crossfade = crossfade, crossfade > 0, n >= 2 {
-            // Build xfade filter chain for crossfade transitions.
-            // Each pair of adjacent segments gets an xfade and acrossfade filter.
+        // Crossfade needs each clip's duration to place the transitions on the
+        // running timeline (see buildCrossfadeFilterComplex). Without a full,
+        // matching duration list, fall back to a plain sequential re-encode
+        // join rather than emit transitions at the wrong offsets.
+        if let crossfade = crossfade, crossfade > 0, n >= 2, durations.count == n {
             let filterComplex = buildCrossfadeFilterComplex(
-                fileCount: n,
+                durations: durations,
                 crossfadeDuration: crossfade
             )
             args += ["-filter_complex", filterComplex]
@@ -183,6 +188,11 @@ public struct VideoConcatenator: Sendable {
             args += ["-filter_complex", filterComplex]
             args += ["-map", "[v]", "-map", "[a]"]
         }
+
+        // The filter path RE-ENCODES, so name the output codecs explicitly
+        // rather than relying on the container extension's ffmpeg defaults
+        // (which can pick an undesired encoder or fail for some containers).
+        args += ["-c:v", videoCodec, "-c:a", audioCodec]
 
         args += [outputPath]
 
@@ -249,55 +259,61 @@ public struct VideoConcatenator: Sendable {
         return "\(inputs)concat=n=\(fileCount):v=1:a=1[v][a]"
     }
 
-    /// Builds an ``xfade`` + ``acrossfade`` filter complex string for
-    /// crossfade transitions between segments.
+    /// Builds an ``xfade`` + ``acrossfade`` filter-complex string for
+    /// crossfade transitions between segments, placing each transition at the
+    /// correct point on the running output timeline.
+    ///
+    /// The `xfade` filter's `offset` is the time IN THE FIRST INPUT at which the
+    /// transition begins. For a chain, each xfade's first input is the
+    /// already-crossfaded accumulation, whose timeline starts at 0, so:
+    ///
+    ///   L(0) = d0
+    ///   offset for joining clip k+1 = L(k) - crossfade
+    ///   L(k+1) = L(k) + d(k+1) - crossfade
+    ///
+    /// The previous implementation hard-coded `offset=0`, which fired every
+    /// transition at t=0 — visually broken for any clip longer than the
+    /// crossfade (Issue #322).
     ///
     /// - Parameters:
-    ///   - fileCount: Number of input files.
+    ///   - durations: Per-clip durations in seconds, parallel to the inputs.
     ///   - crossfadeDuration: Duration of each crossfade in seconds.
-    /// - Returns: FFmpeg ``-filter_complex`` string.
+    /// - Returns: FFmpeg ``-filter_complex`` string (empty for < 2 clips).
     private static func buildCrossfadeFilterComplex(
-        fileCount: Int,
+        durations: [TimeInterval],
         crossfadeDuration: TimeInterval
     ) -> String {
-        // For 2 files: simple xfade between [0:v] and [1:v].
-        // For 3+ files: chain xfade filters sequentially.
+        let fileCount = durations.count
         guard fileCount >= 2 else { return "" }
 
-        var filterParts: [String] = []
         let dur = String(format: "%.3f", crossfadeDuration)
+        func off(_ value: Double) -> String { String(format: "%.3f", max(0, value)) }
 
-        if fileCount == 2 {
-            // Single xfade between two inputs
-            filterParts.append(
-                "[0:v][1:v]xfade=transition=fade:duration=\(dur):offset=0[vout]"
-            )
-            filterParts.append(
-                "[0:a][1:a]acrossfade=d=\(dur)[aout]"
-            )
-        } else {
-            // Chain xfade filters for 3+ inputs.
-            // First pair produces [xv0], then [xv0] + [2:v] produces [xv1], etc.
-            filterParts.append(
-                "[0:v][1:v]xfade=transition=fade:duration=\(dur):offset=0[xv0]"
-            )
-            filterParts.append(
-                "[0:a][1:a]acrossfade=d=\(dur)[xa0]"
-            )
+        var filterParts: [String] = []
 
-            for i in 2..<fileCount {
-                let prevV = "xv\(i - 2)"
-                let prevA = "xa\(i - 2)"
-                let outV = i == fileCount - 1 ? "vout" : "xv\(i - 1)"
-                let outA = i == fileCount - 1 ? "aout" : "xa\(i - 1)"
+        // First pair: [0][1]. offset = d0 - crossfade.
+        let firstOutV = fileCount == 2 ? "vout" : "xv0"
+        let firstOutA = fileCount == 2 ? "aout" : "xa0"
+        filterParts.append(
+            "[0:v][1:v]xfade=transition=fade:duration=\(dur):offset=\(off(durations[0] - crossfadeDuration))[\(firstOutV)]"
+        )
+        filterParts.append("[0:a][1:a]acrossfade=d=\(dur)[\(firstOutA)]")
 
-                filterParts.append(
-                    "[\(prevV)][\(i):v]xfade=transition=fade:duration=\(dur):offset=0[\(outV)]"
-                )
-                filterParts.append(
-                    "[\(prevA)][\(i):a]acrossfade=d=\(dur)[\(outA)]"
-                )
-            }
+        // Running accumulated timeline length after joining clips 0..1.
+        var accumulated = durations[0] + durations[1] - crossfadeDuration
+
+        for i in 2..<fileCount {
+            let prevV = "xv\(i - 2)"
+            let prevA = "xa\(i - 2)"
+            let outV = i == fileCount - 1 ? "vout" : "xv\(i - 1)"
+            let outA = i == fileCount - 1 ? "aout" : "xa\(i - 1)"
+
+            filterParts.append(
+                "[\(prevV)][\(i):v]xfade=transition=fade:duration=\(dur):offset=\(off(accumulated - crossfadeDuration))[\(outV)]"
+            )
+            filterParts.append("[\(prevA)][\(i):a]acrossfade=d=\(dur)[\(outA)]")
+
+            accumulated += durations[i] - crossfadeDuration
         }
 
         return filterParts.joined(separator: ";")
