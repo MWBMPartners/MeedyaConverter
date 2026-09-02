@@ -2044,6 +2044,22 @@ final class AppViewModel {
     /// fractions, the summed speed (throughput really is additive), and
     /// either the single file's name or a "N files" count. With one job in
     /// flight this is identical to the old per-job push.
+    /// Coarse queue status for the menu-bar dropdown (Issue #281). Its
+    /// `MenuBarController.updateQueueStatus` was never called, so the dropdown
+    /// showed a permanent "Idle" lie. Deliberately coarse — it changes on
+    /// start/stop and job add/remove, not on every progress tick — so the
+    /// observer that pushes it to the menu bar does not rebuild the menu
+    /// dozens of times a second.
+    var menuBarStatusText: String {
+        guard isQueueRunning else { return "Idle" }
+        let active = activeJobStates.count
+        switch active {
+        case 0:  return "Starting\u{2026}"
+        case 1:  return "Encoding 1 job"
+        default: return "Encoding \(active) jobs"
+        }
+    }
+
     func refreshAggregateActivityIndicator() {
         let active = activeJobStates
         guard !active.isEmpty else { return }

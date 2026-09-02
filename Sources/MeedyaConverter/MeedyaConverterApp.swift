@@ -183,6 +183,16 @@ public struct MeedyaConverterApp: App {
                 .onChange(of: showMenuBarStatus, initial: true) { _, isEnabled in
                     menuBarController.isMenuBarEnabled = isEnabled
                 }
+                // Drive the dropdown from real state (Issue #281): its
+                // updateQueueStatus / lastUsedProfileName were never updated,
+                // so it showed a static "Idle" / "Web Standard". These push the
+                // live queue status and the current profile name.
+                .onChange(of: appViewModel.menuBarStatusText, initial: true) { _, status in
+                    menuBarController.updateQueueStatus(status)
+                }
+                .onChange(of: appViewModel.selectedProfile.name, initial: true) { _, name in
+                    menuBarController.lastUsedProfileName = name
+                }
         }
         .defaultSize(width: 1100, height: 700)
         .commands {
