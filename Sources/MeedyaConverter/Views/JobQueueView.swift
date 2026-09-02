@@ -350,6 +350,12 @@ struct JobRow: View {
                 }
             }
         }
+        // Drag the finished output straight to Finder / Mail / another app
+        // (Issue #285). `DraggableFileView`'s `.draggableFile` modifier was a
+        // complete drag-source component with zero callers; wiring it here on
+        // completed rows makes drag-out real. `nil` for any non-completed job,
+        // so only a genuinely-produced output file is draggable.
+        .draggableFile(job.status == .completed ? job.config.outputURL : nil)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(job.config.inputURL.lastPathComponent): \(job.summaryString)")
     }
