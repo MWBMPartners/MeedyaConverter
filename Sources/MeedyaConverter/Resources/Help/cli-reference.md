@@ -30,9 +30,9 @@ meedya-convert --help
 meedya-convert --version
 ```
 
-The seven subcommands are: `encode`, `probe`, `profiles`, `batch`, `manifest`,
-`validate`, and `serve`. Every subcommand also accepts `--help` for its own
-usage text.
+The eight subcommands are: `encode`, `probe`, `profiles`, `batch`, `manifest`,
+`validate`, `serve`, and `disc`. Every subcommand also accepts `--help` for its
+own usage text.
 
 ---
 
@@ -300,6 +300,45 @@ Swagger UI at `docs/api/swagger-ui/index.html`.
 **Exit codes:** does not return under normal operation · `1` the listener
 failed to bind (for example, the port is in use) · `2` invalid `--port` or an
 empty `--api-key` · `130` Ctrl+C.
+
+### `disc` — Image Optical Discs
+
+Read a physical **Audio CD** into a verified **BIN/CUE** image, by shelling out
+to `cdrdao`. Three subcommands:
+
+```bash
+meedya-convert disc drives [--format text|json]
+meedya-convert disc toc    --device <dev> [--driver <d>] [--fast] [--format text|json] [-o <path>]
+meedya-convert disc image  --device <dev> -o <base-path> [--image-format bin]
+                           [--driver <d>] [--speed <n>] [--paranoia 0-3]
+                           [--subchannel] [--skip-verify] [--overwrite]
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `--device <dev>` | The `cdrdao` device string (e.g. `/dev/sr0` on Linux). |
+| `--driver <d>` | `cdrdao` driver (e.g. `generic-mmc`); omit to autodetect. |
+| `-o`, `--output <path>` | `toc`: where to write the `.toc`. `image`: base path — `.bin`/`.cue` are derived from it. |
+| `--image-format <fmt>` | `image` only; currently only `bin` is supported. |
+| `--paranoia 0-3` | Error-correction level (default `3` = full). |
+| `--subchannel` | Capture raw + subchannel (2448-byte) sectors. |
+| `--skip-verify` | Skip the post-read byte-count / SHA-256 verification. |
+| `--overwrite` | Delete an existing `.bin`/`.toc` first. |
+| `--speed <n>` | Read speed; its effect on `cdrdao read-cd` is drive/build-dependent. |
+| `--format text\|json` | `drives`/`toc` output format. |
+
+**Requires `cdrdao`** on `PATH` (or Homebrew) for now; a bundled copy ships with
+the Direct build in a later release (it is GPL, Direct-distribution only — see
+`docs/decisions/0001-gpl-disc-tools.md`).
+
+**Scope:** this images **Red Book Audio CDs** only. A disc carrying a data
+session (mixed-mode / enhanced-CD / data disc) is refused with a clear message —
+full mixed-mode/multisession imaging is a later phase. **DRM:** protected discs
+are never circumvented; where a copy would be non-functional because of DRM, the
+disc is detected and the copy declined rather than a broken image produced.
+
+**Availability:** Direct distribution only — the App Store sandbox has no
+raw-device access.
 
 ---
 

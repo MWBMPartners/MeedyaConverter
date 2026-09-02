@@ -1187,6 +1187,130 @@ paths:
         "500":
           description: "Exit 1 — the API server failed to start (for example, the port is already in use)."
 
+  /disc-drives:
+    get:
+      operationId: discDrives
+      summary: List optical drives cdrdao can see.
+      description: |
+        `meedya-convert disc drives [--format text|json]`. Lists the optical
+        drives via `cdrdao scanbus`. Direct distribution only — the App Store
+        sandbox has no raw-device access.
+      tags:
+        - Disc
+      parameters:
+        - name: --format
+          in: query
+          required: false
+          description: "Output format: text (default) or json."
+          schema: { type: string, enum: [text, json], default: text }
+      responses:
+        "200": { description: "Drives listed." }
+
+  /disc-toc:
+    get:
+      operationId: discToc
+      summary: Read and print a disc's table of contents.
+      description: |
+        `meedya-convert disc toc --device <dev> [--driver <d>] [--fast]
+        [--format text|json] [-o <path>]`. Reads the TOC via cdrdao and parses
+        it (tracks, ISRC, CD-Text, sessions, pre-gaps). Direct distribution only.
+      tags:
+        - Disc
+      parameters:
+        - name: --device
+          in: query
+          required: true
+          description: "cdrdao --device string (e.g. /dev/sr0)."
+          schema: { type: string }
+        - name: --driver
+          in: query
+          required: false
+          description: "cdrdao --driver value (e.g. generic-mmc); omit to autodetect."
+          schema: { type: string }
+        - name: --fast
+          in: query
+          required: false
+          description: "Use --fast-toc (skips the deep ISRC/pregap scan)."
+          schema: { type: boolean, default: false }
+        - name: --output
+          in: query
+          required: false
+          description: "Where to write the .toc (default: a temp file, deleted after parse). Short: -o."
+          schema: { type: string }
+        - name: --format
+          in: query
+          required: false
+          schema: { type: string, enum: [text, json], default: text }
+      responses:
+        "200": { description: "TOC read and printed." }
+        "404": { description: "Exit 3 — no disc / device unreadable." }
+
+  /disc-image:
+    post:
+      operationId: discImage
+      summary: Image a physical Audio CD into a verified BIN/CUE pair.
+      description: |
+        `meedya-convert disc image --device <dev> -o <base> [--image-format bin]
+        [--driver <d>] [--speed <n>] [--paranoia 0-3] [--subchannel]
+        [--skip-verify] [--overwrite]`. Reads a Red Book Audio CD via cdrdao and
+        writes <base>.bin + <base>.cue, verified (byte-count + SHA-256).
+
+        Scope: Red Book Audio CDs only — a disc with a data session is refused
+        (exit 2) pointing at the mixed-mode phases (#108/#135). DRM: protected
+        content is never circumvented; a disc whose copy would be non-functional
+        because of DRM is detected and declined (exit 6) rather than imaged
+        broken. Direct distribution only. Requires cdrdao on PATH until the
+        Direct build bundles it (DR-0001).
+      tags:
+        - Disc
+      parameters:
+        - name: --device
+          in: query
+          required: true
+          schema: { type: string }
+        - name: --output
+          in: query
+          required: true
+          description: "Base output path; .bin/.cue derived from it. Short: -o."
+          schema: { type: string }
+        - name: --image-format
+          in: query
+          required: false
+          description: "Only 'bin' is supported; any other value is rejected."
+          schema: { type: string, default: bin }
+        - name: --driver
+          in: query
+          required: false
+          schema: { type: string }
+        - name: --speed
+          in: query
+          required: false
+          description: "Read speed; effect on cdrdao read-cd is drive/build-dependent."
+          schema: { type: integer }
+        - name: --paranoia
+          in: query
+          required: false
+          description: "Error-correction level 0-3 (default 3 = full)."
+          schema: { type: integer, minimum: 0, maximum: 3, default: 3 }
+        - name: --subchannel
+          in: query
+          required: false
+          description: "Capture raw + subchannel (2448-byte) sectors."
+          schema: { type: boolean, default: false }
+        - name: --skip-verify
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: --overwrite
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200": { description: "BIN/CUE written and verified." }
+        "400": { description: "Exit 2 — a data-session disc (mixed-mode not yet supported) or invalid arguments." }
+        "422": { description: "Exit 6 — refused: the disc is DRM-protected and a working copy cannot be made without circumvention." }
+        "500": { description: "Exit 4 — cdrdao failed or verification mismatch." }
+
 # ============================================================================
 # Schemas — JSON output formats and job file structures
 # ============================================================================

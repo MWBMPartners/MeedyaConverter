@@ -109,7 +109,7 @@ struct DiscTocCommand: AsyncParsableCommand {
     @Flag(name: .customLong("fast"), help: "Use --fast-toc (skips the deep ISRC/pregap scan).")
     var fastToc = false
 
-    @Option(name: [.short, .customLong("format")], help: "Output format: text (default), json.")
+    @Option(name: .customLong("format"), help: "Output format: text (default), json.")
     var outputFormat: DiscOutputFormat = .text
 
     @Option(name: .customLong("cdrdao"), help: "Full path to the cdrdao binary (overrides discovery).")
