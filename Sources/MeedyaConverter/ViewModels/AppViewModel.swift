@@ -1060,7 +1060,7 @@ final class AppViewModel {
     /// - Parameters:
     ///   - url: The detected file's URL.
     ///   - config: The watch folder configuration that detected it.
-    func enqueueWatchFolderFile(_ url: URL, config: WatchFolderConfig) {
+    func enqueueWatchFolderFile(_ url: URL, config: WatchFolderConfig) async {
         // Resolve the configured profile by name. `WatchFolderConfig`'s
         // own default (`profileName: "webStandard"`, set by `addNewConfig()`
         // in `WatchFolderView`) does not match any built-in profile's
@@ -1068,7 +1068,7 @@ final class AppViewModel {
         // case-insensitive-exact match — so falling back to Web Standard
         // with a warning (rather than silently dropping the file) is the
         // common case, not just a defensive edge case.
-        let profile: EncodingProfile
+        var profile: EncodingProfile
         if let resolved = engine.profileStore.profile(named: config.profileName) {
             profile = resolved
         } else {
@@ -1078,6 +1078,41 @@ final class AppViewModel {
                 category: .encoding
             )
             profile = .webStandard
+        }
+
+        // Conditional rules on the AUTOMATION path (#469 follow-up). The manual
+        // enqueue evaluates the user's conditional-rule set against the probed
+        // source; the watch-folder path — where per-file rules matter MOST,
+        // since nobody is watching — did not, so a "if 4K, use the 4K profile"
+        // rule silently never fired for auto-imported files. The rules match on
+        // probed metadata (resolution/codec/HDR/duration/…), so we probe first.
+        // A probe failure is not fatal: it just means rules cannot be evaluated,
+        // so we proceed with the folder's configured profile rather than
+        // dropping the file.
+        var probedDuration: TimeInterval?
+        if let rulesData = UserDefaults.standard.data(forKey: "conditionalRules"),
+           let rules = try? JSONDecoder().decode([ConditionalRule].self, from: rulesData),
+           !rules.isEmpty {
+            do {
+                let probed = try await engine.probe(url: url)
+                probedDuration = probed.duration
+                if let matched = RuleEngine.evaluateRules(
+                    rules, for: probed, profileStore: engine.profileStore
+                ) {
+                    profile = matched
+                    appendLog(
+                        .info,
+                        "Watch folder \"\(config.name)\": conditional rule matched — using profile \"\(matched.name)\".",
+                        category: .encoding
+                    )
+                }
+            } catch {
+                appendLog(
+                    .warning,
+                    "Watch folder \"\(config.name)\": could not probe \(url.lastPathComponent) for conditional rules (\(error.localizedDescription)) — using \"\(profile.name)\".",
+                    category: .encoding
+                )
+            }
         }
 
         let outputExtension = profile.containerFormat.fileExtensions.first ?? "mp4"
@@ -1096,7 +1131,10 @@ final class AppViewModel {
         // Honour the global hardware-acceleration kill switch (#475) so
         // this path behaves like every other job the app enqueues.
         let effectiveProfile = HardwareAccelerationPreference.applying(to: profile)
-        let jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: effectiveProfile)
+        var jobConfig = EncodingJobConfig(inputURL: url, outputURL: outputURL, profile: effectiveProfile)
+        // If we probed for rule evaluation, reuse the duration for the queue
+        // optimiser (#326) rather than leaving it unknown.
+        jobConfig.estimatedSourceDuration = probedDuration
         engine.queue.addJob(jobConfig)
 
         // Record the watch-folder association so `startQueue()`'s

@@ -276,7 +276,7 @@ struct WatchFolderView: View {
                         // (e.g. `ContentView`'s drop handling).
                         monitor.start(config: config) { detectedURL in
                             Task { @MainActor in
-                                viewModel.enqueueWatchFolderFile(detectedURL, config: config)
+                                await viewModel.enqueueWatchFolderFile(detectedURL, config: config)
                             }
                         }
                     }
