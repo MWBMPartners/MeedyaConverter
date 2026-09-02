@@ -91,12 +91,12 @@ final class MockSubjectDetector: SubjectDetecting, @unchecked Sendable {
     }
 }
 
-// MARK: - ProgressRecorder
+// MARK: - SmartCropProgressRecorder
 
 /// Records `analyze`'s progress callback invocations under a lock — the
 /// callback is a plain (non-async) `@Sendable` closure, so a lock-guarded
 /// sink (not an actor) keeps ordering deterministic.
-final class ProgressRecorder: @unchecked Sendable {
+final class SmartCropProgressRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [SmartCropVideoProgress] = []
 
@@ -407,7 +407,7 @@ final class SmartCropVideoAnalyzerTests: XCTestCase {
         let detector = MockSubjectDetector(results: [])
         let analyzer = SmartCropVideoAnalyzer(frameExtractor: extractor, subjectDetector: detector)
         let request = makeRequest(sampleCount: 9)
-        let recorder = ProgressRecorder()
+        let recorder = SmartCropProgressRecorder()
         _ = try await analyzer.analyze(request) { recorder.record($0) }
         let values = recorder.values
         XCTAssertEqual(values.count, 9)
