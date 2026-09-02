@@ -161,7 +161,14 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   field (Codable-back-compat), smuggling deleted, populated at enqueue from `file.duration`. 6 tests incl.
   the "no __duration in argv" guard. shortest/longest/estimated-time now genuinely reorder.
 
-**Round-2 remaining (ranked):** #286 throughput tiles, #361 notification actions, regression-test for the
+- **#361 notification actions — DONE + CLOSED** (`3d2c115`). `NotificationActionHandler` was a complete
+  UNUserNotificationCenter delegate with zero references — never set as delegate, categories never
+  registered, notifications never stamped a categoryIdentifier. Wired the full chain: handler held for
+  app lifetime + set as delegate + registerCategories at launch; `sendNotification` stamps category +
+  userInfo (complete→output path, failed→input path, queue→output dir); AppViewModel observes the three
+  decoupled posts (Start Next→startQueue, View Log→.log, Retry→re-import+enqueue).
+
+**Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
 watermarks, #335 multi-output, #473 vector, #278 pipeline editor.
