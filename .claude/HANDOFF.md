@@ -262,8 +262,19 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   `OutputSettingsView` passes `onSave`. `EncodingPipelineExecutorTests` (mock runner). Epic OPEN —
   drag-drop graph, branching, per-step progress bars, template sharing remain.
 
-**Round-2 remaining (ranked):** #302 AppleScript activation, #288 chapters. (Done this pass: #482
-conflicts, #286 throughput, #298 watermarks, #335 multi-output, #473 vector, #278 pipeline editor.)
+- **#302 AppleScript/JXA — DONE (epic left OPEN)** (`f26695f`). `.sdef` + `ScriptingBridge`
+  (encode/probe/listProfiles) existed but were inert. Activated: Info.plist `NSAppleScriptEnabled` +
+  `OSAScriptingDefinition`; `.sdef` `<cocoa class>` bindings; new `ScriptingCommands.swift`
+  (NSScriptCommand subclasses → `ScriptingBridge.shared` via `MainActor.assumeIsolated`, defensive
+  arg-key lookup); `AppViewModel.init` wires `ScriptingBridge.shared.{engine,queue,profileStore}`;
+  release.yml + dev-build.yml stage the `.sdef` at `Contents/Resources/` (was nested too deep for OSA);
+  `Help/applescript-scripting.md` + HelpView registration. ⚠️ Runtime OSA dispatch is NOT CI-verifiable
+  (needs signed .app + osascript) — compile/Info.plist/.sdef/staging verified, live round-trip must be
+  smoke-tested on a packaged build. Epic OPEN — encode-complete events, queue-status properties,
+  scriptable object graph remain.
+
+**Round-2 remaining (ranked):** #288 chapters. (Done this pass: #482 conflicts, #286 throughput, #298
+watermarks, #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript/JXA.)
 
 ---
 
