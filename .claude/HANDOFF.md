@@ -188,9 +188,18 @@ outstanding elements. Done:
 (lost 9f5e123's validation). RULE: watch each push fully to green BEFORE the next push. All pushes here
 were watched; #323/#320/#275 validated by 288cbcc (green), #322 by 13ae775 (green), #324 by b8817e8.
 
-**Next candidates (from the triage, executableNow, not yet done):** #322 concat (S), #324 deinterlace (M),
-#280 mini-player progress (M, XS core), #331 shortcuts (M), #330 undo/redo (L), #477 dead-cluster sweep (L),
-#281 menu-bar drag+status (M). #283 and #374 need a user decision / upstream tag first.
+- **#280 mini-player — DONE (epic OPEN)** (`4ca48f8`, CI green). `MiniPlayerController.updateProgress`
+  had zero callers → panel was a permanent "No active encoding". `refreshAggregateActivityIndicator`
+  now drives it live; new `resetToIdle()` at both queue-finish points. Remaining: panel pause/cancel
+  buttons, frame persistence, always-on-top/translucency toggles, auto-show.
+- **#331 shortcut recorder — DONE (epic OPEN)** (`a43c5b7`, CI green pending). Recorder was decorative
+  (no key capture). New pure `ShortcutBinding.captureBinding(...)` + an NSEvent key-down monitor active
+  only while recording, writing to the manager (didSet saves). `ShortcutCaptureTests`. Remaining:
+  Cmd+1-9 profile shortcuts, encode.pause/stop actions, per-conflict reassign.
+
+**Next candidates (remaining from triage, executableNow):** #330 undo/redo (L), #477 dead-cluster sweep
+(L), #281 menu-bar drag+status (M). #283 (needs Xcode .appex target) and #374 (needs MeedyaSuite-core tag)
+need a user decision / upstream first. Done this phase: #323 #320 #275 #322 #324 #280 #331 (+ #499 closed).
 
 ## 🟢 2026-09-02 — round-2 quick wins in progress (autonomous)
 
