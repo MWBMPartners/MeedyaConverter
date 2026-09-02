@@ -38,6 +38,12 @@
   throughput tiles** (#286).
 - CLI `batch --dir --output-mode mirror` mirrors the source folder tree (#275).
 - Team-profile pull now surfaces real local-vs-remote **conflicts** (#482).
+- **Filter Graph editor** can now **attach its composed filter to the next
+  encode** ("Apply to Next Encode" — video composed after any crop, audio into
+  `-af`), not just copy to the clipboard.
+- **Background Removal** can now **save the single processed image** ("Save…"),
+  writing the exact encoded bytes so the PNG/TIFF alpha channel is preserved
+  (#300).
 
 ### Changed
 
@@ -50,6 +56,12 @@
 - **ffmpeg resolution** in Image conversion, Voice Isolation and the Media
   Browser now goes through the bundled binary (Contents/Helpers) instead of
   PATH/Homebrew, so those features work in a Finder-launched notarized app.
+- **Dual Dynamic HDR** wrappers (`dovi_tool`, `hdr10plus_tool`) now resolve
+  their binaries via the shared bundled-tool locator (Contents/Helpers →
+  Homebrew → PATH), instead of a hardcoded path list that never checked the
+  app's bundled tools.
+- **Voice Isolation** removed the placeholder "ML Sound Analysis" method (it ran
+  the same band-pass as the basic method) and the inert centre-channel toggle.
 - **Disc burn "Simulate"** no longer writes a real disc on the hdiutil/growisofs
   paths (only the Audio-CD `-dummy` path is a genuine dry run); "Verification
   passed" is reported only when a verify actually ran.

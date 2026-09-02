@@ -22,7 +22,10 @@ actual code (a pre-release readiness pass), not comments.
 - **YouTube / Vimeo upload** — disabled pending OAuth app registration.
 - **Subscription / licensing** — hidden: StoreKit in-app purchase only works for
   App-Store distribution, so it can't function in a Direct build; a Direct
-  licensing system is a separate effort. All features are free in this build.
+  licensing system is a separate effort. All features are unlocked (no purchase
+  or subscription) — with one caveat: parallel encoding currently runs a single
+  job at a time because the Direct build does not yet install an entitlement
+  provider (see the Parallel-encoding note below, and #286).
 - **Plugins** — hidden: the plugin host does not yet load or run third-party
   plugins (#353).
 
@@ -47,8 +50,10 @@ actual code (a pre-release readiness pass), not comments.
   settings screen tests/saves connections only. Key-based auth only.
 - **Render Farm** settings are configuration-only; distributed encoding is not
   active yet (the tab says so).
-- **Filter Graph editor** produces a filter string to copy — it does not yet
-  attach to encodes.
+- **Filter Graph editor** — the composed filter now attaches to the next encode
+  via "Apply to Next Encode" (video composed after any crop, audio into `-af`);
+  it also still copies to the clipboard. It applies to the *next* file you
+  enqueue, not retroactively to jobs already queued.
 - **Resumable jobs** re-queue from 0% (restart, not seek-resume).
 - **Parallel encoding** is limited to 1 concurrent job in unlicensed builds.
 - **Media metadata *lookup* / auto-tagging** (MusicBrainz, TMDB, …) is not in
