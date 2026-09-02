@@ -17,6 +17,14 @@ public enum DiscImageFormat: String, Codable, Sendable, CaseIterable {
     case mdf = "mdf"
     case nrg = "nrg"
 
+    /// CloneCD image set (`.ccd` control file + `.img` data + `.sub`
+    /// subchannel). Declared as part of the image-format taxonomy so the
+    /// enum names every format a user might request, but the raw Audio CD
+    /// imaging executor deliberately refuses it (P1 emits only BIN/CUE) —
+    /// see `supportsRawAudioImaging`. Added at the end of the case list so
+    /// existing `Codable` payloads remain decodable. (Issue #495.)
+    case ccd = "ccd"
+
     /// File extension.
     public var fileExtension: String { rawValue }
 
@@ -28,8 +36,23 @@ public enum DiscImageFormat: String, Codable, Sendable, CaseIterable {
         case .img: return "IMG"
         case .mdf: return "MDF/MDS"
         case .nrg: return "Nero Image"
+        case .ccd: return "CloneCD (CCD/IMG/SUB)"
         }
     }
+}
+
+// MARK: - DiscImageFormat + Raw Audio CD Imaging
+
+extension DiscImageFormat {
+    /// Whether the raw Audio CD imaging executor (issue #495) can emit this
+    /// format today. P1 supports only `.bin` (BIN/CUE); every other case —
+    /// including the declared-but-refused `.ccd` — returns `false`, and
+    /// `RawCDImagingConfig(imagingConfig:)` turns that into a thrown
+    /// `ImagingError.unsupportedImageFormat` rather than faking capability.
+    ///
+    /// This is the wiring that finally gives `ImagingConfig.imageFormat`
+    /// observable behaviour — it was dead configuration before this batch.
+    public var supportsRawAudioImaging: Bool { self == .bin }
 }
 
 // MARK: - DiscAuthorFormat

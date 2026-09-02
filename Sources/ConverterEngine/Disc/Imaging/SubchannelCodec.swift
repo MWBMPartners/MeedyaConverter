@@ -24,6 +24,19 @@ public enum ImagingError: Error, Sendable, Equatable, LocalizedError {
     /// describes what went wrong.
     case malformedCueSheet(String)
 
+    /// A `cdrdao` `.toc` file could not be parsed by `CdrdaoTocParser`: an
+    /// unknown `TRACK` mode, an unparsable MM:SS:FF value, or a track with no
+    /// FILE/SILENCE/ZERO data statement. The associated string describes what
+    /// went wrong. (Additive case, issue #495 — the raw Audio CD executor.)
+    case malformedCdrdaoToc(String)
+
+    /// The requested `DiscImageFormat` is not supported by the raw Audio CD
+    /// imaging executor. P1 supports only `.bin` (BIN/CUE); every other
+    /// format — including the declared-but-refused `.ccd` — raises this rather
+    /// than silently producing the wrong artifact. Carries the offending
+    /// format. (Additive case, issue #495.)
+    case unsupportedImageFormat(DiscImageFormat)
+
     public var errorDescription: String? {
         switch self {
         case .invalidSectorDataLength(let byteCount, let sectorSize):
@@ -31,6 +44,11 @@ public enum ImagingError: Error, Sendable, Equatable, LocalizedError {
                 + "\(sectorSize) bytes per sector."
         case .malformedCueSheet(let reason):
             return "Malformed CUE sheet: \(reason)"
+        case .malformedCdrdaoToc(let reason):
+            return "Malformed cdrdao .toc file: \(reason)"
+        case .unsupportedImageFormat(let format):
+            return "The raw Audio CD imaging executor cannot emit the "
+                + "\(format.displayName) format. Only BIN/CUE is supported."
         }
     }
 }

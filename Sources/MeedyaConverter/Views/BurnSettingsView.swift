@@ -169,9 +169,9 @@ struct BurnSettingsView: View {
             if availableDrives.isEmpty {
                 Text("No drives detected").tag("")
             }
-            ForEach(availableDrives, id: \.devicePath) { drive in
-                Text("\(drive.displayName) (\(drive.devicePath))")
-                    .tag(drive.devicePath)
+            ForEach(availableDrives) { drive in
+                Text(drive.devicePath.map { "\(drive.displayName) (\($0))" } ?? drive.displayName)
+                    .tag(drive.devicePath ?? "")
             }
         }
         .accessibilityLabel("Select optical disc drive")
@@ -413,66 +413,83 @@ struct BurnSettingsView: View {
     /// `Sendable` `String` and never touches `self`.
     private func detectDrives() {
         Task {
-            do {
-                let output = try await Task.detached {
-                    let task = Process()
-                    task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
-                    task.arguments = ["list"]
+            // `drutil list` names the drives; `drutil status` reports the real
+            // device node of the drive that currently holds media. Both run
+            // off the main actor as detached, Sendable-String work. Neither
+            // throws — `runDrutil` swallows its own launch failure and
+            // returns "" — so there is no error path to catch here.
+            let listOutput = await Task.detached {
+                Self.runDrutil(arguments: ["list"])
+            }.value
+            let statusOutput = await Task.detached {
+                Self.runDrutil(arguments: ["status"])
+            }.value
 
-                    let pipe = Pipe()
-                    task.standardOutput = pipe
-                    task.standardError = pipe
-
-                    try task.run()
-                    task.waitUntilExit()
-
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    return String(data: data, encoding: .utf8) ?? ""
-                }.value
-
-                if output.contains("No drives") || output.isEmpty {
-                    availableDrives = []
-                    driveStatus = .noDrive
-                } else {
-                    availableDrives = parseDrutilOutput(output)
-                    if let first = availableDrives.first {
-                        selectedDevicePath = first.devicePath
-                        driveStatus = .ready
-                    }
-                }
-            } catch {
+            if listOutput.contains("No drives") || listOutput.isEmpty {
                 availableDrives = []
                 driveStatus = .noDrive
+                return
+            }
+
+            var drives = parseDrutilOutput(listOutput)
+
+            // Resolve the active drive's REAL raw device node from
+            // `drutil status`; never fabricate one. `drutil status` reports the
+            // node for the drive holding the current medium but does not label
+            // WHICH listed drive that is, so on the common single-optical-drive
+            // Mac it is attached to the first drive. Correct attribution on a
+            // multi-drive Mac (matching the status block's vendor/product to a
+            // listed drive) needs hardware to verify and is a known limitation.
+            if let diskNode = DriveListingParser.parseDrutilStatusDeviceName(statusOutput) {
+                let rawNode = DriveListingParser.rawDeviceNode(forDiskNode: diskNode)
+                if drives.isEmpty {
+                    drives = [DiscDriveInfo(devicePath: rawNode, displayName: "Optical Drive")]
+                } else {
+                    drives[0] = DiscDriveInfo(devicePath: rawNode, displayName: drives[0].displayName)
+                }
+            }
+
+            availableDrives = drives
+            if let node = drives.first(where: { $0.devicePath != nil })?.devicePath {
+                selectedDevicePath = node
+                driveStatus = .ready
+            } else {
+                // Drives exist but no media/no resolvable node yet.
+                selectedDevicePath = ""
+                driveStatus = .noDisc
             }
         }
     }
 
+    /// Launch `drutil` with the given arguments and capture its combined
+    /// output as a `Sendable` `String`. Runs on a detached task; touches no
+    /// `self`/`@State`.
+    private nonisolated static func runDrutil(arguments: [String]) -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/drutil")
+        task.arguments = arguments
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            return String(data: data, encoding: .utf8) ?? ""
+        } catch {
+            return ""
+        }
+    }
+
+    /// Parse `drutil list` output into drives. Delegates to the pure,
+    /// unit-tested `DriveListingParser`, which reports `device == nil` for list
+    /// rows (a node comes only from `drutil status`) and never fabricates a
+    /// path — the old `/dev/rdisk<n>` invention and the "Optical Drive"
+    /// fallback row are gone.
     private func parseDrutilOutput(_ output: String) -> [DiscDriveInfo] {
-        var drives: [DiscDriveInfo] = []
-        let lines = output.components(separatedBy: "\n")
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.contains("Name:") || trimmed.contains("Vendor:") {
-                // Extract drive name from drutil output
-                let name = trimmed.replacingOccurrences(of: "Name:", with: "")
-                    .replacingOccurrences(of: "Vendor:", with: "")
-                    .trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty {
-                    drives.append(DiscDriveInfo(
-                        devicePath: "/dev/rdisk\(drives.count + 1)",
-                        displayName: name
-                    ))
-                }
-            }
+        DriveListingParser.parseDrutilList(output).map {
+            DiscDriveInfo(devicePath: $0.device, displayName: $0.description)
         }
-
-        // If no drives parsed from output but output wasn't empty, add a default
-        if drives.isEmpty && !output.contains("No drives") {
-            drives.append(DiscDriveInfo(devicePath: "/dev/rdisk1", displayName: "Optical Drive"))
-        }
-
-        return drives
     }
 
     private func browseSource() {
@@ -638,9 +655,14 @@ struct BurnSettingsView: View {
 // MARK: - Supporting Types
 
 /// Information about a detected optical disc drive.
+///
+/// `devicePath` is optional and may be `nil`: `drutil list` reports a drive's
+/// vendor/product text but not its device node, and we NEVER fabricate one
+/// (the pre-#495 code invented `/dev/rdisk<n>` paths). A real node is filled in
+/// only when `drutil status` actually printed one — see `DriveListingParser`.
 struct DiscDriveInfo: Identifiable {
-    var id: String { devicePath }
-    let devicePath: String
+    var id: String { devicePath ?? displayName }
+    let devicePath: String?
     let displayName: String
 }
 
