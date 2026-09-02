@@ -52,6 +52,19 @@
 
 ### Added
 
+- **Audio CD → BIN/CUE imaging executor + `disc` CLI (#495 P1)** -- the executor
+  half of the disc-backup-imaging feature (#492). `meedya-convert disc`
+  (`drives` / `toc` / `image`) reads a Red Book Audio CD via cdrdao and writes a
+  verified BIN/CUE, feeding the existing serialiser core. New engine types
+  (`RawCDReadPlanner`, `CdrdaoTocParser`, `CdrdaoProgressParser`,
+  `DiscImagingController`, `BundledToolLocator`, `DiscProtectionDetector`,
+  `DriveListingParser`); `ImagingConfig.imageFormat` is finally consumed and
+  `DiscImageFormat.ccd` added. 29 unit tests incl. a `.toc` → `DiscTableOfContents`
+  → CUE round-trip. A DRM detect-and-warn gate (raw imaging only, never
+  circumvention) is built in. Device I/O is hardware-verified on the manual
+  matrix — there is no optical drive in CI; the pure logic is unit-tested.
+  Direct distribution only (the App Store sandbox has no raw-device access).
+  Also fixes the fabricated `/dev/rdisk` device paths in `BurnSettingsView`.
 - **Cloud-upload execution (PR #472)** -- real, authenticated upload to S3
   (SigV4), Dropbox, Google Drive, OneDrive (chunked/resumable), and SFTP
   (`scp`), reachable from `CloudStorageView` and the `.uploadCloud`
