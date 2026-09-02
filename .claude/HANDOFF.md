@@ -168,6 +168,12 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   userInfo (complete→output path, failed→input path, queue→output dir); AppViewModel observes the three
   decoupled posts (Start Next→startQueue, View Log→.log, Retry→re-import+enqueue).
 
+- **#498 watch-folder conditional rules — DONE + CLOSED** (`34f47f9`, filed as a #469 follow-up). The
+  manual enqueue evaluated #469's conditional rules; the watch-folder (automation) path — where per-file
+  rules matter most — did not. Made `enqueueWatchFolderFile` async (its caller was already in a Task),
+  probe the detected file, evaluate rules against the probed metadata, swap profile on match; probe
+  failure degrades gracefully. Also populates `estimatedSourceDuration` (#326) for this path.
+
 **Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
