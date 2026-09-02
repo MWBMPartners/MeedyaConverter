@@ -196,6 +196,12 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   only runs on a release/dev build, so that one line is confirmed on the next such build** — CI Build &
   Test verifies the compile + the new tests only.
 
+- **#468 periodic checkpointing — DONE** (`1e95455`, left OPEN for true seek-resume). saveCheckpoint
+  fired only on failure/cancel; a mid-encode crash left nothing resumable. Now the progress closure
+  writes a checkpoint every ~5% (throttled via new `EncodingJobState.lastCheckpointFraction`, off-main
+  via `Task.detached`), and the success branch DELETES it (so completed jobs aren't shown resumable).
+  New `CheckpointManagerTests` (save/load, overwrite, delete). Still honest-minimal (re-queue from 0%).
+
 **Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
