@@ -399,15 +399,16 @@ final class AppViewModel {
     /// Whether crop detection is currently running.
     var isDetectingCrop: Bool = false
 
-    /// A manually-computed Smart Crop filter string, set by
-    /// `SmartCropView.applyCropToJob()` (Issue #474).
-    ///
-    /// Mirrors `detectedCrop` above but comes from the standalone Smart
-    /// Crop tool rather than automatic source-file crop detection. When
-    /// present, it takes precedence over `detectedCrop`/`autoCropEnabled`
-    /// and is merged into `videoFilterChain` at enqueue exactly like the
-    /// auto-crop path, then cleared so it does not silently keep applying
-    /// to unrelated future jobs.
+    /// A crop filter string (`crop=W:H:X:Y`, source-pixel coordinates) staged by
+    /// `SmartCropView.applyCropToJob()` — the subject-aware crop that
+    /// `SmartCropVideoAnalyzer` computed from sampled frames of the selected
+    /// file, inside the auto-detected black-bar area when `autoCropEnabled`
+    /// and `detectedCrop` say there is one for this file. Consumed by the next
+    /// `enqueueSelectedFile()`, where it takes precedence over
+    /// `detectedCrop`/`autoCropEnabled` (the staged rect already excludes the
+    /// bars, so applying both would double-crop), is merged into
+    /// `videoFilterChain` before any staged filter graph, then cleared so it
+    /// does not silently keep applying to unrelated future jobs.
     var pendingManualCropFilter: String?
 
     /// A scene-detected FFmetadata chapters file staged by `SceneDetectorView`
@@ -1010,9 +1011,12 @@ final class AppViewModel {
             overwriteExisting: overwriteExisting
         )
 
-        // Apply a manually-selected Smart Crop filter (Issue #474) if one is
-        // pending, otherwise fall back to auto-crop if enabled and a crop
-        // was detected.
+        // Apply a Smart Crop staged by SmartCropView.applyCropToJob() if one is
+        // pending, otherwise fall back to auto-crop if enabled and a crop was
+        // detected. Either way the crop is dropped — with a warning — when the
+        // effective profile copies the video stream: FFmpeg refuses `-vf`
+        // together with `-c:v copy` ("Filtering and streamcopy cannot be used
+        // together"), so keeping it would fail the whole job.
         var cropFilter: String? = nil
         if let manualCrop = pendingManualCropFilter {
             cropFilter = manualCrop
@@ -1021,6 +1025,10 @@ final class AppViewModel {
         } else if autoCropEnabled, let crop = detectedCrop, crop.willCrop {
             cropFilter = crop.recommendedCrop.filterString
             appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
+        }
+        if cropFilter != nil, effectiveProfile.videoPassthrough {
+            appendLog(.warning, "Crop discarded — profile \"\(effectiveProfile.name)\" copies the video stream, and a copied stream cannot be filtered", category: .filter)
+            cropFilter = nil
         }
 
         // Consume a filter graph staged by FilterGraphEditorView's

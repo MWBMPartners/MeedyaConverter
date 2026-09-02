@@ -47,6 +47,11 @@
 - **Background Removal** can now **save the single processed image** ("Save…"),
   writing the exact encoded bytes so the PNG/TIFF alpha channel is preserved
   (#300).
+- **Smart Crop** now analyses the **selected video** — it samples frames with
+  ffmpeg, runs Vision face/saliency detection on each, and computes a stable
+  crop at the chosen aspect ratio (inside the auto-detected black-bar area when
+  one is present), with a preview frame, progress and Cancel; "Apply to Next
+  Encode" stages it onto the next queued job (#299).
 
 ### Changed
 
@@ -56,6 +61,9 @@
 
 ### Fixed
 
+- A staged or auto-detected crop is now dropped (with a warning) when the
+  profile copies the video stream, instead of emitting `-vf crop=…` next to
+  `-c:v copy`, which FFmpeg rejects and which failed the whole job.
 - **Storage Analysis** now reads codec, resolution, HDR and duration with
   **ffprobe** (a few concurrent probes, with progress and Cancel) instead of
   guessing them from file names; files ffprobe cannot read keep the file-name

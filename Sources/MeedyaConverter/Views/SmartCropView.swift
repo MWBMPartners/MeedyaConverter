@@ -10,21 +10,19 @@ import ConverterEngine
 
 // MARK: - SmartCropView
 
-/// Provides a visual interface for subject-aware smart cropping.
+/// Subject-aware crop for the selected source file (Issue #299).
 ///
-/// Users can load an image (or video frame), detect subjects using
-/// Vision framework analysis, preview the resulting crop rectangle
-/// with bounding box overlays, and apply the crop to an encoding job.
-///
-/// Features:
-/// - Image preview with detected subject bounding boxes
-/// - Aspect ratio selector (16:9, 4:3, 1:1, 9:16)
-/// - Rule-of-thirds toggle for compositional alignment
-/// - Subject detection with confidence display
-/// - Crop preview overlay
-/// - FFmpeg filter string generation
-///
-/// Phase 11 — Smart Crop / Subject Detection (Issue #299)
+/// "Analyze" samples frames across the selected video with ffmpeg, runs
+/// Vision face/saliency detection on each (`SmartCropVideoAnalyzer`), and
+/// computes one crop at the chosen aspect ratio — inside the auto-detected
+/// black-bar area when "Auto-crop black bars" is on. The preview shows the
+/// middle sampled frame with that frame's subjects and the crop; changing
+/// the aspect ratio or rule-of-thirds recomputes the crop without
+/// re-analysing. "Apply to Next Encode" stages the crop on
+/// `AppViewModel.pendingManualCropFilter`, which the next
+/// `enqueueSelectedFile()` merges into the job's `-vf` (before any staged
+/// filter graph, with precedence over auto-crop). Runs ffmpeg with progress
+/// and Cancel; needs a re-encoding (non-passthrough) profile to apply.
 struct SmartCropView: View {
 
     // MARK: - Environment
@@ -53,58 +51,56 @@ struct SmartCropView: View {
 
     // MARK: - State
 
-    /// The selected image URL for subject detection.
-    @State private var selectedImageURL: URL?
-
-    /// The loaded image for preview display.
-    @State private var previewImage: NSImage?
-
-    /// Detected subjects from the most recent analysis.
-    @State private var detectedSubjects: [SubjectDetectionResult] = []
-
-    /// Whether a detection operation is in progress.
-    @State private var isDetecting = false
-
-    /// The selected target aspect ratio.
     @State private var selectedAspectRatio: AspectRatioOption = .ratio16_9
-
-    /// Whether to apply rule-of-thirds positioning.
     @State private var useRuleOfThirds = false
-
-    /// The calculated crop rectangle in pixel coordinates.
-    @State private var cropRect: CGRect?
-
-    /// The generated FFmpeg crop filter string.
-    @State private var cropFilterString: String?
-
-    /// Error message from the most recent operation.
+    @State private var sampleCount = 9
+    @State private var isAnalysing = false
+    @State private var analysisTask: Task<Void, Never>?
+    @State private var progress: SmartCropVideoProgress?
+    @State private var statusText = ""
+    @State private var result: SmartCropVideoResult?
+    @State private var analysedFileURL: URL?
+    @State private var sourceWidth = 0
+    @State private var sourceHeight = 0
+    @State private var activeArea: CropRect?
+    @State private var previewImage: NSImage?
+    @State private var cropRect: CropRect?
     @State private var errorMessage: String?
-
-    /// Whether the crop filter has been applied to the pending job (used for
-    /// confirmation feedback).
     @State private var didApplyToJob = false
+    @State private var didCopyFilter = false
 
     // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             headerSection
+            sourceSection
             controlsSection
-            if isDetecting {
-                ProgressView("Detecting subjects…")
-                    .padding()
+            if isAnalysing {
+                progressSection
             }
             HStack(spacing: 16) {
-                imagePreviewSection
-                detectionResultsSection
+                previewSection
+                resultsSection
             }
-            if let filter = cropFilterString {
-                cropFilterSection(filter: filter)
+            if let cropRect {
+                cropFilterSection(cropRect)
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
             Spacer()
         }
         .padding()
         .frame(minWidth: 700, minHeight: 500)
+        .onChange(of: selectedAspectRatio) { recomputeCrop() }
+        .onChange(of: useRuleOfThirds) { recomputeCrop() }
+        .onChange(of: viewModel.selectedFile?.fileURL) { _, new in
+            if new != analysedFileURL { resetResults() }
+        }
+        .onDisappear { cancel() }
     }
 
     // MARK: - Header
@@ -115,28 +111,36 @@ struct SmartCropView: View {
             Text("Smart Crop")
                 .font(.title2)
                 .fontWeight(.semibold)
-            Text("Detect subjects in an image and calculate an optimal crop rectangle for the desired aspect ratio.")
+            Text("Detect subjects across the selected video and compute a crop for the desired aspect ratio.")
                 .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Source
+
+    /// The currently selected source file, or a prompt to pick one.
+    @ViewBuilder
+    private var sourceSection: some View {
+        if let file = viewModel.selectedFile {
+            HStack(spacing: 12) {
+                LabeledContent("File", value: file.fileName)
+                if let video = file.primaryVideoStream, let w = video.width, let h = video.height {
+                    Text("\(w)×\(h)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            Text("Select a source file in the Source tab to crop.")
                 .foregroundStyle(.secondary)
         }
     }
 
     // MARK: - Controls
 
-    /// Image picker, aspect ratio selector, rule-of-thirds toggle, and detect button.
+    /// Aspect ratio selector, rule-of-thirds toggle, sample-count stepper, and analyze button.
     private var controlsSection: some View {
         HStack(spacing: 12) {
-            Button("Choose Image…") {
-                chooseImage()
-            }
-
-            if let url = selectedImageURL {
-                Text(url.lastPathComponent)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-            }
-
             Picker("Aspect Ratio:", selection: $selectedAspectRatio) {
                 ForEach(AspectRatioOption.allCases, id: \.self) { option in
                     Text(option.rawValue).tag(option)
@@ -148,106 +152,95 @@ struct SmartCropView: View {
             Toggle("Rule of Thirds", isOn: $useRuleOfThirds)
                 .toggleStyle(.checkbox)
 
-            Button("Detect Subjects") {
-                Task { await detectSubjects() }
+            Stepper("Sample frames: \(sampleCount)", value: $sampleCount, in: 3...21, step: 2)
+
+            Button("Analyze Video") {
+                startAnalysis()
             }
-            .disabled(selectedImageURL == nil || isDetecting)
             .buttonStyle(.borderedProminent)
+            .disabled(viewModel.selectedFile == nil || isAnalysing)
         }
     }
 
-    // MARK: - Image Preview
+    // MARK: - Progress
 
-    /// Image preview with bounding box overlays for detected subjects.
     @ViewBuilder
-    private var imagePreviewSection: some View {
+    private var progressSection: some View {
+        HStack {
+            ProgressView()
+                .controlSize(.small)
+            Text(statusText)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Cancel", role: .cancel, action: cancel)
+        }
+        if let progress {
+            ProgressView(value: Double(progress.completedFrames), total: Double(progress.totalFrames))
+        }
+    }
+
+    // MARK: - Preview
+
+    /// Preview of the middle sampled frame with subject and crop overlays.
+    @ViewBuilder
+    private var previewSection: some View {
         GroupBox("Preview") {
             if let image = previewImage {
+                let subjects = result?.previewFrameIndex.map { result?.perFrameSubjects[$0] ?? [] } ?? []
                 ZStack {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .overlay {
                             GeometryReader { geo in
-                                // Draw bounding boxes for each detected subject
-                                ForEach(
-                                    Array(detectedSubjects.enumerated()),
-                                    id: \.offset
-                                ) { _, subject in
+                                ForEach(Array(subjects.enumerated()), id: \.offset) { _, subject in
                                     boundingBoxOverlay(
                                         subject: subject,
                                         displaySize: geo.size,
-                                        imageSize: CGSize(
-                                            width: image.size.width,
-                                            height: image.size.height
-                                        )
-                                    )
+                                        imageSize: CGSize(width: sourceWidth, height: sourceHeight))
                                 }
-                                // Draw crop rectangle preview
-                                if let crop = cropRect {
+                                if let cropRect {
                                     cropOverlay(
-                                        crop: crop,
+                                        crop: CGRect(x: cropRect.x, y: cropRect.y, width: cropRect.width, height: cropRect.height),
                                         displaySize: geo.size,
-                                        imageSize: CGSize(
-                                            width: image.size.width,
-                                            height: image.size.height
-                                        )
-                                    )
+                                        imageSize: CGSize(width: sourceWidth, height: sourceHeight))
                                 }
                             }
                         }
                 }
                 .frame(maxWidth: 400, maxHeight: 300)
             } else {
-                Text("No image selected")
+                Text("Analyze the selected video to see a preview.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 400, maxHeight: 300)
             }
         }
     }
 
-    // MARK: - Detection Results
+    // MARK: - Results
 
-    /// List of detected subjects with type, confidence, and bounding box details.
+    /// Summary of the most recent analysis.
     @ViewBuilder
-    private var detectionResultsSection: some View {
-        GroupBox("Detected Subjects") {
-            if detectedSubjects.isEmpty {
-                Text("No subjects detected yet.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(
-                        Array(detectedSubjects.enumerated()),
-                        id: \.offset
-                    ) { index, subject in
-                        HStack {
-                            // Subject type badge
-                            Text(subject.subjectType.rawValue.capitalized)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(colorForSubjectType(subject.subjectType).opacity(0.2))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .foregroundStyle(colorForSubjectType(subject.subjectType))
-
-                            Spacer()
-
-                            // Confidence
-                            Text(String(format: "%.0f%%", subject.confidence * 100))
-                                .font(.caption)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-
-                            Text("#\(index + 1)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
+    private var resultsSection: some View {
+        GroupBox("Detection") {
+            if let r = result {
+                VStack(alignment: .leading, spacing: 6) {
+                    let s = r.summary
+                    Text("Subjects in \(s.framesWithSubjects) of \(s.framesAnalysed) frames · \(s.faceCount) face detections")
+                    if r.skippedFrames > 0 {
+                        Text("\(r.skippedFrames) frame(s) could not be read")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let activeArea {
+                        Label("Inside auto-detected picture area \(activeArea.displayString)", systemImage: "rectangle.dashed")
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .listStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("No analysis yet.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: 250)
@@ -255,23 +248,43 @@ struct SmartCropView: View {
 
     // MARK: - Crop Filter Output
 
-    /// Displays the generated FFmpeg crop filter string.
-    private func cropFilterSection(filter: String) -> some View {
+    /// Displays the computed FFmpeg crop filter and staging controls.
+    private func cropFilterSection(_ crop: CropRect) -> some View {
         GroupBox("FFmpeg Crop Filter") {
-            HStack {
-                Text(filter)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                Spacer()
-                if didApplyToJob {
-                    Label("Applied", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .transition(.opacity)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(crop.displayString)
+                            .foregroundStyle(.secondary)
+                        Text(crop.filterString)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button {
+                        copyFilter(crop)
+                    } label: {
+                        Label(didCopyFilter ? "Copied!" : "Copy Filter", systemImage: didCopyFilter ? "checkmark" : "doc.on.doc")
+                    }
+                    Button {
+                        applyCropToJob()
+                    } label: {
+                        Label(didApplyToJob ? "Staged" : "Apply to Next Encode", systemImage: didApplyToJob ? "checkmark" : "arrow.right.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.selectedProfile.videoPassthrough)
+                    .help("Stage this crop onto the next job you queue")
                 }
-                Button("Apply to Job") {
-                    applyCropToJob()
+                if viewModel.selectedProfile.videoPassthrough {
+                    Text("The selected profile copies the video stream — choose a re-encoding profile to crop.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
+                if viewModel.pendingFilterGraphVideo?.contains("crop=") == true {
+                    Text("A staged Filter Graph also contains a crop; both will apply in sequence.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -333,80 +346,113 @@ struct SmartCropView: View {
 
     // MARK: - Actions
 
-    /// Presents an open panel to choose an image file.
-    private func chooseImage() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.image, .png, .jpeg, .tiff]
-        panel.message = "Select an image for subject detection."
-        if panel.runModal() == .OK, let url = panel.url {
-            selectedImageURL = url
-            previewImage = NSImage(contentsOf: url)
-            detectedSubjects = []
-            cropRect = nil
-            cropFilterString = nil
-            didApplyToJob = false
+    private func startAnalysis() {
+        guard let file = viewModel.selectedFile else { return }
+        guard let video = file.primaryVideoStream, let w = video.width, let h = video.height, w > 0, h > 0 else {
+            errorMessage = "The selected file has no video stream with known dimensions."
+            return
         }
+        resetResults()
+        sourceWidth = w
+        sourceHeight = h
+        isAnalysing = true
+        statusText = "Locating FFmpeg…"
+        analysisTask = Task { await runAnalysis(file: file) }
     }
 
-    /// Runs subject detection and calculates the crop rectangle.
-    private func detectSubjects() async {
-        guard let imageURL = selectedImageURL else { return }
-        isDetecting = true
-        errorMessage = nil
-        detectedSubjects = []
-        cropRect = nil
-        cropFilterString = nil
-        didApplyToJob = false
+    private func runAnalysis(file: MediaFile) async {
+        defer { finish() }
+        let bundleManager = viewModel.engine.bundleManager
+        let ffmpegPath: String
+        do {
+            ffmpegPath = try await Task.detached { try bundleManager.locateFFmpeg().path }.value
+        } catch {
+            errorMessage = "FFmpeg could not be found: \(error.localizedDescription) Install FFmpeg or set its path in Settings."
+            return
+        }
+        guard !Task.isCancelled else { return }
 
-        let subjects = await SmartCropDetector.detectSubjects(imageURL: imageURL)
-        detectedSubjects = subjects
+        // Black bars: reuse the live auto-crop pass so the smart crop is computed
+        // inside the picture area (and a single `crop=` removes bars AND reframes).
+        if viewModel.autoCropEnabled, viewModel.detectedCrop == nil {
+            statusText = "Detecting black bars…"
+            await viewModel.detectCropForSelectedFile()
+        }
+        guard !Task.isCancelled else { return }
+        activeArea = Self.activeArea(
+            from: viewModel.detectedCrop, autoCropEnabled: viewModel.autoCropEnabled,
+            sourceWidth: sourceWidth, sourceHeight: sourceHeight)
 
-        // Calculate crop rectangle
-        if let image = previewImage {
-            let imageSize = CGSize(width: image.size.width, height: image.size.height)
-            var rect = SmartCropDetector.calculateCropRect(
-                subjects: subjects,
-                targetAspectRatio: selectedAspectRatio.numericValue,
-                imageSize: imageSize
-            )
-
-            // Apply rule of thirds if enabled and subjects exist
-            if useRuleOfThirds, let firstSubject = subjects.first {
-                let subjectCenterX = (firstSubject.boundingBox.origin.x + firstSubject.boundingBox.width / 2) * imageSize.width
-                let subjectCenterY = (1.0 - firstSubject.boundingBox.origin.y - firstSubject.boundingBox.height / 2) * imageSize.height
-                rect = SmartCropDetector.applyRuleOfThirds(
-                    subjectCenter: CGPoint(x: subjectCenterX, y: subjectCenterY),
-                    imageSize: imageSize,
-                    cropSize: rect.size
-                )
+        let analyzer = SmartCropVideoAnalyzer(
+            frameExtractor: FFmpegFrameExtractor(ffmpegPath: ffmpegPath),
+            subjectDetector: SmartCropDetector())
+        let request = SmartCropVideoRequest(videoURL: file.fileURL, duration: file.duration, sampleCount: sampleCount)
+        statusText = "Analysing frame 1 of \(sampleCount)…"
+        do {
+            let analysis = try await analyzer.analyze(request) { p in
+                Task { @MainActor in
+                    self.progress = p
+                    self.statusText = "Analysing frame \(min(p.completedFrames + 1, p.totalFrames)) of \(p.totalFrames)…"
+                }
             }
-
-            cropRect = rect
-            cropFilterString = SmartCropDetector.buildCropFilter(cropRect: rect)
+            guard !Task.isCancelled else { return }
+            result = analysis
+            analysedFileURL = file.fileURL
+            previewImage = analysis.previewFramePNG.flatMap { NSImage(data: $0) }
+            recomputeCrop()
+            viewModel.appendLog(.info, "Smart Crop: analysed \(analysis.perFrameSubjects.count) frames of \(file.fileName) — subjects in \(analysis.summary.framesWithSubjects), \(analysis.summary.faceCount) face detections", category: .filter)
+        } catch is CancellationError {
+            statusText = ""
+        } catch {
+            errorMessage = error.localizedDescription
+            viewModel.appendLog(.warning, "Smart Crop analysis failed: \(error.localizedDescription)", category: .filter)
         }
-
-        isDetecting = false
     }
 
-    /// Applies the crop filter to the pending encoding job.
-    ///
-    /// Hands the computed filter string to `AppViewModel.pendingManualCropFilter`,
-    /// which `enqueueSelectedFile()` merges into the job's `videoFilterChain`
-    /// at enqueue time — the same mechanism used by automatic crop detection
-    /// (Issue #474).
+    /// The auto-crop rect is used as the picture area only when auto-crop is on,
+    /// it actually crops, and it was measured on a frame of THESE dimensions —
+    /// `detectedCrop` is not cleared when the selection changes, and carries no URL.
+    static func activeArea(from detected: CropDetectionResult?, autoCropEnabled: Bool,
+                           sourceWidth: Int, sourceHeight: Int) -> CropRect? {
+        guard autoCropEnabled, let detected, detected.willCrop,
+              detected.sourceWidth == sourceWidth, detected.sourceHeight == sourceHeight else { return nil }
+        return detected.recommendedCrop
+    }
+
+    private func recomputeCrop() {
+        guard let result, sourceWidth > 0, sourceHeight > 0 else { cropRect = nil; return }
+        cropRect = SmartCropVideoAnalyzer.cropRect(
+            summary: result.summary, sourceWidth: sourceWidth, sourceHeight: sourceHeight,
+            targetAspectRatio: selectedAspectRatio.numericValue,
+            useRuleOfThirds: useRuleOfThirds, activeArea: activeArea)
+        didApplyToJob = false
+    }
+
+    /// Stages the crop on `AppViewModel.pendingManualCropFilter`; the next
+    /// `enqueueSelectedFile()` merges it into `videoFilterChain` (before any
+    /// staged filter graph, with precedence over auto-crop) and clears it.
     private func applyCropToJob() {
-        guard let filter = cropFilterString else { return }
-
-        viewModel.pendingManualCropFilter = filter
-        viewModel.appendLog(.info, "Smart Crop: filter \"\(filter)\" will be applied to the next queued job")
-
-        withAnimation {
-            didApplyToJob = true
-        }
+        guard let cropRect else { return }
+        viewModel.pendingManualCropFilter = cropRect.filterString
+        viewModel.appendLog(.info, "Smart Crop: \(cropRect.filterString) will be applied to the next queued job", category: .filter)
+        withAnimation { didApplyToJob = true }
     }
+
+    private func copyFilter(_ crop: CropRect) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(crop.filterString, forType: .string)
+        didCopyFilter = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { didCopyFilter = false }
+    }
+
+    private func resetResults() {
+        result = nil; analysedFileURL = nil; previewImage = nil; cropRect = nil
+        activeArea = nil; errorMessage = nil; didApplyToJob = false; progress = nil
+    }
+
+    private func finish() { analysisTask = nil; isAnalysing = false; progress = nil }
+
+    private func cancel() { analysisTask?.cancel(); finish() }
 
     // MARK: - Helpers
 
