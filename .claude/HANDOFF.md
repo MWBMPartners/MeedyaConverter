@@ -180,6 +180,9 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   chains concurrently (later ones sleeping less) and asserts no overlap + FIFO order + `drain()` waits.
   A reintroduced reentrancy bug fails CI.
 
+- **#285 drag-out — DONE + CLOSED** (`69921ae`). `DraggableFileView`/`.draggableFile` were a complete
+  drag-source with zero callers; applied to completed `JobRow`s (output URL for completed, nil otherwise).
+
 **Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
