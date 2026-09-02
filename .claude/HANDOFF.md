@@ -221,8 +221,20 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   runtime subscription, not the aggregate math. Epic stays OPEN — GPU/CPU load-balancing enforcement,
   per-job priority, thermal-throttling still to do (see issue comment for the checklist).
 
-**Round-2 remaining (ranked):** #298 watermarks, #335 multi-output, #473 vector, #278 pipeline editor,
-#302 AppleScript activation, #288 chapters. (Done this pass: #482 team conflicts, #286 throughput tiles.)
+- **#298 watermarks — DONE (epic left OPEN)** (`73c4469`). `WatermarkView` previewed a filter string
+  that never reached an encode; `EncodingProfile` had no watermark field and the builder emitted none.
+  Wired end-to-end single-pass inside the existing `-vf` slot (no `-map`/HDR interaction): text →
+  `drawtext`; image → the `movie` *source* filter (`movie='logo'[wm];[in]<chain>[base];[base][wm]
+  overlay=x:y[out]`) so **no second `-i` and no `-map` rewrite**. New
+  `WatermarkOverlay.appendToVideoFilterChain` + `escapeFilterPath` (single-quote + `'\''` idiom).
+  `EncodingProfile.watermark: OverlayWatermarkConfig?` (optional back-compat; config now Equatable/
+  Hashable so profile's synthesized conformances hold); view loads/applies/removes on `selectedProfile`.
+  Skipped for passthrough. Tests: chain composition, no-2nd-input/no-map invariant, path escaping,
+  passthrough-skip, threading, Codable back-compat. Epic OPEN — tiled/custom-XY/rotation/font-config/
+  rendered-preview remain.
+
+**Round-2 remaining (ranked):** #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript
+activation, #288 chapters. (Done this pass: #482 conflicts, #286 throughput tiles, #298 watermarks.)
 
 ---
 
