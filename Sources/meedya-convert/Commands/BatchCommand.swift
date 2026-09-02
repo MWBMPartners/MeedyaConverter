@@ -33,6 +33,10 @@ struct BatchCommand: AsyncParsableCommand {
     @Flag(name: .customLong("recursive"), help: "Recursively scan subdirectories.")
     var recursive = false
 
+    @Option(name: .customLong("output-mode"),
+            help: "Folder structure for --dir output: 'flatten' (all files in the output dir) or 'mirror' (recreate the source subfolder tree under the output dir; use with --recursive). Default: flatten.")
+    var outputMode: String = "flatten"
+
     @Flag(name: .customLong("quiet"), help: "Suppress progress output.")
     var quiet = false
 
@@ -99,11 +103,27 @@ struct BatchCommand: AsyncParsableCommand {
 
         var results: [(file: String, status: String)] = []
 
+        // Output organisation (Issue #275): the batch path previously wrote
+        // every file flat into outputDir even under --recursive, so a scanned
+        // folder tree lost its structure. `mirror` recreates the source subtree
+        // under outputDir via the same OutputPathResolver the GUI uses; the
+        // encoded filename (stem + the profile's container extension) is still
+        // owned here, so only the DIRECTORY changes.
+        let mode: OutputMode = (outputMode.lowercased() == "mirror") ? .mirror : .flatten
+        if mode == .mirror && !recursive && !quiet {
+            printStderr("Note: --output-mode mirror has no effect without --recursive (no subfolders to mirror); writing flat.")
+        }
+        let baseInputDir: URL? = (mode == .mirror && recursive) ? dirURL : nil
+
         for (index, file) in files.enumerated() {
             let stem = file.deletingPathExtension().lastPathComponent
             let ext = profile.preferredExtension
+            // Mode-aware target directory (creates mirrored subdirs as needed);
+            // flatten / non-recursive returns outputDir unchanged.
+            let targetDir = OutputPathResolver.resolveOutputDirectory(
+                inputURL: file, baseInputDir: baseInputDir, outputDir: outputDir, mode: mode)
             // F-002 defensive sanitisation per SECURITY.md (POLISH follow-up).
-            let outputURL = outputDir.appendingPathComponent(
+            let outputURL = targetDir.appendingPathComponent(
                 PathSanitizer.sanitizeFilenameComponent("\(stem).\(ext)")
             )
 
