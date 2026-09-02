@@ -72,6 +72,44 @@ MeedyaConverter includes built-in profiles for common use cases:
 
 ---
 
+## App Behaviour
+
+A few app-wide conveniences beyond the core convert workflow:
+
+### The Queue Is One File at a Time by Default
+
+Add several files and MeedyaConverter queues them, but by default it
+encodes them **sequentially**, one at a time. Plus-tier licences (and
+above) can raise this in **Performance → Parallel Encoding** in the
+sidebar; Free installs are held to 1 no matter how the slider is set.
+Turning it up doesn't change what any single encode does — it only lets
+more than one run at once — and this is a new, alpha-quality setting, so
+treat higher values as experimental rather than production-proven.
+
+### Keyboard Shortcuts
+
+The default shortcuts (⌘1–⌘5 to jump between sections, ⌘O to import,
+⌘↩ to add the current file to the queue) can be reassigned in
+**Settings → Shortcuts**. The editor flags it if two actions end up
+sharing the same combination.
+
+### Menu Bar Mode
+
+**Settings → General → Show status in menu bar** adds a MeedyaConverter
+icon to the menu bar showing queue status, with a quick-encode action
+using your last-used profile.
+
+### Deep Links (`meedyaconverter://`)
+
+MeedyaConverter registers the `meedyaconverter://` URL scheme so other
+apps, Shortcuts, and scripts can trigger it:
+
+- `meedyaconverter://encode?file=/path/to/video.mov&profile=Web%20Standard` — start an encode
+- `meedyaconverter://probe?file=/path/to/video.mov` — probe a file
+- `meedyaconverter://open?view=queue` — bring a specific view to the front
+
+---
+
 ## Next Steps
 
 - 📖 [Encoding Guide](encoding-guide.md) — Detailed encoding settings reference

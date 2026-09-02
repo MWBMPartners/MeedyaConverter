@@ -190,6 +190,133 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
 
 ### Fixed
 
+- **Bounded-concurrency queue, opt-in and defaulted to width 1 (#286)** -- the
+  queue runner (`startQueue()`) is now a `TaskGroup` whose width is re-read
+  from the Max Concurrent Jobs setting on every slot top-up, replacing the
+  previous `while ... nextPendingJob()` loop. At width 1 -- the default, and
+  what an unentitled install is unconditionally clamped to via
+  `FeatureGateManager`/`.parallelEncoding` (`FreeGateProvider` grants only
+  `.free`-tier features, and `parallelEncoding` requires `.plus`) -- the
+  sequence degenerates to exactly the old claim-run-await-claim behaviour.
+  Going concurrent surfaced three bugs that were already latent in the
+  sequential code: `EncodingEngine` held a single `activeController` optional
+  cleared unconditionally by a `defer`, racing `cancelCurrentJob` even today
+  (now a keyed `[UUID: FFmpegProcessController]` registry so a finishing pass
+  can only clear its own entry); both statistics-write call sites constructed
+  a fresh `EncodingStatisticsStore` per write, whose `NSLock` protects nothing
+  across instances (writes now go through one serialising
+  `EncodingStatisticsRecorder` actor); and `EncodingActivityIndicator`'s
+  `guard !isTracking` meant the first job to finish would tear down the
+  menu-bar/dock indicators while others were still running (lifecycle moved
+  to the queue: start on first claim, stop only once the queue drains). Also
+  fixed: `PostEncodeHookRunner` was an `actor` whose doc comment promised
+  strictly-one-at-a-time execution, but Swift actors are reentrant and its
+  body was one bare `await chain.execute(...)`, so two completions landing
+  together ran their hook chains in parallel regardless -- real serialisation
+  now comes from chaining each run behind a stored tail `Task`, in
+  `EncodingPersistenceActors.swift`. **Width > 1 has never been run**:
+  `swift test` cannot execute in this environment and CI cannot spawn a real
+  multi-job FFmpeg encode, so concurrent execution is unverified at runtime --
+  which is exactly why it ships opt-in, entitlement-gated, and defaulted off.
+- **A/B comparison now has a working capture -> persist -> compare loop
+  (#329)** -- `ComparisonLibraryView` was a permanently empty screen:
+  `entries` had no writer anywhere, `ComparisonView` was never instantiated,
+  and `ComparisonCapture`/`FrameComparisonExtractor`'s argument builders were
+  referenced only from a comment. A capture sheet now extracts frames through
+  a real `FFmpegProcessController` and computes real SSIM/PSNR/VMAF; entries
+  persist as JSON via the new `ComparisonLibraryManager`
+  (`~/Library/Application Support/MeedyaConverter/comparison_library.json`,
+  mirroring `RecentFilesManager`'s convention), and selecting a persisted
+  entry opens the comparison instead of the view staying permanently empty.
+- **Menu-bar mode now works (#281)** -- `MenuBarController` was a complete
+  `NSStatusItem` implementation that was never constructed anywhere, and the
+  `showMenuBarStatus` toggle it was meant to obey was itself read by nothing.
+  The controller is now held for the app's lifetime with its visibility
+  tracking the toggle live from both the main window's scene and the Settings
+  scene -- previously the sync was attached only to the main window's scene,
+  so toggling the setting with the main window closed (menu-bar-only use, the
+  exact scenario this feature exists for) did nothing.
+- **`meedyaconverter://` URLs now route through `URLSchemeHandler` (#356)** --
+  `onOpenURL` silently discarded every non-profile URL while
+  `URLSchemeHandler` (encode/probe/open, fully implemented) had zero
+  references anywhere in the app. Non-profile URLs are now routed through it
+  against the live `AppViewModel`; unparseable URLs and unmapped view names
+  now produce a visible warning instead of silence, and the dead
+  `routeAction` placeholder was removed.
+- **"Prefer hardware acceleration" is now a real kill switch (#475)** -- the
+  setting was persisted by Settings and read by nothing. A new
+  `HardwareAccelerationPreference` now applies it at all seven of the app's
+  `EncodingJobConfig`-building enqueue paths (`enqueueSelectedFile`,
+  `enqueueWatchFolderFile`, `ScriptingBridge`, the Automator
+  `EncodeMediaAction`, `ResumableJobsView`, `ScheduleView`, and
+  `FFmpegPreviewView`, the last so the command preview doesn't show hardware
+  arguments the encode won't actually use) -- deliberately excluding the CLI
+  and HTTP API, which keep their own explicit options and should not change
+  behaviour because of a GUI checkbox. It is a kill switch, not a duplicate
+  of the per-profile `EncodingProfile.useHardwareEncoding`: on, profiles
+  decide as before; off, hardware encoding is forced off even when the
+  profile asks for it. Fixed in the process: the stored default was `false`
+  and was read via `UserDefaults.bool(forKey:)`, which answers `false` for a
+  key that was never written -- so the kill switch would have been engaged on
+  every fresh install and for every existing user who never touched the
+  (previously dead) toggle, silently downgrading the built-in `hardwareH264`/
+  `hardwareH265` profiles to software encoding. The default is now `true`,
+  read via `object(forKey:)` so "absent" is distinguished from "explicitly
+  off".
+- **Post-encode hooks now fire on job failure too (#277)** -- the hook chain
+  (`PostEncodeActionChain`) was invoked only from the success branch, so
+  every `runOnFailure` action configured in the Hooks tab was dead. The
+  failure branch now loads the persisted chain and executes it with
+  `success: false`, guarded and fire-and-forget exactly like the success
+  path, so a throwing action cannot take down the queue runner.
+- **Toolbar commands resolve through the shortcut manager, and five
+  View-menu navigation commands now exist (#331)** --
+  `KeyboardShortcutManager.binding(for:)` had zero callers, so rebinding a
+  shortcut in Settings changed nothing; the File menu's Import command and
+  the Encode toolbar command (and their tooltips, previously hard-coded
+  "(Cmd+O)"/"(Cmd+Return)") now resolve through it, with `ShortcutBinding.
+  keyEquivalent` made failable so a corrupt or multi-character key persisted
+  in `UserDefaults` degrades to the caller's fallback instead of trapping via
+  `KeyEquivalent(Character(binding.key))`. The five `navigate.*` shortcuts
+  (Cmd+1-5) had no command anywhere, so their rows in the shortcut editor
+  were decorative; a new View-menu `CommandGroup` now provides all five
+  (`navigate.settings` opens the Settings scene, there being no
+  `NavigationItem` case for it).
+- **ScriptingBridge's `probe(file:)` no longer blocks a thread on a semaphore
+  for up to 60 seconds (#451)** -- replaced with Cocoa Scripting's own
+  suspend/resume idiom (`NSScriptCommand.current()` +
+  `suspendExecution()` / `resumeExecution(withResult:)`), with the timeout
+  outcome preserved by a structured `TaskGroup` race instead of a blocking
+  wait. The method's own former comment claimed this "would require
+  restructuring as an NSScriptCommand subclass ... out of scope"; that was
+  verified wrong against the real SDK header. This describes how the method
+  behaves *if* AppleScript dispatch reaches it -- it still doesn't:
+  `MeedyaConverter.sdef` has no `<cocoa>` mapping elements and nothing
+  registers `ScriptingBridge.shared` (#302), so the semaphore removal is real
+  but the code path is presently unreachable via a live Apple Event.
+- **Scene detection now runs ffmpeg (#288)** -- `detectScenes()` built FFmpeg
+  arguments, logged "requested", and returned without spawning anything;
+  `detectedScenes` was only ever populated by manually-added markers. It now
+  runs ffmpeg, drains progress, reads the metadata file, and parses real
+  scene timestamps -- `SceneDetector.swift` itself is unchanged, since its
+  `buildDetectionArguments`/`parseSceneOutput` already matched ffmpeg's
+  output format; the capability was never missing engine code, only a
+  caller. "Apply to Job" stays disabled with a stated reason, because
+  `EncodingJobConfig` genuinely has nowhere to put chapters -- that part of
+  #288 remains open.
+- **Concatenation now has a working Start action (#322)** -- the
+  Concatenate screen offered file reordering, a method picker, a crossfade
+  slider and live compatibility warnings, but contained no process
+  invocation at all, so it could never produce output. `startConcatenation()`
+  now runs `VideoConcatenator.buildDemuxerConcatArguments` through a real
+  `FFmpegProcessController`, surfaces live progress and real errors, and
+  verifies the joined file exists before reporting success. The re-encode/
+  filter path (`buildFilterConcatArguments`, still zero callers) is left
+  visibly disabled with an honest label rather than as a crossfade slider
+  that silently does nothing. Also fixed: the error banner was shared with
+  the file-import alert, so a dismissed import error lingered as red text in
+  the Concatenate section, implying a join had failed that was never
+  attempted -- now separate state.
 - **Inline metadata search no longer fabricates an empty result (#493)** --
   `SuiteCoreMetadataAdapter.searchViaInline` returned `[]` behind a comment
   claiming it was "a pass-through" to the `MetadataProviders` implementations.
@@ -425,6 +552,21 @@ released `v0.1.0-rc.3`; `docs/api/meedya-convert-api.yaml` and
 
 ### Documentation
 
+- **DR-0001 recorded: GPL disc tools bundled in Direct builds only (#494)** --
+  `docs/decisions/0001-gpl-disc-tools.md` decides that `cdrdao` / `ddrescue` /
+  `wodim` are bundled in the Direct `.dmg` under GPLv2 §2 / GPLv3 §5 "mere
+  aggregation" (each tool's licence text shipped alongside it, plus a written
+  offer for source), invoked only as subprocesses and never linked into
+  `ConverterEngine`. The original framing of #494 treated the App Store
+  question as a licensing decision; it is in fact settled by a technical
+  fact that made that framing moot: `MeedyaConverter-AppStore.entitlements`
+  declares `com.apple.security.app-sandbox` with no raw optical-device
+  entitlement, and Apple offers none -- disc imaging cannot work in an App
+  Store build under any tool licence, so the feature stays Direct-only on
+  technical grounds regardless. The drafted `ToolBundleManifest` entries are
+  recorded in the decision but deliberately not added to `defaultManifest`
+  until the binaries are actually staged, which would otherwise assert
+  binaries the app does not yet bundle.
 - **The HTTP API is no longer documented as fabricated (#497)** --
   `docs/api/meedya-http-api.yaml`, its README section and the Swagger UI banner
   were written on 2026-07-28, when `APIServer`'s endpoints really were stubs.

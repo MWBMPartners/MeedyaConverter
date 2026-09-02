@@ -48,23 +48,35 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 
 ### Advanced Features
 
-- Encoding pipelines with multi-step chained operations
-- Scheduled encoding with cron-like timing
+- Encoding pipelines — build multi-step chains in the Pipeline Editor (see note below)
+- Scheduled encoding (one-time, or recurring at a fixed daily/weekly interval)
 - Conditional encoding rules (if source matches criteria, apply settings)
 - Post-encode actions (move, rename, upload, notify)
 - Watch folder monitoring for automatic encoding
-- Scene detection and chapter generation
+- Scene detection and chapter generation (chapters export; not yet attachable to a job — see note below)
 - Audio normalization presets (EBU R128, ReplayGain)
 - Smart profile suggestions based on source analysis
 - FFmpeg command preview before encoding
 - A/B quality comparison with frame extraction
 - Bitrate heatmap and audio waveform visualisation
 - File size estimation before encoding
-- Filename templates for batch output naming
-- VMAF/SSIM quality metrics
-- AI upscaling (experimental)
-- Content-aware encoding analysis
-- DCP (Digital Cinema Package) creation
+- Filename templates for GUI encode output naming
+
+> **Not yet reachable from the app.** Three more capabilities exist as
+> backend code with no UI or CLI entry point: `ContentAnalyzer`
+> (complexity/grain analysis), `AIUpscaler` (three Real-ESRGAN-based
+> models), and `DCPGenerator` (Digital Cinema Package creation). None has
+> a caller anywhere in `Sources/MeedyaConverter/`. VMAF/SSIM/PSNR quality
+> metrics, by contrast, **are** reachable, via the Quality Metrics view.
+>
+> **Pipelines are a builder, not yet an automated workflow.** The
+> Pipeline Editor lets you assemble and reorder steps, but nothing in the
+> app executes a saved pipeline, and its own Save action has no handler
+> wired up — a pipeline is discarded when you close the editor.
+>
+> **Scene detection's "Apply to Job" is permanently disabled** —
+> `EncodingJobConfig` has no field for attaching external chapter
+> metadata. Export the chapters file and inject it manually instead.
 
 ### Monetisation and Licensing
 

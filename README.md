@@ -86,6 +86,25 @@ phase-by-phase feature inventory; the table below is the headline list.
 > `GET /profiles`), bearer-token authenticated. See
 > [docs/api/README.md](docs/api/README.md).
 
+#### Landed on the working branch (`wip/alpha-consolidation`) — not in any release, not even the alpha above
+
+These fixed previously-orphaned or never-launched code this session. None of
+them are in `v0.1.0-alpha.3` or `v0.1.0-rc.3` — they exist only on the
+working branch pending their own release.
+
+| Feature | Notes |
+| ------- | ----- |
+| 🔗 **Concatenation now runs a real encode** | The Concatenate screen launched no process at all; Start now runs FFmpeg via `VideoConcatenator.buildDemuxerConcatArguments`. The re-encode/crossfade path is left visibly disabled — it still has no caller (#322) |
+| 🔍 **Scene detection now runs ffmpeg** | Detection previously logged "requested" and returned without spawning anything; it now runs ffmpeg and parses real scene timestamps. "Apply to Job" stays disabled — `EncodingJobConfig` has nowhere to put chapters, so this is a partial fix (#288) |
+| 🍏 **AppleScript probe no longer blocks a thread** | `ScriptingBridge.probe(file:)` parked the calling thread on a `DispatchSemaphore` for up to 60s; replaced with Cocoa Scripting's own suspend/resume idiom. AppleScript dispatch is still not reachable at all — the `.sdef` has no `<cocoa>` mappings (#302) — so this fixes code that cannot yet run (#451) |
+| ⌨️ **Toolbar & navigation shortcuts wired up** | Import/Encode toolbar commands, and five new View-menu Cmd+1–5 navigation commands, now resolve through the shortcut manager instead of being decorative (#331) |
+| ⚠️ **Failure-path post-encode hooks** | `runOnFailure` hook actions previously never fired — the chain was invoked only on success. They now fire on job failure too (#277) |
+| 🛑 **Hardware acceleration kill switch** | "Prefer hardware acceleration" was persisted and read by nothing; it now overrides all seven of the app's `EncodingJobConfig`-building enqueue paths (not the CLI or HTTP API, deliberately) (#475) |
+| 🔗 **URL-scheme routing** | `meedyaconverter://` URLs other than `profile` were silently dropped; non-profile URLs now route through the previously-unreferenced `URLSchemeHandler` (#356) |
+| 📶 **Menu-bar mode** | `MenuBarController` was a complete implementation that was never constructed; it now runs and tracks the Settings toggle live (#281) |
+| ⚙️ **Bounded-concurrency queue (opt-in)** | The queue can now run more than one job at a time via a `TaskGroup`, entitlement-gated and defaulted to width 1 — at width 1 it behaves exactly as before. **Width > 1 has never actually been run**: neither `swift test` nor CI can spawn a real multi-job FFmpeg encode in this environment, so concurrent execution is unverified at runtime (#286) |
+| 🆚 **A/B Comparison** | `ComparisonLibraryView` was a permanently empty screen with no writer for its entries; there is now a real capture → persist → compare loop with JSON persistence (#329) |
+
 #### Planned / scaffolded (not yet wired into the app)
 
 The arguments/UI/data-model for these exist in the codebase, but there is
@@ -97,11 +116,9 @@ roadmap items, not working features, until their tracking issue closes.
 | ------- | ----- |
 | 🔐 **DRM & Encryption (AES-128 HLS, Widevine/FairPlay/PlayReady)** | Argument builders exist (`HLSEncryption`, `DRMPreparation`) but nothing calls them outside their own unit tests |
 | 🖼️ **Thumbnail Sprites** | `ThumbnailSpriteGenerator` exists but is only exercised by a unit test — no UI or pipeline calls it |
-| 🔍 **Scene Detection** | The Scene Detection view builds FFmpeg arguments but never runs FFmpeg — it logs "requested" and returns; no scenes are ever actually detected (#288) |
 | 🔏 **Forensic Watermarking** | `ForensicWatermark` is orphaned (#477) |
 | 🎥 **3D / Stereoscopic (MV-HEVC / MV-H264)** | `Stereo3DConverter` / `Video3DConverter` have zero callers (#477) |
 | 🏷️ **Media Metadata Lookup / Auto-Tagging** | Not implemented at all, in either direction. `Sources/ConverterEngine/Metadata/` contains no `URLSession`, `URLRequest` or `JSONDecoder`, so every provider client (MusicBrainz, TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles, OMDb) builds request URLs and nothing more; `AutoTagger` has no callers; and there is no lookup control anywhere in the UI. Distinct from the metadata tag **editor**, which does write tags for real (#467) (#205, #493) |
-| 👁️ **A/B Comparison** | `ComparisonView` is orphaned (#329) |
 | 🔎 **AI Upscaling** | `AIUpscaler` exists only as a comment reference (#236, #477) |
 | 💿 **Optical Disc Ripping & Authoring** | Disc readers/authors are orphaned — disc **burning** above is the one part of this pipeline that's real (#476) |
 | 🎛️ **Vector / ProRes→Vector Conversion** | Argument builders exist; there is no executor and no source-file flow (#473) |

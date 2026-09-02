@@ -46,8 +46,18 @@
 #     still compiles, but nothing in the app's navigation can reach it.
 # ============================================================================
 #
-# Updated: 2026-09-01 — reconciled against
-# Sources/ConverterEngine/Server/APIServer.swift.
+# Updated: 2026-09-02 — reconciled against
+# Sources/ConverterEngine/Server/APIServer.swift and
+# Sources/ConverterEngine/Encoding/EncodingJob.swift (Issue #286's
+# bounded-concurrency queue runner). Two corrections from this pass:
+#   - `QueueJob.status` was missing `cancelled`, a real
+#     `EncodingJobStatus` case a job keeps until `clearFinished()` is
+#     called.
+#   - `activeJobs` is a plain in-flight count, not a 0/1 flag — since
+#     #286 more than one job can be `.encoding` at once, though this is
+#     not observable via `meedya-convert serve` (nothing drives the
+#     queue) or today's orphaned `APIServerView` (see "Standing
+#     limitations" above; both facts are unchanged by #286).
 # ============================================================================
 
 openapi: 3.1.0
@@ -325,8 +335,26 @@ paths:
         the app's live one, jobs added through the GUI — appear here.
         `activeJobs` counts jobs with `status: "encoding"`; `pendingJobs`
         counts jobs with `status: "queued"`. `totalJobs` includes those
-        plus any `paused`, `completed`, or `failed` jobs, so it need not
-        equal `activeJobs + pendingJobs`.
+        plus any `paused`, `completed`, `failed`, or `cancelled` jobs, so
+        it need not equal `activeJobs + pendingJobs`.
+
+        **`activeJobs` can be greater than 1.** Since the bounded-concurrency
+        queue runner (Issue #286), `EncodingQueue.claimNextPendingJob()` can
+        mark several jobs `.encoding` at once — `activeJobs` is a plain
+        count of however many that is right now, not a 0/1 flag. In
+        practice this is not observable through either currently-reachable
+        way of running this server, both unchanged by #286:
+        `meedya-convert serve` never calls `claimNextPendingJob()` at all
+        (see the queue-runner limitation above), so a CLI-started server's
+        `activeJobs` stays `0` forever; and the GUI's `APIServerView`, which
+        embeds a live, driven `EncodingQueue`, has no navigation entry to
+        reach it (#448) and, even if reached, still defaults to its own
+        standalone `EncodingEngine()` rather than the app's shared one (see
+        `APIServerViewModel.engine`'s doc comment). A multi-job `activeJobs`
+        value would only appear if a future caller wires `APIServerView` (or
+        another `APIServer` instance) to the app's shared, queue-driving
+        engine while the `.parallelEncoding` entitlement and a Max
+        Concurrent Jobs width above 1 are both in effect.
       tags:
         - Encoding
       responses:
@@ -346,7 +374,13 @@ paths:
                     description: Total number of jobs in the queue, in any status.
                   activeJobs:
                     type: integer
-                    description: Number of jobs with `status == "encoding"`.
+                    description: >-
+                      Number of jobs with `status == "encoding"`. Not
+                      clamped to 0/1 — since Issue #286's bounded-concurrency
+                      queue runner, this can legitimately be greater than 1
+                      when several jobs are claimed at once (see the
+                      operation description above for why that is not
+                      currently reachable through this API in practice).
                   pendingJobs:
                     type: integer
                     description: Number of jobs with `status == "queued"`.
@@ -506,7 +540,15 @@ components:
           description: Name of the profile attached to the job.
         status:
           type: string
-          enum: [queued, encoding, paused, completed, failed]
+          enum: [queued, encoding, paused, completed, failed, cancelled]
+          description: >-
+            The full `EncodingJobStatus` raw-value set
+            (Sources/ConverterEngine/Encoding/EncodingJob.swift) — a job
+            cancelled via `EncodingQueue.cancelJob(id:)` (e.g. from the GUI,
+            if the injected engine is the app's live one) stays in the
+            queue with this status until something calls `clearFinished()`,
+            so it can appear here. There is no `DELETE`/cancel route on
+            this HTTP API itself.
         progress:
           type: number
           description: "Real-time progress fraction (`job.progress`), 0.0–1.0."

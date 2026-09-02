@@ -163,10 +163,24 @@ struct MeedyaConverterApp: App {
         .commands {
             // File menu — Import
             CommandGroup(after: .newItem) {
+                // Resolve through the shortcut manager like every other
+                // command (Issue #331). This was previously hard-coded, so
+                // rebinding "Import File" in Settings changed the toolbar
+                // button but silently left the File menu on ⌘O — the menu
+                // then advertised a shortcut the app no longer honoured
+                // there, which is the drift this issue exists to remove.
+                // Title kept literal rather than taken from the binding's
+                // label: macOS convention wants the trailing ellipsis to
+                // signal that a dialog follows, which the editor's short
+                // label ("Import File") does not carry. Only the shortcut is
+                // resolved from the manager.
                 Button("Import Media Files...") {
                     openFilePicker()
                 }
-                .keyboardShortcut("o", modifiers: .command)
+                .keyboardShortcut(
+                    appViewModel.shortcutManager.binding(for: "file.import")
+                        ?? KeyboardShortcut("o", modifiers: .command)
+                )
             }
 
             // App menu — Check for Updates (Phase 9 / Issue #94)

@@ -25,17 +25,9 @@ Solutions for common issues encountered when using MeedyaConverter.
    ffmpeg -version
    ```
 
-3. **Check expected paths.** MeedyaConverter searches in this order:
-   - App bundle (direct distribution builds).
-   - `/opt/homebrew/bin/ffmpeg` (Apple Silicon Homebrew).
-   - `/usr/local/bin/ffmpeg` (Intel Homebrew).
-   - System PATH.
+3. **Check expected paths.** `FFmpegBundleManager` searches, in order: the app bundle (direct distribution builds), `/opt/homebrew/bin` (Apple Silicon Homebrew), `/usr/local/bin` (Intel Homebrew), `/opt/local/bin` (MacPorts), `/usr/bin`, `/bin`, and finally `which ffmpeg` as a last resort.
 
-4. **Set a custom path** using the `FFMPEG_PATH` environment variable:
-
-   ```bash
-   export FFMPEG_PATH=/path/to/ffmpeg
-   ```
+4. **There is no `FFMPEG_PATH` environment variable, CLI flag, or Settings field to override this search** — MeedyaConverter does not currently read any environment variables for configuration, and none of the CLI commands or the GUI pass a custom path into the engine. If your FFmpeg build lives somewhere else, make it discoverable instead: symlink it into one of the searched directories (e.g. `ln -s /path/to/your/ffmpeg /usr/local/bin/ffmpeg`), or simply ensure `which ffmpeg` resolves to it, since that is the search's final fallback.
 
 5. **App Store version:** Does not require external FFmpeg (uses embedded FFmpegKit).
 
@@ -138,19 +130,11 @@ Solutions for common issues encountered when using MeedyaConverter.
 
 ---
 
-## Encoding Pipeline Failures
+## Encoding Pipelines Don't Run
 
-**Symptom:** A multi-step encoding pipeline fails partway through.
+**Symptom:** A pipeline built in the Pipeline Editor never seems to start, and disappears after you click Save.
 
-**Solutions:**
-
-1. **Check step dependencies.** Each pipeline step depends on the previous step's output. If an earlier step fails, subsequent steps cannot run.
-
-2. **Validate each step independently.** Use `meedya-convert validate` to check each profile used in the pipeline.
-
-3. **Check intermediate files.** Pipeline steps produce intermediate files. Ensure sufficient disk space for all intermediate outputs.
-
-4. **Resume from checkpoint.** If the pipeline supports checkpoints, resumable jobs can restart from the last successful step.
+**This is expected, not a bug to troubleshoot around.** The Pipeline Editor is currently a builder only — nothing in the app executes a saved pipeline, and the editor's own Save action (as reached from Output Settings) has no handler wired up, so the pipeline is discarded the moment the editor closes. There is no "Run Pipeline" action, checkpointing, or resume-from-step behaviour to fall back on. See the User Guide's [Encoding Pipelines](User-Guide#encoding-pipelines) section. If you need a multi-step workflow today, run each step as a separate `meedya-convert encode`/`manifest` invocation yourself.
 
 ---
 

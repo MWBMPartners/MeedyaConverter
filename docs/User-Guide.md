@@ -10,17 +10,17 @@ This guide covers the key features and settings available in MeedyaConverter.
 
 ### Built-in Profiles
 
-MeedyaConverter ships with built-in profiles for common workflows:
+MeedyaConverter ships with 24 built-in profiles covering quick-start, streaming, disc-authoring, and archival workflows — run `meedya-convert profiles --list` (or `--show <name>` for full detail) to see all of them. A representative sample:
 
 | Profile | Video | Audio | Use Case |
 | ------- | ----- | ----- | -------- |
-| H.264 Fast | H.264, CRF 23, fast | AAC 128k | Quick previews, web upload |
-| H.264 High Quality | H.264, CRF 18, slow | AAC 256k | High-quality archival |
-| H.265 Balanced | H.265, CRF 22, medium | AAC 192k | Good quality/size balance |
-| H.265 High Quality | H.265, CRF 18, slow | AAC 256k | 4K/HDR content |
-| AV1 Efficient | AV1, CRF 28, 6 | Opus 128k | Maximum compression |
-| ProRes HQ | ProRes 422 HQ | PCM | Professional editing |
-| Passthrough | Copy all | Copy all | Remux (change container only) |
+| Quick Convert | H.264, CRF 23, fast | AAC 128k | Quick previews, maximum speed |
+| Web Standard | H.264, CRF 20, medium | AAC 160k | Maximum-compatibility web playback |
+| Web High Quality | H.265, CRF 22, medium | AAC 192k | Better quality, smaller files than Web Standard |
+| 4K HDR Master | H.265, CRF 18, slow, HDR preserved | E-AC-3 7.1, 640k | High-quality HDR archive |
+| Web Next-Gen | AV1 (SVT-AV1 preset 6), CRF 30 | Opus 128k | Best compression for modern browsers |
+| ProRes HQ | Apple ProRes HQ | PCM | Professional mastering |
+| Remux to MKV | Passthrough (copy) | Passthrough (copy) | Remux — change container only |
 
 ### Custom Profiles
 
@@ -192,17 +192,21 @@ The Stream Inspector in the GUI shows all available tracks with their properties
 
 ## Filename Templates
 
-When encoding multiple files (batch mode or pipelines), filename templates let you control the output naming pattern. Available variables include:
+In the GUI's Output Settings, a filename template controls the output naming pattern for encodes queued from there. Available variables:
 
-- `{name}` — Original filename without extension.
-- `{ext}` — Profile-determined extension.
-- `{profile}` — Profile name.
-- `{resolution}` — Output resolution (e.g., 1080p).
+- `{title}` (or the older `{name}`) — Source filename without extension.
+- `{container}` (or the older `{ext}`) — Output container format (e.g. `mkv`).
+- `{profile}` — Encoding profile name, used verbatim (spaces and all).
+- `{resolution}` — Output resolution (e.g., `1920x1080`).
 - `{codec}` — Video codec name.
-- `{date}` — Current date.
-- `{index}` — Sequential index in batch.
+- `{width}` / `{height}` — Output width/height in pixels individually.
+- `{fps}` — Output frame rate.
+- `{channels}` — Audio channel count.
+- `{date}` — Current date (`yyyy-MM-dd`), or `{date:FORMAT}` for a custom `DateFormatter` pattern (e.g. `{date:yyyyMMdd}`).
 
-Example: `{name}_{profile}_{resolution}.{ext}` produces `movie_H265HQ_1080p.mkv`.
+There is no `{index}`/sequential-batch-position variable, and `meedya-convert batch` (the CLI's own multi-file mode) does not use filename templates at all — it always names outputs `<stem>.<profile-extension>`.
+
+Example: `{title}_{profile}_{resolution}.{container}` with the "Quick Convert" profile produces `movie_Quick Convert_1920x1080.mp4`.
 
 ---
 
@@ -237,7 +241,7 @@ Compare encoding quality before committing to a full encode:
 1. Select a representative frame or short segment from your source.
 2. Encode it with two different profiles or settings.
 3. View both results side by side in the Comparison view.
-4. Optionally run VMAF/SSIM quality metrics on the comparison.
+4. Optionally run SSIM/PSNR quality metrics on the comparison (for VMAF specifically, use the dedicated Quality Metrics view described below, which runs VMAF, SSIM, and PSNR as separate FFmpeg passes across a whole file).
 
 This feature extracts frames using the Frame Comparison Extractor and displays them in a split-screen view.
 
@@ -251,7 +255,7 @@ This feature extracts frames using the Frame Comparison Extractor and displays t
 - **Fast** — limited only by disk I/O speed.
 - **Useful for** changing containers (e.g., MKV to MP4), adding/removing tracks, or editing metadata.
 
-To remux an entire file (all streams passthrough), use the "Passthrough" profile or select "Copy" for every stream.
+To remux an entire file (all streams passthrough), use the built-in "Remux to MKV" or "Remux to MP4" profile, or select "Copy" for every stream in a custom profile.
 
 ---
 
@@ -276,20 +280,20 @@ MeedyaConverter validates codec/container compatibility and warns when a combina
 
 Generate Apple-compatible HLS packages with:
 
-- Multiple quality variants (adaptive bitrate ladder).
-- Audio and subtitle variant streams.
-- fMP4 or MPEG-TS segment format.
-- Encryption (AES-128, SAMPLE-AES).
-- Master playlist generation.
+- Multiple quality variants (adaptive bitrate ladder), each with its own video/audio bitrate and resolution.
+- MPEG-TS segments for plain HLS; fMP4 segments when you choose CMAF instead (see below) — this is a consequence of the top-level format choice, not a separate per-format toggle.
+- Master playlist (`#EXT-X-STREAM-INF`) generation, listing every variant's bandwidth, resolution, and codec string.
+
+Each variant maps exactly one video track and one audio track from the source (`-map 0:v:0 -map 0:a:0`) — there is currently no multi-audio-track or subtitle variant-stream support in the manifest pipeline. **Segment encryption (AES-128, SAMPLE-AES) is not currently available**: `HLSEncryption` (`Sources/ConverterEngine/FFmpeg/StreamingEnhancements.swift`) implements AES-128-CBC key generation and key-file writing, but nothing in `ManifestGenerator`, `ManifestConfig`, or the `manifest` CLI command calls it — it has no callers anywhere in the codebase.
 
 ### MPEG-DASH
 
 Generate DASH manifests (MPD) with:
 
-- Multiple adaptation sets.
-- On-demand or live profiles.
-- Segment timeline or segment template.
-- CENC encryption.
+- Two adaptation sets per manifest — one video, one audio — each listing every quality variant as a `<Representation>`.
+- Segment template **and** timeline addressing together (`-use_template 1 -use_timeline 1`) — this is fixed, not a choice between the two.
+
+The generated MPD is always `type="static"` (on-demand) — **there is no live/dynamic DASH profile support**. **CENC/DRM encryption is not currently available** the same way HLS encryption isn't: `DRMPreparation` (`Sources/ConverterEngine/Utilities/DRMPreparation.swift`) can build PSSH boxes, CPIX documents, and CENC FFmpeg arguments, but it has no callers — nothing wires it into manifest generation.
 
 ### CMAF (Common Media Application Format)
 
@@ -308,16 +312,9 @@ Use `meedya-convert manifest --dry-run` to preview the FFmpeg commands before en
 
 ## Encoding Pipelines
 
-Encoding pipelines chain multiple encoding steps into a single automated workflow. Each step in a pipeline can have its own profile, filters, and output settings.
+The Pipeline Editor view lets you assemble a sequence of steps — Encode, Extract Thumbnail, Generate Preview GIF, Extract Audio, or Probe/Verify — each with its own profile or step-specific settings, reordered by drag.
 
-Example pipeline:
-
-1. **Step 1:** Encode source to H.265 4K master.
-2. **Step 2:** Downscale master to 1080p H.264 for web delivery.
-3. **Step 3:** Extract audio to FLAC for archival.
-4. **Step 4:** Generate HLS manifest from the web delivery encode.
-
-Pipelines are defined in the Pipeline Editor view and can be saved, shared, and triggered manually or on a schedule.
+**This is currently a builder only, not an automated workflow.** `PipelineExecutor` can build the FFmpeg arguments for a single step, but nothing in the app calls it — there is no "Run Pipeline" action anywhere. The editor's own Save button, as reached from Output Settings, has no save handler wired up, so a pipeline you build there is discarded the moment you close the sheet. Pipelines cannot currently be saved, shared, or triggered manually or on a schedule; Scheduled Encoding (below) schedules a single profile against a single file, not a saved pipeline.
 
 ---
 
@@ -326,7 +323,7 @@ Pipelines are defined in the Pipeline Editor view and can be saved, shared, and 
 Schedule encoding jobs to run at specific times or on a recurring basis:
 
 - **One-time:** Encode at a specified date and time (e.g., overnight for long encodes).
-- **Recurring:** Encode on a cron-like schedule (e.g., every night at 2 AM).
+- **Recurring:** Repeat at a fixed **Daily** or **Weekly** interval from the scheduled time (e.g., every night at 2 AM) — this is a fixed interval, not an arbitrary cron expression.
 - **Watch folder triggered:** Automatically encode files when they appear in a monitored directory.
 
 The Schedule view shows upcoming and completed scheduled jobs with their status.
@@ -377,13 +374,9 @@ Watch folders support recursive monitoring and file extension filters. The Watch
 
 ## Scene Detection
 
-MeedyaConverter can detect scene changes in video content:
+MeedyaConverter can detect scene changes in video content, using FFmpeg's scene-detection filter with a configurable sensitivity threshold. Results appear as a scene list with timestamps and confidence scores in the Scene Detector view, where you can also add or remove markers manually.
 
-- **Chapter generation:** Automatically create chapter markers at scene boundaries.
-- **Keyframe placement:** Align keyframes with scene changes for better seeking and streaming segment alignment.
-- **Segment splitting:** Split a video into individual scenes for separate processing.
-
-Scene detection uses FFmpeg's `scdet` filter with configurable sensitivity thresholds. Results are displayed in the Scene Detector view.
+Detected scenes can be exported as a chapter file in OGM, Matroska (FFmetadata), or similar formats — this is the way to get scene markers into an encode today. **"Apply to Job" is permanently disabled**: `EncodingJobConfig`/`EncodingProfile` have no field for attaching external chapter metadata to a job, so use "Export Chapters" and inject the resulting file into your encoding pipeline manually (e.g. via FFmpeg's `-i chapters.txt -map_metadata 1`). There is no keyframe-alignment or automatic segment-splitting feature.
 
 ---
 
@@ -406,28 +399,19 @@ After encoding, compare the output quality against the source using industry-sta
 - **SSIM** (Structural Similarity Index) — Measures structural similarity. 1.0 = identical.
 - **PSNR** (Peak Signal-to-Noise Ratio) — Traditional quality metric in dB.
 
-Metrics are computed via FFmpeg's `libvmaf` filter and displayed in the Encoding Graphs view.
+VMAF, SSIM, and PSNR are each computed as a separate FFmpeg pass and displayed in the Quality Metrics view (part of the Analysis Hub) — not the Encoding Graphs view, which covers encoding-history statistics instead.
 
 ---
 
-## Content-Aware Encoding
+## Content-Aware Encoding (Not Yet Reachable)
 
-The Content Analyser examines source media to optimise encoding decisions:
-
-- **Complexity analysis:** Detect high-motion and static segments to adjust quality allocation.
-- **Grain/noise detection:** Identify noisy footage that benefits from denoising before encoding.
-- **Crop recommendation:** Detect letterboxing and pillarboxing for optimal cropping.
+`ContentAnalyzer` (`Sources/ConverterEngine/FFmpeg/ContentAnalyzer.swift`) can build FFmpeg arguments for temporal/spatial complexity analysis, classify segments (static/medium/high complexity), and detect film grain — but **there is no view or menu item anywhere in the app that calls it**. Crop/letterbox detection is a separate, genuinely wired-up feature (FFmpeg's `cropdetect`, see [Resolution and Crop](#resolution-and-crop) above) — `ContentAnalyzer` itself has no cropping logic at all.
 
 ---
 
-## AI Upscaling (Experimental)
+## AI Upscaling (Not Yet Reachable)
 
-Upscale lower-resolution content using AI-based super-resolution:
-
-- Scale 720p to 1080p or 1080p to 4K with improved detail.
-- Multiple model options with quality/speed trade-offs.
-
-This feature is experimental and requires compatible hardware. It is implemented in the AI Upscaler module.
+`AIUpscaler` (`Sources/ConverterEngine/FFmpeg/AIUpscaler.swift`) defines three Real-ESRGAN-based models (general-purpose, anime/animation, and a temporally-consistent video model) with configurable scale factors and tiling for AI-based super-resolution — but **there is no view, menu item, or CLI flag anywhere that calls it**. It is backend code only; it cannot currently be used from the app or `meedya-convert`.
 
 ---
 

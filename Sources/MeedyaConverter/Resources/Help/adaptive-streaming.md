@@ -64,12 +64,11 @@ output/
 
 ## Encryption
 
-MeedyaConverter supports **AES-128 encryption** for HLS content:
-
-- Automatic key generation
-- Key URL configuration for your key server
-- IV (Initialization Vector) management
-- Key rotation support
+**Not implemented yet.** The engine has an `HLSEncryption` type that can
+generate an AES-128 key and the matching FFmpeg key-info arguments, but
+nothing in the app calls it and no UI exposes key URL configuration, IV
+management, or key rotation — it is exercised only by its own unit test.
+Generated HLS/DASH output is unencrypted today.
 
 ---
 

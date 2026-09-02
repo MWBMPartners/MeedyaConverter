@@ -8,6 +8,24 @@
 
 Not all audio formats can be converted to/from each other without limitations. This guide documents what conversions are possible, which lose information, and which are not meaningful.
 
+> **What's actually implemented today vs. reference material.** This guide
+> covers the whole spatial-audio format landscape, but MeedyaConverter's
+> shipped audio path only covers **channel-based** conversion: re-encoding,
+> channel remapping, algorithmic downmix, DSD→PCM decode via FFmpeg's
+> `dsd_lsbf` decoder (PCM→DSD is not possible at all — FFmpeg has no DSD
+> encoder, and `AudioCodec.ffmpegEncoder` returns `nil` for `.dsd`
+> accordingly), and MQA unfold. Everything involving **object-based** formats (Atmos, MPEG-H,
+> IAMF, …), **ambisonics** decode/encode/order-conversion, **binaural**
+> rendering, **matrix encoding** embed/preserve/decode, and **virtual
+> surround upmixing** is described below as general format-engineering
+> reference — the engine type these sections were written against
+> (`SpatialAudioConverter`, `MatrixEncodingPreserver`, `SurroundUpmixer`)
+> has zero call sites anywhere in the app, and no view exposes any of this
+> as a setting. Sections below repeat this caveat inline where the false
+> "MeedyaConverter does X" framing was strongest, but treat every ⚠️/✅ cell
+> that isn't plain channel-based re-encoding, remapping, or downmix the
+> same way.
+
 ---
 
 ## Format Categories
@@ -82,7 +100,7 @@ Audio formats fall into distinct categories that determine conversion possibilit
 | From | To | Quality | Notes |
 | ---- | -- | ------- | ----- |
 | DSD → PCM | ✅ Decimation filter | High quality | Standard conversion; choose target sample rate (88.2/176.4/352.8 kHz recommended) |
-| PCM → DSD | ⚠️ Delta-sigma modulation | Variable | Technically possible but controversial; noise shaping required |
+| PCM → DSD | ❌ Not available | — | FFmpeg has no DSD encoder, and MeedyaConverter's codec model reflects that (`AudioCodec.ffmpegEncoder` returns `nil` for `.dsd`) — there is no encode path to offer here, technically-possible-but-controversial arguments aside |
 | DSD → Lossy (AAC, MP3) | ⚠️ Via PCM intermediate | Acceptable | DSD → PCM → lossy encode |
 
 ### Matrix-Encoded Stereo
@@ -121,7 +139,15 @@ Audio formats fall into distinct categories that determine conversion possibilit
 
 ## Matrix Encoding Format Support by Output Codec
 
-When downmixing to stereo, MeedyaConverter can embed matrix encoding metadata in these output formats:
+> **Not implemented.** `MatrixEncodingPreserver` exists in the engine but has
+> zero references anywhere else — not even from `FFmpegArgumentBuilder`'s own
+> downmix path — and no setting exposes it. The tables below describe what
+> matrix encoding embedding *would* look like format-by-format if this
+> shipped; treat them as reference material on the format landscape, not as
+> a description of what MeedyaConverter currently does. Today, downmixing to
+> stereo does not embed or preserve any matrix-encoding flag.
+
+When downmixing to stereo, embedding matrix encoding metadata is possible in these output formats:
 
 | Matrix Method | AC-3 | E-AC-3 | AAC | PCM/WAV | FLAC | ALAC | MP3 | Opus |
 | ------------- | ---- | ------ | --- | ------- | ---- | ---- | --- | ---- |
@@ -130,15 +156,20 @@ When downmixing to stereo, MeedyaConverter can embed matrix encoding metadata in
 | Dolby Digital EX | ✅ `dsurexmod` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | DTS ES Matrix | DTS only | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-> ⚠️ Container tag = Matrix encoding is applied to the audio signal, but the flag is set at the container level (e.g., MKV/MP4 metadata) rather than in the codec bitstream. Not all players read container-level matrix flags.
+> ⚠️ Container tag = matrix encoding applied to the audio signal, with the flag set at the container level (e.g., MKV/MP4 metadata) rather than in the codec bitstream. Not all players read container-level matrix flags.
 
 ---
 
 ## Matrix Encoding Preservation on Transcode
 
-When converting between formats that both support matrix encoding, MeedyaConverter preserves the matrix metadata by default. This ensures that AVR systems can still unfold surround from the transcoded output.
+> **Not implemented** — see the note above. The table below shows what
+> preservation would look like source-to-target if `MatrixEncodingPreserver`
+> were wired up; no version of MeedyaConverter has shipped this yet, so
+> there is no "Setting" to enable.
 
-**Setting:** Enabled by default (app-wide). Configurable per audio track and per-encode.
+If this shipped, converting between formats that both support matrix
+encoding would preserve the matrix metadata, so AVR systems could still
+unfold surround from the transcoded output:
 
 | Source Format | Source Flag | Target Format | Target Flag | Preserved? |
 | ------------- | ---------- | ------------- | ----------- | ---------- |
@@ -149,7 +180,7 @@ When converting between formats that both support matrix encoding, MeedyaConvert
 | AAC | `matrix_mixdown_idx` | AC-3 | `dsurmod` | ✅ Yes |
 | PCM (container tag) | Pro Logic II | AAC | `matrix_mixdown_idx` | ✅ Yes |
 
-> When the target format doesn't support the specific matrix flag at codec level, MeedyaConverter falls back to container-level metadata tagging where possible.
+> Where the target format doesn't support the specific matrix flag at codec level, falling back to container-level metadata tagging would be the plan.
 
 ---
 
@@ -165,17 +196,26 @@ When converting between formats that both support matrix encoding, MeedyaConvert
 
 ## IMAX Enhanced Audio
 
-IMAX Enhanced uses **DTS:X IMAX** — a specific DTS:X profile with IMAX-tuned mastering and metadata. MeedyaConverter supports:
+IMAX Enhanced uses **DTS:X IMAX** — a specific DTS:X profile with IMAX-tuned mastering and metadata.
 
-- Detecting IMAX Enhanced metadata in DTS:X streams
-- Preserving IMAX metadata during passthrough
-- Identifying IMAX-mastered Dolby Vision or HDR10+ video tracks
+> **Not implemented.** `AudioCodec` has an `imaxEnhanced` case purely as a
+> display label ("IMAX Enhanced (DTS:X)") for a stream's reported codec —
+> there is no bitstream inspection that detects the profile, no logic that
+> preserves it specifically during passthrough, and no video-track
+> IMAX-mastering detection anywhere in the engine.
 
 ---
 
 ## Virtual Surround Upmixing
 
-MeedyaConverter can algorithmically upmix stereo or mono audio to multichannel surround. Unlike matrix encoding (which embeds metadata for AVR decoding), this creates actual multichannel audio data — ensuring surround on any playback system, even those without built-in upmixing.
+> **Not implemented.** `SurroundUpmixer` builds the FFmpeg filter arguments
+> described below but has zero callers anywhere else in the app, and no
+> upmix control exists in any view. Everything from here to "Recommendations"
+> below is a description of the upmixing landscape this module was written
+> against, not a shipped MeedyaConverter feature — there is currently no way
+> to upmix stereo/mono to multichannel surround from the app.
+
+If this shipped, MeedyaConverter would algorithmically upmix stereo or mono audio to multichannel surround. Unlike matrix encoding (which embeds metadata for AVR decoding), this creates actual multichannel audio data — ensuring surround on any playback system, even those without built-in upmixing.
 
 ### Available Methods
 
@@ -198,7 +238,7 @@ MeedyaConverter can algorithmically upmix stereo or mono audio to multichannel s
 
 ### Matrix-Guided Surround Expansion
 
-When the source has matrix encoding metadata (Pro Logic II, DTS Neo:6, etc.), MeedyaConverter offers a superior "Matrix Decode" option that uses the embedded surround information to create discrete multichannel audio. This produces significantly better results than blind algorithmic upmixing.
+The design intent: when the source has matrix encoding metadata (Pro Logic II, DTS Neo:6, etc.), a "Matrix Decode" option would use the embedded surround information to create discrete multichannel audio, producing better results than blind algorithmic upmixing. None of this exists in the app today.
 
 | Source Matrix | Decoded Output |
 | ------------- | -------------- |
@@ -209,7 +249,7 @@ When the source has matrix encoding metadata (Pro Logic II, DTS Neo:6, etc.), Me
 | DTS ES Matrix | 6.1 |
 | DTS Neo:6 Cinema/Music | 5.1 or 6.1 |
 
-This option only appears when matrix metadata is detected. Decoded output can be encoded to native Dolby Digital 5.1, DTS 5.1, E-AC-3 7.1, etc.
+Decoded output would be encodable to native Dolby Digital 5.1, DTS 5.1, E-AC-3 7.1, etc. — again, describing intent, not a shipped option.
 
 ### Upmixed Output → Native Surround Codecs
 
@@ -221,11 +261,11 @@ Both virtual upmixing and matrix decode produce standard multichannel PCM, which
 | 6.1 | Dolby Digital EX, DTS ES |
 | 7.1 | E-AC-3, DTS-HD, AAC 7.1 |
 
-### Important Notes
+### Design Notes (Not Yet Built)
 
-- **Upmixing is never auto-enabled** — opt-in per audio track only
-- **Mono sources** — upmix options are hidden/disabled (no stereo image to analyse)
-- **Matrix decode vs blind upmix** — matrix decode is always preferred when metadata exists
+- **Upmixing would not be auto-enabled** — opt-in per audio track only
+- **Mono sources** — upmix options would be hidden/disabled (no stereo image to analyse)
+- **Matrix decode vs blind upmix** — matrix decode would be preferred when metadata exists
 
 ### When to Use Which Method
 
@@ -246,11 +286,10 @@ Both virtual upmixing and matrix decode produce standard multichannel PCM, which
 | -------- | -------------------- |
 | Archive original quality | Passthrough or lossless (FLAC/ALAC/PCM) |
 | Streaming delivery | AAC (stereo/5.1) or Opus (stereo) |
-| Atmos content for streaming | E-AC-3 with JOC (Atmos) or passthrough |
-| Spatial audio for headphones | Binaural render from any spatial source |
+| Atmos content for streaming | Passthrough only — encoding *new* E-AC-3 JOC (Atmos) requires Dolby's proprietary tools, which FFmpeg does not provide; see [Encoding Guide](encoding-guide.md) |
 | Disc authoring (DVD) | AC-3 5.1 or DTS |
 | Disc authoring (Blu-ray) | DTS-HD MA, TrueHD, or LPCM |
-| Downmix for maximum compatibility | Stereo with Pro Logic II metadata |
+| Downmix for maximum compatibility | Plain stereo — matrix-metadata embedding (Pro Logic II) is not implemented; see "Matrix Encoding Format Support" above |
 
 ---
 

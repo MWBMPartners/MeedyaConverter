@@ -2,7 +2,7 @@
 
 # MeedyaConverter -- Project Status
 
-> **Last Updated:** 2026-08-04
+> **Last Updated:** 2026-09-02
 >
 > Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 
@@ -18,6 +18,81 @@
 | **Current Phase** | Phase 16 -- Polish and Distribution (ongoing); GA release engineering |
 | **Next Target** | Cut `v0.1.0-rc.4` for a short soak, then tag `v0.1.0` GA -- Direct distribution only (signed + notarised + stapled `.app` in a `.dmg`, plus a signed/notarised CLI tarball, via GitHub Releases). App Store Lite is explicitly deferred (#392) |
 | **Active Work** | rc.4 soak validation and GA tag prep. Full 19-phase roadmap (Phases 10-18: optical disc, Windows/Linux, image conversion, etc.) continues post-GA per [Project_Plan.md](Project_Plan.md) -- v0.1.0 GA is a release milestone, not "everything in the plan is done" |
+
+---
+
+## Recent milestones (2026-09-01 to 2026-09-02 -- `wip/alpha-consolidation`, continued)
+
+- **CI restored on the working branch (#496)** -- `build.yml` only triggered
+  on push/PR to `main`/`beta`/`alpha`. Because all work happens on the
+  long-lived `wip/**` branch rather than stacked PRs, the moment a PR
+  merged that branch lost every trigger: six commits accumulated with no
+  build and no test run. `'wip/**'` added to the push branch list.
+- **Documentation reconciliation (#497)** -- `docs/api/meedya-http-api.yaml`
+  and its Swagger UI banner stopped describing the (now real) HTTP API as
+  "fabricated"; `meedya-convert serve` documented in the CLI OpenAPI spec
+  and in-app help; `docs/Architecture.md`, `FEATURES.md`, and this file's
+  dead-code tables corrected against the source tree in both directions;
+  two false network-capability claims removed from `docs/Home.md` and
+  `docs/FAQ.md`; README's "landing next" framing corrected to say the PR
+  #472 feature set already shipped in `v0.1.0-alpha.3`.
+- **Metadata search honesty + MusicBrainz Nov 30 verification (#493)** --
+  `SuiteCoreMetadataAdapter.searchViaInline` now throws
+  `SuiteCoreBridgeError.notImplemented(_:)` instead of returning a
+  fabricated empty result; the reported Nov 30 2026 MusicBrainz Solr 10
+  changes (SEARCH-444/642/666/752/764) were fetched and verified
+  first-hand against every MusicBrainz call in the codebase and require
+  no migration.
+- **DR-0001 decided (#494)** -- `docs/decisions/0001-gpl-disc-tools.md`
+  records bundling `cdrdao` / `ddrescue` / `wodim` in the Direct `.dmg`
+  only, under GPLv2 §2 / GPLv3 §5 "mere aggregation" (licence texts + a
+  written source offer, never linked into `ConverterEngine`). The App
+  Store exclusion is a sandbox-entitlement fact -- no raw optical-device
+  entitlement exists -- not a licensing choice, which narrows #494 to "how
+  do we obtain the tools" for the Direct build.
+- **Four reachable screens made to actually do their job (#322, #288,
+  #451, #331)** -- Concatenation's Start action now runs a real FFmpeg
+  encode via `VideoConcatenator.buildDemuxerConcatArguments` (the
+  crossfade/re-encode path stays visibly disabled -- still no caller);
+  Scene Detection now runs ffmpeg and parses real scene timestamps
+  ("Apply to Job" stays disabled, because `EncodingJobConfig` still has
+  nowhere to put chapters); `ScriptingBridge.probe(file:)` no longer
+  blocks a thread on a `DispatchSemaphore` for up to 60s (AppleScript
+  dispatch itself remains unreachable -- the `.sdef` has no `<cocoa>`
+  mappings, #302); toolbar commands and the shortcut editor now share one
+  binding table instead of two that could drift.
+- **Failure-path hooks, hardware kill switch, URL routing, menu bar, nav
+  shortcuts (#277, #475, #356, #281, #331)** -- post-encode hooks now fire
+  `runOnFailure` actions when a job fails, not only on success; "Prefer
+  hardware acceleration" is now applied at all seven of the app's
+  `EncodingJobConfig`-building enqueue paths via a new
+  `HardwareAccelerationPreference` (deliberately excluding the CLI and
+  HTTP API); `meedyaconverter://` URLs other than `profile` now route
+  through the previously-dead `URLSchemeHandler`; `MenuBarController` is
+  now constructed and tracks the Settings toggle live; five `navigate.*`
+  View-menu shortcuts (Cmd+1-5) now exist where none did before.
+- **Bounded-concurrency queue and A/B comparison (#286, #329)** -- the
+  queue runner is now a `TaskGroup`, width defaulted to 1 and
+  entitlement-gated (`.parallelEncoding` requires the `.plus` tier, so
+  `FreeGateProvider` clamps every unentitled install to 1). Three bugs
+  latent in the *sequential* code were fixed along the way: a single
+  shared `activeController` optional that could race `cancelCurrentJob`
+  even today (now a keyed per-job registry); per-instance statistics-store
+  locking that protects nothing across instances (now one serialising
+  `EncodingStatisticsRecorder` actor); and a `PostEncodeHookRunner` actor
+  that was reentrant despite its doc comment promising strict
+  serialisation (now enforced via a chained tail task). **Width > 1 has
+  never been run** -- `swift test` cannot execute in this environment and
+  CI cannot spawn a real multi-job FFmpeg encode, so concurrent execution
+  is unverified at runtime, which is why it ships opt-in and defaulted
+  off. `ComparisonLibraryView` now has a real capture -> persist -> compare
+  loop via the new `ComparisonLibraryManager`, replacing a permanently
+  empty screen with no writer for its entries.
+
+None of the above is in the released `v0.1.0-rc.3` build, and none of it is
+in the `v0.1.0-alpha.3` pre-release either -- every item here landed after
+that tag. See [CHANGELOG.md](CHANGELOG.md)'s `[Unreleased]` section for the
+full per-fix detail.
 
 ---
 
@@ -448,11 +523,12 @@ carried over from an earlier draft):
   document builders with no caller outside their own unit tests
 - **Thumbnail Sprites** -- `ThumbnailSpriteGenerator` is exercised only by
   a unit test; no UI or pipeline calls it
-- **Scene Detection** -- `SceneDetectorView.detectScenes()` builds FFmpeg
-  arguments via `SceneDetector.buildDetectionArguments` but never launches
-  FFmpeg; it logs "Scene detection requested... with N arguments" and
-  immediately clears the in-progress flag. No scene is ever actually
-  detected, despite the view being reachable from the Analysis Hub (#288)
+- **Scene Detection -- "Apply to Job" only** -- superseded in part: since
+  the working-branch fix above, `detectScenes()` runs ffmpeg for real and
+  populates `detectedScenes` with genuine timestamps. What remains
+  scaffolded is "Apply to Job": it stays permanently disabled because
+  `EncodingJobConfig` has nowhere to put chapters, so a detected scene
+  list still cannot flow into an encode (#288 stays open for that reason)
 - **AccurateRip verification / audio disc fidelity** -- `AudioCDReader`
   has zero instantiation call sites; `AccurateRipVerifier`'s API is only
   referenced from a doc comment in `SettingsView.swift`. Falls under the
@@ -496,7 +572,6 @@ carried over from an earlier draft):
   file; `MetadataEditorView` is orphaned; and `MetadataTagEditorView` offers
   no lookup control of any kind. A separate concern from the metadata tag
   *editor*, which now writes tags for real (#467) (#205, #493)
-- **A/B Comparison** -- `ComparisonView` is orphaned (#329)
 - **AI Upscaling** -- `AIUpscaler` is named only in comments at
   `FFmpegBackend.swift:52` and `FFmpegBackendFactory.swift:35`; it has no
   call site (#236, #477)

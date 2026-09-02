@@ -80,7 +80,7 @@ These tools are detected automatically if present on the system PATH or in Homeb
 2. **Import** a media file by dragging it onto the app window or using File > Open.
 3. **Inspect** the source — the Stream Inspector shows all video, audio, and subtitle tracks with their properties.
 4. **Configure** output settings:
-   - Choose an encoding profile (e.g., "H.265 High Quality") or customise settings.
+   - Choose an encoding profile (e.g., "Web High Quality") or customise settings.
    - Select which streams to include, re-encode, or passthrough.
    - Set the output container format.
    - Optionally preview the FFmpeg command that will be generated.
@@ -94,7 +94,7 @@ These tools are detected automatically if present on the system PATH or in Homeb
 meedya-convert probe --input video.mkv
 
 # Encode with a built-in profile
-meedya-convert encode --input video.mkv --output video.mp4 --profile "H.265 High Quality"
+meedya-convert encode --input video.mkv --output video.mp4 --profile "Web High Quality"
 
 # Encode with custom settings
 meedya-convert encode --input video.mkv --output video.mp4 \
@@ -105,7 +105,7 @@ meedya-convert encode --input video.mkv --output video.mp4 \
 meedya-convert profiles --list
 
 # Validate a profile for a specific platform
-meedya-convert validate --profile "H.265 High Quality" --platform iOS
+meedya-convert validate --profile "Web High Quality" --platform iOS
 ```
 
 ---

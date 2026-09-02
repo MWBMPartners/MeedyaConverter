@@ -17,9 +17,9 @@ docs/api/
 ### `meedya-convert-api.yaml` — the CLI
 
 Documents the actual `meedya-convert` command-line tool
-(`Sources/meedya-convert/**`): its six subcommands (`encode`, `probe`,
-`profiles`, `batch`, `manifest`, `validate`), every `@Option`/`@Flag` each
-one accepts, their real defaults and accepted values (verified against the
+(`Sources/meedya-convert/**`): its seven subcommands (`encode`, `probe`,
+`profiles`, `batch`, `manifest`, `validate`, `serve`), every `@Option`/
+`@Flag` each one accepts, their real defaults and accepted values (verified against the
 `ConverterEngine` enums they resolve to, not just the CLI's own `--help`
 text — the two occasionally disagree, and the spec calls that out inline
 where it matters), the JSON shapes the CLI reads and writes (`--json`

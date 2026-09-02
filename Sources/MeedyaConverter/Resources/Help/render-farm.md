@@ -4,28 +4,47 @@
 
 ---
 
-## Overview
+## Status: not usable yet
 
-MeedyaConverter can submit encoding jobs to remote macOS or server agents
-so long-running renders do not block the local machine. Jobs are
-transferred as chunked uploads with per-chunk SHA-256 verification, and
-progress streams back in real time over the same channel.
+Everything on this page describes the **design** for issue #346, not a
+shipped feature. What exists today in `Settings → Render Farm` is a
+configuration screen only:
 
-Introduced in **issue #346**. Available in the Free tier for single-agent
-submission; Pro and Studio tiers add multi-agent parallel submission.
+- You can save transport preferences (chunk size, whether insecure plain
+  HTTP is allowed) and add agents **manually** to a list, persisted as
+  JSON in `UserDefaults`.
+- Bonjour discovery is not active — the agent list's empty state says so
+  directly, and there is no `_meedyaconverter-agent._tcp` advertisement
+  or browser anywhere in the app.
+- There is no **MeedyaConverter Agent** companion app to install on a
+  remote Mac. It doesn't exist yet.
+- `RenderFarmTransportAdapter` — the piece that would actually speak
+  SSH/TLS/HTTP to an agent and move chunks — has no implementation
+  outside its own unit tests (a mock adapter only). Nothing in the app
+  can submit a job to an agent, because there is no agent to submit to
+  and no wire protocol that talks to one.
+- There is no "Run on" menu anywhere in the encode flow, and no
+  licensing tier gates any of this — the Free/Pro/Studio split described
+  in earlier drafts of this page did not correspond to anything in the
+  entitlement system and has been removed.
 
-## Quick start
+The rest of this page is kept as the design reference for #346, so that
+when the transport and agent are built, this document already describes
+the target shape. Read everything below as **planned**, not present.
 
-1. Install the **MeedyaConverter Agent** app on the remote Mac
-   (separate download from the main app)
+## Planned: Quick start
+
+1. Install the MeedyaConverter Agent app on the remote Mac (not yet built)
 2. Start the agent — it will advertise itself via Bonjour as
    `_meedyaconverter-agent._tcp`
 3. On the client, open **Settings → Render Farm**
 4. The discovered agent appears in the list — click **Enable** to
-   register it
-5. When submitting a job, pick the agent from the "Run on" menu
+   register it (today you can add an agent's address manually, but there
+   is nothing on the other end to connect to)
+5. When submitting a job, pick the agent from a "Run on" menu (does not
+   exist yet)
 
-## Transports
+## Planned: Transports
 
 | Transport | When to use | Security |
 |-----------|-------------|----------|
@@ -33,17 +52,20 @@ submission; Pro and Studio tiers add multi-agent parallel submission.
 | TLS | LAN with pinned self-signed cert | Cert fingerprint pinned on first connect |
 | Plain HTTP | Local dev only (requires explicit opt-in) | ⚠️ Unencrypted — avoid |
 
-Plain HTTP is refused unless the client is configured with
-`Settings → Render Farm → Allow insecure transports (development only)`.
+The settings tab already has an "Allow insecure transports (development
+only)" toggle wired to a persisted acknowledgement string, ready for
+whichever transport lands first — but no transport is implemented yet, so
+toggling it changes no actual network behaviour.
 
-## Chunk size and resumability
+## Planned: Chunk size and resumability
 
-Source files are split into 4 MiB chunks by default. Each chunk carries
-its own SHA-256; the agent rejects the upload if any chunk fails to
-verify, and the client automatically retries just the failed chunk
-rather than restarting the whole transfer.
+The intent is to split source files into 4 MiB chunks by default, each
+carrying its own SHA-256, with the agent rejecting a chunk that fails to
+verify and the client retrying just that chunk. `RenderFarmChunk` and the
+chunk-size setting exist as data types/preferences today; the upload path
+that would actually move and verify chunks does not.
 
-## Job lifecycle
+## Planned: Job lifecycle
 
 1. **queued** — job accepted, waiting in the agent's queue
 2. **transferring** — chunks are being uploaded and verified
@@ -52,9 +74,10 @@ rather than restarting the whole transfer.
 5. **completed** — ready for download from the agent
 6. **failed** / **cancelled** — terminal states with error detail
 
-The UI polls the agent for status every 2 seconds during an active job.
+`RenderFarmJobStatus` models these states in the engine already; nothing
+drives a real job through them yet.
 
-## Known limitations
+## Known limitations (once built)
 
 - Agents must be reachable over the network from the client — NAT
   traversal is out of scope

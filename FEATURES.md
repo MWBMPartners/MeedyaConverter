@@ -5,7 +5,7 @@
 > authoritative feature-gap ledger for this product. Updated by the autopilot
 > loop as new gaps surface.
 >
-> **Last reconciled:** 2026-08-04, against the actual call graph on
+> **Last reconciled:** 2026-09-02, against the actual call graph on
 > `wip/alpha-consolidation` (static analysis; no `swift build` available in
 > this environment). See "Known dead / orphaned code" below for items this
 > pass found presented elsewhere in the docs as shipped when they have no
@@ -103,42 +103,51 @@ Code that exists (argument builders, data models, or even reachable UI) but
 has no caller/executor that actually runs it — a `Process` launch or a
 non-test call site outside the defining file. Tracked here so README /
 PROJECT_STATUS don't re-present it as shipped. Verified by grep against
-`wip/alpha-consolidation` on **2026-09-01** (previous pass: 2026-08-04).
+`wip/alpha-consolidation` on **2026-09-02** (previous passes: 2026-09-01,
+2026-08-04).
 
-Three things changed since the 2026-08-04 pass, and the table below reflects
-them: several modules were **deleted outright** by the orphan sweep
-(`af83104`, `7f59196`) and so are no longer "dead code" at all; several
-features were **fixed** by the 2026-08-04 wave and are no longer dead; and the
-metadata-lookup subsystem turns out to be dead **in full**, not partially.
+Since the 2026-09-01 pass: **A/B Comparison** (#329), **Scene Detection**
+(#288), the menu bar (#281), URL-scheme routing (#356), user-assignable
+keyboard shortcuts (#331), post-encode failure hooks (#277) and the hardware
+kill switch (#475) were all wired up and are no longer dead — see the rows
+below for what each one now actually does, and what (if anything) is still
+missing. This pass also found three items presented as shipped elsewhere in
+the docs that have no real implementation at all: matrix-encoding
+preservation, spatial-audio (Atmos/Ambisonics) conversion, and the render-farm
+network transport.
 
 | Feature | Finding | Issue |
 |---------|---------|-------|
 | 3D / Stereoscopic (MV-HEVC, MV-H264) | `Stereo3DConverter` / `Video3DConverter` — zero callers | #477 |
+| Spatial audio conversion (Atmos / Ambisonics / Auro-3D rendering) | `SpatialAudioConverter`, in the same file as `Video3DConverter` above (`Models/SpatialAudioProcessor.swift` — the file name does not match either public type it defines) — zero references outside that file, no UI. See the correction to `docs/Architecture.md`, which previously named a `SpatialAudioProcessor` module that does not exist under that name | *(none filed — found this pass)* |
+| Matrix encoding preservation (Dolby Pro Logic II / DTS Neo:6 metadata on downmix) | `MatrixEncodingPreserver` (`FFmpeg/MatrixEncodingPreserver.swift`) — zero references anywhere outside its own file, not even a call from `FFmpegArgumentBuilder`'s downmix path. No UI exposes it | *(none filed — found this pass)* |
 | Media Metadata **lookup** / auto-tagging | Dead in full: `Sources/ConverterEngine/Metadata/` contains no `URLSession`/`URLRequest`/`JSONDecoder` at all, so every provider (MusicBrainz, TMDB, TVDB, Discogs, FanArt, OpenSubtitles, OMDb) is a URL *builder* only; `AutoTagger` has zero references outside its own file; `MetadataEditorView` is orphaned; `MetadataTagEditorView` has no lookup affordance | #205, #493 |
-| A/B Comparison viewer | `ComparisonView` orphaned | #329 |
+| A/B Comparison viewer | **FIXED** — `ComparisonView` now runs a real capture → persist → compare loop: `ComparisonLibraryView` (reachable from the sidebar) probes source/encoded frame pairs and whole-clip SSIM/PSNR via real `FFmpegProcessController` runs, and `ComparisonLibraryManager` persists entries as JSON so the library survives relaunch | #329 |
 | AI Upscaling | `AIUpscaler` — named only in comments at `FFmpegBackend.swift:52` and `FFmpegBackendFactory.swift:35`; no call site | #236, #477 |
 | Forensic Watermarking | `ForensicWatermark` orphaned | #477 |
 | DCP generator, VVC encoder, TrueHD-MP4 muxer, surround upmixer, speech-to-text, audio fingerprinter, content analyzer | all orphaned | #477 |
-| Vector conversion / ProRes→Vector | arg-builders exist, no executor, no source-file flow | #473 |
+| Vector conversion / ProRes→Vector | arg-builders exist, no executor, no source-file flow; confirmed again this pass — `VectorConversionView` is a settings editor only (no file picker, no "Convert" action) | #473 |
 | Conditional rules | **FIXED** (`27b42dd`) — applied at enqueue, and the rules view is reachable | #469 |
 | Resumable jobs | **Honest-minimal shipped** (`444bde1`) — checkpoints written on cancel/fail, view surfaced, "Resume" relabelled "Re-queue". True seek-resume is still future work | #468 |
-| REST API server mode | **FIXED** (`1773763`) — `meedya-convert serve` starts the real `APIServer`, and all five routes call the real engine. `APIServerView` remains orphaned (no `NavigationItem` case), so the CLI is the only entry point | #355, #448 |
-| Post-encode hook chains | **Mostly fixed** (`3ee5072`) — chain persisted and invoked on completion, watch-folder `postAction` honoured. The failure path (`runOnFailure`) is still not wired | #277 |
-| Disc ripping & authoring | readers/authors orphaned — disc **burning** is real and unaffected | #476 |
-| DRM & Encryption (AES-128 HLS; Widevine/FairPlay/PlayReady) | `HLSEncryption` and `DRMPreparation` — no caller outside their own unit tests | *(none filed — found this pass)* |
+| REST API server mode | **FIXED** (`1773763`) — `meedya-convert serve` starts the real `APIServer`, and all five routes call the real engine. `APIServerView` remains orphaned (no `NavigationItem` case — its only call site is a `#Preview`), so the CLI is the only entry point | #355, #448 |
+| Post-encode hook chains | **FIXED** (`761101c`) — chain persisted and invoked on completion, watch-folder `postAction` honoured, and the failure path now runs too: `AppViewModel`'s failure handler loads the persisted chain and calls `PostEncodeHookRunner.run(..., success: false)`, so `runOnFailure` actions actually fire | #277 |
+| Disc ripping & authoring | readers/authors orphaned — disc **burning** is real and unaffected. Per `docs/decisions/0001-gpl-disc-tools.md` (#494), raw-device imaging is Direct-distribution-only forever regardless of tooling, since the App Sandbox has no raw-optical-device entitlement | #476 |
+| DRM & Encryption (AES-128 HLS; Widevine/FairPlay/PlayReady) | `HLSEncryption` and `DRMPreparation` — no caller outside their own unit tests. `adaptive-streaming.md` and `faq.md` previously described this as shipped; corrected | *(none filed — found this pass)* |
 | Thumbnail Sprites | `ThumbnailSpriteGenerator` — exercised only by a unit test | *(none filed — found this pass)* |
-| Scene Detection | `SceneDetectorView.detectScenes()` builds FFmpeg args but never launches FFmpeg — logs "requested" and returns; reachable from the Analysis Hub but produces no scenes | #288 |
+| Scene Detection | **Mostly fixed** — `SceneDetectorView.detectScenes()` now builds FFmpeg args via `SceneDetector.buildDetectionArguments` and actually runs them through `FFmpegProcessController`, parsing real scene-change timestamps back from the filter's output file. The remaining gap: "Apply to Job" is still permanently disabled, because `EncodingJobConfig` has no field to attach a chapters file to | #288 |
 | AccurateRip verification / audio disc fidelity | `AudioCDReader` has zero instantiation sites; `AccurateRipVerifier` only referenced from a doc comment | *(none filed — found this pass; falls under #476)* |
 | Colour space converter | `ColourSpaceConverter` and `HDRPolicyEngine` were **deleted** (`7f59196`). `ColorSpaceConverter` (US spelling) survives with zero references outside its own file, retained deliberately for a name collision | #477 |
 | Multi-stream selector | **Deleted** (`7f59196`) — no longer in the source tree | #477 |
 | Encoding reports | **Deleted** (`7f59196`) — no longer in the source tree | #477 |
 | Encoding pipelines (generic, user-configurable) | `PipelineEditorView` has no `onSave` wired; `PipelineExecutor` has zero callers anywhere | *(none filed — found this pass)* |
+| Render-farm submission (`meedya-convert` remote agents) | `RenderFarmSettingsTab` and its `RenderFarmClient`/`RenderFarmAgent` scaffolding are real, but `RenderFarmTransportAdapter` — the protocol that would actually talk SSH/TLS/HTTP to an agent — has no concrete implementation anywhere outside unit tests (mock adapter only); Bonjour discovery is not active. The settings tab's own code comments say as much. `render-farm.md` previously documented this as a complete, shipped feature (companion agent app, chunked SHA-256 uploads, live job polling); corrected. Matches the gate ledger above ("In-scope gaps awaiting user approval"), where #346 is still `awaiting-user`, not an approved-and-built feature | #346 |
 
-Also verified dormant on 2026-09-01 — present, compiling, unit-tested where
+Also verified dormant on 2026-09-02 — present, compiling, unit-tested where
 noted, but with **zero references outside their own file**: `ContentAnalyzer`,
 `ForensicWatermark`, `StreamingEnhancements` (which contains `HLSEncryption`
 and `ThumbnailSpriteGenerator`), `HLGToDolbyVision`, `CodecMetadataPreserver`,
-`DRMPreparation`, `Stereo3DConverter`, `SurroundUpmixer`, `AudioFingerprinter`,
+`DRMPreparation`, `Stereo3DConverter`, `SpatialAudioConverter`,
+`MatrixEncodingPreserver`, `SurroundUpmixer`, `AudioFingerprinter`,
 `DiscImager`, `DiscAuthor`, `DVDReader`, `BlurayReader`. The same list appears
 under "Dormant modules" in `docs/Architecture.md`; keep the two in step.
 

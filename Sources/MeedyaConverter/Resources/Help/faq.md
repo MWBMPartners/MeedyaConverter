@@ -19,8 +19,7 @@ Key differences include:
 - **Multiple video streams** — handle files with multiple video tracks
 - **Adaptive streaming** — built-in HLS and MPEG-DASH preparation
 - **Audio normalization** — EBU R128 and ReplayGain support
-- **Cloud upload** — direct upload to 12+ cloud providers
-- **Forensic watermarking** — invisible content protection
+- **Cloud upload** — direct upload to Dropbox, Google Drive, OneDrive, Amazon S3 (and S3-compatible endpoints such as Backblaze B2, Cloudflare R2, or DigitalOcean Spaces), or SFTP
 
 ### Is MeedyaConverter free?
 
@@ -66,7 +65,10 @@ Yes. You can generate HLS (.m3u8), MPEG-DASH (.mpd), or both from a single sourc
 
 ### Can I add encryption to my streams?
 
-Yes. MeedyaConverter supports AES-128 encryption for HLS content with integrated key generation and management.
+Not yet. AES-128 HLS encryption exists in the engine as a configuration
+type with no UI and no call site outside its own unit tests — there is no
+way to turn it on from the app today. Treat this as a roadmap item, not a
+shipped feature.
 
 ---
 

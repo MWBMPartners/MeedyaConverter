@@ -79,16 +79,20 @@ Yes. Use passthrough mode (remux) to copy all streams to a new container without
 | Probe / inspect | Yes | Yes | Yes |
 | Batch encoding | Limited | Yes | Yes |
 | Custom profiles | -- | Yes | Yes |
-| Encoding pipelines | -- | Yes | Yes |
+| Encoding pipelines¹ | -- | Yes | Yes |
 | Scheduled encoding | -- | Yes | Yes |
 | Watch folders | -- | Yes | Yes |
 | Cloud uploads | -- | Yes | Yes |
 | Media server notifications | -- | Yes | Yes |
 | VMAF/SSIM quality metrics | -- | -- | Yes |
-| DCP creation | -- | -- | Yes |
-| AI upscaling | -- | -- | Yes |
+| DCP creation³ | -- | -- | Yes |
+| AI upscaling² | -- | -- | Yes |
 
 Exact tier assignments may change before release.
+
+¹ Entitlement-gated, but not yet functional for anyone at any tier — see "What is an encoding pipeline?" below.
+² Entitlement-gated, but not yet reachable from any UI or CLI at any tier — the upscaling engine exists in `ConverterEngine` with no caller. See the User Guide's AI Upscaling section.
+³ Entitlement-gated, but not yet reachable from any UI or CLI at any tier — `DCPGenerator` exists in `ConverterEngine` with no caller.
 
 ### How do I restore a purchase?
 
@@ -129,7 +133,10 @@ Hardware encoders (VideoToolbox, NVENC) are generally slightly lower quality tha
 
 ### Can I encode multiple files at once?
 
-Yes. The encoding queue supports multiple concurrent jobs (configurable concurrency limit). In the CLI, use `meedya-convert batch` with the `--dir` or `--job-file` options.
+You can always queue multiple files — whether more than one is *encoding at the same time* depends on which tool you use:
+
+- **GUI:** the encoding queue can run more than one job at once, but only when the **Parallel Encoding** entitlement is active and the Max Concurrent Jobs setting is raised above its default of 1. Without both, the queue is strictly sequential — one job encodes at a time.
+- **CLI:** `meedya-convert batch` (with `--dir` or `--job-file`) is a convenience for encoding many files or jobs in a single invocation, not concurrent encoding — both modes process every file/job strictly one after another. There is currently no CLI flag for concurrent batch encoding; run several `meedya-convert encode`/`batch` processes in parallel yourself (e.g. with `xargs -P` or `&` background jobs) if you want that.
 
 ### Can I estimate file size before encoding?
 
@@ -141,7 +148,7 @@ Yes. MeedyaConverter provides file size estimation based on target bitrate, CRF 
 
 ### What is an encoding pipeline?
 
-An encoding pipeline chains multiple encoding steps into a single automated workflow. For example, you could encode a source to a 4K master, then downscale to 1080p for web, extract audio to FLAC, and generate HLS manifests -- all in one pipeline.
+A pipeline is a sequence of steps (encode, extract thumbnail, generate preview GIF, extract audio, probe/verify) that you assemble in the Pipeline Editor. **It's a builder only today, not an automated workflow** — nothing in the app currently executes a saved pipeline, and the editor's Save action has no handler wired up, so a pipeline you build is discarded when you close the editor. See the User Guide's [Encoding Pipelines](User-Guide#encoding-pipelines) section for the details.
 
 ### Can I schedule encodes for later?
 

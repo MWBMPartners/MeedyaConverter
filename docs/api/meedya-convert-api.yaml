@@ -70,6 +70,22 @@
 #     --ladder-file.
 # See the "Known CLI quirks" section and each path's parameter
 # descriptions below for the corrected per-flag detail.
+#
+# Updated: 2026-09-02 — spot-checked every path's parameters against the
+# current `@Option`/`@Flag` declarations in Sources/meedya-convert/Commands/
+# and the enums under components/schemas against their ConverterEngine
+# sources; `/serve` (added 2026-09-01, #497) confirmed still accurate.
+# Two drifts found and fixed:
+#   - `info.description` still said "six subcommands" — stale since #497
+#     added `/serve` as a seventh path in this same document without
+#     updating this count. Corrected to seven.
+#   - The `/validate` path's `--profile` parameter description still said
+#     it "searches EncodingProfile.builtInProfiles only, not user-saved
+#     profiles" — stale since #489 (noted correctly in the changelog above,
+#     just not carried into that parameter's own description).
+#     `ValidateCommand.validateNamedProfile` resolves built-ins first, then
+#     `EncodingProfileStore().profile(named:)`, same as `--profile-file`'s
+#     siblings; corrected to match.
 # ============================================================================
 
 openapi: 3.1.0
@@ -80,9 +96,9 @@ info:
     Command-line interface for MeedyaConverter media conversion toolkit.
 
     `meedya-convert` is a headless CLI tool built with Swift Argument Parser.
-    It provides six subcommands: encode, probe, profiles, batch, manifest,
-    and validate. Designed for CI/CD pipelines, batch processing, shell
-    scripting, and remote encoding over SSH.
+    It provides seven subcommands: encode, probe, profiles, batch, manifest,
+    validate, and serve. Designed for CI/CD pipelines, batch processing,
+    shell scripting, and remote encoding over SSH.
 
     **Root command:**
     ```
@@ -1050,7 +1066,7 @@ paths:
         - name: --profile
           in: query
           required: false
-          description: Validate a named built-in encoding profile (searches `EncodingProfile.builtInProfiles` only, not user-saved profiles).
+          description: "Validate a named encoding profile. As of #489, resolved case-insensitively against `EncodingProfile.builtInProfiles` FIRST, then `EncodingProfileStore().profile(named:)` — the same order `encode --profile` and `profiles --show` use — so a profile imported via `profiles --import` is found here too. Previously (pre-#489) this searched `EncodingProfile.builtInProfiles` only."
           schema:
             type: string
 
