@@ -251,8 +251,19 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   was the only live entry). Views/routing kept for re-enable. `NavigationItemAvailabilityTests` guards it.
   Re-enable gated on bundling tracing tools (#494/MeedyaDL-Tools; refs #376/#377/#402/#404).
 
-**Round-2 remaining (ranked):** #278 pipeline editor, #302 AppleScript activation, #288 chapters.
-(Done this pass: #482 conflicts, #286 throughput, #298 watermarks, #335 multi-output, #473 vector.)
+- **#278 pipeline editor — DONE (epic left OPEN)** (`93a1b49`). `buildStepArguments` had no caller,
+  editor only previewed, `onSave` was nil. New `EncodingPipelineExecutor` (mirrors #370): pure
+  `resolve` (threads a "current media" through steps; `.encode` = transform via full profile-aware
+  `EncodingJobConfig.buildArguments()`; extract/probe = side deliverables), `intermediateOutputs`
+  (only *superseded* transform outputs), `execute` (in-order, halt-on-fail rethrowing tool stderr,
+  cancellation-aware, success-only cleanup honouring `cleanIntermediateFiles`). Injectable
+  `PipelineStepRunning`; real `FFmpegPipelineStepRunner` (ffmpeg via controller, ffprobe stdout->file).
+  `AppViewModel.savedPipelines` (JSON/UserDefaults) + save/delete/`runPipeline`; editor "Run..." button;
+  `OutputSettingsView` passes `onSave`. `EncodingPipelineExecutorTests` (mock runner). Epic OPEN —
+  drag-drop graph, branching, per-step progress bars, template sharing remain.
+
+**Round-2 remaining (ranked):** #302 AppleScript activation, #288 chapters. (Done this pass: #482
+conflicts, #286 throughput, #298 watermarks, #335 multi-output, #473 vector, #278 pipeline editor.)
 
 ---
 
