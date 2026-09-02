@@ -178,6 +178,13 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// VBV buffer size in bits (for CVBR mode).
     public var videoBufferSize: Int?
 
+    // MARK: - Watermark (Issue #298)
+
+    /// An optional text or image watermark drawn on the final video frame.
+    /// Applied single-pass via the `-vf` chain by `toArgumentBuilder`. Nil =
+    /// no watermark. Optional, so profiles saved before #298 decode cleanly.
+    public var watermark: OverlayWatermarkConfig?
+
     // MARK: - Initialiser
 
     public init(
@@ -221,7 +228,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         perStreamSettings: PerStreamSettings? = nil,
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
-        videoBufferSize: Int? = nil
+        videoBufferSize: Int? = nil,
+        watermark: OverlayWatermarkConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -264,6 +272,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.containerFormat = containerFormat
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
         self.videoBufferSize = videoBufferSize
+        self.watermark = watermark
     }
 
     // MARK: - Computed Properties
@@ -382,6 +391,9 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
                 }
             }
         }
+
+        // Watermark overlay (Issue #298)
+        builder.watermark = watermark
 
         // Container
         builder.containerFormat = containerFormat

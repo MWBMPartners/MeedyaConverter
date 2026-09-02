@@ -55,9 +55,88 @@ struct WatermarkView: View {
             positionSection
             adjustmentSection
             previewSection
+            applySection
         }
         .formStyle(.grouped)
         .navigationTitle("Watermark Overlay")
+        .onAppear(perform: loadFromProfile)
+        // Re-sync the form if the user switches the active profile while this
+        // editor is on screen, so it always reflects the profile it writes to.
+        .onChange(of: viewModel.selectedProfile.id) { _, _ in loadFromProfile() }
+    }
+
+    // MARK: - Apply / Persist (Issue #298)
+
+    /// Whether the form currently describes a usable watermark.
+    private var configIsValid: Bool {
+        switch watermarkType {
+        case .text:  return !watermarkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .image: return !imagePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// Whether the active profile already carries a watermark.
+    private var profileHasWatermark: Bool {
+        viewModel.selectedProfile.watermark != nil
+    }
+
+    /// Section binding the editor to the active encoding profile: this is
+    /// what turns the live preview into a watermark the encoder actually
+    /// applies (Issue #298 — the view previously previewed a filter string
+    /// that never reached an encode).
+    @ViewBuilder
+    private var applySection: some View {
+        Section("Apply to Profile") {
+            LabeledContent("Profile", value: viewModel.selectedProfile.name)
+
+            HStack {
+                Image(systemName: profileHasWatermark
+                      ? "checkmark.seal.fill" : "seal")
+                    .foregroundStyle(profileHasWatermark ? .green : .secondary)
+                Text(profileHasWatermark
+                     ? "This profile has a watermark. Encodes using it are watermarked."
+                     : "No watermark on this profile yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button("Apply Watermark to Profile", action: applyToProfile)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!configIsValid)
+
+                Button("Remove Watermark", role: .destructive, action: removeFromProfile)
+                    .disabled(!profileHasWatermark)
+            }
+
+            if watermarkType == .image && !configIsValid {
+                Text("Choose a watermark image before applying.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    /// Populate the form from the active profile's stored watermark (if any).
+    private func loadFromProfile() {
+        guard let wm = viewModel.selectedProfile.watermark else { return }
+        watermarkType = wm.type
+        watermarkText = wm.text ?? watermarkText
+        imagePath = wm.imagePath ?? ""
+        position = wm.position
+        opacity = wm.opacity
+        scale = wm.scale
+        margin = Double(wm.margin)
+    }
+
+    /// Persist the current form as the active profile's watermark.
+    private func applyToProfile() {
+        viewModel.selectedProfile.watermark = buildConfig()
+    }
+
+    /// Clear the active profile's watermark.
+    private func removeFromProfile() {
+        viewModel.selectedProfile.watermark = nil
     }
 
     // MARK: - Type Selection

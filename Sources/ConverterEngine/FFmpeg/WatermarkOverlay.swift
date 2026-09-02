@@ -51,7 +51,7 @@ public enum WatermarkPosition: String, Codable, Sendable, CaseIterable {
 /// Supports both text and image watermarks with configurable position,
 /// opacity, scale, and margin. Text watermarks also accept font size
 /// and colour parameters via the FFmpeg `drawtext` filter.
-public struct OverlayWatermarkConfig: Codable, Sendable {
+public struct OverlayWatermarkConfig: Codable, Sendable, Equatable, Hashable {
 
     /// Whether this is a text or image watermark.
     public var type: WatermarkType
@@ -269,6 +269,89 @@ public struct WatermarkOverlay: Sendable {
         }
 
         return args
+    }
+
+    // MARK: - Video-Filter-Chain Composition (Issue #298)
+
+    /// Fold this watermark into an existing simple `-vf` video filter chain,
+    /// returning the combined chain. This is the single-pass path the real
+    /// encode uses (via `FFmpegArgumentBuilder`), as opposed to the
+    /// standalone `build*WatermarkArguments` helpers.
+    ///
+    /// The watermark is drawn **last**, on top of whatever `existingChain`
+    /// produced (crop, scale, tone-map, …), so it lands on the final
+    /// composited frame at output resolution.
+    ///
+    /// - **Text** — appends a `drawtext` filter to the comma chain; no extra
+    ///   input, no graph labels.
+    /// - **Image** — uses the `movie` *source* filter to pull the logo into
+    ///   the same simple filtergraph, so no second `-i` input and no `-map`
+    ///   rewrite are needed. The main video is referenced by the simple
+    ///   filtergraph's `[in]` pad and the result is emitted on `[out]`:
+    ///   ```
+    ///   movie='logo.png',scale=…,format=rgba,colorchannelmixer=aa=A[wm];
+    ///   [in]<existingChain>[base];[base][wm]overlay=X:Y[out]
+    ///   ```
+    ///   When `existingChain` is empty the `[base]` stage is skipped and the
+    ///   main video flows straight into the overlay: `[in][wm]overlay=…[out]`.
+    ///   An image watermark with no `imagePath` is a no-op (returns
+    ///   `existingChain` unchanged), matching the argument-array helpers.
+    ///
+    /// - Parameters:
+    ///   - existingChain: The comma-joined simple filter chain to build on
+    ///     (may be empty).
+    ///   - config: The watermark configuration.
+    /// - Returns: The combined `-vf` string.
+    public static func appendToVideoFilterChain(
+        _ existingChain: String,
+        config: OverlayWatermarkConfig
+    ) -> String {
+        switch config.type {
+        case .text:
+            let drawtext = buildTextWatermarkFilter(config: config)
+            return existingChain.isEmpty ? drawtext : "\(existingChain),\(drawtext)"
+
+        case .image:
+            guard let imagePath = config.imagePath, !imagePath.isEmpty else {
+                // No image selected — leave the chain untouched rather than
+                // emit a filtergraph that references a non-existent input.
+                return existingChain
+            }
+
+            let scaleStr = String(format: "%.2f", config.scale)
+            let alphaStr = String(format: "%.2f", config.opacity)
+            let (xExpr, yExpr) = overlayPositionExpressions(
+                position: config.position,
+                margin: config.margin
+            )
+
+            // `movie` is a *source* filter (no input pad), so it lives in its
+            // own chain and hands the prepared logo to the overlay via [wm].
+            let movieChain = "movie=\(escapeFilterPath(imagePath))"
+                + ",scale=iw*\(scaleStr):ih*\(scaleStr)"
+                + ",format=rgba,colorchannelmixer=aa=\(alphaStr)[wm]"
+
+            if existingChain.isEmpty {
+                return "\(movieChain);[in][wm]overlay=x=\(xExpr):y=\(yExpr)[out]"
+            } else {
+                return "\(movieChain);[in]\(existingChain)[base];"
+                    + "[base][wm]overlay=x=\(xExpr):y=\(yExpr)[out]"
+            }
+        }
+    }
+
+    /// Escape a filesystem path for use as an FFmpeg filtergraph option value.
+    ///
+    /// The path is wrapped in single quotes, which — because arguments are
+    /// passed to FFmpeg via `argv` (there is no shell) — protects every
+    /// filtergraph metacharacter (`: , ; [ ] =` and spaces) at once. Inside a
+    /// single-quoted FFmpeg string the only special character is the single
+    /// quote itself; it is emitted by closing the quote, adding an escaped
+    /// bare quote, and reopening — the `'\''` idiom. Backslashes are literal
+    /// inside the quotes and are deliberately left untouched.
+    private static func escapeFilterPath(_ path: String) -> String {
+        let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+        return "'\(escaped)'"
     }
 
     // MARK: - Private Helpers

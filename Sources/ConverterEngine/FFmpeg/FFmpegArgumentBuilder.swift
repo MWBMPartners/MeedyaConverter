@@ -322,6 +322,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Video filter chain string (e.g., "scale=1920:1080,tonemap=hable").
     public var videoFilterChain: String?
 
+    /// An optional watermark (text or image) drawn on top of the final
+    /// composited video frame. Folded into the `-vf` chain as its last stage
+    /// by `buildVideoFilterChain()` — see `WatermarkOverlay
+    /// .appendToVideoFilterChain(_:config:)`. Ignored for passthrough video
+    /// (a copied stream cannot be filtered). Issue #298.
+    public var watermark: OverlayWatermarkConfig?
+
     /// Audio filter chain string (e.g., "loudnorm=I=-14").
     public var audioFilterChain: String?
 
@@ -480,7 +487,16 @@ public struct FFmpegArgumentBuilder: Sendable {
             filters.append(buildPQToHLGFilter())
         }
 
-        return filters.joined(separator: ",")
+        let base = filters.joined(separator: ",")
+
+        // Watermark overlay (Issue #298) — drawn last, on the final frame.
+        // Skipped for passthrough: a copied video stream is not re-encoded,
+        // so it cannot carry a filter.
+        if let watermark, !videoPassthrough {
+            return WatermarkOverlay.appendToVideoFilterChain(base, config: watermark)
+        }
+
+        return base
     }
 
     /// Build the zscale/tonemap filter chain for HDR → SDR conversion.
