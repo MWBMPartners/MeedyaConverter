@@ -290,6 +290,10 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   [[verification-gates-and-what-cannot-be-tested]]: always check `gh run` after pushing test-bearing
   commits, since `swift test` can't run locally.
 
+- **New standing rule (2026-09-02, user directive): monitor CI after every push/sync/PR, stay until
+  green, fix reds immediately.** Codified as `standing_tasks.md` §15 + folded into W5 step 1 + memory
+  [[always-monitor-ci-after-push]]. This closes the process gap that let CI stay red from #468 onward.
+
 **Round-2 register: COMPLETE.** All eight worked this session — #482 conflicts, #286 throughput, #298
 watermarks, #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript/JXA, #288 chapters.
 Six are epics left OPEN with detailed acceptance-criteria checklists in their issue comments (the

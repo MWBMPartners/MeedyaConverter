@@ -4,7 +4,7 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-01 (second pass — verification gates + read-only sibling repos added)
+> Last updated: 2026-09-02 (§15 — monitor CI/checks after every push/sync/PR, stay until green)
 
 ## Mandatory Post-Action Tasks
 
@@ -135,6 +135,27 @@ erode when incremental ticking is impractical.
   - **OpenSSF Scorecard** advisories surfaced in the dependency-review comment — address where actionable
 - Applies regardless of session, branch, or task. If a security check fails or a scanning alert appears, treat it like any CI failure: investigate, fix, re-run to green.
 
+### 15. Monitor CI / checks after EVERY push, sync, or PR — stay until green
+
+- After ANY `git push`, branch sync, or PR raise/update, **do NOT walk away or start
+  unrelated work** — stay and watch the checks the push triggered through to
+  completion (`gh run watch <id> --exit-status`, or poll
+  `gh run list --branch <branch>`). A push is not "done" until its run is green.
+- Treat a red run as an **immediate** task: open the failed job log
+  (`gh run view <id> --log-failed`), find the real cause, fix it (code *or* test),
+  re-push, and watch again — before moving on to anything else.
+- Applies to **every** check a push triggers — CI Build & Test, CodeQL / code
+  scanning, actionlint / Lint Workflows, Dependency Review, `security-check`
+  pin-hygiene, TestFlight / release gates — not just Build & Test. §14 is the
+  security-specific subset of this rule.
+- **CI is the only test gate here** (`swift test` cannot run locally — see W10):
+  a green local `swift build` does NOT prove tests pass. Never declare "CI green"
+  from a compile; confirm the actual run's conclusion.
+- **Rationale (learned 2026-09-02):** CI on the working branch went red and stayed
+  red across many commits because a test regression was pushed without watching the
+  run. Monitoring each push surfaces a break in ONE iteration, not N commits later.
+
+
 ## Code Standards (Apply to All Code)
 
 - Detailed comments/annotations on every code block (not abbreviated)
@@ -207,7 +228,8 @@ erode when incremental ticking is impractical.
 ### W5. Steps after EACH task
 
 1. **Commit and push** the work to the single working branch that will eventually
-   target `alpha` (currently `wip/alpha-consolidation`).
+   target `alpha` (currently `wip/alpha-consolidation`), **then stay and watch the
+   triggered CI run to green (§15)** — a red run is fixed before moving on.
 2. **Update the relevant GitHub Issue(s) individually** for that task (progress
    comment, tick acceptance-criteria boxes, close only when truly satisfied).
 3. **Update Claude memory & context** in `.claude/`.
