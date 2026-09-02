@@ -401,6 +401,13 @@ final class AppViewModel {
     /// to unrelated future jobs.
     var pendingManualCropFilter: String?
 
+    /// A scene-detected FFmetadata chapters file staged by `SceneDetectorView`
+    /// (Issue #288), consumed by the next `enqueueSelectedFile()` — which sets
+    /// it on the job's `externalChaptersFile` so the chapters are embedded into
+    /// the encode — then cleared so it does not silently attach to unrelated
+    /// future jobs. Mirrors `pendingManualCropFilter`.
+    var pendingChaptersFile: URL?
+
     // MARK: - Hardware Encoding (Phase 3.10)
 
     /// Discovered hardware encoders on this system.
@@ -1011,6 +1018,14 @@ final class AppViewModel {
         // strategies had nothing to sort by and silently left the order
         // unchanged.
         config.estimatedSourceDuration = file.duration
+
+        // Embed scene-detected chapters if one was staged (#288), then clear it
+        // so it does not attach to a later, unrelated job.
+        if let chapters = pendingChaptersFile {
+            config.externalChaptersFile = chapters
+            appendLog(.info, "Embedding chapters from \(chapters.lastPathComponent)", category: .encoding)
+            pendingChaptersFile = nil
+        }
 
         engine.queue.addJob(config)
         appendLog(.info, "Queued: \(file.fileName) with profile \"\(effectiveProfile.name)\"")

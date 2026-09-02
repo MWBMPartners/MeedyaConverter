@@ -309,6 +309,14 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// and all other stream/container metadata unless overridden in the UI.
     public var copySourceMetadata: Bool = true
 
+    /// An optional external FFmetadata chapters file to embed into the output
+    /// (Issue #288). When set, it is added as the last `-i` input and the
+    /// output's chapters are mapped from it (`-map_chapters <its index>`)
+    /// instead of copied from the source — so scene-detected chapters can be
+    /// baked into the encode. Nil = source chapters (the default). The file is
+    /// added purely for its chapters; none of its streams are mapped.
+    public var externalChaptersFile: URL?
+
     // MARK: - Metadata
 
     /// Metadata key-value pairs to write to the output file.
@@ -397,6 +405,13 @@ public struct FFmpegArgumentBuilder: Sendable {
             args.append(contentsOf: ["-i", replacement.path])
         }
 
+        // --- External chapters input (Issue #288) ---
+        // Added LAST, after subtitle replacements, so their input indices
+        // (1 + additionalInputs.count + replacementOrdinal) are unaffected.
+        if let chapters = externalChaptersFile {
+            args.append(contentsOf: ["-i", chapters.path])
+        }
+
         // --- Stream mapping ---
         args.append(contentsOf: buildStreamMapping())
 
@@ -406,7 +421,16 @@ public struct FFmpegArgumentBuilder: Sendable {
         // are applied separately via buildMetadataArguments().
         if copySourceMetadata {
             args.append(contentsOf: ["-map_metadata", "0"])
-            args.append(contentsOf: ["-map_chapters", "0"])
+            if externalChaptersFile != nil {
+                // Chapters come from the external FFmetadata input, not source.
+                args.append(contentsOf: ["-map_chapters", "\(externalChaptersInputIndex)"])
+            } else {
+                args.append(contentsOf: ["-map_chapters", "0"])
+            }
+        } else if externalChaptersFile != nil {
+            // Chapters explicitly requested even though source metadata is not
+            // being copied wholesale.
+            args.append(contentsOf: ["-map_chapters", "\(externalChaptersInputIndex)"])
         }
 
         // --- Video codec and quality ---
@@ -644,6 +668,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// `subtitleStreamActions`. Used by `build()` to emit the matching
     /// `-i` arguments and by `buildSubtitleStreamActionMapping()` to
     /// reason about input indices.
+    /// The FFmpeg `-i` index of `externalChaptersFile` (Issue #288). It is
+    /// emitted after `inputURL` (0), `additionalInputs`, and every subtitle
+    /// replacement input, so its index is one past all of them.
+    private var externalChaptersInputIndex: Int {
+        1 + additionalInputs.count + subtitleReplacementInputs.count
+    }
+
     private var subtitleReplacementInputs: [URL] {
         subtitleStreamActions.compactMap { entry in
             if case .replaceWith(let url) = entry.action { return url }

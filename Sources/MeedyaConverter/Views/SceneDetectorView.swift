@@ -52,26 +52,13 @@ struct SceneDetectorView: View {
     /// `AnimatedImageView.currentController`.
     @State private var currentController: FFmpegProcessController?
 
-    /// Why "Apply to Job" is permanently disabled (Issue #288).
-    ///
-    /// `EncodingJobConfig`/`EncodingProfile` (`ConverterEngine/Encoding
-    /// /EncodingJob.swift`, `EncodingProfile.swift`) have no field for
-    /// attaching an external chapters/FFmetadata file to a job — the
-    /// closest mechanisms are `EncodingJobConfig.extraArguments` /
-    /// `FFmpegArgumentBuilder.additionalInputs`, but `FFmpegArgumentBuilder
-    /// .build()` already hard-codes `-map_chapters 0` whenever
-    /// `copySourceMetadata` is true (its default), and nothing exposes an
-    /// override for that from `EncodingJobConfig`. There is also no
-    /// live "current job" object in `AppViewModel` for this view to reach
-    /// into: jobs are materialised only once, inside
-    /// `AppViewModel.enqueueSelectedFile()`, built fresh from
-    /// `selectedFile` + `selectedProfile` at that moment. Wiring this up
-    /// properly needs a staged value on `AppViewModel` — mirroring
-    /// `pendingManualCropFilter` — consumed there, which is out of this
-    /// view's scope. Rather than fake success (the original bug), the
-    /// button stays disabled and honestly labelled until that lands.
-    private let applyToJobUnavailableReason =
-        "Chapters can't be attached to a job yet — the encoding job model has no field for external chapter metadata. Use \"Export Chapters\" above and inject the file manually."
+    /// Explains the "Embed in Next Encode" action (Issue #288). The chapters
+    /// are staged as an FFmetadata file on `AppViewModel.pendingChaptersFile`
+    /// (mirroring `pendingManualCropFilter`); the next `enqueueSelectedFile()`
+    /// sets it on the job's `externalChaptersFile`, and `FFmpegArgumentBuilder`
+    /// adds it as an input and maps chapters from it instead of the source.
+    private let applyToJobHint =
+        "Stages these chapters as FFmetadata to be embedded into the next encode of the selected file."
 
     // MARK: - Body
 
@@ -401,22 +388,20 @@ struct SceneDetectorView: View {
 
                         Spacer()
 
-                        // Permanently disabled — see `applyToJobUnavailableReason`.
-                        // `EncodingJobConfig`/`EncodingProfile` have no field to
-                        // carry external chapter metadata into an encode, so this
-                        // is left honestly non-functional rather than logging a
-                        // fake "applied" message (the original issue #288 bug).
+                        // Staged into the next encode (#288): EncodingJobConfig
+                        // now carries an externalChaptersFile, consumed by
+                        // enqueueSelectedFile via AppViewModel.pendingChaptersFile.
                         Button {
-                            // Intentionally empty: permanently disabled below.
+                            embedChaptersInNextEncode()
                         } label: {
-                            Label("Apply to Job (Unavailable)", systemImage: "exclamationmark.circle")
+                            Label("Embed in Next Encode", systemImage: "text.insert")
                         }
-                        .disabled(true)
-                        .help(applyToJobUnavailableReason)
-                        .accessibilityLabel(applyToJobUnavailableReason)
+                        .disabled(detectedScenes.isEmpty || viewModel.selectedFile == nil)
+                        .help(applyToJobHint)
+                        .accessibilityLabel("Embed chapters into the next encode")
                     }
 
-                    Text(applyToJobUnavailableReason)
+                    Text(applyToJobHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -630,6 +615,31 @@ struct SceneDetectorView: View {
     /// Remove scenes at the given index set (for false positive removal).
     private func removeScenes(at indexSet: IndexSet) {
         detectedScenes.remove(atOffsets: indexSet)
+    }
+
+    /// Stage the detected chapters (as an FFmetadata file) so the next encode
+    /// of the selected file embeds them (Issue #288). FFmetadata specifically —
+    /// that is the format `FFmpegArgumentBuilder` maps chapters from as an input
+    /// — regardless of the export-format picker above (which is for the on-disk
+    /// Export Chapters action). The temp file is consumed and cleared by
+    /// `AppViewModel.enqueueSelectedFile()`.
+    private func embedChaptersInNextEncode() {
+        guard !detectedScenes.isEmpty else { return }
+        let content = SceneDetector.generateChapterFile(scenes: detectedScenes, format: .ffmetadata)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meedya-chapters-\(UUID().uuidString).txt")
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            viewModel.pendingChaptersFile = url
+            viewModel.appendLog(
+                .info,
+                "Staged \(detectedScenes.count) chapters to embed into the next encode",
+                category: .general
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to stage chapters: \(error.localizedDescription)"
+        }
     }
 
     /// Export the generated chapter file to disk.

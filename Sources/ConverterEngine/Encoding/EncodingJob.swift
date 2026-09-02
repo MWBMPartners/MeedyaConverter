@@ -138,6 +138,14 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// `nil` = unknown (duration strategies sort such jobs to the end).
     public var estimatedSourceDuration: TimeInterval? = nil
 
+    /// An optional external FFmetadata chapters file to embed into the output
+    /// (Issue #288). Populated at enqueue from scene-detected chapters
+    /// (SceneDetectorView → AppViewModel.pendingChaptersFile). Threaded to the
+    /// argument builder in `buildArguments()`. `nil` = keep the source's
+    /// chapters. A post-construction default (like `estimatedSourceDuration`),
+    /// so it is optional in Codable and needs no init change.
+    public var externalChaptersFile: URL? = nil
+
     public init(
         id: UUID = UUID(),
         inputURL: URL,
@@ -192,6 +200,9 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         // Apply metadata
         builder.metadata = outputMetadata
         builder.streamMetadata = streamMetadata
+
+        // External chapters to embed (Issue #288)
+        builder.externalChaptersFile = externalChaptersFile
 
         // Apply filter overrides
         if let vf = videoFilterChain {
