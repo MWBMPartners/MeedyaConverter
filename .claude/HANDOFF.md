@@ -192,21 +192,11 @@ running. Next session: pick up the list below in order. Each piece: verify vs co
 gate (`swift build --target ConverterEngine` + the `#Preview`-filtered whole-package build) → write test →
 commit → update its GitHub issue → append here → push → **watch CI green before the next push** (§15).
 
-**A. Three remaining quick-fixes (precise findings already captured — implement directly):**
-1. **Background Removal — single-image save (Issue #300).** `BackgroundRemovalView` single-image path
-   (`processImages()`, `selectedImageURLs.count == 1`) sets `processedImage` (preview) but offers **no way to
-   save it to disk**; the batch path already saves to a chosen dir. `UniformTypeIdentifiers` is already
-   imported. Plan: add `@State processedImageData: Data?` (+ source URL for a default filename), set it
-   alongside `processedImage` in the single branch, reset it wherever `processedImage` resets
-   (`chooseSingleImage`/`chooseBatchImages`), add a "Save…" button in the `GroupBox("Result")` (shown when
-   data != nil) → `NSSavePanel` with the correct default extension + `allowedContentTypes` (png/jpeg/tiff via
-   `config.outputFormat`) writing the raw `data` (don't re-encode the NSImage). `processImage(...)` returns
-   `Data` in `config.outputFormat`; `ImageFormat.fileExtension` maps png→png, jpeg→**jpg**, tiff→tiff.
-   **Also fix a false comment:** `BackgroundRemover.swift:~237-240` (inside `batchRemoveBackgrounds`) says the
-   sanitisation "mirrors the fix already applied to the single-image path in `BackgroundRemovalView`" — there
-   is no single-image save path in the view; the sanitisation is in the view's **batch** path (`batchProcess`,
-   `\(baseName)_nobg.\(ext)`). Reword to reference the batch path (and note `batchRemoveBackgrounds` has no
-   caller — the view calls `removeBackground` per file).
+**A. Remaining quick-fixes (precise findings already captured — implement directly):**
+1. ~~**Background Removal — single-image save (Issue #300).**~~ **DONE — `4ba5e62`, CI GREEN.** Added a
+   "Save…" button in the Result box → `NSSavePanel` writing the exact encoded bytes (alpha preserved), name
+   `<source>_nobg.<ext>`, F-002 sanitised; fixed the false comment in `BackgroundRemover.batchRemoveBackgrounds`
+   (grep-verified it has no caller). #300 (closed epic) commented.
 2. **Storage Analysis — real ffprobe.** (Fable-specced in the earlier plan: `StorageAnalyzer.analysis(from:base:)`
    + `probeFiles(_:ffprobePath:maxConcurrency:progress:)` async; `StorageAnalysisView` `probeProgress`.)
    Replace filename-guess sizing with real `ffprobe` (resolve via `FFmpegBundleManager().locateFFprobe().path`).
@@ -230,6 +220,38 @@ commit → update its GitHub issue → append here → push → **watch CI green
 
 **Deferred/disclosed (NOT to build this pass):** Direct licensing (Subscription hidden ✓), Distributed
 Render Farm (config-only + disclosed).
+
+## 🟢 2026-09-02 — full open-issue sweep + ranked proposals (autonomous bulk-work cycle)
+
+User re-issued the standard bulk-work prompt ("proceed autonomously, no pauses"): full GitHub-issue sweep
+vs real code, ranked new-work proposals, docs/memory/handoff refresh, commit-per-task, no PR stacking.
+
+- **Reconciliation DONE** — a 10-agent workflow (8 parallel Sonnet evidence agents, code-first + citation-only,
+  across all 87 open issues → sequential Fable reconciliation → sequential Fable proposals). Full output saved
+  to **`.claude/reconciliation-2026-09-02.md`** (per-issue ACTIONS table + comment texts + 8 human decisions)
+  and **`.claude/proposals-2026-09-02b.md`** (15 ranked proposals). Key finding: **nothing is unconditionally
+  closeable** — every open issue is a partial epic, dead-code-only (built+tested but zero callers), or
+  correctly deferred. The pervasive defect is *builder-exists-but-unwired* (same class as
+  [[metadata-lookup-is-dead-in-full]]).
+- **10 targeted issue comments posted** (state changed / record stale): #477 (corrected dead-list — struck
+  VideoStabilizer, now wired via #323; folded the cloud/streaming/broadcast dead clusters here as the parent
+  tracker), #257, #492, #493, #494, #374, #298 (scope mismatch — shipped watermark is video, issue is batch
+  images), #392 + #387 (App Store cluster consolidated status + cert-family blocker), #495 (all code/tests/CI
+  proven; only the hardware matrix remains). Did NOT re-comment epics that already carry current comments from
+  this session.
+- **Memory added:** [[alpha-test-build-packaging-gaps]] (alpha ships CLI-only; Direct sets no entitlement
+  provider → testers clamped to Free), [[appstore-testflight-blocked-cert-family]] (#387 cert-family + one
+  smoke-test gate the App Store track; Direct build unaffected).
+- **⚠️ AWAITING USER DECISION (surfaced, non-blocking):** which of the 15 proposals to build. Top-3 shortlist:
+  **#1** reusable notarized-DMG package workflow so the `alpha` branch ships an installable app (today it ships
+  a bare CLI); **#2** `DirectBuildGateProvider` (unlock plus/pro for testers in Direct); **#3+#4** diagnostics
+  bundle w/ git SHA + a pre-release update channel. Plus 8 issue-level human decisions in the reconciliation
+  doc (§Needs-human-decision): #495 hardware pass?, #387 cert family?, #359 WidgetKit vs status-item?, #424
+  extend #307 vs new gating?, #257↔#477 home, #476 narrow scope, #357↔#283 canonical Services provider, and a
+  stale-doc-comment housekeeping PR.
+- **Feature build continues in parallel** (already-decided prior directive): #300 Background Removal save DONE
+  (`4ba5e62`); next = Storage Analysis ffprobe → Smart Crop → Team Profile git (plan in
+  `.claude/plans/team-profile-git-plan.md`), each via a sequential Fable plan then Sonnet impl.
 
 ## 🟢 2026-09-02 — pre-release hardening for the first Direct test build (autonomous)
 
