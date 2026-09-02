@@ -299,31 +299,26 @@ final class ScriptingBridge: NSObject {
     /// Uses FFprobe (via ConverterEngine) to analyse the file's streams,
     /// format, duration, codecs, and other technical metadata.
     ///
-    /// ### Precondition: AppleScript dispatch is not live yet (Issue #302)
-    /// Read this before trusting the paragraph below. Nothing in this target
-    /// registers `ScriptingBridge.shared` or assigns its `engine`/`queue`/
-    /// `profileStore`, and `MeedyaConverter.sdef` contains **no** `<cocoa>`
-    /// mapping elements at all (`grep -c "<cocoa" …` returns 0), so macOS
-    /// currently has no route to dispatch command code `MDYAprob` to this
-    /// selector. The suspend/resume design described next is therefore how
-    /// this method is *built to behave once #302 activates scripting* — it is
-    /// not a description of behaviour observable today. The fallback path at
-    /// the end of this method is what actually runs if anything calls
-    /// `probe(file:)` in the meantime.
+    /// ### AppleScript dispatch is live (Issue #302)
+    /// `MeedyaConverter.sdef` binds the `probe` verb to `MDYAProbeCommand` via a
+    /// `<cocoa class="MDYAProbeCommand"/>` element; that command's
+    /// `performDefaultImplementation()` reads the direct parameter and calls this
+    /// method through `MainActor.assumeIsolated` on the main thread.
+    /// `ScriptingBridge.shared`'s `engine`/`queue`/`profileStore` are wired in
+    /// `AppViewModel.init`, and the app is marked scriptable in Info.plist
+    /// (`NSAppleScriptEnabled`/`OSAScriptingDefinition`). So the suspend/resume
+    /// path described next is the behaviour observable today; the fallback path
+    /// at the end applies only to a direct in-Swift call (no live command).
     ///
     /// ### Why this no longer blocks the calling thread (Issue #451)
-    /// `FFmpegProbe.analyze(url:)` is `async`, but this method is designed to
-    /// be invoked by Cocoa's Open Scripting Architecture as a plain
-    /// Objective-C message send: `MeedyaConverter.sdef` declares no
-    /// `<cocoa class="...">` override for the `probe` command, so there
-    /// is no custom `NSScriptCommand` subclass anywhere in the dispatch
-    /// path to hook. Even without one, Cocoa Scripting still exposes the
-    /// hook this needs on the *generic* command object it builds for
-    /// every dispatch: `NSScriptCommand.current()` returns that in-flight
-    /// command from anywhere in the handler's call stack — including a
-    /// plain `@objc` method like this one — and calling
-    /// `suspendExecution()` on it tells Cocoa Scripting to hold the Apple
-    /// Event reply open. The eventual `resumeExecution(withResult:)` call
+    /// `FFmpegProbe.analyze(url:)` is `async`, but this method returns a
+    /// `String` synchronously. Live dispatch reaches it through
+    /// `MDYAProbeCommand.performDefaultImplementation()` — the `<cocoa>`
+    /// subclass the `.sdef` binds `probe` to — which calls this method on the
+    /// main thread while that command is the one in flight. So
+    /// `NSScriptCommand.current()` returns that in-flight command from inside
+    /// this `@objc` method, and calling `suspendExecution()` on it tells Cocoa
+    /// Scripting to hold the Apple Event reply open. The eventual `resumeExecution(withResult:)` call
     /// supplies the real return value later, from any thread, once the
     /// async probe actually finishes (see `NSScriptCommand.h`: "This
     /// method may be invoked in any thread, not just the one in which

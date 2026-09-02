@@ -14,8 +14,9 @@ import ConverterEngine
 /// Full metadata tag editing interface for media files.
 ///
 /// Provides a table of key-value pairs with add/edit/remove capabilities,
-/// artwork preview and change, batch tag editing, tag templates for
-/// common workflows, and common tag suggestions via auto-complete.
+/// artwork preview and change, tag templates for common workflows, and
+/// common tag suggestions via auto-complete. Operates on the single selected
+/// file — multi-file batch tag editing is not yet implemented (#320).
 ///
 /// Phase 6 — Full Metadata Tag Editor (Issue #320)
 struct MetadataTagEditorView: View {

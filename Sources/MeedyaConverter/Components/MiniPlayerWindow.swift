@@ -14,7 +14,8 @@
 // Features:
 //   - NSPanel configured as a floating, utility-style window.
 //   - Compact layout (~300x120): file name, progress bar, speed, ETA.
-//   - Automatically appears when the main window is minimised.
+//   - Shown/hidden from the toolbar; auto-show on window minimise is not yet
+//     implemented (#280).
 //   - Click to restore the main window.
 //   - Show / hide / toggle API for programmatic control.
 //   - @Observable for SwiftUI reactivity.

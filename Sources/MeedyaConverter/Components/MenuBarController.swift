@@ -14,7 +14,6 @@
 //   - NSStatusItem with the app icon in the menu bar.
 //   - Dropdown menu: current queue status, quick encode with last profile,
 //     open main window, preferences, quit.
-//   - Drag-and-drop onto the menu bar icon for quick encoding.
 //   - Toggle between full app mode and menu bar-only mode.
 //   - Optionally hides the dock icon when minimised to menu bar.
 //   - Persistence via @AppStorage("menuBarMode").
