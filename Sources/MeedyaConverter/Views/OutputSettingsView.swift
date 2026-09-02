@@ -126,6 +126,7 @@ struct OutputSettingsView: View {
                 pqToHLGControls
                 hardwareEncoderInfo
                 cropDetectionControls
+                deinterlacePicker
             }
 
             // Audio settings
@@ -384,6 +385,22 @@ struct OutputSettingsView: View {
     }
 
     // MARK: - Video Settings
+
+    /// Deinterlace preset picker (Issue #324), bound to the profile's
+    /// `deinterlace`. `DeinterlacePresets.buildFilterString` is applied as the
+    /// first `-vf` stage at encode. "Best" (nnedi) is omitted — it needs an
+    /// external nnedi3 weights file the bundled ffmpeg may lack; yadif/bwdif
+    /// are built in. Disabled for passthrough (a copied stream can't be
+    /// filtered).
+    private var deinterlacePicker: some View {
+        @Bindable var vm = viewModel
+        return Picker("Deinterlace", selection: $vm.selectedProfile.deinterlace) {
+            Text("Off").tag(Optional<DeinterlaceConfig>.none)
+            Text("Fast (yadif)").tag(Optional(DeinterlacePresets.fast))
+            Text("Quality (bwdif, 2x fps)").tag(Optional(DeinterlacePresets.quality))
+        }
+        .disabled(viewModel.selectedProfile.videoPassthrough)
+    }
 
     @ViewBuilder
     private var videoSettingsSummary: some View {

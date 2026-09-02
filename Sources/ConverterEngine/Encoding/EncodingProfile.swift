@@ -185,6 +185,11 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// no watermark. Optional, so profiles saved before #298 decode cleanly.
     public var watermark: OverlayWatermarkConfig?
 
+    /// An optional deinterlace configuration applied as the first `-vf` stage
+    /// (Issue #324). Nil = no deinterlace. Optional, so profiles saved before
+    /// #324 decode cleanly.
+    public var deinterlace: DeinterlaceConfig?
+
     // MARK: - Initialiser
 
     public init(
@@ -229,7 +234,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         containerFormat: ContainerFormat = .mkv,
         keyframeIntervalSeconds: Double? = nil,
         videoBufferSize: Int? = nil,
-        watermark: OverlayWatermarkConfig? = nil
+        watermark: OverlayWatermarkConfig? = nil,
+        deinterlace: DeinterlaceConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -273,6 +279,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.keyframeIntervalSeconds = keyframeIntervalSeconds
         self.videoBufferSize = videoBufferSize
         self.watermark = watermark
+        self.deinterlace = deinterlace
     }
 
     // MARK: - Computed Properties
@@ -394,6 +401,9 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
 
         // Watermark overlay (Issue #298)
         builder.watermark = watermark
+
+        // Deinterlace (Issue #324)
+        builder.deinterlace = deinterlace
 
         // Container
         builder.containerFormat = containerFormat

@@ -337,6 +337,11 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// (a copied stream cannot be filtered). Issue #298.
     public var watermark: OverlayWatermarkConfig?
 
+    /// An optional deinterlace configuration, applied as the FIRST `-vf` stage
+    /// (before scale/tone-map/watermark) so downstream filters operate on
+    /// progressive frames. Ignored for passthrough video. Issue #324.
+    public var deinterlace: DeinterlaceConfig?
+
     /// Audio filter chain string (e.g., "loudnorm=I=-14").
     public var audioFilterChain: String?
 
@@ -494,6 +499,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Build the complete video filter chain combining user filters and tone mapping.
     private func buildVideoFilterChain() -> String {
         var filters: [String] = []
+
+        // Deinterlace (Issue #324) — FIRST, so scaling/tone-mapping operate on
+        // progressive frames. Skipped for passthrough (a copied stream cannot
+        // be filtered).
+        if let deinterlace, !videoPassthrough {
+            filters.append(DeinterlacePresets.buildFilterString(config: deinterlace))
+        }
 
         // User-specified video filter chain (crop, scale, etc.)
         if let vf = videoFilterChain, !vf.isEmpty {

@@ -102,7 +102,7 @@ public enum FieldOrder: String, Codable, Sendable, CaseIterable {
 /// configurations optimised for speed or quality.
 ///
 /// Phase 10 — Deinterlacing Presets (Issue #324)
-public struct DeinterlaceConfig: Codable, Sendable {
+public struct DeinterlaceConfig: Codable, Sendable, Equatable, Hashable {
 
     /// The deinterlacing filter algorithm to use.
     public let filter: DeinterlaceFilter
