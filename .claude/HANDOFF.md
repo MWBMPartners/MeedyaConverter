@@ -193,8 +193,17 @@ does not circumvent DRM. Two readings:
   Backup/preservation, NOT circumvention. This is the default and the ONLY thing I will build.
 - ❌ **Decrypting** protected content to a playable copy = DRM circumvention. Conflicts with the app's
   policy, unlawful under DMCA §1201 / EU Copyright Directive Art. 6, and I will **not** implement it.
-Need explicit confirmation the feature is **raw-imaging-only**. Caveats even then: 4K UHD BD may be
-un-raw-readable without a "friendly" drive / at all; restore/burn-back is realistically CD/BD-R only.
+**RESOLVED 2026-09-02:** user confirmed **raw-imaging-only, never circumvention**, and added the
+detect-and-warn rule: if a disc is DRM-protected such that even a bit-for-bit copy would be
+non-functional (broken even on a legitimate DRM-capable player/drive), **do not produce a broken
+artifact** — detect the protection via public markers (CSS IFO flags, `AACS/` dir, `BDSVM/` BD+,
+drive-reported status; never touch keys) and warn "copy-protected, a working copy cannot be made
+without circumvention, which we do not do." The warning fires ONLY when the copy would actually break
+because of DRM. In practice this means the feature images Audio CD/CD-G/mixed-mode/eCD + unprotected
+CD/DVD/BD, and declines-with-reason on genuinely-encrypted commercial DVD/BD/UHD. Full policy on the
+#492 comment thread and in Claude memory (`disc-imaging-drm-policy`). No code yet — this is executor
+design capture; the executor (#495's missing half) must implement the detect-and-warn gate first and
+never add a decrypt path. **No open DRM decision remains.**
 
 ---
 
