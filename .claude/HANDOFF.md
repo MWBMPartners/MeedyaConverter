@@ -146,6 +146,33 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🔨 2026-09-02 — BUILDING the disc-imaging executor (#495 P1), autonomously
+
+User: proceed autonomously; surface decisions upfront. Decisions stated + defaults taken (none blocking):
+- **Increment = #495 P1: Audio CD → BIN/CUE vertical slice**, CLI-first (GUI is a follow-up — a SwiftUI
+  view can only be compiled here, not exercised; the CLI read path is arg-builder-testable).
+- cdrdao via subprocess, never linking libcdio (DR-0001).
+- **Verification boundary, stated honestly:** pure logic (planners, parsers, protection detection, path
+  resolution, drutil-parse fix) is CI-unit-tested; the actual cdrdao process execution against a physical
+  disc is **compile-clean only here, hardware-verified on the manual matrix** — same split #495's
+  serializer core used. No fabricated device I/O.
+
+**Workflow `wvtgj7p76` (`wf_8354bc90-899`) RUNNING** — sequential pipeline:
+1. Fable deep plan (exact type signatures so implementers align + DRM detector design + test plan).
+2. Opus builds the engine core: `RawCDReadPlanner` (cdrdao arg builders), `CdrdaoTocParser`,
+   `parseCdrdaoProgress`, `DiscImagingController` (Process+AsyncStream+cancel+checksum-verify, modelled on
+   `FFmpegProcessController`), `BundledToolLocator` (factored from `FFmpegBundleManager`),
+   `DiscProtectionDetector` (detect-and-warn gate, markers-only, Audio CD → .none), `.ccd` +
+   `ImagingConfig.imageFormat` wiring, and the `BurnSettingsView.parseDrutilOutput` real-device fix.
+3. Sonnet builds the CLI `disc image` / `disc info` on top.
+4. Fable adversarial review — told a fabricated execution path or a wrong cdrdao invocation is a BLOCKER.
+
+On completion: verify `swift build --target ConverterEngine` clean + `swift build` (filter #Preview) +
+`swiftc -parse` tests; apply review findings; commit to `wip/alpha-consolidation`; update #495 (per-AC),
+handoff, memory. The DRM detect-and-warn gate is built into the flow per the confirmed #492 policy.
+
+---
+
 ## 🟢 2026-09-02 — #494 packaging + disc-imaging scope clarification
 
 ### #494 — user answered the four follow-on decisions; packaging begun
