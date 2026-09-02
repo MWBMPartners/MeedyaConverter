@@ -174,6 +174,12 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   probe the detected file, evaluate rules against the probed metadata, swap profile on match; probe
   failure degrades gracefully. Also populates `estimatedSourceDuration` (#326) for this path.
 
+- **Reentrant-actor regression test — DONE** (`c54c3cb`, re #361). Added the missing guard for the
+  defect class that nearly shipped: `PostEncodeHookRunner` gains an internal injectable-executor seam
+  (mirroring `PostEncodeActionChain.execute`'s), and `PostEncodeHookRunnerSerialisationTests` fires three
+  chains concurrently (later ones sleeping less) and asserts no overlap + FIFO order + `drain()` waits.
+  A reintroduced reentrancy bug fails CI.
+
 **Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
