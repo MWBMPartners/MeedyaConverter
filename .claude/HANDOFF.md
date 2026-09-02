@@ -184,32 +184,36 @@ tracers (exec + bundle binaries).
     the dead centre-channel toggle + `VoiceIsolator.isMLAvailable()`.
   - Tests: `FilterGraphStagingTests`, `HDRToolWrapperDiscoveryTests`, `VoiceIsolationMethodTests`.
 
-### ⏸️ RESUME HERE — remaining pre-release feature build (2026-09-02, session paused mid-batch)
+### ✅ PRE-RELEASE FEATURE BUILD — quick-fixes + Team git ALL DONE (2026-09-03)
 
-State at pause: branch `wip/alpha-consolidation` @ **`9511291`, tree CLEAN, CI GREEN**. `main` branch =
-default for PRs; working branch is 6+ ahead of `alpha` (no PR stacking — commit straight to wip). No agents
-running. Next session: pick up the list below in order. Each piece: verify vs code → implement → compile
-gate (`swift build --target ConverterEngine` + the `#Preview`-filtered whole-package build) → write test →
-commit → update its GitHub issue → append here → push → **watch CI green before the next push** (§15).
+Branch `wip/alpha-consolidation`, tree CLEAN, **CI GREEN @ `3ced838`**. All decided quick-fixes and Team git
+landed and CI-verified this session (each: Fable plan → Sonnet impl → 5-gate verify → commit → issue comment
+→ watch CI green). No agents running.
 
-**A. Remaining quick-fixes (precise findings already captured — implement directly):**
-1. ~~**Background Removal — single-image save (Issue #300).**~~ **DONE — `4ba5e62`, CI GREEN.** Added a
-   "Save…" button in the Result box → `NSSavePanel` writing the exact encoded bytes (alpha preserved), name
-   `<source>_nobg.<ext>`, F-002 sanitised; fixed the false comment in `BackgroundRemover.batchRemoveBackgrounds`
-   (grep-verified it has no caller). #300 (closed epic) commented.
-2. **Storage Analysis — real ffprobe.** (Fable-specced in the earlier plan: `StorageAnalyzer.analysis(from:base:)`
-   + `probeFiles(_:ffprobePath:maxConcurrency:progress:)` async; `StorageAnalysisView` `probeProgress`.)
-   Replace filename-guess sizing with real `ffprobe` (resolve via `FFmpegBundleManager().locateFFprobe().path`).
-3. **Smart Crop — video-based crop.** (Fable-specced: `SmartCropView` rewrite + `SmartCropDetector.fitCropRect`
-   helper + `extractFrame` helper.) Currently still-image only; make it detect a crop rect from sampled video
-   frames and stage it like the manual crop filter (`pendingManualCropFilter`) for the next encode.
+**A. Quick-fixes — DONE:**
+1. **Background Removal single-image save (#300)** — `4ba5e62`. "Save…" → `NSSavePanel`, exact bytes (alpha
+   preserved), F-002 name; fixed a false comment. CI green.
+2. **Storage Analysis real ffprobe (#365)** — `743650c`. New `MediaFileProbing` seam (`FFmpegProbe` conforms),
+   pure `analysis(from:base:)`, `probeFiles` (bounded concurrency + progress + Cancel + graceful fallback),
+   `Provenance` labelling; view shows a probed-vs-guessed caption. 34 tests. CI green.
+3. **Smart Crop video-based (#299)** — `16db504` (+ test fix `3ced838`). New `SmartCropVideoAnalyzer` (frame
+   sampling + Vision + median-centroid crop at target aspect, inside the black-bar area), view rewritten to
+   analyse the selected video with progress/Cancel/preview; enqueue now drops a crop on stream-copy profiles
+   (fixed a real `-vf`+`-c:v copy` job failure); deleted 4 dead geometry fns. 38 tests. CI green.
 
-**B. Team Profile — real git (Issue #345). FULL PLAN COMPLETE & SAVED:**
-`.claude/plans/team-profile-git-plan.md` (Fable deep plan, git sequence empirically verified). New
-`GitProfileSync.swift` (injectable `GitRunning` seam) + `TeamProfileManager`/`TeamProfileView` edits +
-`GitProfileSyncTests` (18 cases) + CHANGELOG line. Implement straight from that file.
+**B. Team Profile real git (#345) — DONE:** `0bfd5e1` (+ test fixes `56ae4d6`, `1fdc86f`). New `GitProfileSync`
+(injectable `GitRunning` seam; clone/fetch/checkout/add/commit/push; user's own credentials; `GIT_TERMINAL_PROMPT=0`;
+App-Sandbox warning), repository git fields, `pullProfiles` async, 3 new errors. 19 tests. CI green. Plan:
+`.claude/plans/team-profile-git-plan.md`.
 
-**C. Not yet planned (Fable plan still to run each):**
+> ⚠️ **CI-only test-failure lesson (this session):** all three CI reds were TEST bugs invisible to local
+> single-file `swiftc -parse` — (1) raw `NSLock.lock()` in an `async` mock method, (2) a `.arguments.first`
+> sequence assertion that labelled `-c commit…` as `-c`, (3) a top-level `ProgressRecorder` colliding with the
+> same-named type in another test file of the module. Production was correct each time. Fixes + prevention in
+> memory [[verification-gates-and-what-cannot-be-tested]]. **Before pushing a new test file: use `withLock` in
+> async mocks; label commands, don't take `.first`; grep the module for duplicate top-level type names.**
+
+### ⏸️ STILL QUEUED — two larger feature-build items (Fable plan still to run each):
 - **Native-Swift metadata backend + MusicBrainz metadata lookup / auto-tagging** (decision locked: native
   Swift, keyless MusicBrainz; see [[metadata-lookup-is-dead-in-full]], [[musicbrainz-nov30-2026-option-b]] —
   keep URL builders, no Swift client; every provider is currently a dead URL builder).
