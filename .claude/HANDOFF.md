@@ -146,6 +146,38 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 2026-09-02 — post-round-2 dead-feature sweep (autonomous, CI-monitored)
+
+After the round-2 register completed, the user added a **standing rule** and directed autonomous work on
+outstanding elements. Done:
+
+- **Standing rule §15** (`standing_tasks.md` + W5 + memory [[always-monitor-ci-after-push]]): stay and
+  watch CI to green after every push/sync/PR; fix reds immediately. Committed `76114f7` (CI green). This
+  closed the gap that let CI sit red from #468. **Every push below was watched to green.**
+- **#499 CLOSED** — the test-target split was genuinely done but the handoff had *falsely* marked it
+  closed; it was still open with 0 comments. Actually closed now (another false-record instance — verify
+  issue state, don't trust the handoff's "closed" claims).
+- **Triage workflow** (`wf_83fca15b-515`, 13 agents) reconciled actionable macOS-alpha issues (#275 #280
+  #281 #283 #320 #322 #323 #324 #330 #331 #374 #477) against REAL code and ranked them. Excluded: #283
+  (needs an Xcode .appex target — not SPM-buildable), #374 (blocked on MeedyaSuite-core tag). Signature
+  defect ("dead engine / dead UI, never executed") confirmed pervasive. Full result in the workflow output.
+- **#323 video stabilization — DONE (epic OPEN)** (`2d991c5`, CI green). `VideoStabilizer` was a
+  zero-caller two-pass builder. New `StabilizationView` runs both passes (vidstabdetect→.trf→vidstabtransform)
+  via `FFmpegProcessController`, presets + custom sliders, progress/cancel, libvidstab-missing message,
+  Tools nav entry. `VideoStabilizerArgumentTests`.
+- **#320 metadata editor — DONE (epic OPEN)** (`3905a7e`, CI green). Was write-only + destructive: added
+  the READ path (seed tags from `selectedFile.metadata`), and fixed `MetadataTagEditor.buildWriteArguments`
+  — metadata-only now `-map 0 -c copy` (was re-encoding the whole file), artwork now keeps source streams
+  (`-map 0` + cover; was dropping A/V, output was just the image). `MetadataTagWriteArgumentTests`.
+- **#275 folder mirroring — DONE (epic OPEN)** (`9f5e123`, CI green pending). CLI `batch --dir` flattened
+  even under `--recursive`; added `--output-mode mirror` routed through the GUI's
+  `OutputPathResolver.resolveOutputDirectory`. `OutputPathResolverMirrorTests`. Remaining AC (persist GUI
+  outputMode, WatchFolderManager honour it, collision prompt) tracked on the issue.
+
+**Next candidates (from the triage, executableNow, not yet done):** #322 concat (S), #324 deinterlace (M),
+#280 mini-player progress (M, XS core), #331 shortcuts (M), #330 undo/redo (L), #477 dead-cluster sweep (L),
+#281 menu-bar drag+status (M). #283 and #374 need a user decision / upstream tag first.
+
 ## 🟢 2026-09-02 — round-2 quick wins in progress (autonomous)
 
 Working the round-2 register (`.claude/proposals-round2-2026-09-02.json`) in rank order, per "continue
