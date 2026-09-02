@@ -37,6 +37,12 @@ struct BackgroundRemovalView: View {
     /// The processed image with background removed.
     @State private var processedImage: NSImage?
 
+    /// The raw encoded bytes of the processed single image, in `outputFormat`.
+    /// Held so "Save…" writes the exact bytes `processImage` produced rather
+    /// than re-encoding the `NSImage` (which would drop the alpha channel for
+    /// PNG/TIFF). `nil` until a single image has been processed.
+    @State private var processedImageData: Data?
+
     /// Whether processing is in progress.
     @State private var isProcessing = false
 
@@ -221,14 +227,30 @@ struct BackgroundRemovalView: View {
             // Processed image
             GroupBox("Result") {
                 if let image = processedImage {
-                    // Checkerboard background to show transparency
-                    ZStack {
-                        checkerboardBackground
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
+                    VStack(spacing: 8) {
+                        // Checkerboard background to show transparency
+                        ZStack {
+                            checkerboardBackground
+                            Image(nsImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                        }
+                        .frame(maxHeight: 300)
+
+                        // Single-image export (batch already saves to a chosen
+                        // directory in `processImages`). Writes the exact
+                        // encoded bytes, preserving alpha for PNG/TIFF.
+                        if processedImageData != nil {
+                            HStack {
+                                Spacer()
+                                Button {
+                                    saveProcessedImage()
+                                } label: {
+                                    Label("Save…", systemImage: "square.and.arrow.down")
+                                }
+                            }
+                        }
                     }
-                    .frame(maxHeight: 300)
                 } else {
                     Text("Not yet processed")
                         .foregroundStyle(.secondary)
@@ -314,6 +336,7 @@ struct BackgroundRemovalView: View {
             selectedImageURLs = [url]
             originalImage = NSImage(contentsOf: url)
             processedImage = nil
+            processedImageData = nil
             errorMessage = nil
             successMessage = nil
         }
@@ -333,6 +356,7 @@ struct BackgroundRemovalView: View {
                 originalImage = NSImage(contentsOf: firstURL)
             }
             processedImage = nil
+            processedImageData = nil
             errorMessage = nil
             successMessage = nil
         }
@@ -359,6 +383,7 @@ struct BackgroundRemovalView: View {
                 if let nsImage = NSImage(data: data) {
                     processedImage = nsImage
                 }
+                processedImageData = data
                 successMessage = "Background removed successfully."
             } catch {
                 errorMessage = error.localizedDescription
@@ -433,6 +458,47 @@ struct BackgroundRemovalView: View {
         }
 
         return outputURLs
+    }
+
+    /// Presents a save panel and writes the processed single image to disk in
+    /// its encoded format — the exact bytes ``BackgroundRemover/processImage``
+    /// produced, so the alpha channel survives for PNG/TIFF. The batch path
+    /// (``processImages``) already saves to a chosen directory; this covers the
+    /// single-image case, which previously could only be previewed.
+    private func saveProcessedImage() {
+        guard let data = processedImageData else { return }
+        let format = outputFormat
+
+        // The format picker offers only PNG/JPEG/TIFF; map to their UTTypes so
+        // the panel enforces the right extension. `.image` is an unreachable
+        // safe fallback if the picker ever widens.
+        let contentType: UTType
+        switch format {
+        case .png: contentType = .png
+        case .jpeg: contentType = .jpeg
+        case .tiff: contentType = .tiff
+        default: contentType = .image
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [contentType]
+        let base = selectedImageURLs.first?.deletingPathExtension().lastPathComponent ?? "image"
+        // F-002 defensive sanitisation per SECURITY.md, matching the batch path.
+        panel.nameFieldStringValue = PathSanitizer.sanitizeFilenameComponent(
+            "\(base)_nobg.\(format.fileExtension)"
+        )
+        panel.message = "Save the processed image."
+        panel.prompt = "Save"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            successMessage = "Saved to \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// Builds a ``BackgroundRemovalConfig`` from the current UI state.

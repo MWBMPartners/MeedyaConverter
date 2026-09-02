@@ -236,9 +236,13 @@ public struct BackgroundRemover: Sendable {
 
         for inputURL in inputURLs {
             let baseName = inputURL.deletingPathExtension().lastPathComponent
-            // F-002 defensive sanitisation per SECURITY.md (POLISH
-            // follow-up): mirrors the fix already applied to the
-            // single-image path in `BackgroundRemovalView`.
+            // F-002 defensive sanitisation per SECURITY.md: the output name is
+            // derived from a user-supplied input filename, so strip any path
+            // components. This matches the same sanitisation the UI applies in
+            // its own batch loop and single-image save (`BackgroundRemovalView`).
+            // NOTE: this convenience helper currently has no caller — the view
+            // drives its own per-file loop over `removeBackground` — so it is
+            // kept for API completeness / CLI use.
             let outputURL = outputDir.appendingPathComponent(
                 PathSanitizer.sanitizeFilenameComponent("\(baseName).\(ext)")
             )
