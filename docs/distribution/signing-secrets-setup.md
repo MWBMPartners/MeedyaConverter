@@ -2,6 +2,19 @@
 
 # GitHub signing & notarization secrets — setup guide (Direct distribution)
 
+> **STATUS (verified 2026-09-02): already set up.** All six required `APPLE_*`
+> secrets exist as **organization** secrets on `MWBMPartners` and are accessible
+> to this repository (they appear under "Organization secrets" on the repo's
+> Actions secrets page, which GitHub only shows when the repo is within the
+> secret's access policy). So `release.yml` will resolve them and **you do not
+> need to add any repository secrets.** The org also holds `ASC_API_KEY` /
+> `ASC_ISSUER_ID` / `ASC_KEY_ID` (an App Store Connect API key — a more robust
+> notarization path we could switch to later; release.yml uses the Apple-ID
+> path today). The steps below are a **reference for rotating/renewing** these
+> credentials, not initial setup. The only value-level risks left (an expired
+> Developer ID cert or a revoked app-specific password) surface at the actual
+> sign/notarize step on the first tagged run.
+
 `release.yml` builds, **Developer ID-signs, notarizes, and staples** the Direct
 `.app` + DMG entirely on a GitHub-hosted macOS runner — **no local machine is
 needed**. It only requires six secrets. Until all six are present (and the cert
