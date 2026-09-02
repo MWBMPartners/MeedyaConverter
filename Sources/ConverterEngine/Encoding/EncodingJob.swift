@@ -258,6 +258,11 @@ public final class EncodingJobState: ObservableObject, @unchecked Sendable {
     /// a known `currentTime` arrives.
     public var lastKnownInputDuration: TimeInterval?
 
+    /// The progress fraction at which the last crash-safe checkpoint was
+    /// written (Issue #468). Not `@Published` — it is throttle state for the
+    /// queue runner's periodic checkpointing, not UI state.
+    public var lastCheckpointFraction: Double = 0
+
     /// Error message if the job failed.
     @Published public var errorMessage: String?
 

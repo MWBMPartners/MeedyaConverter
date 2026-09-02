@@ -1436,6 +1436,29 @@ final class AppViewModel {
                     jobState.currentBitrate = progressInfo.bitrate
                     jobState.currentFrame = progressInfo.frame
 
+                    // Periodic crash-safe checkpoint (#468). Previously a
+                    // checkpoint was written only on failure/cancel, so a crash
+                    // or force-quit MID-encode — the exact scenario resumable
+                    // jobs exist for — left nothing to resume. Write one every
+                    // ~5% of progress (throttled so it does not thrash the disk
+                    // on every ffmpeg tick), off the main actor. Cleaned up on
+                    // success below. `CheckpointManager` and `EncodingCheckpoint`
+                    // are Sendable, so the detached write is race-free.
+                    let fraction = progressInfo.fractionComplete ?? 0
+                    if fraction - jobState.lastCheckpointFraction >= 0.05 {
+                        jobState.lastCheckpointFraction = fraction
+                        let checkpoint = EncodingCheckpoint(
+                            jobId: jobState.config.id,
+                            inputURL: jobState.config.inputURL,
+                            outputURL: jobState.config.outputURL,
+                            profileSnapshot: jobState.config.profile,
+                            lastGoodTimestamp: progressInfo.currentTime
+                                ?? (fraction * (jobState.lastKnownInputDuration ?? 0)),
+                            progressFraction: fraction
+                        )
+                        Task.detached { try? CheckpointManager().saveCheckpoint(checkpoint) }
+                    }
+
                     // Calculate ETA (Issue #470). Default to the naive
                     // linear extrapolation from observed progress
                     // (unchanged formula — this is also the fallback
@@ -1506,6 +1529,10 @@ final class AppViewModel {
                 }
             }
 
+            // A successfully-completed job leaves no resumable checkpoint —
+            // remove any periodic ones written during the encode (#468).
+            let completedJobID = jobState.config.id
+            Task.detached { CheckpointManager().deleteCheckpoint(for: completedJobID) }
             jobState.status = .completed
             jobState.progress = 1.0
             jobState.completedAt = Date()
