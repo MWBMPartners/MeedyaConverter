@@ -35,6 +35,9 @@ struct KeyboardShortcutsView: View {
     /// Whether the reset confirmation alert is showing.
     @State private var showResetConfirmation: Bool = false
 
+    /// Local key-event monitor, live only while a row is recording (#331).
+    @State private var keyMonitor: Any?
+
     // MARK: - Body
 
     var body: some View {
@@ -142,6 +145,59 @@ struct KeyboardShortcutsView: View {
             }
         }
         .padding()
+        // Install a key monitor only while a row is actively recording (#331):
+        // the recorder was previously decorative ("Press a key..." with no
+        // capture), so a custom shortcut could never be assigned.
+        .onChange(of: recordingBindingID) { _, newValue in
+            if newValue != nil { installKeyMonitor() } else { removeKeyMonitor() }
+        }
+        .onDisappear { removeKeyMonitor() }
+    }
+
+    // MARK: - Key Recording (#331)
+
+    /// Begin capturing the next key-down and write it into the recording
+    /// binding. Escape (no modifiers) cancels; an unusable keystroke is
+    /// ignored and left to propagate.
+    private func installKeyMonitor() {
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard let id = recordingBindingID else { return event }
+
+            let flags = event.modifierFlags
+            // Escape with no modifiers cancels recording (keyCode 53).
+            if event.keyCode == 53,
+               !flags.contains(.command), !flags.contains(.shift),
+               !flags.contains(.option), !flags.contains(.control) {
+                recordingBindingID = nil
+                return nil
+            }
+
+            guard let captured = ShortcutBinding.captureBinding(
+                characters: event.charactersIgnoringModifiers,
+                command: flags.contains(.command),
+                shift: flags.contains(.shift),
+                option: flags.contains(.option),
+                control: flags.contains(.control)
+            ), let index = shortcutManager.bindings.firstIndex(where: { $0.id == id }) else {
+                // Not a usable shortcut (no modifier / unmapped key) — let it pass.
+                return event
+            }
+
+            // Mutating a binding triggers the manager's didSet → save().
+            shortcutManager.bindings[index].key = captured.key
+            shortcutManager.bindings[index].modifiers = captured.modifiers
+            recordingBindingID = nil
+            return nil   // swallow the captured event
+        }
+    }
+
+    /// Remove the key monitor if one is installed.
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
     }
 
     // MARK: - Helpers

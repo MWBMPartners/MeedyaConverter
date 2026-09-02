@@ -110,6 +110,56 @@ struct ShortcutBinding: Identifiable, Codable, Sendable, Equatable {
         return result
     }
 
+    /// Translate a captured key event into a `(key, modifiers)` pair for a new
+    /// binding (Issue #331). Pure and AppKit-free — the recorder view decodes
+    /// the `NSEvent` into these primitives and passes them here — so the
+    /// translation is unit-testable without synthesising real key events.
+    ///
+    /// Returns `nil` for a keystroke that is not a usable shortcut: no modifier
+    /// held (a bare letter would hijack plain typing), or a non-printable,
+    /// unmapped key. Modifiers are returned in the canonical
+    /// command→shift→option→control order the rest of this type expects.
+    ///
+    /// - Parameters:
+    ///   - characters: `event.charactersIgnoringModifiers`.
+    ///   - command/shift/option/control: whether each modifier was held.
+    /// - Returns: The `key`/`modifiers` for the binding, or `nil` if unusable.
+    static func captureBinding(
+        characters: String?,
+        command: Bool,
+        shift: Bool,
+        option: Bool,
+        control: Bool
+    ) -> (key: String, modifiers: [String])? {
+        guard let first = characters?.first else { return nil }
+
+        let key: String
+        switch first {
+        case "\r", "\u{3}":       key = "return"
+        case "\t":                 key = "tab"
+        case " ":                   key = "space"
+        case "\u{1b}":             key = "escape"
+        case "\u{7f}", "\u{8}":   key = "delete"
+        default:
+            guard first.isLetter || first.isNumber
+                    || first.isPunctuation || first.isSymbol else {
+                return nil
+            }
+            key = String(first).lowercased()
+        }
+
+        var modifiers: [String] = []
+        if command { modifiers.append("command") }
+        if shift   { modifiers.append("shift") }
+        if option  { modifiers.append("option") }
+        if control { modifiers.append("control") }
+
+        // A modifier-less shortcut would swallow ordinary typing — require one.
+        guard !modifiers.isEmpty else { return nil }
+
+        return (key, modifiers)
+    }
+
     /// A human-readable rendering such as `⌘1` or `⌘⇧O`, suitable for menu
     /// titles, help tooltips and the shortcut editor.
     ///
