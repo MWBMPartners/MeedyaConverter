@@ -168,6 +168,21 @@ public actor PostEncodeHookRunner {
         outputURL: URL,
         success: Bool
     ) {
+        run(chain: chain, inputURL: inputURL, outputURL: outputURL, success: success, actionExecutor: nil)
+    }
+
+    /// Serialisation-testing seam (mirrors `PostEncodeActionChain.execute`'s own
+    /// injectable executor). The public `run(...)` calls this with a `nil`
+    /// executor, so the real chain runs; a test injects a closure that records
+    /// timing to prove the tail-chaining genuinely serialises concurrent calls.
+    /// Reached from the test target via `@testable import ConverterEngine`.
+    func run(
+        chain: PostEncodeActionChain,
+        inputURL: URL,
+        outputURL: URL,
+        success: Bool,
+        actionExecutor: (@Sendable (PostEncodeAction, Bool) async throws -> Void)?
+    ) {
         let predecessor = tail
         tail = Task {
             // Wait for the previous chain. `Task<Void, Never>` cannot throw
@@ -177,7 +192,8 @@ public actor PostEncodeHookRunner {
             try? await chain.execute(
                 inputURL: inputURL,
                 outputURL: outputURL,
-                success: success
+                success: success,
+                actionExecutor: actionExecutor
             )
         }
     }
