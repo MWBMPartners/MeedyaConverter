@@ -51,6 +51,7 @@ struct MultiOutputView: View {
             outputsSection
             teeSection
             argumentsPreviewSection
+            runSection
         }
         .formStyle(.grouped)
         .navigationTitle("Multi-Output Encoding")
@@ -133,6 +134,49 @@ struct MultiOutputView: View {
                 }
                 .sheet(isPresented: $showAddSheet) {
                     addOutputSheet
+                }
+            }
+        }
+    }
+
+    // MARK: - Run
+
+    /// Number of outputs that would actually be encoded.
+    private var enabledOutputCount: Int {
+        outputs.filter(\.enabled).count
+    }
+
+    /// The action that turns this view from a preview into a real encode
+    /// (Issue #335): enqueue every enabled output as its own full-fidelity
+    /// queue job. Each gets independent progress and success/failure status,
+    /// and the queue can run them in parallel.
+    @ViewBuilder
+    private var runSection: some View {
+        if let source = sourceURL, !outputs.isEmpty {
+            Section {
+                Button {
+                    viewModel.enqueueMultiOutput(
+                        MultiOutputConfig(sourceURL: source, outputs: outputs)
+                    )
+                } label: {
+                    Label(
+                        enabledOutputCount == 1
+                            ? "Add 1 Output to Queue"
+                            : "Add \(enabledOutputCount) Outputs to Queue",
+                        systemImage: "plus.rectangle.on.rectangle"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(enabledOutputCount == 0)
+
+                Text("Each enabled output is queued as its own full-fidelity encode with independent progress and status. Start the queue to run them — they can run in parallel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if useTee && teeCompatible {
+                    Text("Single-pass tee muxing is shown in the preview above but not yet executed; outputs are queued as independent encodes.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
         }

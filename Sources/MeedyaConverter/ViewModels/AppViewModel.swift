@@ -985,6 +985,55 @@ final class AppViewModel {
         selectedNavItem = .queue
     }
 
+    /// Enqueue every enabled output of a multi-output configuration as its
+    /// own full-fidelity queue job (Issue #335).
+    ///
+    /// `MultiOutputView` previously only *previewed* the FFmpeg arguments built
+    /// by `MultiOutputEncoder` — nothing executed them, so "encode to multiple
+    /// formats" produced no files. Rather than run those simplified,
+    /// codec-and-CRF-only argument arrays (which ignore the profile's filters,
+    /// HDR/tone-mapping, watermark, subtitles and metadata), this enqueues one
+    /// ordinary `EncodingJobConfig` per enabled output through the real queue.
+    /// Each output is therefore a full-fidelity encode with its own progress
+    /// and success/failure status, and the bounded-concurrency runner (#286)
+    /// can run them in parallel — satisfying the "independent progress per
+    /// output" and "per-output success/failure" criteria without a bespoke
+    /// sub-job model.
+    ///
+    /// The global hardware-acceleration kill switch (#475) is honoured per
+    /// output, exactly as `enqueueSelectedFile()` does. Source-tab stream
+    /// selection and conditional rules are deliberately NOT applied here: each
+    /// output's profile is an explicit per-output choice in this view.
+    ///
+    /// Single-pass tee muxing (the shared-decode optimisation) is a separate,
+    /// larger change to the job/backend model and is not done here; these are
+    /// independent encodes.
+    ///
+    /// - Parameter config: The multi-output configuration.
+    /// - Returns: The number of jobs enqueued (0 if nothing was enabled).
+    @discardableResult
+    func enqueueMultiOutput(_ config: MultiOutputConfig) -> Int {
+        let enabled = config.outputs.filter(\.enabled)
+        guard !enabled.isEmpty else { return 0 }
+
+        for spec in enabled {
+            var profile = spec.profile
+            if HardwareAccelerationPreference.apply(to: &profile) {
+                appendLog(.info, "Hardware acceleration disabled globally — forcing software encoding for \"\(profile.name)\"", category: .encoding)
+            }
+            let jobConfig = EncodingJobConfig(
+                inputURL: config.sourceURL,
+                outputURL: spec.outputURL,
+                profile: profile
+            )
+            engine.queue.addJob(jobConfig)
+        }
+
+        appendLog(.info, "Multi-output: queued \(enabled.count) output\(enabled.count == 1 ? "" : "s") for \(config.sourceURL.lastPathComponent)")
+        selectedNavItem = .queue
+        return enabled.count
+    }
+
     /// The deepest common ancestor directory across every currently
     /// imported source file, used as `OutputPathResolver`'s
     /// `baseInputDir` for `.mirror` mode (Issue #275).
