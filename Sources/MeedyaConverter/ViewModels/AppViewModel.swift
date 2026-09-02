@@ -560,6 +560,52 @@ final class AppViewModel {
                 }
             }
         }
+
+        // Observe the notification-action posts from NotificationActionHandler
+        // (Issue #361). The handler is a UNUserNotificationCenter delegate that
+        // decouples from this view model by posting NotificationCenter events;
+        // nothing listened for them, so its Start Next / View Log / Retry
+        // actions were inert. Wired here.
+        setupNotificationActionObservers()
+    }
+
+    /// Wires the three decoupled notification-action posts to real behaviour
+    /// (Issue #361). Registered on `.main` and hopped onto the main actor,
+    /// since this type is `@MainActor`.
+    private func setupNotificationActionObservers() {
+        let centre = NotificationCenter.default
+
+        centre.addObserver(forName: .notificationActionEncodeNext, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.appendLog(.info, "Notification action: starting the next queued job")
+                Task { await self.startQueue() }
+            }
+        }
+
+        centre.addObserver(forName: .notificationActionViewLog, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.selectedNavItem = .log
+            }
+        }
+
+        centre.addObserver(forName: .notificationActionRetry, object: nil, queue: .main) { [weak self] note in
+            let inputURL = note.userInfo?[NotificationActionHandler.inputPathKey] as? URL
+            MainActor.assumeIsolated {
+                guard let self, let inputURL else { return }
+                self.appendLog(.info, "Notification action: retrying \(inputURL.lastPathComponent)")
+                Task {
+                    await self.importFiles([inputURL])
+                    // Ensure the retried file is the selected one, then enqueue
+                    // it — importFiles only auto-selects when nothing is chosen.
+                    if let imported = self.sourceFiles.last(where: { $0.fileURL == inputURL }) {
+                        self.selectedFile = imported
+                    }
+                    self.enqueueSelectedFile()
+                    await self.startQueue()
+                }
+            }
+        }
     }
 
     // MARK: - Remote Feature Gate (Roadmap #5 / intAppsAPI)
@@ -1222,10 +1268,17 @@ final class AppViewModel {
         let summary = "\(engine.queue.completedCount) completed, \(engine.queue.failedCount) failed"
         appendLog(.info, "Queue finished — \(summary)")
 
+        var queueUserInfo: [String: Any] = [:]
+        if let dir = outputDirectory?.path {
+            queueUserInfo[NotificationActionHandler.outputDirectoryKey] = dir
+        }
         sendNotification(
             title: "Queue Finished",
             body: summary,
-            settingKey: "notifyOnQueueFinished"
+            settingKey: "notifyOnQueueFinished",
+            // Only offer "Open Output Folder" when there is a folder to open.
+            category: outputDirectory != nil ? NotificationActionHandler.queueCompleteCategory : nil,
+            userInfo: queueUserInfo
         )
 
         // Queue-finished email (Issue #348). `emailOnQueueFinished`
@@ -1476,7 +1529,9 @@ final class AppViewModel {
             sendNotification(
                 title: "Encoding Complete",
                 body: "\(jobState.config.inputURL.lastPathComponent) finished in \(elapsed)",
-                settingKey: "notifyOnCompletion"
+                settingKey: "notifyOnCompletion",
+                category: NotificationActionHandler.encodeCompleteCategory,
+                userInfo: [NotificationActionHandler.outputPathKey: jobState.config.outputURL.path]
             )
 
             let outputSizeBytes = fileSizeInBytes(atPath: jobState.config.outputURL.path)
@@ -1632,7 +1687,9 @@ final class AppViewModel {
             sendNotification(
                 title: "Encoding Failed",
                 body: "\(jobState.config.inputURL.lastPathComponent): \(error.localizedDescription)",
-                settingKey: "notifyOnFailure"
+                settingKey: "notifyOnFailure",
+                category: NotificationActionHandler.encodeFailedCategory,
+                userInfo: [NotificationActionHandler.inputPathKey: jobState.config.inputURL.path]
             )
 
             sendCompletionEmail(
@@ -1838,7 +1895,13 @@ final class AppViewModel {
     // MARK: - Notifications
 
     /// Send a macOS notification if the corresponding setting is enabled.
-    private func sendNotification(title: String, body: String, settingKey: String) {
+    private func sendNotification(
+        title: String,
+        body: String,
+        settingKey: String,
+        category: String? = nil,
+        userInfo: [String: Any] = [:]
+    ) {
         let enabled = UserDefaults.standard.bool(forKey: settingKey)
         // Default to true if key hasn't been set
         let isEnabled = UserDefaults.standard.object(forKey: settingKey) == nil ? true : enabled
@@ -1850,6 +1913,13 @@ final class AppViewModel {
         content.body = body
         content.sound = UserDefaults.standard.bool(forKey: "playSoundOnCompletion")
             ? .default : nil
+        // Stamp the category (Issue #361) so the registered action buttons
+        // (Open in Finder / Start Next, View Log / Retry, Open Output Folder)
+        // appear, and carry the paths those actions operate on. Without this
+        // the notifications were plain banners and NotificationActionHandler —
+        // a complete delegate — had nothing to route.
+        if let category { content.categoryIdentifier = category }
+        content.userInfo = userInfo
 
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,

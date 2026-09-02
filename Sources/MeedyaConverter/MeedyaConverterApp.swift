@@ -74,6 +74,12 @@ struct MeedyaConverterApp: App {
     /// `.tint` existed at the app root, so choosing a theme changed nothing.
     @State private var themeManager = ThemeManager()
 
+    /// Routes notification action-button taps (Issue #361). Held for the app's
+    /// lifetime because `UNUserNotificationCenter.delegate` is `weak` — if
+    /// nothing retained this, the Start Next / View Log / Retry / Open Output
+    /// actions would silently stop working the moment it deallocated.
+    @State private var notificationActionHandler = NotificationActionHandler()
+
     /// Opens app windows (e.g. the Help window) via SwiftUI's native
     /// window-opening action. Replaces a dead `meedyaconverter://help`
     /// URL-scheme round-trip that had no `onOpenURL` handler to catch it
@@ -573,6 +579,15 @@ struct MeedyaConverterApp: App {
     /// Request permission for macOS notifications on first launch.
     private func requestNotificationPermission() {
         let viewModel = appViewModel
+
+        // Wire the action handler (Issue #361): make it the notification-centre
+        // delegate and register the categories whose action buttons the
+        // encode/queue notifications now stamp. Done here (main actor, at
+        // launch) before any notification is posted, as registerCategories'
+        // own doc requires.
+        UNUserNotificationCenter.current().delegate = notificationActionHandler
+        notificationActionHandler.registerCategories()
+
         UNUserNotificationCenter.current().requestAuthorization(
             options: [.alert, .sound, .badge]
         ) { granted, error in
