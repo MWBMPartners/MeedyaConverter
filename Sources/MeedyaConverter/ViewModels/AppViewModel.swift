@@ -417,6 +417,14 @@ final class AppViewModel {
     /// future jobs. Mirrors `pendingManualCropFilter`.
     var pendingChaptersFile: URL?
 
+    /// Video (`-vf`) half of a graph staged by `FilterGraphEditorView`, consumed by
+    /// the next `enqueueSelectedFile()` then cleared. Mirrors pendingManualCropFilter;
+    /// composed AFTER crop so crop coordinates (measured on the source frame) stay
+    /// valid. The multi-output enqueue path does not consume this.
+    var pendingFilterGraphVideo: String?
+    /// Audio (`-af`) half of the same staged graph.
+    var pendingFilterGraphAudio: String?
+
     // MARK: - Hardware Encoding (Phase 3.10)
 
     /// Discovered hardware encoders on this system.
@@ -1015,6 +1023,32 @@ final class AppViewModel {
             appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
         }
 
+        // Consume a filter graph staged by FilterGraphEditorView's
+        // "Apply to Next Encode" button, then clear it so it does not
+        // silently attach to a later, unrelated job. A passthrough stream
+        // is copied verbatim (`-c:v copy` / `-c:a copy`) and cannot be
+        // filtered, so a staged half is dropped — with a warning — when the
+        // effective profile copies that stream instead of re-encoding it.
+        // Composed AFTER crop above so the crop's coordinates, measured on
+        // the source frame, stay valid; the multi-output enqueue path does
+        // not consume this.
+        var stagedVideoGraph = pendingFilterGraphVideo
+        var stagedAudioGraph = pendingFilterGraphAudio
+        if stagedVideoGraph != nil, effectiveProfile.videoPassthrough {
+            appendLog(.warning, "Filter Graph: video filters discarded — profile \"\(effectiveProfile.name)\" copies the video stream", category: .filter)
+            stagedVideoGraph = nil
+        }
+        if stagedAudioGraph != nil, effectiveProfile.audioPassthrough {
+            appendLog(.warning, "Filter Graph: audio filters discarded — profile \"\(effectiveProfile.name)\" copies the audio stream", category: .filter)
+            stagedAudioGraph = nil
+        }
+        if cropFilter != nil, let stagedVideoGraph, stagedVideoGraph.contains("crop=") {
+            appendLog(.warning, "Filter Graph: staged graph also contains a crop filter — both crops will be applied in sequence", category: .filter)
+        }
+        pendingFilterGraphVideo = nil
+        pendingFilterGraphAudio = nil
+        let composedVideoFilter = FilterChainComposer.compose(cropFilter, stagedVideoGraph)
+
         var config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
@@ -1024,7 +1058,8 @@ final class AppViewModel {
             subtitleStreamIndex: selectedSubtitleStreamIndex,
             mapAllStreams: mapAllStreams,
             streamMetadata: streamMetadataOverrides,
-            videoFilterChain: cropFilter
+            videoFilterChain: composedVideoFilter,
+            audioFilterChain: stagedAudioGraph
         )
         // Feed the queue optimiser's duration-based strategies (#326). The
         // source was already probed on import, so `file.duration` is the real

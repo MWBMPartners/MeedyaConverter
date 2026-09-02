@@ -48,18 +48,9 @@ public final class HDR10PlusToolWrapper: @unchecked Sendable {
 
     // MARK: - Properties
 
-    /// Path to the hdr10plus_tool binary.
-    private var binaryPath: String?
-
-    /// Search paths for locating hdr10plus_tool.
-    private let searchPaths: [String] = [
-        "/opt/homebrew/bin/hdr10plus_tool",
-        "/usr/local/bin/hdr10plus_tool",
-        "/usr/bin/hdr10plus_tool",
-    ]
-
-    /// Lock for thread-safe access.
-    private let lock = NSLock()
+    /// Bundled-tool discovery (user override → Contents/Helpers → Homebrew →
+    /// MacPorts → /usr/bin → which(1)); caches the resolved path internally.
+    private let locator: BundledToolLocator
 
     // MARK: - Initialiser
 
@@ -67,39 +58,18 @@ public final class HDR10PlusToolWrapper: @unchecked Sendable {
     ///
     /// - Parameter binaryPath: Optional explicit path to the hdr10plus_tool binary.
     public init(binaryPath: String? = nil) {
-        self.binaryPath = binaryPath
+        self.locator = BundledToolLocator(toolName: "hdr10plus_tool", userOverridePath: binaryPath)
     }
 
     // MARK: - Discovery
 
-    /// Locate the hdr10plus_tool binary on the system.
+    /// Locate the hdr10plus_tool binary.
     ///
-    /// Searches user-specified path, then Homebrew, then standard locations.
-    ///
-    /// - Returns: The path to hdr10plus_tool, or nil if not found.
+    /// Resolves via `BundledToolLocator`: an explicit override, then the app's
+    /// `Contents/Helpers` (where the release pipeline can bundle it), then
+    /// Homebrew / MacPorts / PATH. Returns nil if not found.
     public func locateBinary() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let path = binaryPath, FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-
-        for path in searchPaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                binaryPath = path
-                return path
-            }
-        }
-
-        // Try which(1) as fallback
-        if let result = locateViaWhich(),
-           FileManager.default.isExecutableFile(atPath: result) {
-            binaryPath = result
-            return result
-        }
-
-        return nil
+        try? locator.locate()
     }
 
     /// Whether hdr10plus_tool is available on this system.
@@ -383,14 +353,4 @@ public final class HDR10PlusToolWrapper: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    /// Locate hdr10plus_tool via the `which` command as a last-resort fallback.
-    ///
-    /// - Returns: The path to hdr10plus_tool if found, or nil.
-    private func locateViaWhich() -> String? {
-        guard let result = try? runCommand("/usr/bin/which", arguments: ["hdr10plus_tool"]),
-              !result.isEmpty else {
-            return nil
-        }
-        return result
-    }
 }

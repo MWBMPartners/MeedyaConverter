@@ -23,11 +23,7 @@ public enum IsolationMethod: String, Codable, Sendable, CaseIterable {
     /// content within the speech band is preserved.
     case ffmpegHighpass
 
-    /// On-device ML sound classification (SoundAnalysis framework).
-    /// Provides better separation but requires macOS with Core ML support.
-    case visionSoundAnalysis
-
-    /// FFmpeg ``afftdn`` (FFT-based denoising) for spectral subtraction.
+/// FFmpeg ``afftdn`` (FFT-based denoising) for spectral subtraction.
     /// Good for reducing steady-state background noise while preserving speech.
     case spectralSubtraction
 
@@ -36,8 +32,6 @@ public enum IsolationMethod: String, Codable, Sendable, CaseIterable {
         switch self {
         case .ffmpegHighpass:
             return "FFmpeg Bandpass (Basic)"
-        case .visionSoundAnalysis:
-            return "ML Sound Analysis"
         case .spectralSubtraction:
             return "Spectral Subtraction"
         }
@@ -243,24 +237,4 @@ public struct VoiceIsolator: Sendable {
         ]
     }
 
-    // MARK: - ML Availability Check
-
-    /// Checks whether the SoundAnalysis framework is available on the current system.
-    ///
-    /// SoundAnalysis requires macOS 15.0+ and may not be available on all
-    /// hardware configurations. This method checks for framework availability
-    /// at runtime.
-    ///
-    /// - Returns: `true` if SoundAnalysis is available for on-device ML processing.
-    public static func isMLAvailable() -> Bool {
-        // SoundAnalysis framework is available on macOS 15+
-        // Check by attempting to load the framework bundle
-        if let bundle = Bundle(identifier: "com.apple.SoundAnalysis") {
-            return bundle.isLoaded || bundle.load()
-        }
-        // Fallback: check if the framework path exists
-        return FileManager.default.fileExists(
-            atPath: "/System/Library/Frameworks/SoundAnalysis.framework"
-        )
-    }
 }

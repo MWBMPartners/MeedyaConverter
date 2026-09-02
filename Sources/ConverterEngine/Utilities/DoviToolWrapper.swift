@@ -89,18 +89,10 @@ public final class DoviToolWrapper: @unchecked Sendable {
 
     // MARK: - Properties
 
-    /// Path to the dovi_tool binary.
-    private var binaryPath: String?
-
-    /// Search paths for locating dovi_tool.
-    private let searchPaths: [String] = [
-        "/opt/homebrew/bin/dovi_tool",
-        "/usr/local/bin/dovi_tool",
-        "/usr/bin/dovi_tool",
-    ]
-
-    /// Lock for thread-safe access.
-    private let lock = NSLock()
+    /// Bundled-tool discovery, shared with cdrdao & co.: user override →
+    /// Contents/Helpers → legacy Resources/Tools → executable dir → Homebrew →
+    /// MacPorts → /usr/bin → which(1). Caches the resolved path internally.
+    private let locator: BundledToolLocator
 
     // MARK: - Initialiser
 
@@ -108,40 +100,18 @@ public final class DoviToolWrapper: @unchecked Sendable {
     ///
     /// - Parameter binaryPath: Optional explicit path to the dovi_tool binary.
     public init(binaryPath: String? = nil) {
-        self.binaryPath = binaryPath
+        self.locator = BundledToolLocator(toolName: "dovi_tool", userOverridePath: binaryPath)
     }
 
     // MARK: - Discovery
 
-    /// Locate the dovi_tool binary on the system.
+    /// Locate the dovi_tool binary.
     ///
-    /// Searches user-specified path, then Homebrew, then standard locations.
-    ///
-    /// - Returns: The path to dovi_tool, or nil if not found.
+    /// Resolves via `BundledToolLocator`: an explicit override, then the app's
+    /// `Contents/Helpers` (where the release pipeline can bundle it), then
+    /// Homebrew / MacPorts / PATH. Returns nil if not found.
     public func locateBinary() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let path = binaryPath, FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-
-        for path in searchPaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                binaryPath = path
-                return path
-            }
-        }
-
-        // Try which(1) as fallback
-        if let result = try? runCommand("/usr/bin/which", arguments: ["dovi_tool"]),
-           !result.isEmpty,
-           FileManager.default.isExecutableFile(atPath: result) {
-            binaryPath = result
-            return result
-        }
-
-        return nil
+        try? locator.locate()
     }
 
     /// Whether dovi_tool is available on this system.
@@ -451,19 +421,4 @@ public final class DoviToolWrapper: @unchecked Sendable {
         }
     }
 
-    private func runCommand(_ path: String, arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        try process.run()
-        process.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
 }

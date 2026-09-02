@@ -38,7 +38,6 @@ struct VoiceIsolationView: View {
     @State private var sensitivity: Double = 0.5
 
     /// Whether to extract only the centre channel (for surround content).
-    @State private var centerChannelOnly = true
 
     /// The selected output audio format.
     @State private var outputFormat: String = "wav"
@@ -53,7 +52,6 @@ struct VoiceIsolationView: View {
     @State private var ffmpegArguments: [String] = []
 
     /// Whether ML sound analysis is available on this system.
-    @State private var mlAvailable = false
 
     /// Audio player for previewing the isolated audio.
     @State private var audioPlayer: AVAudioPlayer?
@@ -101,9 +99,6 @@ struct VoiceIsolationView: View {
         }
         .padding()
         .frame(minWidth: 600, minHeight: 500)
-        .onAppear {
-            mlAvailable = VoiceIsolator.isMLAvailable()
-        }
     }
 
     // MARK: - Header
@@ -155,24 +150,6 @@ struct VoiceIsolationView: View {
                 Text(methodDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                // ML availability warning
-                if isolationMethod == .visionSoundAnalysis && !mlAvailable {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                        Text("ML Sound Analysis is not available on this system. Falling back to FFmpeg bandpass.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                // Centre channel option (only relevant for dialogue extraction)
-                if isolationMethod == .ffmpegHighpass || isolationMethod == .spectralSubtraction {
-                    Divider()
-                    Toggle("Also extract centre channel (for surround audio)", isOn: $centerChannelOnly)
-                        .toggleStyle(.checkbox)
-                }
             }
         }
     }
@@ -182,8 +159,6 @@ struct VoiceIsolationView: View {
         switch isolationMethod {
         case .ffmpegHighpass:
             return "Applies a bandpass filter targeting speech frequencies (300Hz-3400Hz) with dynamic range compression. Fast and universally available."
-        case .visionSoundAnalysis:
-            return "Uses on-device machine learning to classify and separate sound types. Best quality but requires ML framework support."
         case .spectralSubtraction:
             return "FFT-based noise reduction that removes steady-state background noise while preserving speech transients. Good for consistent background noise."
         }
@@ -367,13 +342,6 @@ struct VoiceIsolationView: View {
                 outputPath: outputPath,
                 config: config
             )
-        case .visionSoundAnalysis:
-            // Fall back to FFmpeg bandpass if ML not available
-            ffmpegArguments = VoiceIsolator.buildFFmpegIsolationArguments(
-                inputPath: inputURL.path,
-                outputPath: outputPath,
-                config: config
-            )
         case .spectralSubtraction:
             ffmpegArguments = VoiceIsolator.buildSpectralSubtractionArguments(
                 inputPath: inputURL.path,
@@ -400,7 +368,7 @@ struct VoiceIsolationView: View {
         // Build the arguments
         let args: [String]
         switch isolationMethod {
-        case .ffmpegHighpass, .visionSoundAnalysis:
+        case .ffmpegHighpass:
             args = VoiceIsolator.buildFFmpegIsolationArguments(
                 inputPath: inputURL.path,
                 outputPath: outputPath,

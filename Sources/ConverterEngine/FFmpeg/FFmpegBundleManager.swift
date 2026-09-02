@@ -135,8 +135,9 @@ public final class FFmpegBundleManager: @unchecked Sendable {
 
     /// The ordered list of directories to search for FFmpeg/FFprobe binaries.
     /// User path is checked first, then the app's bundled Contents/Helpers
-    /// directory (where the release pipeline stages ffmpeg/ffprobe/ffplay and
-    /// the HDR helpers via scripts/bundle-ffmpeg.sh), then the legacy
+    /// directory (where the release pipeline stages ffmpeg/ffprobe/ffplay via
+    /// scripts/bundle-ffmpeg.sh; dovi_tool/hdr10plus_tool resolve through the
+    /// same directory via BundledToolLocator when present), then the legacy
     /// Resources/Tools location, then Homebrew, then system.
     ///
     /// The bundled-helpers path is checked FIRST (after the user override) so a

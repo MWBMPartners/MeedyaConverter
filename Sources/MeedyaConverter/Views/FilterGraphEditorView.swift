@@ -365,15 +365,38 @@ final class FilterGraph {
     /// - Returns: The complete filter string, or an empty string if the
     ///   graph has no nodes.
     func toFilterString() -> String {
+        filterString(for: topologicallySortedNodes())
+    }
+
+    /// The video-only half of the graph's filter string, in topological
+    /// order — everything `isAudioNode(_:)` does not classify as audio.
+    /// Suitable for `-vf`. Empty string if the graph has no video nodes.
+    func toVideoFilterString() -> String {
+        filterString(for: topologicallySortedNodes().filter { !isAudioNode($0) })
+    }
+
+    /// The audio-only half of the graph's filter string, in topological
+    /// order. Suitable for `-af`. Empty string if the graph has no audio
+    /// nodes.
+    func toAudioFilterString() -> String {
+        filterString(for: topologicallySortedNodes().filter { isAudioNode($0) })
+    }
+
+    /// Whether `node` is an audio filter. Unknown/custom filter names (not a
+    /// recognised `FilterNodeType`) are treated as video.
+    private func isAudioNode(_ node: FilterNode) -> Bool {
+        FilterNodeType(rawValue: node.filterName)?.isAudioFilter == true
+    }
+
+    /// Renders `nodes` (already in the desired order) into a comma-joined
+    /// FFmpeg filter expression list. Shared by `toFilterString()`,
+    /// `toVideoFilterString()`, and `toAudioFilterString()`.
+    private func filterString(for nodes: [FilterNode]) -> String {
         guard !nodes.isEmpty else { return "" }
 
-        // Build adjacency for topological sort
-        let sortedNodes = topologicallySortedNodes()
-
-        // Generate filter expressions
         var filterParts: [String] = []
 
-        for node in sortedNodes {
+        for node in nodes {
             var expr = node.filterName
             if !node.parameters.isEmpty {
                 let paramStr = node.parameters
@@ -463,6 +486,10 @@ struct FilterGraphEditorView: View {
 
     // MARK: - State
 
+    /// Shared app state — used by the "Apply to Next Encode" button to stage
+    /// this graph's video/audio filter halves for the next queued job.
+    @Environment(AppViewModel.self) private var viewModel
+
     /// The filter graph model containing all nodes and connections.
     @State private var graph = FilterGraph()
 
@@ -477,6 +504,10 @@ struct FilterGraphEditorView: View {
 
     /// Whether the generated filter string was recently copied.
     @State private var didCopyFilterString: Bool = false
+
+    /// Whether the graph was recently staged onto `viewModel` via
+    /// "Apply to Next Encode".
+    @State private var didStageFilterGraph: Bool = false
 
     /// Search text for filtering the palette.
     @State private var paletteSearchText: String = ""
@@ -961,6 +992,36 @@ struct FilterGraphEditorView: View {
                 )
             }
             .disabled(graph.toFilterString().isEmpty)
+
+            Button {
+                let videoFilter = graph.toVideoFilterString()
+                let audioFilter = graph.toAudioFilterString()
+                guard !videoFilter.isEmpty || !audioFilter.isEmpty else { return }
+
+                viewModel.pendingFilterGraphVideo = videoFilter.isEmpty ? nil : videoFilter
+                viewModel.pendingFilterGraphAudio = audioFilter.isEmpty ? nil : audioFilter
+
+                viewModel.appendLog(
+                    .info,
+                    "Filter Graph: staged for next queued job (\(graph.nodes.count) node\(graph.nodes.count == 1 ? "" : "s"))",
+                    category: .filter
+                )
+
+                didStageFilterGraph = true
+
+                // Reset the staged confirmation after 2 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    didStageFilterGraph = false
+                }
+            } label: {
+                Label(
+                    didStageFilterGraph ? "Staged" : "Apply to Next Encode",
+                    systemImage: didStageFilterGraph ? "checkmark" : "arrow.right.circle"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(graph.toFilterString().isEmpty)
+            .help("Stage this filter graph's video and audio filters onto the next job you queue")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -975,5 +1036,6 @@ struct FilterGraphEditorView: View {
 #Preview("Filter Graph Editor") {
     FilterGraphEditorView()
         .frame(width: 900, height: 600)
+        .environment(AppViewModel())
 }
 #endif
