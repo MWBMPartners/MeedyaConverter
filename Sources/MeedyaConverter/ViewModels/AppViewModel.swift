@@ -87,6 +87,8 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Concatenation — join multiple media files.
     case concatenation = "Concatenate"
 
+    case stabilization = "Stabilization"
+
     /// Watermark overlay editor.
     case watermark = "Watermark"
 
@@ -196,6 +198,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .metadataTags:      return "tag"
         case .batchRename:       return "pencil.and.list.clipboard"
         case .concatenation:     return "link"
+        case .stabilization:     return "hand.raised.slash"
         case .watermark:         return "text.below.photo"
         case .multiOutput:       return "arrow.triangle.branch"
         case .conditionalRules:  return "switch.2"
@@ -245,6 +248,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .metadataTags:      return "Edit metadata tags"
         case .batchRename:       return "Batch rename output files"
         case .concatenation:     return "Join media files together"
+        case .stabilization:     return "Stabilise shaky video (vid.stab)"
         case .watermark:         return "Add watermark overlay"
         case .multiOutput:       return "Encode to multiple outputs"
         case .conditionalRules:  return "Manage conditional encoding rules"

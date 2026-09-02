@@ -54,6 +54,7 @@ struct SidebarView: View {
                 sidebarLabel(for: .metadataTags)
                 sidebarLabel(for: .batchRename)
                 sidebarLabel(for: .concatenation)
+                sidebarLabel(for: .stabilization)
                 sidebarLabel(for: .watermark)
                 sidebarLabel(for: .multiOutput)
                 sidebarLabel(for: .conditionalRules)

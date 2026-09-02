@@ -135,6 +135,8 @@ struct ContentView: View {
             BatchRenameView()
         case .concatenation:
             ConcatenationView()
+        case .stabilization:
+            StabilizationView()
         case .watermark:
             WatermarkView()
         case .multiOutput:
