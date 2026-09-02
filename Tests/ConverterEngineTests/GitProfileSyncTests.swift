@@ -82,7 +82,7 @@ final class MockGitRunner: GitRunning, @unchecked Sendable {
 
     /// Mirrors `GitProfileSync`'s private `commandLabel(for:)`: the first
     /// argument that isn't a flag or a `-c key=value` pair.
-    private static func commandLabel(for arguments: [String]) -> String {
+    static func commandLabel(for arguments: [String]) -> String {
         var index = arguments.startIndex
         while index < arguments.endIndex {
             let argument = arguments[index]
@@ -266,7 +266,7 @@ final class GitProfileSyncTests: XCTestCase {
 
         XCTAssertEqual(outcome, .pushed)
         XCTAssertEqual(
-            runner.calls.map { $0.arguments.first ?? "" },
+            runner.calls.map { MockGitRunner.commandLabel(for: $0.arguments) },
             ["clone", "rev-parse", "checkout", "add", "diff", "config", "commit", "push"]
         )
 
