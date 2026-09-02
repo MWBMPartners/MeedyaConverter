@@ -384,10 +384,17 @@ public struct MediaScanner: Sendable {
 
     /// Locates the FFprobe binary on the system.
     ///
-    /// Checks common installation paths in order of preference.
+    /// Prefers the bundle-aware lookup (`FFmpegBundleManager`, which checks
+    /// `Contents/Helpers` before falling back to Homebrew/PATH) so this works
+    /// in a Finder-launched, notarized app that has no Homebrew on PATH.
+    /// Falls back to the hardcoded candidate list only if that lookup fails.
     ///
     /// - Returns: The path to FFprobe, or `nil` if not found.
     private static func locateFFprobe() -> String? {
+        if let bundled = try? FFmpegBundleManager().locateFFprobe().path {
+            return bundled
+        }
+
         let candidates = [
             "/opt/homebrew/bin/ffprobe",
             "/usr/local/bin/ffprobe",

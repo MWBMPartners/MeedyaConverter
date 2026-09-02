@@ -39,6 +39,14 @@ struct VideoTrimmerView: View {
     // MARK: - State
 
     /// Total duration of the source video in seconds.
+    ///
+    /// Seeded from `viewModel.selectedFile?.duration` on appear and whenever
+    /// the selected file changes (see `syncDuration()`). The 120.0 default
+    /// here is only a last-resort fallback for when no file is selected yet
+    /// or its duration hasn't been probed — every trim/snip/split
+    /// calculation below reads this property directly, so leaving it
+    /// unassigned from the real file silently computed cuts against the
+    /// wrong length for any source other than exactly two minutes.
     @State private var duration: TimeInterval = 120.0
 
     /// Trim start position as a fraction of duration (0.0 to 1.0).
@@ -120,7 +128,14 @@ struct VideoTrimmerView: View {
         .onChange(of: trimStartFraction) { _, _ in recalculateSegments() }
         .onChange(of: trimEndFraction) { _, _ in recalculateSegments() }
         .onChange(of: snipRegions) { _, _ in recalculateSegments() }
-        .onAppear { recalculateSegments() }
+        .onAppear {
+            syncDuration()
+            recalculateSegments()
+        }
+        .onChange(of: viewModel.selectedFile?.fileURL) { _, _ in
+            syncDuration()
+            recalculateSegments()
+        }
         .onDisappear { cancelApply() }
         // Drop a single video file to set as the trim source (Issue #366).
         .onDrop(
@@ -482,6 +497,15 @@ struct VideoTrimmerView: View {
             endTime: midpoint + regionLength / 2
         )
         snipRegions.append(snip)
+    }
+
+    /// Seeds `duration` from the selected media file's real probed duration.
+    ///
+    /// Falls back to the current `duration` value (ultimately the 120.0
+    /// default) when no file is selected or its duration hasn't been probed
+    /// yet, so the timeline never collapses to zero.
+    private func syncDuration() {
+        duration = viewModel.selectedFile?.duration ?? duration
     }
 
     /// Recalculate the resulting segments based on current trim and snip config.

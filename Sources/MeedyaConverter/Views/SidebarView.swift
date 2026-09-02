@@ -102,7 +102,6 @@ struct SidebarView: View {
                 sidebarLabel(for: .sftp)
                 sidebarLabel(for: .podcastFeed)
                 sidebarLabel(for: .teamProfile)
-                sidebarLabel(for: .cloudSync)
             }
         }
         .listStyle(.sidebar)

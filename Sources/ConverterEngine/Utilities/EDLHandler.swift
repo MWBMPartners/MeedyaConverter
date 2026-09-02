@@ -176,18 +176,25 @@ public struct EDLHandler: Sendable {
         lines.append("TITLE: \(title)")
         lines.append("") // Blank line after title
 
+        // Left-justify to a MINIMUM width without truncating — the pure-Swift
+        // equivalent of printf `%-Ns`. The former `String(format: "%s", (x as
+        // NSString).utf8String)` passed a pointer into a temporary NSString
+        // (deallocated before printf read it) — undefined behaviour that
+        // produced garbage reel/track/edit fields. `%s` with a Swift String is
+        // equally unsafe, so every string column is now built in Swift.
+        func padMin(_ value: String, _ width: Int) -> String {
+            value.count >= width
+                ? value
+                : value + String(repeating: " ", count: width - value.count)
+        }
+
         for event in events {
-            let line = String(
-                format: "%03d  %-8s %-5s %-4s %s %s %s %s",
-                event.eventNumber,
-                (event.reelName as NSString).utf8String ?? "",
-                (event.trackType as NSString).utf8String ?? "",
-                (event.editType as NSString).utf8String ?? "",
-                event.sourceIn,
-                event.sourceOut,
-                event.recordIn,
-                event.recordOut
-            )
+            let number = String(format: "%03d", event.eventNumber)
+            let line = number
+                + "  " + padMin(event.reelName, 8)
+                + " " + padMin(event.trackType, 5)
+                + " " + padMin(event.editType, 4)
+                + " \(event.sourceIn) \(event.sourceOut) \(event.recordIn) \(event.recordOut)"
             lines.append(line)
         }
 

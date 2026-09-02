@@ -163,14 +163,19 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Features whose UI exists but whose engine-side execution is not yet
-    /// wired: `RasterVectorConverter`/`ProResToVectorConverter` are
-    /// argument-builders only, and the tracing tools they need (potrace /
-    /// vtracer / rsvg-convert) are GPL and not yet bundled, with no process
-    /// runner. Hidden from the sidebar and not selectable until that wiring
-    /// lands, so a user can't open a settings-only form that can never convert
-    /// (Issue #473). Re-list them here — nowhere else — to bring them back.
-    static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector]
+    /// Features whose UI exists but that cannot function in the shipped build,
+    /// hidden from the sidebar and not selectable so a user can't open a
+    /// dead-end. Re-list here — nowhere else — to bring one back.
+    ///
+    /// - `.vectorConversion` / `.proresVector` (#473): `RasterVectorConverter` /
+    ///   `ProResToVectorConverter` are argument-builders only; the tracing tools
+    ///   they need (potrace / vtracer / rsvg-convert) are GPL and not yet
+    ///   bundled, with no process runner.
+    /// - `.cloudSync`: iCloud sync needs an iCloud/ubiquity entitlement the
+    ///   Direct distribution does not carry (Direct is un-sandboxed, no iCloud
+    ///   container), so every Upload/Download can only fail. Cloud *Storage*
+    ///   (S3/Dropbox/Drive/OneDrive) is unaffected and stays available.
+    static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector, .cloudSync]
 
     /// Whether this item is currently reachable (see `unavailable`).
     var isAvailable: Bool { !NavigationItem.unavailable.contains(self) }

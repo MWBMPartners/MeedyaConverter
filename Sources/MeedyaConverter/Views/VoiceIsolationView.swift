@@ -433,19 +433,12 @@ struct VoiceIsolationView: View {
     /// - Parameter arguments: FFmpeg command-line arguments.
     /// - Throws: If FFmpeg is not found or exits with a non-zero code.
     private func runFFmpeg(arguments: [String]) async throws {
-        let ffmpegPaths = [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-
-        guard let ffmpegPath = ffmpegPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
-            throw NSError(
-                domain: "VoiceIsolation",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "FFmpeg not found on this system."]
-            )
-        }
+        // Bundle-aware lookup (Contents/Helpers first, then Homebrew/PATH as
+        // a fallback) so this works in a Finder-launched, notarized app that
+        // has no Homebrew on PATH — see FFmpegBundleManager.
+        let ffmpegPath = try await Task.detached {
+            try FFmpegBundleManager().locateFFmpeg().path
+        }.value
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpegPath)

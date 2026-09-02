@@ -637,6 +637,23 @@ struct ImageConversionView: View {
         // for it to exit — runs in a `Task.detached` that captures/returns
         // only `Sendable` values, never `self`.
         Task {
+            // Resolve the bundled ffmpeg binary once, before the per-file
+            // loop, using the same bundle-aware lookup as SceneDetectorView
+            // (Issue #451-family fix): a Finder-launched, notarized app has
+            // no Homebrew on PATH, so `/usr/bin/env ffmpeg` would fail.
+            let ffmpegPath: String
+            do {
+                ffmpegPath = try await Task.detached {
+                    try FFmpegBundleManager().locateFFmpeg().path
+                }.value
+            } catch {
+                conversionErrors.append("FFmpeg could not be found: \(error.localizedDescription)")
+                isConverting = false
+                viewModel.appendLog(.error,
+                    "Image conversion could not start — FFmpeg lookup failed: \(error.localizedDescription)")
+                return
+            }
+
             for (index, file) in filesToConvert.enumerated() {
                 guard isConverting else { break }
 
@@ -656,8 +673,8 @@ struct ImageConversionView: View {
 
                 let (succeeded, errorOutput): (Bool, String?) = await Task.detached {
                     let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = ["ffmpeg"] + args
+                    process.executableURL = URL(fileURLWithPath: ffmpegPath)
+                    process.arguments = args
 
                     let pipe = Pipe()
                     process.standardOutput = pipe

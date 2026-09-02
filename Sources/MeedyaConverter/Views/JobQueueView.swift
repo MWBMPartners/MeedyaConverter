@@ -102,10 +102,34 @@ struct JobQueueView: View {
                     ForEach(activeJobs, id: \.config.id) { job in
                         JobRow(job: job)
                     }
-                    .onMove { from, to in
-                        if let fromIndex = from.first {
-                            viewModel.engine.queue.moveJob(fromIndex: fromIndex, toIndex: to)
+                    .onMove { source, destination in
+                        // `source`/`destination` are indices into `activeJobs`
+                        // (this section's filtered list), not into the full
+                        // `viewModel.engine.queue.jobs` array that
+                        // `moveJob(fromIndex:toIndex:)` operates on. Whenever a
+                        // finished job exists, those index spaces diverge and
+                        // handing the filtered indices straight to `moveJob`
+                        // reordered the wrong job.
+                        //
+                        // Reconcile by computing the drag's *desired relative
+                        // order* of just the active jobs, then rebuild the full
+                        // queue's ID order by walking the full array and
+                        // substituting that new order into the active jobs'
+                        // existing slots — finished jobs keep their exact
+                        // position, and `reorder(to:)` (keyed by job ID) applies
+                        // the result without any index-space translation.
+                        var reorderedActive = activeJobs
+                        reorderedActive.move(fromOffsets: source, toOffset: destination)
+
+                        let activeIDs = Set(activeJobs.map(\.config.id))
+                        var reorderedActiveIDs = reorderedActive.map(\.config.id).makeIterator()
+
+                        let newOrder = viewModel.engine.queue.jobs.map { job in
+                            activeIDs.contains(job.config.id)
+                                ? (reorderedActiveIDs.next() ?? job.config.id)
+                                : job.config.id
                         }
+                        viewModel.engine.queue.reorder(to: newOrder)
                     }
                 }
             }

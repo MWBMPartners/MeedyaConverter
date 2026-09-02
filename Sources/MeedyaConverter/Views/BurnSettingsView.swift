@@ -557,6 +557,26 @@ struct BurnSettingsView: View {
                     args = DiscBurner.buildHdiutilBurnArguments(isoPath: capturedSourcePath, verify: capturedVerifyAfterBurn)
                 }
 
+                // SAFETY (rc.4): "Simulate (dry run)" is only a genuine dry run on
+                // the cdrecord `-dummy` path (Audio CD). growisofs and hdiutil have
+                // no true dry-run, so running them with simulate on would write a
+                // REAL disc — refuse rather than waste the tester's blank media.
+                if config.simulate && capturedDiscFormat != .audioCd {
+                    burnProgress = nil
+                    burnResult = BurnResult(
+                        success: false,
+                        message: "Simulation (dry run) is not supported for \(capturedDiscFormat.displayName) in this build — nothing was written to disc. A true dry run is available for Audio CD only.",
+                        verified: false)
+                    viewModel.appendLog(.warning, "Disc burn simulation not supported for \(capturedDiscFormat.displayName); nothing written")
+                    isBurning = false
+                    return
+                }
+
+                // A verification pass only actually happens on the hdiutil
+                // `-verifyburn` path; cdrecord/growisofs do not verify, so we
+                // must not claim "Verification passed" for them.
+                let didVerify = executable == "hdiutil" && capturedVerifyAfterBurn
+
                 let (exitCode, errorOutput): (Int32, String?) = try await Task.detached {
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -582,7 +602,7 @@ struct BurnSettingsView: View {
 
                 if exitCode == 0 {
                     burnProgress = BurnProgress(phase: .complete, bytesWritten: 0, totalBytes: 0)
-                    burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: capturedVerifyAfterBurn)
+                    burnResult = BurnResult(success: true, message: "Disc burned successfully", verified: didVerify)
                     viewModel.appendLog(.info, "Disc burn completed successfully")
                 } else {
                     burnProgress = BurnProgress(phase: .failed, bytesWritten: 0, totalBytes: 0)

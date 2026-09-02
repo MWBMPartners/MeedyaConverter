@@ -369,17 +369,14 @@ struct ConcatenationView: View {
             }
 
             // Start action, progress, and results (Issue #322).
+            //
+            // No "re-encode not available" banner here: the filter path IS
+            // wired (runFilterConcat) and Start is enabled for it — that
+            // status is already explained accurately by the Label in the
+            // Crossfade section above. A second, stale banner used to live
+            // here claiming re-encode concatenation "is not yet available",
+            // which directly contradicted it.
             Section("Concatenate") {
-                if method == .filter {
-                    Text(
-                        "Re-encode concatenation is not yet available in "
-                        + "this build. Select \"Lossless (Demuxer)\" to "
-                        + "concatenate."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-
                 if isRunning {
                     if let progressFraction {
                         ProgressView(value: progressFraction)

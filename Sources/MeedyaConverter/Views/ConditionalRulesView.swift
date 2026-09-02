@@ -414,9 +414,9 @@ private struct RuleEditorView: View {
                 // Conditions
                 Section("Conditions (AND logic)") {
                     if rule.conditions.isEmpty {
-                        Text("No conditions. This rule will match all files.")
+                        Text("Add at least one condition before saving. An empty condition list would match every file, silently overriding every other rule.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.orange)
                     }
 
                     ForEach(Array(rule.conditions.enumerated()), id: \.element.id) { index, condition in
@@ -458,7 +458,14 @@ private struct RuleEditorView: View {
                     onSave(rule)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                // A rule with zero conditions is vacuously true — it would
+                // match every file and silently hijack the profile for all
+                // future encodes. Block Save until at least one condition is
+                // added (matching the name-required guard above).
+                .disabled(
+                    rule.name.trimmingCharacters(in: .whitespaces).isEmpty
+                        || rule.conditions.isEmpty
+                )
             }
             .padding()
         }
