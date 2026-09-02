@@ -1491,6 +1491,7 @@ final class AppViewModel {
         // menu bar item and dock tile down while later jobs were still
         // encoding.
         activityIndicator.stopTracking()
+        miniPlayer.resetToIdle()
 
         ProcessInfo.processInfo.endActivity(activity)
         isQueueRunning = false
@@ -2071,6 +2072,28 @@ final class AppViewModel {
             eta: longestETA,
             bitrate: combinedBitrate
         )
+
+        // Drive the floating Mini Player too (Issue #280): its
+        // `updateProgress` had zero callers, so the panel showed a permanent
+        // "No active encoding" placeholder even mid-encode. The panel takes
+        // pre-formatted strings (empty renders as "--").
+        miniPlayer.updateProgress(
+            fileName: label,
+            progress: meanProgress,
+            speed: combinedSpeed.map { String(format: "%.1fx", $0) } ?? "",
+            eta: longestETA.map(formatMiniPlayerETA) ?? ""
+        )
+    }
+
+    /// Formats a remaining-time interval for the Mini Player's ETA label
+    /// (Issue #280). Empty for a non-finite/negative value (the panel then
+    /// shows "--").
+    private func formatMiniPlayerETA(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "" }
+        let total = Int(seconds)
+        let minutes = total / 60
+        let secs = total % 60
+        return minutes > 0 ? "\(minutes)m \(secs)s" : "\(secs)s"
     }
 
     /// Stop claiming new jobs; the queue drains once the jobs already in
@@ -2127,6 +2150,7 @@ final class AppViewModel {
         }
 
         activityIndicator.stopTracking()
+        miniPlayer.resetToIdle()
         isQueueRunning = false
         appendLog(.warning, "Encoding cancelled")
 

@@ -131,6 +131,13 @@ final class MiniPlayerController {
         }
     }
 
+    /// Resets the panel to its idle "No active encoding" state (Issue #280).
+    /// Called when the queue finishes or is cancelled so the panel does not
+    /// keep showing the last job's stale progress.
+    func resetToIdle() {
+        updateProgress(fileName: "", progress: 0, speed: "", eta: "")
+    }
+
     /// Restores the main application window and hides the mini player.
     ///
     /// Activates the app, un-minimises the main window if needed,
