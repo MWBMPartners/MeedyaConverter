@@ -146,7 +146,51 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
-## 🔨 2026-09-02 — BUILDING the disc-imaging executor (#495 P1), autonomously
+## 🟢 2026-09-02 — disc-imaging executor (#495 P1) BUILT + docs + CI
+
+**Landed on `wip/alpha-consolidation`:** `96f0617` (executor), `7325c5d` (docs + `-o` flag fix),
+`+CHANGELOG`. Fable planned (exact signatures), Opus built the engine, Sonnet the CLI, Fable
+adversarially reviewed; **all review findings fixed before commit.**
+
+New (`Sources/ConverterEngine/Disc/Imaging/` + CLI): `RawCDReadPlanner`/`RawCDImagingConfig` (the bridge
+that finally **consumes the dead `ImagingConfig.imageFormat`**), `CdrdaoTocParser` (→ existing
+`DiscTableOfContents`), `CdrdaoProgressParser`, `DiscImagingController` (Process+AsyncStream+cancel+
+checksum-verify), `BundledToolLocator`, `DiscProtectionDetector` (the #492 DRM policy in code),
+`DriveListingParser`; `DiscImageFormat.ccd`; `BurnSettingsView` real device-node parsing; CLI
+`meedya-convert disc {drives|toc|image}`. **29 unit tests** incl. a `.toc`→CUE round-trip.
+
+**Review findings fixed (all real):**
+- MAJOR — `.toc` FILE/DATAFILE grammar mis-read a leading `#byteOffset` as a length. Fixed
+  (behaviour-preserving for cdrdao's own 2-operand output).
+- MAJOR (**the fabricated-capability pattern again**) — the DRM gate could never fire: the image command
+  hardcoded all-default markers → `detect()` always `.none` → dead refuse branch. Now the image path
+  reads the TOC FIRST and refuses (genuinely reachable) any data-session disc (mixed-mode = later phase,
+  #108/#135), so the audio-only markers it then feeds the gate are a *checked fact*. CSS/AACS/BD+/AACS2
+  refusal is documented as DVD/BD-reader-phase markers.
+- Controller lifecycle hardened (exitCode guards `isRunning`; terminationHandler clears the stderr
+  readabilityHandler) — matching the FFmpeg model.
+- CLI `-o` collisions fixed (`-o` = output path everywhere; `--format` has no short) — one caught in the
+  review, a **second one (`DiscTocCommand`) I caught myself** during the docs pass.
+- `buildMacOSUnmountArguments` doc corrected: I'd written it claimed a controller pre-step that doesn't
+  exist (would have been another false comment) — reworded to honestly say it's a pure builder,
+  not-yet-wired (the cdrdao-device→diskutil-node mapping needs hardware).
+
+**Docs:** OpenAPI `/disc-drives|toc|image` (valid 3.1.0), in-app `cli-reference.md` disc section
+(eight subcommands now), CHANGELOG. **#495 updated per-criterion.**
+
+**⚠️ VERIFICATION BOUNDARY (stated everywhere):** `swift build` + the 29 tests are CI-green; but there
+is **no optical drive in this environment or CI**, so every path that launches cdrdao against a device
+is **compile-checked only, hardware-verified on the manual matrix (macOS-Direct + Linux)**. No simulated
+read, no canned TOC, no fabricated node — it fails cleanly without a drive rather than faking success.
+cdrdao is **not** in `ToolBundleManifest` yet (DR-0001 — bundled when the mirror stages it, PR
+MeedyaDL-Tools#25); `BundledToolLocator` finds a PATH/Homebrew cdrdao meanwhile.
+
+**#495 P1 remaining = hardware-matrix verification only.** Next disc components (later phases): NRG/MDX
+writers, DVD/BD/UHD readers + their filesystem-marker DRM detection, mixed-mode (#108/#135), the GUI view.
+
+---
+
+## (superseded) 🔨 2026-09-02 — BUILDING the disc-imaging executor (#495 P1), autonomously
 
 User: proceed autonomously; surface decisions upfront. Decisions stated + defaults taken (none blocking):
 - **Increment = #495 P1: Audio CD → BIN/CUE vertical slice**, CLI-first (GUI is a follow-up — a SwiftUI
