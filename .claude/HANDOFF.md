@@ -146,6 +146,70 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+### ✅ ALL 11 SELECTED ITEMS DONE — batch C committed, CI green on every commit
+
+`45a8931` — **#286** bounded-concurrency queue (opt-in, width 1 default) · **#329** A/B comparison
+capture→persist→compare. **CI `Build & Test (macOS)` SUCCESS at `45a8931`, `761101c`, `b845cf7`,
+`2f9519f`** — so `swift build` + `swift test --parallel` pass over everything.
+
+**#286 was deliberately gated behind a Fable go/no-go plan** before any code was written. It returned
+`proceed-reduced-scope`, and its most valuable finding is that three hazards are **bugs in the CURRENT
+sequential queue**, not merely risks of going concurrent:
+
+1. `EncodingEngine` held ONE `activeController` optional and `runFFmpegPass`'s
+   `defer { setActiveController(nil) }` cleared it unconditionally — **`cancelCurrentJob` already
+   races that defer today**. Now a keyed `[UUID: FFmpegProcessController]` registry.
+2. Both statistics writes built a **fresh** `EncodingStatisticsStore` doing load-append-rewrite of
+   `encoding_history.json`; the per-instance `NSLock` protects nothing across instances. Safe today
+   only because the sequential loop awaits each write. Now one `EncodingStatisticsRecorder` actor.
+3. `EncodingActivityIndicator.stopTracking` tears down the menu-bar item and dock tile, so the first
+   job to finish would blank them while others ran. Lifecycle moved to the queue.
+
+**Rollback is two-layered:** persisted max-concurrency defaults to **1** (TaskGroup degenerates to
+today's exact sequence), and `.parallelEncoding` is entitlement-gated (`EntitlementGating.swift:152`,
+`FreeGateProvider` returns false) so width clamps to 1 when unentitled.
+
+⚠️ **NOT VERIFIED, and stated as such in the commit, the issue and the eventual PR:** no interleaved
+multi-job encode has been run anywhere. `swift test` cannot run here and **CI cannot spawn a real
+multi-job FFmpeg encode either**. Width > 1 is unproven at runtime.
+
+#### The false-comment pattern struck again — in code written this session
+
+`PostEncodeHookRunner` was an `actor` whose doc promised chains run "strictly one at a time". **It
+serialised nothing.** Swift actors are **reentrant**: the whole body was one `await chain.execute(...)`,
+so the actor was released on entry and two concurrent completions would run the user's shell scripts
+in parallel. Fixed by chaining each run behind a stored tail task; the comments now say explicitly
+that actor isolation is *not* what provides serialisation.
+
+Also fixed: the menu-bar popover's ETA/Bitrate rows went permanently empty (their only writer was the
+Combine sink the queue no longer uses), contradicting the "width 1 is exactly the old behaviour" claim
+the whole safety argument rests on.
+
+**That is the FIFTH false comment this session, and the THIRD written by a well-intentioned change
+rather than inherited.** Recorded in Claude memory as the project's dominant defect class, with the
+review question that catches it: *does this claim hold at every call site, not just the one in front
+of me?*
+
+#### #329 review findings fixed
+Difference mode never generated its image when it was already the active mode as frames loaded (both
+triggers are `onChange` and neither value changes there) — the user saw an honest-*looking* but false
+"could not be generated". And the frame scrubber's `0...0` range when only one extraction pass
+succeeded is degenerate (NaN thumb position).
+
+### Issue state after all implementation
+
+**94 open / 358 closed.** Closed this session: #496, #497, #277, #475, #356, #329, #390, #448, #471.
+Reopened as closed-in-error (12): #343, #63, #59, #323, #324, #257, #285, #280, #330, #361, #303, #336.
+Left open with precisely-stated remaining scope: #322 (crossfade), #288 (chapters on job model),
+#451 (likely closeable), #281 (drag-onto-icon), #331, #286 (width > 1 unverified), #494 (packaging).
+
+### 🔄 FINAL PHASE RUNNING — workflow `w8hn1ymz9` / `wf_70efdf65-caf`
+
+Three parallel Sonnet docs agents (CHANGELOG/README/PROJECT_STATUS · FEATURES/Architecture/in-app help
+· OpenAPI specs + docs guides), then **sequential Fable**: re-verify every issue this session touched
+(including whether anything was closed prematurely, and whether any of the 12 reopens was wrong), then
+produce the **round-2 ranked proposal register**.
+
 ### ✅ Batches A and B COMMITTED + PUSHED — 9 of the 11 selected items done
 
 | Commit | Items |
