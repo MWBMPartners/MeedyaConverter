@@ -183,6 +183,19 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
 - **#285 drag-out — DONE + CLOSED** (`69921ae`). `DraggableFileView`/`.draggableFile` were a complete
   drag-source with zero callers; applied to completed `JobRow`s (output URL for completed, nil otherwise).
 
+- **#499 app-module test target — DONE + CLOSED** (`62290d2`; user approved the build-layout change).
+  The app module had NO testable surface (an executable target can't be `@testable import`ed), which is
+  why this session's subtlest defects (the #475 default-polarity trap, the #331 KeyEquivalent crash)
+  shipped unguarded. **Split into a thin `MeedyaConverter` executable + a testable `MeedyaConverterCore`
+  library** (standard SwiftPM pattern): all app code moves to the library (path unchanged), the exe is a
+  one-line `MeedyaConverterApp.main()`, `MeedyaConverterApp` is now public + `@main` removed + `body`
+  public. New `MeedyaConverterCoreTests` seeded with regression tests for both defects.
+  **⚠️ The SwiftPM resource bundle renamed** `MeedyaConverter_MeedyaConverter.bundle` →
+  `MeedyaConverter_MeedyaConverterCore.bundle` (package_target); `release.yml` + `dev-build.yml` copy
+  step updated to match (name verified against the built artefact). **The `.app` resource-bundle copy
+  only runs on a release/dev build, so that one line is confirmed on the next such build** — CI Build &
+  Test verifies the compile + the new tests only.
+
 **Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
 reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
 AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
