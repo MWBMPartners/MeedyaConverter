@@ -127,6 +127,17 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// Priority for queue ordering (higher = processed first).
     public var priority: Int
 
+    /// Estimated source-media duration in seconds, used by the queue optimiser's
+    /// duration-based strategies (shortest/longest/estimated-time first).
+    ///
+    /// A genuine stored field, populated at enqueue from the probed source. It
+    /// used to be a computed property that smuggled a `__duration:<value>`
+    /// token into `extraArguments`; since `FFmpegArgumentBuilder` appends
+    /// `extraArguments` verbatim to the ffmpeg command line, populating it that
+    /// way would have passed `__duration:123` to ffmpeg as a bogus argument.
+    /// `nil` = unknown (duration strategies sort such jobs to the end).
+    public var estimatedSourceDuration: TimeInterval? = nil
+
     public init(
         id: UUID = UUID(),
         inputURL: URL,

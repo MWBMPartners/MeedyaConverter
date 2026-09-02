@@ -914,7 +914,7 @@ final class AppViewModel {
             appendLog(.info, "Auto-crop: \(crop.recommendedCrop.displayString) (\(String(format: "%.1f", crop.cropPercentage))% removed)")
         }
 
-        let config = EncodingJobConfig(
+        var config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
             profile: effectiveProfile,
@@ -925,6 +925,12 @@ final class AppViewModel {
             streamMetadata: streamMetadataOverrides,
             videoFilterChain: cropFilter
         )
+        // Feed the queue optimiser's duration-based strategies (#326). The
+        // source was already probed on import, so `file.duration` is the real
+        // media length; without this the shortest/longest/estimated-time
+        // strategies had nothing to sort by and silently left the order
+        // unchanged.
+        config.estimatedSourceDuration = file.duration
 
         engine.queue.addJob(config)
         appendLog(.info, "Queued: \(file.fileName) with profile \"\(effectiveProfile.name)\"")

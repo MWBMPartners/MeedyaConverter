@@ -179,29 +179,8 @@ public struct SmartQueueOptimizer: Sendable {
     }
 }
 
-// MARK: - EncodingJobConfig Extension
+// The queue optimiser reads `EncodingJobConfig.estimatedSourceDuration`
+// directly — it is a real stored field on the config (see EncodingJob.swift),
+// populated at enqueue. It is no longer smuggled through `extraArguments`,
+// which would have leaked a `__duration:` token onto the ffmpeg command line.
 
-extension EncodingJobConfig {
-
-    /// Estimated source media duration in seconds, used by the queue optimiser
-    /// for sorting strategies that depend on content length.
-    ///
-    /// This value is populated externally after probing the source file.
-    /// When not set, duration-based strategies treat the job as having
-    /// infinite duration (sorted to the end for `.shortestFirst`).
-    public var estimatedSourceDuration: TimeInterval? {
-        get {
-            guard let raw = extraArguments.first(where: { $0.hasPrefix("__duration:") }) else {
-                return nil
-            }
-            return TimeInterval(raw.replacingOccurrences(of: "__duration:", with: ""))
-        }
-        set {
-            // Remove any existing duration tag.
-            extraArguments.removeAll { $0.hasPrefix("__duration:") }
-            if let value = newValue {
-                extraArguments.append("__duration:\(value)")
-            }
-        }
-    }
-}
