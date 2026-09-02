@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-01 · VERSION 0.1.0
+**Last updated:** 2026-09-02 · VERSION 0.1.0
 
 ## 🎉 SESSION OUTCOME — MERGED & RELEASED (2026-08-04)
 
@@ -202,10 +202,27 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   via `Task.detached`), and the success branch DELETES it (so completed jobs aren't shown resumable).
   New `CheckpointManagerTests` (save/load, overwrite, delete). Still honest-minimal (re-queue from 0%).
 
-**Round-2 remaining (ranked):** #286 throughput tiles, regression-test for the
-reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
-AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
-watermarks, #335 multi-output, #473 vector, #278 pipeline editor.
+- **#482 team-profile conflicts — DONE + CLOSED** (`c2abb36`). The fake-push-success half was fixed
+  earlier (real PUT); the remaining gap was that `conflictedProfiles` was initialised to `[]` and
+  **never populated** — nothing computed a diff — so the Conflicts section could never render and
+  `resolveAllConflicts` always merged against `[]`. Added `TeamProfileManager.detectConflicts(local:
+  remote:)` (remote profiles sharing an id with a local one but whose whole `Hashable` value differs);
+  `pullProfiles` now populates it + notes the count. New `TeamProfileConflictTests` (differing-same-id
+  is a conflict; identical isn't; new-remote-id isn't; only the conflicting subset, in remote order).
+
+- **#286 throughput tiles — DONE (epic left OPEN)** (`bdb477f`). Runner + Active Jobs list were live;
+  the **Throughput** tiles (Combined Speed / Active / Avg Progress) were computed in the parent
+  `ParallelEncodingView` body, which — being `@Observable`-based over `viewModel.activeJobStates` —
+  never subscribed to each `EncodingJobState` (a Combine `ObservableObject`). Per-job `ActiveJobRow`
+  updates via `@ObservedObject`; the aggregate tiles didn't, so they froze until the array changed.
+  Extracted `ThroughputTilesView(jobs:)` subscribing to all jobs at once via
+  `.onReceive(Publishers.MergeMany(jobs.map(\.objectWillChange)))` → bump `@State` → re-read fresh
+  numbers. Type-checks clean (only `#Preview` env errors). No unit test: the defect is a SwiftUI
+  runtime subscription, not the aggregate math. Epic stays OPEN — GPU/CPU load-balancing enforcement,
+  per-job priority, thermal-throttling still to do (see issue comment for the checklist).
+
+**Round-2 remaining (ranked):** #298 watermarks, #335 multi-output, #473 vector, #278 pipeline editor,
+#302 AppleScript activation, #288 chapters. (Done this pass: #482 team conflicts, #286 throughput tiles.)
 
 ---
 
