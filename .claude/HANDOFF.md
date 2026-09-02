@@ -242,8 +242,17 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   (AppViewModel construction too side-effectful for a hermetic test). Epic OPEN — single-pass `tee`
   shared-decode needs a distinct one-process/many-outputs job+backend model.
 
-**Round-2 remaining (ranked):** #473 vector, #278 pipeline editor, #302 AppleScript activation, #288
-chapters. (Done this pass: #482 conflicts, #286 throughput, #298 watermarks, #335 multi-output.)
+- **#473 vector tools — DONE + CLOSED** (`8e38fe1`). VectorConversionView/ProResVectorView are
+  settings-only forms; `RasterVectorConverter`/`ProResToVectorConverter` are **arg-builders only** (no
+  process runner) and the tracing tools (potrace/vtracer/rsvg) are GPL + not bundled — so neither can
+  convert. Took #473's 2nd option (hide until wired): `NavigationItem.unavailable =
+  [.vectorConversion,.proresVector]` + derived `isAvailable`; sidebar drops the entries; `selectedNavItem`
+  `didSet` snaps unavailable selections back to `.source` (not persisted, no AppleScript path — sidebar
+  was the only live entry). Views/routing kept for re-enable. `NavigationItemAvailabilityTests` guards it.
+  Re-enable gated on bundling tracing tools (#494/MeedyaDL-Tools; refs #376/#377/#402/#404).
+
+**Round-2 remaining (ranked):** #278 pipeline editor, #302 AppleScript activation, #288 chapters.
+(Done this pass: #482 conflicts, #286 throughput, #298 watermarks, #335 multi-output, #473 vector.)
 
 ---
 
