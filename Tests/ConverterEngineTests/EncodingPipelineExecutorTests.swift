@@ -65,9 +65,20 @@ final class EncodingPipelineExecutorTests: XCTestCase {
         let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: .webStandard)])
         let resolved = EncodingPipelineExecutor.resolve(
             pipeline: pipeline, sourcePath: "/src/movie.mkv", outputDir: "/out")
-        // A real encode carries codec flags; the copy fallback would be `-c copy`.
-        XCTAssertFalse(resolved[0].arguments.contains("copy"), "\(resolved[0].arguments)")
-        XCTAssertTrue(resolved[0].arguments.contains("-i"))
+        // The profile-aware path emits an explicit video codec (`-c:v <encoder>`);
+        // the copy-only fallback in buildStepArguments emits a bare `-c copy`.
+        // Assert on that distinction rather than the mere absence of the word
+        // "copy" (a full encode still legitimately copies e.g. subtitles via
+        // `-c:s copy`).
+        let a = resolved[0].arguments
+        func hasPair(_ f: String, _ v: String) -> Bool {
+            for i in a.indices.dropLast() where a[i] == f && a[i + 1] == v { return true }
+            return false
+        }
+        XCTAssertTrue(a.contains("-c:v"), "expected an explicit video codec: \(a)")
+        XCTAssertFalse(hasPair("-c:v", "copy"), "video must be re-encoded")
+        XCTAssertFalse(hasPair("-c", "copy"), "must not be the copy-only fallback")
+        XCTAssertTrue(a.contains("-i"))
     }
 
     // MARK: - intermediateOutputs
