@@ -55,15 +55,13 @@ final class MockGitRunner: GitRunning, @unchecked Sendable {
     var onCheckout: ((URL) -> Void)?
 
     var calls: [Call] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedCalls
+        lock.withLock { recordedCalls }
     }
 
     func run(_ arguments: [String], in workingDirectory: URL) async throws -> GitCommandResult {
-        lock.lock()
-        recordedCalls.append(Call(arguments: arguments, workingDirectory: workingDirectory))
-        lock.unlock()
+        lock.withLock {
+            recordedCalls.append(Call(arguments: arguments, workingDirectory: workingDirectory))
+        }
 
         let label = Self.commandLabel(for: arguments)
         if label == "checkout" {
