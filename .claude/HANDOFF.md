@@ -146,6 +146,28 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 2026-09-02 — round-2 quick wins in progress (autonomous)
+
+Working the round-2 register (`.claude/proposals-round2-2026-09-02.json`) in rank order, per "continue
+autonomously". Each: verify vs code → fix → test → commit → close issue.
+
+- **#336 themes ignored — DONE + CLOSED** (`cd3ca6b`). Root cause: no `.tint` at the app root AND
+  `ThemeSettingsView` owned a *private* `@State ThemeManager`, so even its edits died locally. Now one
+  shared `ThemeManager` injected into every scene + `.tint(accentColor)` at each root; `ContentView`
+  applies the optional `sidebarTint` to the nav column. The picker now recolours the app.
+- **#326 queue optimiser — DONE + CLOSED** (`10468c3`). The landmine I flagged: `estimatedSourceDuration`
+  was a *computed* property smuggling `__duration:<v>` into `extraArguments`, which `FFmpegArgumentBuilder`
+  appends to argv — so the obvious "populate it" would pass `__duration:123` to ffmpeg. Now a real stored
+  field (Codable-back-compat), smuggling deleted, populated at enqueue from `file.duration`. 6 tests incl.
+  the "no __duration in argv" guard. shortest/longest/estimated-time now genuinely reorder.
+
+**Round-2 remaining (ranked):** #286 throughput tiles, #361 notification actions, regression-test for the
+reentrant-actor class, watch-folder conditional rules, #285 drag-out, #468 periodic checkpointing, #302
+AppleScript activation, a MeedyaConverterTests target, #482 team conflicts, #288 chapters, #298
+watermarks, #335 multi-output, #473 vector, #278 pipeline editor.
+
+---
+
 ## 🟢 2026-09-02 — disc-imaging executor (#495 P1) BUILT + docs + CI
 
 **Landed on `wip/alpha-consolidation`:** `96f0617` (executor), `7325c5d` (docs + `-o` flag fix),
