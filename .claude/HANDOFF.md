@@ -197,9 +197,15 @@ were watched; #323/#320/#275 validated by 288cbcc (green), #322 by 13ae775 (gree
   only while recording, writing to the manager (didSet saves). `ShortcutCaptureTests`. Remaining:
   Cmd+1-9 profile shortcuts, encode.pause/stop actions, per-conflict reassign.
 
+- **#281 menu-bar status — DONE (epic OPEN)** (`27db132`, CI green pending). Dropdown showed permanent
+  "Idle"/"Web Standard" (updateQueueStatus/lastUsedProfileName never called). Added
+  `AppViewModel.menuBarStatusText` (coarse) + App `.onChange` observers pushing it +
+  `selectedProfile.name` to the controller. Remaining: drag-to-encode onto the status item, dock-hide.
+
 **Next candidates (remaining from triage, executableNow):** #330 undo/redo (L), #477 dead-cluster sweep
 (L), #281 menu-bar drag+status (M). #283 (needs Xcode .appex target) and #374 (needs MeedyaSuite-core tag)
-need a user decision / upstream first. Done this phase: #323 #320 #275 #322 #324 #280 #331 (+ #499 closed).
+need a user decision / upstream first. Done this phase: #323 #320 #275 #322 #324 #280 #331 #281 (+ #499 closed). Remaining executable: #330
+undo/redo (L), #477 dead-cluster wire-or-delete (L), #281 drag-to-encode. #283/#374 blocked (Xcode appex / upstream tag).
 
 ## 🟢 2026-09-02 — round-2 quick wins in progress (autonomous)
 
