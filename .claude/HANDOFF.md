@@ -273,8 +273,18 @@ autonomously". Each: verify vs code → fix → test → commit → close issue.
   smoke-tested on a packaged build. Epic OPEN — encode-complete events, queue-status properties,
   scriptable object graph remain.
 
-**Round-2 remaining (ranked):** #288 chapters. (Done this pass: #482 conflicts, #286 throughput, #298
-watermarks, #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript/JXA.)
+- **#288 chapters — DONE (epic left OPEN)** (`914053d`). Detection + disk-export already worked; the gap
+  was embedding chapters into an encode (job model had no field — button honestly disabled). Added
+  `FFmpegArgumentBuilder.externalChaptersFile` (last `-i` input + `-map_chapters <idx>` instead of source,
+  index-safe vs subtitle-replacement inputs) + `EncodingJobConfig.externalChaptersFile` (back-compat) +
+  `AppViewModel.pendingChaptersFile` (mirrors `pendingManualCropFilter`, consumed once by enqueue). View's
+  disabled "Apply to Job" → working "Embed in Next Encode" (writes FFmetadata, stages it).
+  `ExternalChaptersArgumentTests`. Epic OPEN — timeline thumbnails, drag markers, batch detect remain.
+
+**Round-2 register: COMPLETE.** All eight worked this session — #482 conflicts, #286 throughput, #298
+watermarks, #335 multi-output, #473 vector, #278 pipeline editor, #302 AppleScript/JXA, #288 chapters.
+Six are epics left OPEN with detailed acceptance-criteria checklists in their issue comments (the
+"never executed" defect is fixed in each; remaining items are visual/UX polish); #482 and #473 CLOSED.
 
 ---
 
