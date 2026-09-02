@@ -333,8 +333,19 @@ struct TeamProfileView: View {
                     return try mgr.pullProfiles(from: repository)
                 }.value
                 remoteProfiles = pulled
+                // Compute the real conflict set (#482): remote profiles that
+                // share an id with a local one but differ. This is what makes
+                // the Conflicts section renderable — it was previously always
+                // empty, so resolveAllConflicts merged against nothing.
+                conflictedProfiles = manager.detectConflicts(
+                    local: viewModel.engine.profileStore.profiles,
+                    remote: pulled
+                )
                 lastSyncDate = Date()
-                statusMessage = "Pulled \(pulled.count) profiles."
+                let conflictNote = conflictedProfiles.isEmpty
+                    ? ""
+                    : " (\(conflictedProfiles.count) conflict\(conflictedProfiles.count == 1 ? "" : "s"))"
+                statusMessage = "Pulled \(pulled.count) profiles.\(conflictNote)"
                 isError = false
                 isSyncing = false
             } catch {

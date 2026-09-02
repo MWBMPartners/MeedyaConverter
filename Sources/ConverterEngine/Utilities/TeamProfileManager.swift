@@ -266,6 +266,38 @@ public final class TeamProfileManager: @unchecked Sendable {
     ///   - local: The local set of encoding profiles.
     ///   - remote: The remote set of encoding profiles.
     /// - Returns: A merged array with conflicts resolved.
+    /// Identifies the conflicts a pull surfaces: remote profiles that share an
+    /// `id` with a local profile but whose content differs. These — and only
+    /// these — are what the user must resolve; a pull that finds none can be
+    /// merged silently. `EncodingProfile` is `Hashable`, so "differs" is a
+    /// value comparison of the whole profile, not just its name.
+    ///
+    /// Issue #482: the Team Profiles view initialised its conflict list to `[]`
+    /// and never populated it, so the Conflicts section could never render and
+    /// `resolveConflicts` always merged against nothing. This gives the pull a
+    /// real diff to feed it.
+    ///
+    /// - Parameters:
+    ///   - local: The profiles currently in the local store.
+    ///   - remote: The profiles just pulled from the team repository.
+    /// - Returns: The remote profiles that conflict with a local one, in the
+    ///   order they appear in `remote`.
+    public func detectConflicts(
+        local: [EncodingProfile],
+        remote: [EncodingProfile]
+    ) -> [EncodingProfile] {
+        var localByID: [UUID: EncodingProfile] = [:]
+        for profile in local {
+            localByID[profile.id] = profile
+        }
+        return remote.filter { remoteProfile in
+            guard let localProfile = localByID[remoteProfile.id] else {
+                return false
+            }
+            return localProfile != remoteProfile
+        }
+    }
+
     public func resolveConflicts(
         local: [EncodingProfile],
         remote: [EncodingProfile]
