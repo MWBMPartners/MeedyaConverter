@@ -322,6 +322,17 @@ jobs:
             fi
           fi
 
+          # GPL tripwire (#494 / DR-0001): a GPL-licensed helper binary must
+          # never reach an App Store bundle. The App Store build ships no
+          # tools today, so this passes; it is a tripwire for the day a
+          # disc-tool bundling step is added and forgets to exclude them from
+          # this variant. The manifest test (ToolBundleManifest.isAppStoreSafe)
+          # is the first line of defence; this scans the assembled bundle.
+          if ! ./scripts/verify-no-gpl-in-appstore.sh MeedyaConverter.app; then
+            echo "::error::A GPL binary is present in the App Store bundle (#494 / DR-0001). It is Direct-distribution only."
+            fail=1
+          fi
+
           if [ "${fail}" -ne 0 ]; then
             echo "::error::Metadata validation failed. Workflow stopped before any signing or upload step ran."
             exit 1

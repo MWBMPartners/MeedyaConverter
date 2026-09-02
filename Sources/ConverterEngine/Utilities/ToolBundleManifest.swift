@@ -35,8 +35,24 @@ public struct BundledTool: Codable, Sendable, Identifiable {
     /// Description of what the tool does.
     public var description: String
 
-    /// License type (e.g., "MIT", "GPLv2", "Apache-2.0").
+    /// License type as an SPDX identifier where possible (e.g. `"MIT"`,
+    /// `"MPL-2.0"`, `"LGPL-2.1-or-later"`, `"GPL-2.0-or-later"`).
     public var license: String
+
+    /// Whether `license` is a member of the GPL copyleft family (GPL, but
+    /// **not** the weaker LGPL).
+    ///
+    /// This is the single predicate the App-Store-exclusion guard relies on
+    /// (issue #494 / DR-0001): a GPL-family tool may ship only in the Direct
+    /// distribution `.dmg`, never in an App Store bundle. The match is on the
+    /// SPDX form — `GPL-2.0-only`, `GPL-3.0-or-later`, and the bare legacy
+    /// `GPL` all qualify; `LGPL-*` deliberately does not, because it starts
+    /// with `L`. Normalise `license` to its SPDX id when adding a tool so this
+    /// predicate stays reliable rather than depending on free-text spelling.
+    public var isGPLFamily: Bool {
+        let upper = license.uppercased()
+        return upper == "GPL" || upper.hasPrefix("GPL-") || upper.hasPrefix("GPLV")
+    }
 
     public init(
         id: String,
@@ -134,7 +150,7 @@ public struct ToolBundleManifest: Codable, Sendable {
                 lastUpdated: "2026-04-01",
                 binaryName: "fpcalc",
                 description: "Audio fingerprint generation for AcoustID lookup",
-                license: "LGPL-2.1"
+                license: "LGPL-2.1-or-later"
             ),
             BundledTool(
                 id: "hdr10plus_tool",
@@ -177,6 +193,30 @@ public struct ToolBundleManifest: Codable, Sendable {
     /// - Returns: The bundled tool info, or nil.
     public func tool(binaryName: String) -> BundledTool? {
         tools.first { $0.binaryName == binaryName }
+    }
+
+    // MARK: - App Store Exclusion (issue #494 / DR-0001)
+
+    /// The tools in this manifest that carry a GPL-family licence.
+    ///
+    /// These must never reach an App Store bundle. They are App-Store-excluded
+    /// on two independent grounds: the GPL is incompatible with the App Store
+    /// terms, and the optical-disc features they exist for cannot function in
+    /// the App Sandbox anyway (no raw-device entitlement). See DR-0001.
+    public var gplTools: [BundledTool] {
+        tools.filter(\.isGPLFamily)
+    }
+
+    /// Whether this manifest is safe to ship in an App Store build.
+    ///
+    /// `defaultManifest` describes tools bundled in **every** distribution, so
+    /// it must contain no GPL-family tool. When the disc-imaging executor
+    /// lands and GPL tools are bundled, they belong in a Direct-only manifest
+    /// or behind an `isDirectBuild` gate — not here — and the packaging step
+    /// must call `verify-no-gpl-in-appstore.sh` against the assembled bundle
+    /// as a second line of defence.
+    public var isAppStoreSafe: Bool {
+        gplTools.isEmpty
     }
 
     // MARK: - Update Checking

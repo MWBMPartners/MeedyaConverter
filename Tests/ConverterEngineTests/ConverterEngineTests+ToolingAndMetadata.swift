@@ -30,6 +30,46 @@ extension ConverterEngineTests {
         XCTAssertNotNil(manifest.tool(id: "subtitle_tonemap"))
     }
 
+    /// The default manifest must contain NO GPL-family tool (issue #494 /
+    /// DR-0001).
+    ///
+    /// `defaultManifest` ships in every distribution, including the App Store
+    /// build. A GPL-family tool there would violate both the App Store terms
+    /// and — for the optical-disc tools this rule exists for — the App
+    /// Sandbox, which has no raw-device entitlement. When the disc-imaging
+    /// executor lands, GPL tools belong in a Direct-only manifest or behind an
+    /// `isDirectBuild` gate, never here. This test is the tripwire: adding
+    /// e.g. cdrdao with `license: "GPL-2.0-or-later"` to `defaultManifest`
+    /// fails CI until the exclusion is handled.
+    func test_toolBundleManifest_defaultManifestIsAppStoreSafe() {
+        let manifest = ToolBundleManifest.defaultManifest
+        XCTAssertTrue(
+            manifest.isAppStoreSafe,
+            "defaultManifest carries GPL-family tools that would reach an App Store bundle: "
+                + manifest.gplTools.map(\.id).joined(separator: ", ")
+                + " — move them to a Direct-only manifest (see DR-0001)."
+        )
+        XCTAssertTrue(manifest.gplTools.isEmpty)
+    }
+
+    /// `isGPLFamily` recognises the GPL family by SPDX id and excludes LGPL.
+    func test_bundledTool_isGPLFamilyMatching() {
+        func tool(_ license: String) -> BundledTool {
+            BundledTool(
+                id: "t", name: "t", version: "1", sourceURL: "https://example.com",
+                lastUpdated: "2026-01-01", binaryName: "t", description: "d", license: license
+            )
+        }
+        // GPL family — must be caught.
+        for spdx in ["GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-or-later", "GPL", "GPLv2"] {
+            XCTAssertTrue(tool(spdx).isGPLFamily, "\(spdx) should be GPL-family")
+        }
+        // NOT GPL family — must be allowed in the App Store.
+        for spdx in ["LGPL-2.1-or-later", "LGPL-3.0-only", "MIT", "MPL-2.0", "BSD-2-Clause", "Apache-2.0"] {
+            XCTAssertFalse(tool(spdx).isGPLFamily, "\(spdx) should NOT be GPL-family")
+        }
+    }
+
     /// Verifies tool lookup by binary name.
     func test_toolBundleManifest_lookupByBinaryName() {
         let manifest = ToolBundleManifest.defaultManifest

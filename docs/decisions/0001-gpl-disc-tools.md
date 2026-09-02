@@ -120,6 +120,55 @@ use looser forms (`"MIT"`, `"LGPL-2.1"`). Normalise the whole manifest to SPDX
 in the same change, so the App-Store-exclusion check can match on a reliable
 prefix (`GPL-`) rather than on free text.
 
+## Operational decisions (finalised 2026-09-02, by the maintainer)
+
+The four follow-on questions the decision left open are now answered:
+
+1. **Issue scope** — #494 stays **open** until the packaging work is complete,
+   not merely until the decision is recorded.
+2. **Where the source lives** — the corresponding GPL source, and the built
+   binaries, are hosted in the existing first-party tools mirror
+   **`MeedyaSuite/MeedyaDL-Tools`**, exactly as ffmpeg / mediainfo / fpcalc
+   already are. That repo's `populate.yml` workflow is extended to build the
+   tools and to **archive the exact source tarball** for each, published as a
+   release asset alongside the binaries and the `SHA256SUMS`. The written offer
+   in the `.dmg` points at that release.
+3. **Provenance** — **build our own**, per platform, from the upstream source
+   tarball, matching how ffmpeg is already produced (compiled on the mirror's
+   CI runners, SHA-256-verified, universal on macOS). Not redistributed
+   third-party binaries.
+4. **Which tools, which round** — **all of them in the mirror this round**
+   (efficient, and a mirror holding a binary asserts nothing about the app),
+   but **none in the app yet**. This is a stronger statement than "P1 subset":
+   the disc-imaging *executor* does not exist — `RawCDReadPlanner`,
+   `DiscImagingController`, `CdrdaoTocParser` and `BundledToolLocator` are all
+   absent, and `cdrdao`/`wodim`/`cdparanoia` have zero code references (the only
+   `ddrescue` mentions are in the orphaned `DiscImager` arg-builder that nothing
+   runs). Bundling a binary the app cannot invoke, or listing it in
+   `ToolBundleManifest.defaultManifest`, would be the fabricated-capability
+   defect this project polices. The tools enter the app's bundle and manifest
+   in the same change that first invokes them (#495's missing executor half).
+
+**Platform scope:** macOS (universal arm64 + x86_64) and Linux only, matching
+#495's stated target. `cdrdao`/`wodim` are Linux-centric and do not build
+cleanly on Windows, where optical imaging is a separate future effort (IMAPI /
+SPTI), so no Windows disc-tool build is attempted.
+
+## Guards now in place (MeedyaConverter side)
+
+The App-Store-exclusion criterion is implemented as defence in depth, and holds
+today because no GPL tool is bundled yet:
+
+- **Manifest invariant + test.** `BundledTool.isGPLFamily` (SPDX-aware, excludes
+  LGPL) and `ToolBundleManifest.isAppStoreSafe`; a regression test
+  (`test_toolBundleManifest_defaultManifestIsAppStoreSafe`) fails CI if any
+  GPL-family tool ever appears in `defaultManifest`, which ships to every
+  distribution including the App Store.
+- **Bundle tripwire.** `scripts/verify-no-gpl-in-appstore.sh` scans an assembled
+  `.app` for the GPL tool binaries by name and exits non-zero if any is found.
+  It is wired into `testflight.yml`'s pre-signing validation, alongside the
+  existing ITMS-90236 icon guard.
+
 ## Status of the work
 
 Recorded here and on #494. The packaging work — acquiring and pinning the
