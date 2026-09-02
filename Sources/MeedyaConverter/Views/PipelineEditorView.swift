@@ -324,11 +324,32 @@ struct PipelineEditorView: View {
             showTemplatePicker = true
         }
 
+        // Run the pipeline against a chosen source file (Issue #278). This is
+        // what turns the editor from a preview into a real run: it hands the
+        // pipeline to AppViewModel.runPipeline, which drives
+        // EncodingPipelineExecutor and reports progress/outcome to the log.
+        Button("Run\u{2026}") {
+            runPipelineAgainstChosenSource()
+        }
+        .disabled(pipeline.steps.isEmpty)
+
         Button("Save") {
             onSave?(pipeline)
             dismiss()
         }
         .keyboardShortcut("s", modifiers: .command)
+    }
+
+    /// Prompt for a source media file, then run the current pipeline against it.
+    private func runPipelineAgainstChosenSource() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a source file to run this pipeline on"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.runPipeline(pipeline, sourceURL: url)
+        dismiss()
     }
 
     // MARK: - Template Picker

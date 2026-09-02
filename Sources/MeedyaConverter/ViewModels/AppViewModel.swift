@@ -1057,6 +1057,96 @@ final class AppViewModel {
         return enabled.count
     }
 
+    // MARK: - Encoding Pipelines (Issue #278)
+
+    /// User-saved encoding pipelines, persisted as JSON in `UserDefaults`.
+    /// Loaded once here in the property's default so it does not depend on
+    /// `init`'s two-phase ordering. Built-in templates live on
+    /// `EncodingPipeline.builtInTemplates` and are not stored here.
+    var savedPipelines: [EncodingPipeline] = {
+        guard let data = UserDefaults.standard.data(forKey: "savedPipelines"),
+              let decoded = try? JSONDecoder().decode([EncodingPipeline].self, from: data)
+        else { return [] }
+        return decoded
+    }()
+
+    /// Persist (insert or replace by id) a pipeline from the editor. Wired to
+    /// `PipelineEditorView`'s Save, whose `onSave` was previously nil — so a
+    /// saved pipeline used to vanish on dismiss (#278).
+    func savePipeline(_ pipeline: EncodingPipeline) {
+        savedPipelines.removeAll { $0.id == pipeline.id }
+        savedPipelines.append(pipeline)
+        if let data = try? JSONEncoder().encode(savedPipelines) {
+            UserDefaults.standard.set(data, forKey: "savedPipelines")
+        }
+        appendLog(.info, "Saved pipeline \"\(pipeline.name)\" (\(pipeline.steps.count) steps)")
+    }
+
+    /// Delete a saved pipeline by id.
+    func deletePipeline(_ id: UUID) {
+        savedPipelines.removeAll { $0.id == id }
+        if let data = try? JSONEncoder().encode(savedPipelines) {
+            UserDefaults.standard.set(data, forKey: "savedPipelines")
+        }
+    }
+
+    /// Run a pipeline against a source file via `EncodingPipelineExecutor`
+    /// (Issue #278) — the wiring that makes the editor produce actual files
+    /// instead of only previewing arguments. Step outputs land alongside the
+    /// source; superseded intermediates are cleaned on success (honouring the
+    /// pipeline's `cleanIntermediateFiles`). Progress and the final outcome are
+    /// written to the app log, so the caller switches to the Log view.
+    ///
+    /// The `onProgress` callback is `@Sendable` and may resume off the main
+    /// actor; each log write hops back via `Task { @MainActor in }`, the same
+    /// pattern `startQueue()` uses around its progress callback. `self` is a
+    /// `@MainActor` (hence `Sendable`) type, so capturing it is allowed.
+    func runPipeline(_ pipeline: EncodingPipeline, sourceURL: URL) {
+        let outputDir = sourceURL.deletingLastPathComponent().path
+        selectedNavItem = .log
+        appendLog(.info, "Pipeline \"\(pipeline.name)\" started on \(sourceURL.lastPathComponent)", category: .encoding)
+
+        // Strong, Sendable (@MainActor) reference so the @Sendable onProgress
+        // closure captures a `let`, not a re-weakened `self` — the latter trips
+        // Swift's concurrent-capture check. The Task isn't retained, so this
+        // strong ref is released when the run finishes.
+        let vm = self
+        Task {
+            let executor = EncodingPipelineExecutor()
+            do {
+                let result = try await executor.execute(
+                    pipeline: pipeline,
+                    sourcePath: sourceURL.path,
+                    outputDir: outputDir,
+                    onProgress: { _, step in
+                        Task { @MainActor in
+                            vm.appendLog(
+                                .info,
+                                "Pipeline step \(step.stepNumber): \(step.step.name) — \(step.step.type.displayName)",
+                                category: .encoding
+                            )
+                        }
+                    }
+                )
+                await MainActor.run {
+                    vm.appendLog(
+                        .info,
+                        "Pipeline \"\(pipeline.name)\" complete — \(result.deliverables.count) file(s) produced, \(result.cleanedIntermediates.count) intermediate(s) cleaned",
+                        category: .encoding
+                    )
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    vm.appendLog(.warning, "Pipeline \"\(pipeline.name)\" cancelled", category: .encoding)
+                }
+            } catch {
+                await MainActor.run {
+                    vm.appendLog(.error, "Pipeline \"\(pipeline.name)\" failed: \(error.localizedDescription)", category: .encoding)
+                }
+            }
+        }
+    }
+
     /// The deepest common ancestor directory across every currently
     /// imported source file, used as `OutputPathResolver`'s
     /// `baseInputDir` for `.mirror` mode (Issue #275).

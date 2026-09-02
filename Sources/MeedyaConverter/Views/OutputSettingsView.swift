@@ -80,7 +80,7 @@ struct OutputSettingsView: View {
             get: { viewModel.showPipelineEditor },
             set: { viewModel.showPipelineEditor = $0 }
         )) {
-            PipelineEditorView()
+            PipelineEditorView(onSave: { viewModel.savePipeline($0) })
         }
         .sheet(isPresented: Binding(
             get: { viewModel.showScheduleView },
