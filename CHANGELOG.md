@@ -53,6 +53,10 @@
 
 ### Fixed
 
+- **Storage Analysis** now reads codec, resolution, HDR and duration with
+  **ffprobe** (a few concurrent probes, with progress and Cancel) instead of
+  guessing them from file names; files ffprobe cannot read keep the file-name
+  guess and the report says how many did (#365).
 - **ffmpeg resolution** in Image conversion, Voice Isolation and the Media
   Browser now goes through the bundled binary (Contents/Helpers) instead of
   PATH/Homebrew, so those features work in a Finder-launched notarized app.

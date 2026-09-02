@@ -11,9 +11,20 @@ import Foundation
 
 /// Analysis result for a single media file discovered during a storage scan.
 ///
-/// Contains the file's metadata (size, codec, resolution, container, HDR status)
-/// extracted from the file system and, where available, from media probing.
+/// `scanDirectory` produces entries whose codec/resolution/HDR are guessed
+/// from the file name (`provenance == .inferredFromFilename`);
+/// `probeFiles(_:using:maxConcurrency:progress:)` replaces those guesses
+/// with ffprobe data (`.probed`) for every file it can read.
 public struct FileAnalysis: Identifiable, Sendable {
+
+    /// How the codec / resolution / HDR / duration fields were obtained.
+    public enum Provenance: String, Sendable, Equatable {
+        /// Read from the container by ffprobe (`StorageAnalyzer.probeFiles`).
+        case probed
+        /// Guessed from the file name and extension (`StorageAnalyzer.scanDirectory`);
+        /// may be wrong or `nil`. Also what a file keeps when ffprobe cannot read it.
+        case inferredFromFilename
+    }
 
     /// Unique identifier for this analysis entry.
     public let id: UUID
@@ -24,7 +35,8 @@ public struct FileAnalysis: Identifiable, Sendable {
     /// The file size in bytes.
     public let fileSize: Int64
 
-    /// The detected video codec (e.g., "h265", "av1"), or `nil` if unknown.
+    /// The video codec as ffprobe names it (e.g. "hevc", "h264", "av1"); for
+    /// audio-only files the primary audio codec (e.g. "flac"). nil if unknown.
     public let codec: String?
 
     /// The resolution label (e.g., "1920x1080"), or `nil` if unknown.
@@ -39,6 +51,9 @@ public struct FileAnalysis: Identifiable, Sendable {
     /// The media duration in seconds, or `nil` if not determined.
     public let duration: TimeInterval?
 
+    /// How `codec`/`resolution`/`hasHDR`/`duration` were obtained.
+    public let provenance: Provenance
+
     public init(
         id: UUID = UUID(),
         url: URL,
@@ -47,7 +62,8 @@ public struct FileAnalysis: Identifiable, Sendable {
         resolution: String? = nil,
         container: String? = nil,
         hasHDR: Bool = false,
-        duration: TimeInterval? = nil
+        duration: TimeInterval? = nil,
+        provenance: Provenance
     ) {
         self.id = id
         self.url = url
@@ -57,6 +73,7 @@ public struct FileAnalysis: Identifiable, Sendable {
         self.container = container
         self.hasHDR = hasHDR
         self.duration = duration
+        self.provenance = provenance
     }
 
     /// The file name without path components.
@@ -123,14 +140,27 @@ public struct StorageReport: Sendable {
     }
 }
 
+// MARK: - MediaFileProbing
+
+/// Abstraction over "probe one file", so `StorageAnalyzer.probeFiles` can be
+/// unit-tested with a mock. `FFmpegProbe` is the production conformer;
+/// `StorageAnalysisView.performScan()` passes `FFmpegProbe(ffprobePath:)`
+/// resolved via the app's `FFmpegBundleManager`.
+public protocol MediaFileProbing: Sendable {
+    func analyze(url: URL) async throws -> MediaFile
+}
+
+extension FFmpegProbe: MediaFileProbing {}
+
 // MARK: - StorageAnalyzer
 
 /// Scans directories for media files and generates storage utilisation reports.
 ///
-/// The analyser identifies media files by extension, collects file-system
-/// metadata (size, container format), and groups results for visual breakdown.
-/// It also estimates potential storage savings when re-encoding with a given
-/// `EncodingProfile` by leveraging `FileSizeEstimator`.
+/// Two stages: scanDirectory (file-system facts + file-name guesses, no
+/// subprocesses) then probeFiles (real ffprobe through an injected
+/// MediaFileProbing, bounded concurrency). StorageAnalysisView.performScan()
+/// runs both. estimateSavings estimates re-encode savings from
+/// FileSizeEstimator using probed durations when present.
 ///
 /// All methods are static and `Sendable` — the analyser holds no mutable state.
 public struct StorageAnalyzer: Sendable {
@@ -144,6 +174,29 @@ public struct StorageAnalyzer: Sendable {
         "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma",
     ]
 
+    /// Container extensions treated as audio-only. Used both by
+    /// `estimateDurationFromSize` (bitrate assumption) and by
+    /// `analysis(from:base:)` (to gate the cover-art heuristic).
+    private static let audioOnlyContainers: Set<String> = [
+        "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma",
+    ]
+
+    /// Still-image codec names ffprobe reports for embedded cover art —
+    /// excluded from `videoStreams` candidates when the container is
+    /// audio-only, so an MP3/FLAC/etc. with embedded art isn't reported as
+    /// having a "video" stream.
+    private static let stillImageCodecs: Set<String> = [
+        "mjpeg", "png", "bmp", "gif", "tiff", "webp",
+    ]
+
+    /// Default bound on concurrent ffprobe subprocesses for `probeFiles`.
+    /// Half the active processor count, clamped to `1...4` — enough to
+    /// overlap I/O-bound probes without spawning dozens of subprocesses at
+    /// once on many-core machines.
+    public static var defaultProbeConcurrency: Int {
+        max(1, min(4, ProcessInfo.processInfo.activeProcessorCount / 2))
+    }
+
     // MARK: - Directory Scanning
 
     /// Scan a directory for media files and return analysis entries.
@@ -151,6 +204,10 @@ public struct StorageAnalyzer: Sendable {
     /// The actual file-system enumeration is performed synchronously on a
     /// background thread (via `Task.detached`) because `FileManager`'s
     /// `DirectoryEnumerator` is not available from Swift concurrency contexts.
+    ///
+    /// Every entry is marked `.inferredFromFilename`: only size and container
+    /// (extension) are facts; codec/resolution/HDR are file-name guesses and
+    /// duration is nil. No ffprobe runs here — pass the result to probeFiles.
     ///
     /// - Parameters:
     ///   - url: The root directory URL to scan.
@@ -217,7 +274,8 @@ public struct StorageAnalyzer: Sendable {
             let fileSize = Int64(resourceValues.fileSize ?? 0)
             let container = ext
 
-            // Derive codec and resolution heuristics from file name and extension.
+            // File-name guesses only; replaced by real data in probeFiles(...)
+            // when ffprobe can read the file.
             let codec = inferCodec(from: fileURL)
             let resolution = inferResolution(from: fileURL)
             let hasHDR = inferHDR(from: fileURL)
@@ -229,13 +287,121 @@ public struct StorageAnalyzer: Sendable {
                 resolution: resolution,
                 container: container,
                 hasHDR: hasHDR,
-                duration: nil
+                duration: nil,
+                provenance: .inferredFromFilename
             )
 
             results.append(analysis)
         }
 
         return results
+    }
+
+    // MARK: - Probing
+
+    /// Replace each entry's file-name guesses with real ffprobe data.
+    ///
+    /// `files` is typically the output of `scanDirectory`. Results are
+    /// written back by index, so the returned array has the same order and
+    /// count as `files` regardless of which probes finish first. A file
+    /// `prober.analyze(url:)` cannot read (missing, corrupt, permission
+    /// denied, etc.) is left unchanged in the output — it keeps whatever
+    /// `provenance` it already had (typically `.inferredFromFilename`).
+    /// This function never throws.
+    ///
+    /// At most `maxConcurrency` probes run at once (clamped to `>= 1`);
+    /// `progress`, if provided, is called once per completed probe (not
+    /// once per file scheduled) with the fraction `completed/total`, and
+    /// may be called on any thread — hop to `@MainActor` yourself if the
+    /// sink needs to touch UI state. Empty `files` returns `[]` without
+    /// calling `progress`.
+    ///
+    /// Cancellation (`Task.isCancelled`) is checked before every new probe
+    /// is scheduled, so a cancelled caller stops starting new work quickly;
+    /// probes already in flight still run to completion (`FFmpegProbe
+    /// .analyze` does not itself observe cancellation) and their results
+    /// are still written back.
+    public static func probeFiles(
+        _ files: [FileAnalysis],
+        using prober: any MediaFileProbing,
+        maxConcurrency: Int = StorageAnalyzer.defaultProbeConcurrency,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async -> [FileAnalysis] {
+        guard !files.isEmpty else { return [] }
+        let limit = max(1, maxConcurrency)
+        let total = files.count
+
+        return await withTaskGroup(of: (index: Int, analysis: FileAnalysis).self) { group in
+            var results = files
+            var completed = 0
+            var nextIndex = 0
+
+            while nextIndex < min(limit, total), !Task.isCancelled {
+                let index = nextIndex
+                group.addTask { (index: index, analysis: await probeOne(files[index], using: prober)) }
+                nextIndex += 1
+            }
+
+            for await item in group {
+                results[item.index] = item.analysis
+                completed += 1
+                progress?(Double(completed) / Double(total))
+
+                if nextIndex < total, !Task.isCancelled {
+                    let index = nextIndex
+                    group.addTask { (index: index, analysis: await probeOne(files[index], using: prober)) }
+                    nextIndex += 1
+                }
+            }
+            return results
+        }
+    }
+
+    /// Probe a single file, falling back to `base` unchanged on any error.
+    private static func probeOne(_ base: FileAnalysis, using prober: any MediaFileProbing) async -> FileAnalysis {
+        do {
+            return analysis(from: try await prober.analyze(url: base.url), base: base)
+        } catch {
+            return base
+        }
+    }
+
+    /// Build a `.probed` `FileAnalysis` from a real `MediaFile`, keeping
+    /// `base`'s id/url/fileSize/container and replacing codec/resolution/
+    /// hasHDR/duration with values read from the container.
+    ///
+    /// The video stream considered is `mediaFile.videoStreams`, preferring
+    /// the default-disposition stream, else the first — except when `base
+    /// .container` is an audio-only extension, in which case still-image
+    /// codecs (`stillImageCodecs`, e.g. embedded cover art) are excluded
+    /// first so an MP3/FLAC with embedded art isn't reported as having a
+    /// video stream.
+    public static func analysis(from mediaFile: MediaFile, base: FileAnalysis) -> FileAnalysis {
+        let container = base.container ?? base.url.pathExtension.lowercased()
+        let isAudioContainer = audioOnlyContainers.contains(container)
+        let candidates = mediaFile.videoStreams.filter { stream in
+            guard isAudioContainer else { return true }
+            return !stillImageCodecs.contains(stream.codecName?.lowercased() ?? "")
+        }
+        let videoStream = candidates.first { $0.isDefault } ?? candidates.first
+        let audioStream = mediaFile.primaryAudioStream
+
+        let codec = videoStream?.codecName ?? audioStream?.codecName
+        let resolution: String? = {
+            guard let v = videoStream, let w = v.width, let h = v.height, w > 0, h > 0 else { return nil }
+            return "\(w)x\(h)"
+        }()
+        let hasHDR = videoStream.map { !$0.hdrFormats.isEmpty } ?? false
+        let rawDuration = mediaFile.duration
+            ?? videoStream?.duration
+            ?? mediaFile.streams.compactMap(\.duration).max()
+        let duration = rawDuration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+
+        return FileAnalysis(
+            id: base.id, url: base.url, fileSize: base.fileSize,
+            codec: codec, resolution: resolution, container: base.container,
+            hasHDR: hasHDR, duration: duration, provenance: .probed
+        )
     }
 
     // MARK: - Report Generation
@@ -290,7 +456,8 @@ public struct StorageAnalyzer: Sendable {
     /// Uses `FileSizeEstimator` to predict the output size for each file,
     /// then sums the difference between current size and estimated output.
     /// A positive return value indicates bytes saved; negative means the
-    /// re-encoded output would be larger.
+    /// re-encoded output would be larger. Uses file.duration when a probe
+    /// supplied it, otherwise estimateDurationFromSize.
     ///
     /// - Parameters:
     ///   - files: The analysed media files.
@@ -328,9 +495,10 @@ public struct StorageAnalyzer: Sendable {
         let ext = url.pathExtension.lowercased()
         let name = url.lastPathComponent.lowercased()
 
-        // Check for codec hints in the filename.
+        // Check for codec hints in the filename. Returns ffprobe's
+        // codec_name ("hevc"), so probed and inferred files share a report key.
         if name.contains("h265") || name.contains("hevc") || name.contains("x265") {
-            return "h265"
+            return "hevc"
         } else if name.contains("h264") || name.contains("avc") || name.contains("x264") {
             return "h264"
         } else if name.contains("av1") || name.contains("svtav1") {
@@ -383,10 +551,9 @@ public struct StorageAnalyzer: Sendable {
         container: String?
     ) -> TimeInterval {
         // Assume average bitrate of ~5 Mbps for video, ~1 Mbps for audio-only.
-        let audioOnlyContainers: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma"]
         let averageBitrate: Double
 
-        if let container, audioOnlyContainers.contains(container) {
+        if let container, Self.audioOnlyContainers.contains(container) {
             averageBitrate = 1_000_000 // 1 Mbps for audio
         } else {
             averageBitrate = 5_000_000 // 5 Mbps for video

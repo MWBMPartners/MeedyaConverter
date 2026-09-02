@@ -10,9 +10,16 @@ import ConverterEngine
 
 // MARK: - StorageAnalysisView
 
-/// Provides a folder picker, scan progress indicator, breakdown charts
-/// (by codec, resolution, container), estimated savings per profile,
-/// and an "Optimise" button to queue re-encodes for space recovery.
+/// Provides a folder picker, a scan/probe progress indicator with Cancel,
+/// and breakdown lists (by codec, resolution, container).
+///
+/// `performScan()` runs `StorageAnalyzer.scanDirectory` (file-system facts +
+/// file-name guesses) then `StorageAnalyzer.probeFiles` with a real
+/// `FFmpegProbe` resolved via `viewModel.engine.bundleManager` (the app's
+/// ffmpeg/ffprobe location, honouring any Settings override) to replace
+/// those guesses with real codec/resolution/HDR/duration data. When ffprobe
+/// cannot be located, or cannot read a given file, the file-name guess is
+/// kept and the report's caption says so.
 ///
 /// Phase 13 — Issue #365
 struct StorageAnalysisView: View {
@@ -32,7 +39,8 @@ struct StorageAnalysisView: View {
     /// Whether a scan is currently in progress.
     @State private var isScanning = false
 
-    /// The list of analysed files from the most recent scan.
+    /// The list of analysed files from the most recent scan. Read by
+    /// `provenanceCaption` to report how many were read by ffprobe.
     @State private var analysedFiles: [FileAnalysis] = []
 
     /// The generated storage report.
@@ -43,6 +51,20 @@ struct StorageAnalysisView: View {
 
     /// Whether to show the folder-picker panel.
     @State private var showFolderPicker = false
+
+    /// Fraction (0...1) of the ffprobe pass completed, or `nil` while the
+    /// file-system scan is still running (before probing starts).
+    @State private var probeProgress: Double?
+
+    /// Total number of files being probed, for the progress caption.
+    @State private var probeTotal = 0
+
+    /// Whether ffprobe was located for the most recent (or in-progress) scan.
+    @State private var ffprobeLocated = false
+
+    /// The in-flight `performScan()` task, retained so Cancel / `onDisappear`
+    /// can cancel it.
+    @State private var scanTask: Task<Void, Never>?
 
     // MARK: - Body
 
@@ -64,6 +86,9 @@ struct StorageAnalysisView: View {
             }
         }
         .navigationTitle("Storage Analysis")
+        .onDisappear {
+            scanTask?.cancel()
+        }
         .fileImporter(
             isPresented: $showFolderPicker,
             allowedContentTypes: [.folder],
@@ -99,13 +124,21 @@ struct StorageAnalysisView: View {
 
             Spacer()
 
-            Button {
-                Task { await performScan() }
-            } label: {
-                Label("Scan", systemImage: "magnifyingglass")
+            if isScanning {
+                Button(role: .cancel) {
+                    scanTask?.cancel()
+                } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+            } else {
+                Button {
+                    scanTask = Task { await performScan() }
+                } label: {
+                    Label("Scan", systemImage: "magnifyingglass")
+                }
+                .disabled(selectedDirectory == nil)
+                .keyboardShortcut(.defaultAction)
             }
-            .disabled(selectedDirectory == nil || isScanning)
-            .keyboardShortcut(.defaultAction)
         }
     }
 
@@ -122,15 +155,28 @@ struct StorageAnalysisView: View {
 
     // MARK: - Scanning Indicator
 
+    @ViewBuilder
     private var scanningIndicator: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Scanning media files...")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+        if let probeProgress {
+            VStack(spacing: 16) {
+                ProgressView(value: probeProgress)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 320)
+                Text("Reading \(probeTotal) files with ffprobe… \(Int(probeProgress * 100))%")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Scanning media files...")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Report Content
@@ -141,6 +187,14 @@ struct StorageAnalysisView: View {
             // Summary bar.
             summaryBar(report)
                 .padding()
+
+            if let caption = provenanceCaption {
+                Label(caption.text, systemImage: caption.isWarning ? "exclamationmark.triangle" : "checkmark.seal")
+                    .font(.caption)
+                    .foregroundStyle(caption.isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
 
             Divider()
 
@@ -264,27 +318,74 @@ struct StorageAnalysisView: View {
         .padding(.vertical, 4)
     }
 
+    // MARK: - Provenance
+
+    /// Caption describing how many analysed files' codec/resolution/HDR came
+    /// from a real ffprobe read versus a file-name guess. `nil` before any
+    /// scan has completed.
+    private var provenanceCaption: (text: String, isWarning: Bool)? {
+        guard report != nil, !analysedFiles.isEmpty else { return nil }
+        let total = analysedFiles.count
+        let probed = analysedFiles.filter { $0.provenance == .probed }.count
+        if !ffprobeLocated {
+            return ("ffprobe was not found — codec, resolution and HDR are guessed from file names.", true)
+        }
+        if probed == total {
+            return ("Codec, resolution and HDR were read by ffprobe for all \(total) files.", false)
+        }
+        return ("\(probed) of \(total) files were read by ffprobe; \(total - probed) could not be read and are guessed from file names.", true)
+    }
+
     // MARK: - Actions
 
-    /// Perform the directory scan asynchronously.
+    /// Perform the directory scan asynchronously: `StorageAnalyzer
+    /// .scanDirectory` for file-system facts and file-name guesses, then
+    /// (when ffprobe can be located) `StorageAnalyzer.probeFiles` to replace
+    /// those guesses with real ffprobe data, with progress reported via
+    /// `probeProgress`.
     private func performScan() async {
         guard let directory = selectedDirectory else { return }
 
         isScanning = true
         report = nil
+        analysedFiles = []
+        probeProgress = nil
+        probeTotal = 0
+        ffprobeLocated = false
 
-        // Request security-scoped access.
         let accessing = directory.startAccessingSecurityScopedResource()
         defer {
             if accessing { directory.stopAccessingSecurityScopedResource() }
+            isScanning = false
         }
 
-        let files = await StorageAnalyzer.scanDirectory(at: directory, recursive: scanRecursively)
-        let generatedReport = StorageAnalyzer.generateReport(files: files)
+        let scanned = await StorageAnalyzer.scanDirectory(at: directory, recursive: scanRecursively)
+        guard !Task.isCancelled else { return }
+
+        let bundleManager = viewModel.engine.bundleManager
+        let ffprobePath: String? = await Task.detached {
+            try? bundleManager.locateFFprobe().path
+        }.value
+        guard !Task.isCancelled else { return }
+
+        let files: [FileAnalysis]
+        if let ffprobePath {
+            ffprobeLocated = true
+            probeTotal = scanned.count
+            probeProgress = 0
+            files = await StorageAnalyzer.probeFiles(
+                scanned,
+                using: FFmpegProbe(ffprobePath: ffprobePath)
+            ) { fraction in
+                Task { @MainActor in self.probeProgress = fraction }
+            }
+        } else {
+            files = scanned
+        }
+        guard !Task.isCancelled else { return }
 
         analysedFiles = files
-        report = generatedReport
-        isScanning = false
+        report = StorageAnalyzer.generateReport(files: files)
     }
 
     // MARK: - Formatting
