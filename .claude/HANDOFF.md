@@ -146,6 +146,80 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 SESSION COMPLETE — 2026-09-02 · all queued work done
+
+### ✅ Final state
+
+- **Branch `wip/alpha-consolidation`, 31 commits ahead of `alpha`, tree clean, CI green on every commit.**
+  No PR opened (per the no-stacking rule). `swift build` + `swift test --parallel` pass.
+- **Issues: 93 open / 359 closed.** Closed this session: #496, #497, #277, #475, #356, #329, #390,
+  #448, #471, #451. Reopened as closed-in-error: 12.
+- Documentation fully reconciled: CHANGELOG, README, PROJECT_STATUS, FEATURES, docs/Architecture,
+  all docs/ guides, both OpenAPI specs (3.1.0 valid), the Swagger UI banner, and 5 in-app help files.
+- `.claude/` refreshed: `project_brief.md`, `standing_tasks.md` (W10 verification gates, W11
+  read-only siblings), `HANDOFF.md`, and 9 Claude memory files.
+
+### ⚠️ Two errors of MINE, caught by the final re-verification and corrected
+
+Recording these because the correction matters more than the appearance of a clean run:
+
+1. **`761101c`'s commit message claimed the File-menu ⌘O fix had landed. It had not.**
+   `MeedyaConverterApp.swift` kept its literal `.keyboardShortcut("o", modifiers: .command)`, so
+   rebinding `file.import` changed the toolbar button while the menu silently stayed on ⌘O.
+   Fixed in `f4bb44f`; #331 comment corrected publicly.
+2. **The #280 reopen rationale was factually wrong.** I wrote "`MiniPlayerWindow` has zero callers.
+   Nothing constructs or presents it." In fact `MiniPlayerController` IS constructed
+   (`AppViewModel.swift:389`) and toggled from two live sites (`ContentView.swift:235`,
+   `MeedyaConverterApp.swift:185`). My grep matched the FILE name, not the type, and I generalised
+   without confirming — the exact mistake this session was auditing for. The issue stays open for a
+   narrower real defect: `updateProgress` has zero callers, so the panel shows no live progress.
+   Correction posted.
+
+### 📋 ROUND-2 RANKED PROPOSALS — awaiting user selection
+
+Full detail in `.claude/proposals-round2-2026-09-02.json`. Ranks 1-2 spot-verified by the orchestrator.
+
+| # | Size/Risk | Proposal | Issue |
+|---|---|---|---|
+| 1 | XS/low | Apply the persisted theme: tint the app root from ThemeManager so Appearance settings stop being ignored | 336 |
+| 2 | S/low | Populate estimatedSourceDuration at enqueue AND stop the __duration: tag leaking into the ffmpeg argv | 326 |
+| 3 | XS/low | Unfreeze ParallelEncodingView's throughput tiles — they read unobserved ObservableObjects at parent level | 286 |
+| 4 | S/low | Wire NotificationActionHandler: register categories, set the delegate, stamp categoryIdentifier on posted notifications | 361 |
+| 5 | XS/low | Unit-test PostEncodeHookRunner's serialisation — the reentrant-actor defect class has no regression guard | new |
+| 6 | S/medium | Evaluate conditional rules on the watch-folder enqueue path — the automation path skips the automation feature | new (follow-up to closed #469) |
+| 7 | S/low | Drag completed outputs out of the queue — wire the orphaned DraggableFileView onto finished job rows | 285 |
+| 8 | S/medium | Top up free queue slots when jobs are added mid-run, not only when a job finishes | 286 |
+| 9 | M/low | Periodic checkpointing during healthy encodes — crash-safe resume data for the scenario resumability exists for | 468 |
+| 10 | M/medium | Activate AppleScript dispatch (#302) — until it lands, this session's #451 suspend/resume rewrite is unreachable code | 302 |
+| 11 | M/low | Strategic: add a MeedyaConverterTests target — the app module where this session's defects lived has zero testable surface | new |
+| 12 | M/medium | Team profiles: compute the local-vs-remote conflict diff so the Conflicts section can ever render, and test the manager | 482 |
+| 13 | M/medium | Give scene detection's chapters somewhere to live: add chapters to EncodingJobConfig and enable Apply to Job | 288 |
+| 14 | M/medium | Apply watermarks for real: persist WatermarkConfig on the profile and inject the overlay at encode time | 298 |
+| 15 | M/medium | Multi-output encoding executes: run tee when possible, else enqueue per-output jobs | 335 |
+| 16 | M/medium | Vector conversion screens: wire input picker + Convert, or hide both nav entries until they work | 473 |
+| 17 | L/medium | Strategic: make the pipeline editor stop discarding work — persist pipelines and fix the executor's dead-conditional encode stub | 278 |
+
+**Orchestrator verification of the top two:**
+- **#1 (#336 themes)** — confirmed: `grep '\.tint(' MeedyaConverterApp.swift ContentView.swift`
+  returns **nothing**. The accent colour and sidebar tint are persisted and then ignored.
+- **#2 (#326 queue optimiser)** — confirmed, and it is a **latent landmine, not just a no-op**:
+  `estimatedSourceDuration` is implemented by smuggling a `__duration:<value>` string into
+  `extraArguments` (`SmartQueueOptimizer.swift:194-203`), and
+  `FFmpegArgumentBuilder.swift:446` does `args.append(contentsOf: extraArguments)`. Nothing sets it
+  today, so nothing breaks — but **populating the duration, which is the obvious fix, would pass
+  `__duration:123.4` to ffmpeg as a literal argument.** The smuggling must be removed first. A good
+  example of why the proposal register cites code rather than issue text.
+
+### Deferred / blocked, for the record
+
+- **#494** — decision Accepted (DR-0001); packaging work (licence texts, source offer, App-Store
+  exclusion check, moving the drafted manifest entries) not started. User's call whether the issue
+  closes on the decision or stays open for execution.
+- **#286 width > 1** — never run. Unverifiable here and in CI. Opt-in, entitlement-gated, default 1.
+- **MeedyaSuite-core** — its MusicBrainz hardening still sits on `feature/work-in-progress`,
+  unmerged; `main` still builds Lucene queries by raw interpolation. Needs merging before Nov 30.
+- **MeedyaDL** — uncommitted staged rename + 2 untracked files on `alpha`, one `git clean` from loss.
+
 ### ✅ ALL 11 SELECTED ITEMS DONE — batch C committed, CI green on every commit
 
 `45a8931` — **#286** bounded-concurrency queue (opt-in, width 1 default) · **#329** A/B comparison

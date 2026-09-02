@@ -1,0 +1,172 @@
+[
+ {
+  "rank": 1,
+  "title": "Apply the persisted theme: tint the app root from ThemeManager so Appearance settings stop being ignored",
+  "why": "ThemeSettingsView is reachable (SettingsView.swift:51) and ThemeManager persists customAccentColor/customSidebarTint to UserDefaults (ThemeManager.swift:72, read back at :134, reset at :173), but ThemeManager is referenced nowhere outside its own file and ThemeSettingsView, and no root-level .tint exists \u2014 the only .tint calls in the app are local component colours (VideoUploadView.swift:235, WatchFolderView.swift:285, ResourceMonitorView.swift:359, ParallelEncodingView.swift:229/:375). A saved theme is written, read back into the manager, and then ignored forever.",
+  "size": "XS",
+  "risk": "low",
+  "files": "Sources/MeedyaConverter/MeedyaConverterApp.swift (root scene modifiers); Sources/MeedyaConverter/Components/ThemeManager.swift; Sources/MeedyaConverter/Views/SidebarView.swift (sidebar tint)",
+  "acceptance": "Changing the accent colour in Settings visibly retints controls without relaunch; sidebar tint applies; reset restores system accent; the Settings scene gets the same treatment as the main WindowGroup (the #281 lesson: menu-bar-only mode must not be excluded). Update reopened #336.",
+  "existingIssue": "336"
+ },
+ {
+  "rank": 2,
+  "title": "Populate estimatedSourceDuration at enqueue AND stop the __duration: tag leaking into the ffmpeg argv",
+  "why": "Still unstarted from round 1, and now verified to be worse than a no-op: nothing assigns estimatedSourceDuration (grep for '.estimatedSourceDuration =' finds only its own setter), so shortestFirst/longestFirst/estimatedTime (SmartQueueOptimizer.swift:89/:92/:139) silently never reorder \u2014 but the property is implemented by smuggling a '__duration:<x>' string into EncodingJobConfig.extraArguments (SmartQueueOptimizer.swift:193-207), and extraArguments flows verbatim into the command line (EncodingJob.swift:199 'builder.extraArguments = extraArguments' then FFmpegArgumentBuilder.swift:446 'args.append(contentsOf: extraArguments)'). The moment anyone sets the property, every encode of that job gets a bogus '__duration:x' argument. Fix the storage (real Codable field, or filter the tag in build) and assign the probed duration at the enqueue path (AppViewModel.swift ~840).",
+  "size": "S",
+  "risk": "low",
+  "files": "Sources/ConverterEngine/Encoding/SmartQueueOptimizer.swift:184-207; Sources/ConverterEngine/Encoding/EncodingJob.swift:199; Sources/ConverterEngine/FFmpeg/FFmpegArgumentBuilder.swift:446; Sources/MeedyaConverter/ViewModels/AppViewModel.swift (enqueue ~840); Tests/ConverterEngineTests (new)",
+  "acceptance": "Enqueued jobs carry the probed duration; shortestFirst/longestFirst demonstrably reorder a mixed queue (unit test); an argv-level unit test proves no '__duration:' string can ever reach builder.build() output; QueueOptimizerView.swift:168 shows real durations. Update #326.",
+  "existingIssue": "326"
+ },
+ {
+  "rank": 3,
+  "title": "Unfreeze ParallelEncodingView's throughput tiles \u2014 they read unobserved ObservableObjects at parent level",
+  "why": "throughputSection computes Combined Speed from activeJobs.compactMap(\\.speed) (ParallelEncodingView.swift:282) and Avg Progress from job.progress (:299-301) directly in the parent view, but EncodingJobState is a Combine ObservableObject and AppViewModel's @Observable only tracks the array's structure (AppViewModel.swift:1097) \u2014 per-job speed/progress mutations (:1338) re-render only the @ObservedObject ActiveJobRow, not the parent. The file's own ActiveJobRow comment states the hazard verbatim: 'a parent that merely read job.progress would not re-render on change'. The tiles freeze at whatever values held when a job was last added or removed \u2014 on the flagship dashboard shipped this session.",
+  "size": "XS",
+  "risk": "low",
+  "files": "Sources/MeedyaConverter/Views/ParallelEncodingView.swift:272-315 (extract throughputSection into a child view observing the job states, or aggregate via published state)",
+  "acceptance": "Combined Speed and Avg Progress visibly update during a single running job (width 1 \u2014 testable today); no change to the row rendering; note on #286 that the dashboard follow-up is done.",
+  "existingIssue": "286"
+ },
+ {
+  "rank": 4,
+  "title": "Wire NotificationActionHandler: register categories, set the delegate, stamp categoryIdentifier on posted notifications",
+  "why": "NotificationActionHandler is a complete UNUserNotificationCenterDelegate with categories, action routing and handlers (registerCategories at NotificationActionHandler.swift:92; handleOpenInFinder/handleRetry/handleViewLog from :229) but has zero references outside its own file. The app requests notification authorisation (MeedyaConverterApp.swift:548) and posts real notifications (AppViewModel.swift:1854), yet sendNotification (:1835-1854) sets no categoryIdentifier and no userInfo, and nothing ever calls registerCategories() or assigns the delegate \u2014 so every banner ships buttonless and the reopened #361 stays a shipped-as-done lie.",
+  "size": "S",
+  "risk": "low",
+  "files": "Sources/MeedyaConverter/Services/NotificationActionHandler.swift; Sources/MeedyaConverter/MeedyaConverterApp.swift (~548, launch wiring); Sources/MeedyaConverter/ViewModels/AppViewModel.swift:1835-1854 (categoryIdentifier + userInfo per send site)",
+  "acceptance": "Complete/failed/queue-done notifications carry their category's action buttons; Open in Finder reveals the real output file; Retry re-enqueues; delegate set before first post; handler routes to live AppViewModel state, not stale paths. Close reopened #361.",
+  "existingIssue": "361"
+ },
+ {
+  "rank": 5,
+  "title": "Unit-test PostEncodeHookRunner's serialisation \u2014 the reentrant-actor defect class has no regression guard",
+  "why": "This session's worst near-miss was PostEncodeHookRunner claiming serialisation an reentrant actor did not provide; the fix (tail-task chaining in Sources/ConverterEngine/Encoding/EncodingPersistenceActors.swift) is exactly the kind of subtle invariant a future refactor will silently break. ParallelEncodingConcurrencyTests.swift already proves the pattern is testable here \u2014 it covers EncodingStatisticsRecorder under concurrent writes (:223-289) and claimNextPendingJob atomicity (:110) \u2014 but contains no PostEncodeHookRunner test at all: nothing asserts two concurrently-submitted chains run strictly one at a time in FIFO order. Pure-logic, CI-runnable, no FFmpeg needed.",
+  "size": "XS",
+  "risk": "low",
+  "files": "Tests/ConverterEngineTests/ParallelEncodingConcurrencyTests.swift (extend); Sources/ConverterEngine/Encoding/EncodingPersistenceActors.swift (read-only, unless a test seam is needed)",
+  "acceptance": "A test submits N chains whose bodies record enter/exit timestamps into a shared log and asserts zero overlap and submission order preserved; a deliberately-reentrant control case documents why plain actor isolation fails. CI green.",
+  "existingIssue": "new"
+ },
+ {
+  "rank": 6,
+  "title": "Evaluate conditional rules on the watch-folder enqueue path \u2014 the automation path skips the automation feature",
+  "why": "The manual enqueue path evaluates #469's ConditionalRule set via RuleEngine.evaluateRules (AppViewModel.swift:860-868), but enqueueWatchFolderFile (AppViewModel.swift:1011-1053) \u2014 the one path built for unattended automation, where per-file rules matter most \u2014 resolves the folder's configured profile by name and goes straight to addJob, never consulting the rules. It does apply the #475 kill switch (:1046), so the asymmetry is one block, not a design choice. Honest caveat: rule conditions include resolution/codec/HDR/duration (ConditionalRule.swift:74-92), which need a probe the watch path currently never performs \u2014 extension/fileSize rules can work immediately, media-based rules need the probe added (or an honest doc note that they are skipped on this path).",
+  "size": "S",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/ViewModels/AppViewModel.swift:1011-1053 (mirror the :860-868 block); Sources/ConverterEngine/Encoding/ConditionalRule.swift (read-only); probe plumbing if media-based rules are honoured",
+  "acceptance": "A file landing in a watch folder with a matching enabled rule encodes with the rule's profile (logged, as the manual path logs); no rules/no match preserves the folder's configured profile exactly; behaviour for probe-dependent conditions is implemented or explicitly documented in WatchFolderView and the issue.",
+  "existingIssue": "new (follow-up to closed #469)"
+ },
+ {
+  "rank": 7,
+  "title": "Drag completed outputs out of the queue \u2014 wire the orphaned DraggableFileView onto finished job rows",
+  "why": "Reopened #285: DraggableFileView (Sources/MeedyaConverter/Components/DraggableFileView.swift) is a complete drag-source component with zero callers anywhere, SourceFileView.swift:132 handles drop-IN only, and JobQueueView.swift contains no onDrag/NSItemProvider at all \u2014 so a finished encode cannot be dragged to Finder, Mail or anywhere, despite the closed issue claiming it could. The component exists; the wiring is a modifier on the completed-job row plus the output URL it already has.",
+  "size": "S",
+  "risk": "low",
+  "files": "Sources/MeedyaConverter/Views/JobQueueView.swift (completed row); Sources/MeedyaConverter/Components/DraggableFileView.swift; Sources/MeedyaConverter/Views/ComparisonLibraryView.swift (optional: same affordance on captured frames)",
+  "acceptance": "A completed job's row is a working drag source for its real output file (only when the file exists on disk \u2014 no dragging a URL that was never written); in-progress/failed rows are not drag sources; close reopened #285 or restate its remaining scope.",
+  "existingIssue": "285"
+ },
+ {
+  "rank": 8,
+  "title": "Top up free queue slots when jobs are added mid-run, not only when a job finishes",
+  "why": "The #286 runner claims jobs only inside the loop that resumes after 'await group.next()' returns (AppViewModel.swift:1160-1197): with width 3 and one long job in flight, newly-enqueued jobs sit unclaimed until that job completes, because the runner is parked in group.next() and nothing re-triggers the claim pass on queue growth. At width 1 this is invisible (matches the old sequential loop), which is exactly why it will surprise the first entitled tester. Needs a wake-up signal (e.g. an AsyncStream the enqueue paths ping) raced against group.next() \u2014 with the width-1 behaviour provably unchanged, since the whole #286 safety argument rests on it.",
+  "size": "S",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/ViewModels/AppViewModel.swift:1120-1198 (runner loop) plus the addJob call sites that must signal; Sources/ConverterEngine/Encoding/EncodingQueue (if the signal lives there)",
+  "acceptance": "With width >= 2 and one job running, enqueueing a second starts it without waiting for the first (logic-level test on the claim/wake seam, since CI cannot run real encodes); width 1 sequence is byte-identical to today (regression test); pause/cancel unaffected. Update #286.",
+  "existingIssue": "286"
+ },
+ {
+  "rank": 9,
+  "title": "Periodic checkpointing during healthy encodes \u2014 crash-safe resume data for the scenario resumability exists for",
+  "why": "Still unstarted from round 1 and re-verified: CheckpointManager().saveCheckpoint is called at exactly two sites \u2014 the failure branch (AppViewModel.swift:1618) and cancel (:1828). Nothing writes during a healthy encode, so a crash or force-quit mid-encode (the headline case for resumable jobs) leaves no checkpoint, while ResumableJobsView remains reachable and honestly re-queues what it finds (and now applies the kill switch, ResumableJobsView.swift:182). The progress handler that updates jobState (:1338) is the natural cadence point.",
+  "size": "M",
+  "risk": "low",
+  "files": "Sources/MeedyaConverter/ViewModels/AppViewModel.swift (progress handler ~1338, runJob); Sources/ConverterEngine (CheckpointManager, read-mostly)",
+  "acceptance": "Checkpoint written on a throttled cadence (e.g. every 30 s or 5% progress) during encoding; after a simulated kill the job appears in Resumable Jobs; checkpoint removed on success and not duplicated by the failure/cancel writers; write cost measured as negligible. #468 then rescoped to true mid-file seek-resume.",
+  "existingIssue": "468"
+ },
+ {
+  "rank": 10,
+  "title": "Activate AppleScript dispatch (#302) \u2014 until it lands, this session's #451 suspend/resume rewrite is unreachable code",
+  "why": "Verified this week's state: the .sdef at Sources/MeedyaConverter/Scripting/MeedyaConverter.sdef has ZERO <cocoa> elements, Info.plist has neither NSAppleScriptEnabled nor OSAScriptingDefinition, and nothing anywhere assigns ScriptingBridge.shared's engine/queue/profileStore (the only hit is the precondition comment at ScriptingBridge.swift:304). Value went UP this session: b845cf7 rebuilt the probe path around NSScriptCommand.current()/suspendExecution(), which can only ever execute once OSA can dispatch \u2014 #302 is now the single blocker in front of both issues, and its absence means freshly-written, reviewed code is dead on arrival.",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/Scripting/MeedyaConverter.sdef (<cocoa> class/command mappings); Sources/MeedyaConverter/Resources/Info.plist (NSAppleScriptEnabled, OSAScriptingDefinition); Sources/MeedyaConverter/MeedyaConverterApp.swift (register shared bridge at launch); Sources/MeedyaConverter/Scripting/ScriptingBridge.swift",
+  "acceptance": "osascript lists profiles and reads queue status from a running app; encode enqueues a real job through the same kill-switch-aware path (ScriptingBridge.swift:283 already applies it); the suspend/resume probe path executes without blocking; #302 closed and #451 finally closeable.",
+  "existingIssue": "302"
+ },
+ {
+  "rank": 11,
+  "title": "Strategic: add a MeedyaConverterTests target \u2014 the app module where this session's defects lived has zero testable surface",
+  "why": "Package.swift declares exactly two test targets (ConverterEngineTests at :422, MeedyaConvertTests at :442); neither depends on the MeedyaConverter executable target (:375), so the classes where this session's three nastiest defects lived are untestable by construction: HardwareAccelerationPreference (the UserDefaults default-polarity trap that would have force-disabled hardware encoding on every fresh install), ShortcutBinding.keyEquivalent (the KeyEquivalent trap on persisted data), URLSchemeHandler's parsing, and ComparisonLibraryManager's JSON persistence. SwiftPM has allowed testTargets to depend on executable targets since 5.5, and all four seams are pure logic \u2014 no UI, CI-runnable.",
+  "size": "M",
+  "risk": "low",
+  "files": "Package.swift (new testTarget); Tests/MeedyaConverterTests/ (new: HardwareAccelerationPreferenceTests, ShortcutBindingTests, URLSchemeHandlerTests, ComparisonLibraryManagerTests); possibly small access-level changes in the four sources",
+  "acceptance": "swift test runs the new target in CI; polarity test proves an unwritten key means hardware-ON; keyEquivalent test covers empty/multi-character keys without trapping; URL tests cover encode/probe/open plus a malformed URL; persistence round-trip test with a temp directory. CI green.",
+  "existingIssue": "new"
+ },
+ {
+  "rank": 12,
+  "title": "Team profiles: compute the local-vs-remote conflict diff so the Conflicts section can ever render, and test the manager",
+  "why": "Re-verified unchanged since round 1: conflictedProfiles is initialised [] (TeamProfileView.swift:64) and only ever re-assigned [] (:354, inside resolveAllConflicts at :349-357, which therefore always merges against an empty array); the pull path (:335) assigns remoteProfiles and never diffs, so the Conflicts section (:191-193) is dead UI. TeamProfileManager has resolveConflicts and a real 2xx-checked push but zero tests anywhere under Tests/.",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/Services/TeamProfileManager.swift; Sources/MeedyaConverter/Views/TeamProfileView.swift:64,191-211,335,349-357; Tests/ (URLProtocol-mocked, natural companion to the rank-11 target)",
+  "acceptance": "Pull computes a real diff (same id, differing content) into conflictedProfiles; conflicts render with keep-local/take-remote; resolveAllConflicts operates on real entries; tests cover push success, non-2xx failure and conflict detection. Close #482.",
+  "existingIssue": "482"
+ },
+ {
+  "rank": 13,
+  "title": "Give scene detection's chapters somewhere to live: add chapters to EncodingJobConfig and enable Apply to Job",
+  "why": "The one deliberately-deferred half of #288: detection now runs for real (b845cf7), but 'Apply to Job' is permanently disabled with an honest label (SceneDetectorView.swift:55 documents why; :404-412 renders it unavailable) because EncodingJobConfig genuinely has no chapters field \u2014 grep for 'chapter' in EncodingJob.swift returns nothing. The downstream FFmetadata generation already exists and works (SceneDetector's OGM/XML/FFmetadata writers, used by the export path), so the missing piece is a field on the job model plus '-i <metadata> -map_metadata' injection at argument build \u2014 with the #487 lesson applied (Codable round-trip test in the same PR so old persisted jobs decode).",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/ConverterEngine/Encoding/EncodingJob.swift (field + Codable migration); Sources/ConverterEngine/FFmpeg/FFmpegArgumentBuilder.swift; Sources/MeedyaConverter/Views/SceneDetectorView.swift:404-412; Tests/ConverterEngineTests (argv + decode tests)",
+  "acceptance": "Apply to Job enables when scenes exist; the encoded output contains the chapters (argv-level unit test; manual verification for the real file); jobs persisted before the field decode cleanly; #288 closed.",
+  "existingIssue": "288"
+ },
+ {
+  "rank": 14,
+  "title": "Apply watermarks for real: persist WatermarkConfig on the profile and inject the overlay at encode time",
+  "why": "Re-verified unchanged: WatermarkOverlay's runnable builders (buildVideoWatermarkArguments at WatermarkOverlay.swift:204, buildImageWatermarkArguments at :247) still have zero callers \u2014 the only WatermarkOverlay references outside the file are WatermarkView's read-only filter-string preview (:194-196) \u2014 and EncodingProfile has no watermark field, so the reachable 'Add watermark overlay' screen configures something nothing ever uses.",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/ConverterEngine/Models/EncodingProfile.swift (field + Codable migration); Sources/ConverterEngine/FFmpeg/WatermarkOverlay.swift; Sources/MeedyaConverter/Views/WatermarkView.swift; Sources/ConverterEngine/FFmpeg/FFmpegArgumentBuilder.swift (filter injection)",
+  "acceptance": "Watermark saved with the profile survives export/import (decode test in the same PR, per the #487 silent-drop lesson); encodes visibly carry the overlay; filter injection unit-tested at argv level, including interaction with an existing videoFilterChain. Close #298.",
+  "existingIssue": "298"
+ },
+ {
+  "rank": 15,
+  "title": "Multi-output encoding executes: run tee when possible, else enqueue per-output jobs",
+  "why": "Re-verified unchanged: MultiOutputEncoder builds a correct tee-muxer argument set (buildTeeArguments MultiOutputEncoder.swift:108), sequential per-output arrays (:162) and a real canUseTee check (:207), but MultiOutputView contains no FFmpegProcessController, no Process and no Start action (grep confirms) \u2014 the screen renders a command preview and can never produce a file. The execution pattern to copy now exists twice over (ConcatenationView's Start from b845cf7, ComparisonLibraryView's capture from 45a8931).",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/Views/MultiOutputView.swift; Sources/ConverterEngine/Encoding/MultiOutputEncoder.swift (read-mostly)",
+  "acceptance": "Start produces all configured outputs (tee single-pass when canUseTee, else one job per output through the real queue so hooks/stats/kill-switch apply); per-output success/failure shown; one output's failure does not mask the others. Close #335.",
+  "existingIssue": "335"
+ },
+ {
+  "rank": 16,
+  "title": "Vector conversion screens: wire input picker + Convert, or hide both nav entries until they work",
+  "why": "Re-verified unchanged: VectorConversionView and ProResVectorView contain no fileImporter, no NSOpenPanel, no Process and no FFmpegProcessController (grep across both files returns nothing) while both remain reachable from the sidebar \u2014 settings-only forms that cannot perform their titular function. RasterVectorConverter still has zero callers outside its own file. Either wiring or an honest hide closes the gap; the session's precedent (crossfade's disabled-with-reason label) shows the acceptable fallback.",
+  "size": "M",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/Views/VectorConversionView.swift; Sources/MeedyaConverter/Views/ProResVectorView.swift; Sources/ConverterEngine/FFmpeg/RasterVectorConverter.swift (read-mostly); Sources/MeedyaConverter/Views/SidebarView.swift",
+  "acceptance": "Either pick-input -> Convert runs the existing converters with progress and errors and writes real output; or both nav entries are hidden (not disabled-and-mute) with #473 updated to say so. No reachable screen that cannot do what its title says.",
+  "existingIssue": "473"
+ },
+ {
+  "rank": 17,
+  "title": "Strategic: make the pipeline editor stop discarding work \u2014 persist pipelines and fix the executor's dead-conditional encode stub",
+  "why": "Two verified defects compound: OutputSettingsView.swift:83 presents PipelineEditorView() without the onSave callback, so the editor's Save (PipelineEditorView.swift:328, 'onSave?(pipeline)') silently discards everything the user built; and PipelineExecutor.buildStepArguments's encode case is a dead conditional \u2014 'if step.profile != nil' and its else branch BOTH emit '-c copy' (EncodingPipeline.swift:210-219), so even a wired pipeline would ignore the chosen profile entirely, a false-capability bug in the engine itself. Honest-minimal scope: persist pipelines + fix the encode step to use real profile arguments; full multi-step chained execution can follow under #278.",
+  "size": "L",
+  "risk": "medium",
+  "files": "Sources/MeedyaConverter/Views/OutputSettingsView.swift:83; Sources/MeedyaConverter/Views/PipelineEditorView.swift; Sources/ConverterEngine/Encoding/EncodingPipeline.swift:173-230 (encode case); new pipeline persistence store; Tests/ConverterEngineTests (argv tests per step type)",
+  "acceptance": "Saved pipelines persist and reload across launches; the encode step's argv derives from the step's profile, not '-c copy' (unit-tested); either steps execute chained through the real process controller, or execution is honestly gated with the remaining scope restated on #278 \u2014 no silent discard anywhere.",
+  "existingIssue": "278"
+ }
+]
