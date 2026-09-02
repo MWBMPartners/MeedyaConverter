@@ -146,6 +146,51 @@ run sequentially):
 - **Batch C (large, Opus):** #286 bounded-concurrency queue · #329 A/B comparison loop.
 - Then: full issue re-sweep, docs sweep, `.claude/` refresh, round-2 proposals.
 
+## 🟢 2026-09-02 — pre-release hardening for the first Direct test build (autonomous)
+
+**User directive:** prep the first Direct-distribution test build; first do any *recommended pre-build
+tasks*, autonomously, using **sequential Fable 5.1 agents for analysis/deep-planning** and **Sonnet for
+implementation**.
+
+**Analysis:** two sequential Fable agents reconciled the whole release surface against real code —
+(A) the build/sign/notarize PIPELINE, (B) FUNCTIONAL/content readiness. Both reports are thorough (Fable
+even caught 2 false comments). Implementation via 2 parallel Sonnet agents (disjoint files) + me for the
+CI-critical/shared/content items. **CI-green batches landed on `wip/alpha-consolidation`:**
+
+- `92c7d42` — **correctness/blocker fixes**: ffmpeg resolution (Image/Voice/MediaScanner → FFmpegBundleManager,
+  so they work in a Finder-launched notarized app, not just Homebrew); VideoTrimmer seeds real duration (was
+  hardcoded 120 s); disc-burn "Simulate" refuses to write a real disc on hdiutil/growisofs (only Audio-CD
+  `-dummy` is a real dry run) + honest "verified"; EDL CMX3600 dangling-pointer UB fixed (+ test); queue
+  drag-reorder moves the right job; zero-condition rule can't be saved; stale concat note removed; Cloud Sync
+  hidden (no iCloud entitlement in Direct).
+- `936bde3` — **pipeline + drift**: release.yml (CLI `--version` sync via sed before build, missing-CLI hard
+  fail, job timeout 45→90, DIRECT-must-stay-unset doc); notarize.sh (timeout 900→1800, stop `2>&1` corrupting
+  the notarytool JSON parse); false comments fixed (Package.swift bundle name, AppInfo sync-script);
+  README/direct-release.md drift; CHANGELOG `[Unreleased]` backfilled with this session's work (+ release-cut
+  NOTE to fold into a dated `[0.1.0-rc.4]` and correct the stale "vector = first-class sidebar entries"
+  highlight — they're hidden now, #473).
+- `docs/distribution/rc4-known-limitations.md` (DRAFT) — the honest partial/disabled feature list for the
+  test-build release notes.
+
+**DEFERRED / DISCLOSED (not fixed — in the known-limitations doc):** CLI notarization (invasive/untestable —
+disclosed, `xattr -d` workaround); entitlements hardening-key trim (ship as-is, trim in rc.2); Dual-HDR
+tools, Smart Crop still-image crop, Storage Analysis filename-guesses, Team-git relabel, background-removal
+single-image save, etc.
+
+**⚠️ USER DECISIONS that gate the actual tag (surfaced, not blocking):**
+1. **Merge `wip/alpha-consolidation` → `main`** — REQUIRED: the release tags a commit on `main`, which is 89
+   behind `alpha` / 175 behind wip; none of this session's work ships in rc.4 without the merge.
+2. **6 Apple secrets** (APPLE_CERTIFICATE/_PASSWORD, APPLE_SIGNING_IDENTITY [Developer ID Application],
+   APPLE_ID, APPLE_PASSWORD [app-specific], APPLE_TEAM_ID) — only the owner can set; release.yml fails fast
+   without them.
+3. **Tag/version** (v0.1.0-rc.4 per CHANGELOG?).
+4. **Hide Subscription/Plugins Settings tabs in Direct?** (product call).
+5. **GPL disc-tools bundling** — recommend DEFER for the first build (disclosed).
+6. **DIRECT stays UNSET** — recommend yes (documented in release.yml; setting it crashes at launch until
+   Sparkle framework embedding lands, #416).
+
+Pipeline logic itself verified sound by the Fable audit; the genuine gate is the merge + the 6 secrets.
+
 ## 🟢 2026-09-02 — post-round-2 dead-feature sweep (autonomous, CI-monitored)
 
 After the round-2 register completed, the user added a **standing rule** and directed autonomous work on
