@@ -313,7 +313,7 @@ public struct MusicBrainzLookupService: Sendable {
             let artistCredits: [MusicBrainzRecordingMatch.ArtistCredit] = (wire.artistCredit ?? []).map { credit in
                 MusicBrainzRecordingMatch.ArtistCredit(
                     name: sanitized(credit.name ?? ""),
-                    joinPhrase: sanitized(credit.joinphrase ?? ""),
+                    joinPhrase: sanitizedJoinPhrase(credit.joinphrase ?? ""),
                     artistID: credit.artist?.id
                 )
             }
@@ -355,9 +355,20 @@ public struct MusicBrainzLookupService: Sendable {
     }
 
     /// Trims and passes a raw string through `MetadataSanitizer.sanitizeSingleLine`
-    /// (untrusted input — F-006).
+    /// (untrusted input — F-006). Used for names/titles/dates where surrounding
+    /// whitespace is noise.
     private static func sanitized(_ raw: String) -> String {
         MetadataSanitizer.sanitizeSingleLine(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Sanitises an artist-credit join phrase (e.g. `" & "`, `" feat. "`) for
+    /// control/bidi characters but PRESERVES its surrounding spaces — those
+    /// spaces are the separator between credited names, so trimming them would
+    /// merge names (`"Queen & David Bowie"` → `"Queen&David Bowie"`).
+    /// `sanitizeSingleLine` already coalesces runs of spaces to a single space
+    /// and keeps a leading/trailing single space, which is exactly right here.
+    private static func sanitizedJoinPhrase(_ raw: String) -> String {
+        MetadataSanitizer.sanitizeSingleLine(raw)
     }
 
     /// Decodes `{"error": "...", "help": "..."}` (the shape MusicBrainz uses for
