@@ -152,7 +152,11 @@ public enum ProResVectorExecutor: Sendable {
             }
             frameBodies.append(body)
 
-            let fraction = 0.15 + 0.80 * Double(index + 1) / Double(frameFiles.count)
+            // Clamp to the stage's 0.95 ceiling: 0.15 + 0.80 * (n/n) is 0.95 in
+            // exact arithmetic but 0.9500000000000002 in Double, which would
+            // overshoot the following `.assembling` fraction (0.95) and break
+            // the monotonic-progress contract.
+            let fraction = min(0.95, 0.15 + 0.80 * Double(index + 1) / Double(frameFiles.count))
             progress?(ProResVectorProgress(
                 stage: .tracing(frame: index + 1, of: frameFiles.count), fraction: fraction))
         }
