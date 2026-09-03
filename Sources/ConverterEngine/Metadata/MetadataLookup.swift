@@ -294,6 +294,8 @@ public struct TMDBClient: Sendable {
 // MARK: - MusicBrainzClient
 
 /// Builds MusicBrainz API request URLs for music metadata lookup.
+/// Execution, throttling and JSON parsing live in `MusicBrainzLookupService`
+/// (#205); this type remains a pure URL/request builder.
 ///
 /// Phase 15.2
 ///
@@ -309,6 +311,10 @@ public struct TMDBClient: Sendable {
 /// `area`/`url`/`cdstub`/`tag`, never use the `quality:` field, and parse no
 /// relationship `target` property — in fact this type parses no response at
 /// all. No migration is required (issue #493, Part B).
+///
+/// `MusicBrainzLookupService.parseRecordingSearch` decodes only recording /
+/// artist-credit / release / release-group / media / track fields — no
+/// relationships — so the SEARCH-752 `target` change still does not apply.
 ///
 /// ### If `quality:` filtering is ever added — read this first
 ///
@@ -507,6 +513,27 @@ public struct MusicBrainzClient: Sendable {
 
     /// Required User-Agent header for MusicBrainz API.
     public static let userAgent = "MeedyaConverter/1.0 (https://github.com/MWBMPartners/MeedyaConverter)"
+
+    /// Per-request timeout for MusicBrainz calls (seconds).
+    public static let requestTimeoutSeconds: TimeInterval = 15
+
+    /// The ready-to-send request for a recording search: the URL from
+    /// `buildRecordingSearchURL(title:artist:)` plus the two headers MusicBrainz
+    /// requires — `User-Agent` (`userAgent`; see
+    /// https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting) and
+    /// `Accept: application/json` — and `requestTimeoutSeconds`.
+    /// Returns `nil` only if Foundation rejects the assembled string as a URL,
+    /// which is not expected: every user-controlled character is percent-encoded.
+    /// Called by `MusicBrainzLookupService.searchRecordings(title:artist:)`.
+    public static func buildRecordingSearchRequest(title: String, artist: String?) -> URLRequest? {
+        guard let url = URL(string: buildRecordingSearchURL(title: title, artist: artist)) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = requestTimeoutSeconds
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
 }
 
 // MARK: - OpenSubtitlesClient

@@ -18,6 +18,12 @@ import ConverterEngine
 /// common tag suggestions via auto-complete. Operates on the single selected
 /// file — multi-file batch tag editing is not yet implemented (#320).
 ///
+/// Also provides a "Look Up…" action that searches MusicBrainz recordings
+/// from the file's title/artist (`MusicBrainzLookupSheet` →
+/// `MusicBrainzLookupService`) and applies a chosen match to the tag table
+/// via `MusicBrainzTagMapping.applying` (#205); the user still reviews and
+/// writes the result via the existing "Write Tags…" path.
+///
 /// Phase 6 — Full Metadata Tag Editor (Issue #320)
 struct MetadataTagEditorView: View {
 
@@ -47,6 +53,9 @@ struct MetadataTagEditorView: View {
 
     /// Whether the tag edit sheet is presented.
     @State private var showingEditor = false
+
+    /// Whether the MusicBrainz lookup sheet is presented.
+    @State private var showingLookup = false
 
     /// Whether editing an existing tag (true) or adding a new one (false).
     @State private var isEditingExisting = false
@@ -96,6 +105,16 @@ struct MetadataTagEditorView: View {
         VStack(spacing: 0) {
             // Toolbar
             controlsBar
+                .sheet(isPresented: $showingLookup) {
+                    let seed = MusicBrainzTagMapping.seedQuery(tags: tags, filename: viewModel.selectedFile?.fileName ?? "")
+                    MusicBrainzLookupSheet(
+                        initialTitle: seed.title,
+                        initialArtist: seed.artist ?? "",
+                        preferredAlbum: seed.album,
+                        fileDurationSeconds: viewModel.selectedFile?.duration,
+                        onApply: applyLookupMatch
+                    )
+                }
 
             Divider()
 
@@ -191,6 +210,17 @@ struct MetadataTagEditorView: View {
             }
             .disabled(tags.isEmpty)
             .accessibilityLabel("Clear all metadata tags")
+
+            Divider()
+                .frame(height: 16)
+
+            Button {
+                showingLookup = true
+            } label: {
+                Label("Look Up…", systemImage: "magnifyingglass")
+            }
+            .disabled(viewModel.selectedFile == nil || isWriting)
+            .accessibilityLabel("Look up metadata on MusicBrainz")
 
             Spacer()
 
@@ -485,8 +515,8 @@ struct MetadataTagEditorView: View {
                 .foregroundStyle(.secondary)
 
             Text(
-                "Add tags manually, use a template, or click a "
-                + "common tag suggestion below."
+                "Add tags manually, use a template, click a common tag "
+                + "suggestion below, or use Look Up… to fetch them from MusicBrainz."
             )
             .font(.caption)
             .foregroundStyle(.tertiary)
@@ -498,6 +528,19 @@ struct MetadataTagEditorView: View {
     }
 
     // MARK: - Actions
+
+    /// Merge a chosen MusicBrainz match into the tag table (pure mapping in
+    /// `MusicBrainzTagMapping.applying`); the user still reviews and writes via
+    /// "Write Tags…". Nothing touches the file here.
+    private func applyLookupMatch(
+        _ match: MusicBrainzRecordingMatch,
+        release: MusicBrainzRecordingMatch.Release?,
+        includeIdentifiers: Bool
+    ) {
+        tags = MusicBrainzTagMapping.applying(match, release: release, to: tags, includeIdentifiers: includeIdentifiers)
+        selectedTagID = nil
+        viewModel.appendLog(.info, "MusicBrainz match applied: \(match.artist) – \(match.title) (\(match.id))", category: .metadata)
+    }
 
     /// Prepares the editor sheet for adding a new tag.
     private func prepareAddTag() {

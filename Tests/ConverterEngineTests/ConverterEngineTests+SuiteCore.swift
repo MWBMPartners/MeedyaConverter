@@ -148,44 +148,38 @@ extension ConverterEngineTests {
         XCTAssertEqual(json["language"] as? String, "en")
     }
 
-    /// The inline path must THROW, never return an empty array.
+    /// The inline `.musicBrainz` path is a real lookup, not a stub.
     ///
-    /// Regression guard for the fabricated-capability defect fixed alongside
-    /// #493: `searchViaInline` used to `return []` behind a comment claiming
-    /// it was a pass-through to the inline `MetadataProviders` clients. No
-    /// provider was ever called, and `[]` is indistinguishable from a genuine
-    /// "no matches" result. There is nothing to pass through to — every inline
-    /// client builds URLs only, and `Sources/ConverterEngine/Metadata/`
-    /// contains no `URLSession`. If someone ever makes this return a value
-    /// again, it must be because a real lookup runs.
-    func test_suiteCoreMetadataAdapter_inlinePathThrowsRatherThanFakingEmptyResults() async {
-        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
+    /// #205 replaced the always-throwing inline path for MusicBrainz with a
+    /// real lookup through `MusicBrainzLookupService`; this test injects a
+    /// mock `MetadataHTTPClient` (`MusicBrainzMockHTTPClient`, defined in
+    /// `MusicBrainzLookupServiceTests.swift`) so no network I/O occurs, and
+    /// asserts the adapter actually forwards to the service and bridges its
+    /// results rather than fabricating or throwing.
+    func test_suiteCoreMetadataAdapter_inlineMusicBrainzRunsARealLookup() async throws {
+        let client = MusicBrainzMockHTTPClient()
+        client.enqueue(status: 200, body: MusicBrainzFixtures.recordingSearchBohemian)
+        let service = MusicBrainzLookupService(httpClient: client, throttle: MusicBrainzRequestThrottle(minimumInterval: .zero))
+        let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly, musicBrainzLookup: service)
         let query = MetadataSearchQuery(mediaType: .music, title: "Bohemian Rhapsody", artist: "Queen")
-        do {
-            let results = try await adapter.search(source: .musicBrainz, query: query)
-            XCTFail(
-                "Expected .notImplemented; inline search returned \(results.count) result(s). "
-                + "Returning an empty array here would report a lookup that never happened."
-            )
-        } catch let error as SuiteCoreBridgeError {
-            guard case .notImplemented(let capability) = error else {
-                XCTFail("Expected .notImplemented, got \(error)")
-                return
-            }
-            XCTAssertTrue(
-                capability.contains("MusicBrainz"),
-                "The error should name the source that was asked for, got: \(capability)"
-            )
-        } catch {
-            XCTFail("Expected SuiteCoreBridgeError, got \(error)")
-        }
+
+        let results = try await adapter.search(source: .musicBrainz, query: query)
+
+        XCTAssertEqual(client.requests.count, 1)
+        XCTAssertEqual(results.count, 2)
+        let first = try XCTUnwrap(results.first)
+        XCTAssertEqual(first.source, .musicBrainz)
+        XCTAssertEqual(first.externalId, "46fe768c-7b38-4147-9f02-815b9f0759e2")
+        XCTAssertEqual(first.artist, "Queen")
     }
 
-    /// Every inline source throws — not just MusicBrainz.
-    func test_suiteCoreMetadataAdapter_everyInlineSourceThrowsNotImplemented() async {
+    /// Every source OTHER than MusicBrainz still throws — keyed providers
+    /// (TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles, OMDb) have no
+    /// inline implementation in this build and must never fake `[]`.
+    func test_suiteCoreMetadataAdapter_everyOtherInlineSourceThrowsNotImplemented() async {
         let adapter = SuiteCoreMetadataAdapter(backend: .inlineOnly)
         let query = MetadataSearchQuery(mediaType: .movie, title: "Dune")
-        for source in MetadataSource.allCases {
+        for source in MetadataSource.allCases where source != .musicBrainz {
             do {
                 _ = try await adapter.search(source: source, query: query)
                 XCTFail("\(source.rawValue): expected .notImplemented, got a result")

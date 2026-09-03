@@ -13,6 +13,14 @@
 // GitHub Issue #371 — Integrate MeedyaSuite-core metadata providers via
 // Swift bindings.
 //
+// #205 — the inline `.musicBrainz` path is a real lookup through
+// `MusicBrainzLookupService` (keyless; native-Swift `MetadataHTTPClient`
+// seam; `MusicBrainzRequestThrottle.shared`). `MetadataTagEditorView`'s
+// lookup sheet calls `MusicBrainzLookupService` directly rather than through
+// this adapter because it needs `MusicBrainzRecordingMatch` (releases,
+// MBIDs), which `MetadataResult` cannot carry — see `searchViaInline` below
+// for the lossy bridge this adapter uses instead.
+//
 // #478 (cross-repo media-ID program) — TRACKING NOTE, no code yet:
 // the shared external/catalogue identifier vocabulary (MeedyaSuite-core's
 // `identifier_types` registry + the `#[non_exhaustive] CommonTag` — see
@@ -58,6 +66,11 @@ public struct SuiteCoreMetadataAdapter: Sendable {
     /// Backend strategy for this adapter instance.
     public let backend: SuiteCoreMetadataBackend
 
+    /// The keyless MusicBrainz lookup used by the inline `.musicBrainz` path
+    /// (see `searchViaInline`). Injectable so tests can supply a mock
+    /// `MetadataHTTPClient` and never touch the network.
+    public let musicBrainzLookup: MusicBrainzLookupService
+
     /// Provider identifiers that are known to be available from suite-core.
     /// In the stubbed build these are the ones that suite-core's metadata
     /// crate advertises; the real list is discovered at runtime when the
@@ -72,8 +85,12 @@ public struct SuiteCoreMetadataAdapter: Sendable {
         "deezer", "spotify_metadata", "apple_music",
     ]
 
-    public init(backend: SuiteCoreMetadataBackend = .automatic) {
+    public init(
+        backend: SuiteCoreMetadataBackend = .automatic,
+        musicBrainzLookup: MusicBrainzLookupService = MusicBrainzLookupService()
+    ) {
         self.backend = backend
+        self.musicBrainzLookup = musicBrainzLookup
     }
 
     /// Returns the list of provider identifiers the adapter can service.
@@ -145,8 +162,9 @@ public struct SuiteCoreMetadataAdapter: Sendable {
     ///   - source: The provider to query.
     ///   - query: The search parameters.
     /// - Returns: Zero or more matches; ordering is provider-defined.
-    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` whenever the
-    ///   request routes to the inline path, which has no implementation.
+    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` when the request
+    ///   routes to the inline path for a source other than `.musicBrainz`,
+    ///   which has no implementation (see `searchViaInline`).
     /// - Throws: ``SuiteCoreBridgeError/notCompiledIn`` when the caller asked
     ///   for suite-core but it is not linked.
     public func search(
@@ -178,34 +196,47 @@ public struct SuiteCoreMetadataAdapter: Sendable {
 
     /// Inline (non-suite-core) search path.
     ///
-    /// **This is not implemented, and deliberately throws rather than
-    /// returning an empty result.**
+    /// `.musicBrainz` is a real lookup (#205): MusicBrainz is the one source
+    /// in `MetadataSource` that needs no API key
+    /// (`MetadataSource.requiresAPIKey`), so it has a native-Swift inline
+    /// implementation — `MusicBrainzLookupService`, built on the
+    /// `MetadataHTTPClient` seam and `MusicBrainzRequestThrottle.shared` —
+    /// and this adapter routes to it, bridging each
+    /// `MusicBrainzRecordingMatch` to a `MetadataResult` via
+    /// `.metadataResult` (lossy: no release/artist MBIDs beyond
+    /// `externalId`; `MetadataTagEditorView`'s lookup sheet calls
+    /// `MusicBrainzLookupService` directly instead, when it needs those).
     ///
-    /// The previous implementation returned `[]` behind a comment claiming it
-    /// was "a pass-through" to `MetadataProviders.swift`. That comment was
-    /// false: no provider was ever called. Worse, `[]` is indistinguishable
-    /// from "the provider ran and found nothing", so a caller could report a
-    /// successful-but-empty lookup for a search that never happened.
+    /// Every OTHER source still throws rather than returning an empty
+    /// result. The previous implementation returned `[]` behind a comment
+    /// claiming it was "a pass-through" to `MetadataProviders.swift`. That
+    /// comment was false: no provider was ever called. Worse, `[]` is
+    /// indistinguishable from "the provider ran and found nothing", so a
+    /// caller could report a successful-but-empty lookup for a search that
+    /// never happened. There is still nothing to pass through to for these
+    /// sources — TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles and OMDb
+    /// each need an API key this build does not manage — so #205 chose a
+    /// native-Swift backend for the keyless MusicBrainz path; keyed
+    /// providers remain follow-ups (implementing them means either building
+    /// a real HTTP + decoding layer here per provider, or completing the
+    /// suite-core route (#373/#374) and letting the Rust providers serve
+    /// them).
     ///
-    /// There is nothing to pass through to. Every inline provider client in
-    /// `Sources/ConverterEngine/Metadata/` — `MetadataLookup.swift` and
-    /// `MetadataProviders.swift`, covering TMDB, TheTVDB, MusicBrainz,
-    /// Discogs, FanArt.tv, OpenSubtitles and OMDb — builds request **URLs**
-    /// and nothing more. Neither file performs HTTP (there is no `URLSession`
-    /// anywhere in that directory) and neither decodes a provider response.
-    ///
-    /// Implementing this means either building a real HTTP + decoding layer
-    /// here, or completing the suite-core route (#373/#374) and letting the
-    /// Rust providers serve every source. The strategy recorded in
-    /// `docs/MeedyaSuite-core-integration.md` chooses the latter.
-    ///
-    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` — always.
+    /// - Throws: ``SuiteCoreBridgeError/notImplemented(_:)`` for every
+    ///   source except `.musicBrainz`.
     private func searchViaInline(
         source: MetadataSource,
         query: MetadataSearchQuery
     ) async throws -> [MetadataResult] {
-        throw SuiteCoreBridgeError.notImplemented(
-            "Inline metadata search for \(source.displayName)"
-        )
+        switch source {
+        case .musicBrainz:
+            return try await musicBrainzLookup
+                .searchRecordings(title: query.title, artist: query.artist)
+                .map(\.metadataResult)
+        default:
+            throw SuiteCoreBridgeError.notImplemented(
+                "Inline metadata search for \(source.displayName)"
+            )
+        }
     }
 }

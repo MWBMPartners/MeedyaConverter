@@ -21,6 +21,12 @@
 
 ### Added
 
+- **MusicBrainz metadata lookup** in the Metadata Tag Editor: "Look Up…" searches
+  MusicBrainz recordings (keyless; the required User-Agent and a 1-request-per-second
+  throttle are built in) from the file's title/artist, lists candidate matches ranked
+  by score and closeness to the file's duration, and applies the chosen match's
+  title/artist/album/date/track (and MusicBrainz IDs) to the tag table for the
+  existing "Write Tags…" path (#205, follows #493).
 - **Video stabilization** (two-pass vid.stab: detect → transform) with Light/
   Medium/Heavy presets and a progress/cancel UI (#323).
 - **Deinterlacing** at encode — a per-profile Off/Fast(yadif)/Quality(bwdif)
