@@ -185,7 +185,7 @@ extension ConverterEngineTests {
     // MARK: - RasterVectorConverter.buildPrePassArguments (#473)
 
     func test_prePassArguments_potraceProducesGrayBMP() {
-        let config = RasterToVectorConfig(inputFormat: .png, alpha: .discard, preset: .logoIcon)
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .logoIcon, alpha: .discard)
         let args = RasterVectorConverter.buildPrePassArguments(
             inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.bmp", config: config, tool: "potrace"
         )
@@ -199,7 +199,7 @@ extension ConverterEngineTests {
 
     func test_prePassArguments_vtracerKeepsRGBA() {
         let config = RasterToVectorConfig(
-            inputFormat: .png, alpha: .clipPathWithOpacity, preset: .illustration
+            inputFormat: .png, preset: .illustration, alpha: .clipPathWithOpacity
         )
         let args = RasterVectorConverter.buildPrePassArguments(
             inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.png", config: config, tool: "vtracer"
@@ -215,7 +215,7 @@ extension ConverterEngineTests {
     }
 
     func test_prePassArguments_flattenUsesFilterComplex() {
-        let config = RasterToVectorConfig(inputFormat: .png, alpha: .flatten, preset: .illustration)
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .illustration, alpha: .flatten)
         let args = RasterVectorConverter.buildPrePassArguments(
             inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.png", config: config, tool: "vtracer"
         )
