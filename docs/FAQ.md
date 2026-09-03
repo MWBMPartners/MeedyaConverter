@@ -212,12 +212,14 @@ Only for:
 - **Webhooks and media-server notifications** (only when you configure them as post-encode actions).
 - **Subscription verification** (StoreKit/RevenueCat for purchase validation).
 
-**Not** a network use, despite appearing in some older documentation: online
-metadata lookup. That feature is not implemented — the MusicBrainz/TMDB/TVDB
-clients only build request URLs and nothing issues them. See the Metadata
-section of the Home page.
+- **MusicBrainz metadata lookup**, but only when *you* click "Look Up…" in the
+  Metadata Tag Editor: it sends your search terms (title/artist) to
+  `musicbrainz.org` to fetch candidate tags. The keyed providers (TMDB, TheTVDB,
+  Discogs, …) are still not wired, so they make no requests.
 
-MeedyaConverter never sends your media files, encoding settings, or usage patterns to any server.
+MeedyaConverter never sends your media *files*, encoding settings, or usage
+patterns to any server; the MusicBrainz lookup sends only the search text you
+enter, on demand.
 
 ### Does MeedyaConverter include DRM?
 

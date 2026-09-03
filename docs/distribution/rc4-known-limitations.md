@@ -56,8 +56,12 @@ actual code (a pre-release readiness pass), not comments.
   enqueue, not retroactively to jobs already queued.
 - **Resumable jobs** re-queue from 0% (restart, not seek-resume).
 - **Parallel encoding** is limited to 1 concurrent job in unlicensed builds.
-- **Media metadata *lookup* / auto-tagging** (MusicBrainz, TMDB, …) is not in
-  this release. The metadata tag **editor** writes tags for real.
+- **Media metadata *lookup*** now works for **MusicBrainz** (keyless): the
+  Metadata Tag Editor's "Look Up…" searches recordings and applies a match to
+  the tag table. The **keyed** providers (TMDB, TheTVDB, Discogs, FanArt.tv,
+  OMDb, …) are still URL-builders only — they need an API-key UI that isn't in
+  this build. Album/disc-ID and fingerprint lookups are follow-ups. The metadata
+  tag **editor** writes tags for real.
 - `meedya-convert serve` accepts jobs over its REST API but does not drive the
   queue — jobs stay `queued` until run (documented in the CLI reference).
 - **In-app auto-update** is not active for 0.1.0 — updates are manual DMG

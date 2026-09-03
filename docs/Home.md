@@ -105,12 +105,14 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 - Per-stream metadata overrides (title, language, disposition)
 - Kodi/Plex/Jellyfin naming templates and NFO sidecar path generation
 
-> **Not yet available.** Online metadata *lookup* — MusicBrainz, TMDB, TVDB,
-> Discogs, FanArt.tv — is **not** implemented. `MetadataLookup` and
-> `MetadataProviders` build request URLs, but nothing in the app issues those
-> requests or parses a response, and there is no lookup control in the UI.
-> Auto-tagging (`AutoTagger`) and audio fingerprinting are likewise present as
-> code but have no call site. Tracked in #205 / #467.
+> **Partially available.** Online metadata *lookup* now works for **MusicBrainz**
+> (keyless): the Metadata Tag Editor's "Look Up…" button searches recordings via
+> `MusicBrainzLookupService` (User-Agent + 1 req/sec throttle) and applies a
+> chosen match to the tag table. The **keyed** providers — TMDB, TheTVDB,
+> Discogs, FanArt.tv, OMDb — still only build request URLs; they need an API-key
+> UI that isn't in this build. Album/disc-ID lookups, audio fingerprinting
+> (`AudioFingerprinter`) and `AutoTagger` remain present-but-uncalled follow-ups.
+> Tracked in #205 / #467 / #493.
 
 ---
 

@@ -502,7 +502,7 @@ final class MusicBrainzLookupServiceTests: XCTestCase {
     func test_parseRecordingSearch_lengthSecondsFromMilliseconds() throws {
         let json = #"{"recordings":[{"id":"dddddddd-0000-4000-8000-000000000001","title":"Timed","length":130400}]}"#
         let matches = try MusicBrainzLookupService.parseRecordingSearch(data(json))
-        XCTAssertEqual(try XCTUnwrap(matches.first).lengthSeconds, 130.4, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(matches.first?.lengthSeconds), 130.4, accuracy: 0.0001)
     }
 
     func test_parseRecordingSearch_sanitisesControlCharacters() throws {
