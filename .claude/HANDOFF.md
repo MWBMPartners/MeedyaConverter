@@ -213,14 +213,19 @@ App-Sandbox warning), repository git fields, `pullProfiles` async, 3 new errors.
 > memory [[verification-gates-and-what-cannot-be-tested]]. **Before pushing a new test file: use `withLock` in
 > async mocks; label commands, don't take `.first`; grep the module for duplicate top-level type names.**
 
-### ⏸️ STILL QUEUED — two larger feature-build items (Fable plan still to run each):
-- **Native-Swift metadata backend + MusicBrainz metadata lookup / auto-tagging** (decision locked: native
-  Swift, keyless MusicBrainz; see [[metadata-lookup-is-dead-in-full]], [[musicbrainz-nov30-2026-option-b]] —
-  keep URL builders, no Swift client; every provider is currently a dead URL builder).
-- **Vector tracers (#473/#494):** wire `RasterVectorConverter`/`ProResToVectorConverter` execution + un-hide
-  the nav entries (`NavigationItem.unavailable` currently includes `.vectorConversion`/`.proresVector`) +
-  build & bundle GPL binaries (potrace/vtracer) into `MeedyaDL-Tools` via a PR (mirror has no macOS compile
-  runner yet) + a MeedyaConverter bundle step. Cross-repo; the biggest remaining item.
+### ✅ / ⏸️ Larger feature-build items:
+- **Native-Swift metadata backend + MusicBrainz lookup / auto-tagging (#205) — DONE** (`90f37a3` feature;
+  `d9d1935` test-fix+docs; `b7ffcb5` join-phrase production fix). Keyless MusicBrainz executes via a
+  `MetadataHTTPClient` seam + `MusicBrainzLookupService` (User-Agent + 1 req/sec throttle) → "Look Up…" sheet
+  in the Metadata Tag Editor → applies to the tag table. 37 tests. Keyed providers (TMDB/TVDB/Discogs/…) still
+  need an API-key UI; fingerprint/album-disc-ID/`AutoTagger` are noted follow-ups. Plan:
+  `.claude/plans/metadata-musicbrainz-lookup-plan.md`. CI green. Docs reconciled (README/Home/FAQ/rc4/suite-core).
+- **⏸️ Vector tracers (#473/#494) — NOT STARTED, needs a user decision on approach.** Requires: build & bundle
+  GPL binaries (potrace/vtracer) into `MeedyaDL-Tools` — **which has no macOS compile runner yet** — then a
+  MeedyaConverter bundle step + un-hide the nav entries (`NavigationItem.unavailable` includes
+  `.vectorConversion`/`.proresVector`) + wire `RasterVectorConverter`/`ProResToVectorConverter` execution.
+  Cross-repo, lands via a PR (not a direct push). The biggest remaining item; surfaced to the user for a
+  go-ahead on approach (set up the macOS build job + binaries via a PR, vs. defer).
 
 **Deferred/disclosed (NOT to build this pass):** Direct licensing (Subscription hidden ✓), Distributed
 Render Farm (config-only + disclosed).
