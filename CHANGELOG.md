@@ -13,14 +13,22 @@
 
 ## [Unreleased]
 
-> NOTE for the release cut: fold these into a dated `[0.1.0-rc.4]` block AND
-> correct the existing rc.4 "Vector Conversion / ProRes to Vector are now
-> first-class sidebar entries" highlight — those views are now HIDDEN
-> (`NavigationItem.unavailable`, #473) because their converters can't execute
-> yet. This backfill assumes `wip/alpha-consolidation` merges to `main` first.
+> NOTE for the release cut: fold these into a dated `[0.1.0-rc.4]` block. The
+> earlier version of this note said the rc.4 "Vector Conversion / ProRes to
+> Vector are now first-class sidebar entries" highlight had gone stale because
+> those converters couldn't execute — that's now fixed (#473, below): the
+> "first-class sidebar entries" claim is true again for Direct builds (hidden
+> only under `#if APP_STORE`). This backfill assumes `wip/alpha-consolidation`
+> merges to `main` first.
 
 ### Added
 
+- **Vector Conversion** and **ProRes → Vector** now run for real in Direct
+  builds: bundled `potrace` (GPL-2.0-or-later, Direct-only, licence text +
+  written source offer staged in `Contents/Resources/Licenses`) and `vtracer`
+  (MIT, ships everywhere); raster → SVG and ProRes 4444 → SMIL-animated SVG,
+  with progress and Cancel. Hidden only in App Store builds (`#if APP_STORE`)
+  — the sandbox can't spawn a subprocess and potrace is GPL (#473, #494).
 - **MusicBrainz metadata lookup** in the Metadata Tag Editor: "Look Up…" searches
   MusicBrainz recordings (keyless; the required User-Agent and a 1-request-per-second
   throttle are built in) from the file's title/artist, lists candidate matches ranked
@@ -92,8 +100,9 @@
 - Queue drag-reorder moves the correct job when finished jobs are present; a
   zero-condition conditional rule can no longer be saved (it matched everything);
   CMX3600 EDL export no longer emits garbage columns (dangling-pointer UB).
-- Hidden dead-end surfaces: Vector Conversion / ProRes-to-Vector (#473) and
-  iCloud Cloud Sync (no iCloud entitlement in Direct).
+- Hidden dead-end surface: iCloud Cloud Sync (no iCloud entitlement in
+  Direct). Vector Conversion / ProRes-to-Vector are no longer in this list —
+  see Added, above (#473).
 
 ### Security
 

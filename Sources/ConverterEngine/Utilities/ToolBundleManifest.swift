@@ -172,10 +172,61 @@ public struct ToolBundleManifest: Codable, Sendable {
                 description: "Tone-map subtitle colours for HDR→SDR conversions, preserving readability",
                 license: "MIT"
             ),
+            BundledTool(
+                id: "vtracer",
+                name: "VTracer",
+                version: "1.0.0-alpha.4",
+                sourceURL: "https://github.com/visioncortex/vtracer",
+                lastUpdated: "2026-09-03",
+                binaryName: "vtracer",
+                description: "Raster → SVG colour tracing (colour-quantised and photorealistic modes)",
+                // Upstream is dual-licensed "MIT OR Apache-2.0"; MIT is the LICENSE
+                // file at the repo root. Not GPL-family → ships in every distribution.
+                license: "MIT"
+            ),
         ],
         schemaVersion: 1,
         generatedDate: "2026-04-01"
     )
+
+    // MARK: - Direct-only manifest (issue #494 / DR-0001)
+
+    /// GPL-family tools that ship ONLY in the Direct `.dmg`. Kept out of
+    /// `defaultManifest` so `test_toolBundleManifest_defaultManifestIsAppStoreSafe`
+    /// stays the tripwire it was designed to be. First occupant: potrace (#473).
+    public static let directOnlyManifest = ToolBundleManifest(
+        tools: [
+            BundledTool(
+                id: "potrace",
+                name: "potrace",
+                version: "1.16",
+                sourceURL: "https://potrace.sourceforge.net/",
+                lastUpdated: "2026-09-03",
+                binaryName: "potrace",
+                description: "Bitmap → SVG outline / monochrome tracing (invoked as a separate process; never linked)",
+                license: "GPL-2.0-or-later"
+            ),
+        ],
+        schemaVersion: 1,
+        generatedDate: "2026-09-03"
+    )
+
+    /// The manifest describing what THIS build actually bundles. App Store
+    /// builds (`-DAPP_STORE`, testflight.yml/dev-build.yml) get `defaultManifest`
+    /// only; every other build also carries `directOnlyManifest`. `#if APP_STORE`
+    /// is the gate because it is the only build-type flag the pipelines set —
+    /// release.yml keeps `DIRECT` unset (Sparkle), see release.yml:264.
+    public static var activeManifest: ToolBundleManifest {
+        #if APP_STORE
+        return defaultManifest
+        #else
+        return ToolBundleManifest(
+            tools: defaultManifest.tools + directOnlyManifest.tools,
+            schemaVersion: defaultManifest.schemaVersion,
+            generatedDate: defaultManifest.generatedDate
+        )
+        #endif
+    }
 
     // MARK: - Lookup
 
@@ -210,11 +261,10 @@ public struct ToolBundleManifest: Codable, Sendable {
     /// Whether this manifest is safe to ship in an App Store build.
     ///
     /// `defaultManifest` describes tools bundled in **every** distribution, so
-    /// it must contain no GPL-family tool. When the disc-imaging executor
-    /// lands and GPL tools are bundled, they belong in a Direct-only manifest
-    /// or behind an `isDirectBuild` gate — not here — and the packaging step
-    /// must call `verify-no-gpl-in-appstore.sh` against the assembled bundle
-    /// as a second line of defence.
+    /// it must contain no GPL-family tool. Direct-only GPL tools live in
+    /// `directOnlyManifest`; `activeManifest` merges them in except under
+    /// `#if APP_STORE`. `verify-no-gpl-in-appstore.sh` is the second line of
+    /// defence, run against the assembled bundle.
     public var isAppStoreSafe: Bool {
         gplTools.isEmpty
     }

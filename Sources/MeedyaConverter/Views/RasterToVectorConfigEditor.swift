@@ -6,7 +6,7 @@
 // ============================================================================
 //
 // Reusable SwiftUI editor for a `RasterToVectorConfig`. Renders the Preset,
-// Tracing, Alpha, optional Animation, and Other sections — the parts of the
+// Tracing, Alpha, and optional Animation sections — the parts of the
 // raster→vector configuration surface that are common to:
 //
 //   * `VectorConversionView` (Tools → Vector Conversion)
@@ -97,6 +97,24 @@ struct RasterToVectorConfigEditor: View {
             }
             .accessibilityLabel("Number of colours for quantisation tracing")
             .disabled(!colorCountApplies(to: config.tracingMode))
+
+            Stepper(
+                value: $config.curveSimplification,
+                in: 0.0...10.0,
+                step: 0.5
+            ) {
+                HStack {
+                    Text("Curve simplification")
+                    Spacer()
+                    Text(String(format: "%.1f", config.curveSimplification))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .accessibilityLabel(
+                "Curve-simplification tolerance; 0 preserves every "
+                + "point, 10 smooths aggressively"
+            )
         }
 
         Section("Alpha") {
@@ -125,36 +143,13 @@ struct RasterToVectorConfigEditor: View {
             }
         }
 
-        Section("Other") {
-            Toggle("Preserve EXIF / IPTC / XMP metadata", isOn: $config.preserveMetadata)
-                .accessibilityLabel(
-                    "Copy source metadata into the SVG metadata block"
-                )
-
-            Toggle("OCR text regions", isOn: $config.ocrTextRegions)
-                .accessibilityLabel(
-                    "Detect text regions and emit them as SVG text "
-                    + "elements instead of traced paths"
-                )
-
-            Stepper(
-                value: $config.curveSimplification,
-                in: 0.0...10.0,
-                step: 0.5
-            ) {
-                HStack {
-                    Text("Curve simplification")
-                    Spacer()
-                    Text(String(format: "%.1f", config.curveSimplification))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            .accessibilityLabel(
-                "Curve-simplification tolerance; 0 preserves every "
-                + "point, 10 smooths aggressively"
-            )
-        }
+        // The former "Other" section's "Preserve EXIF / IPTC / XMP metadata"
+        // and "OCR text regions" toggles were removed — no bundled tool
+        // implements either (`RasterVectorExecutor` never applies them; see
+        // `RasterToVectorConfig.preserveMetadata`/`.ocrTextRegions`). The
+        // AppStorage keys and config fields are kept for JSON/AppStorage
+        // compatibility. Curve simplification is real (it feeds both
+        // tracers' arguments) and lives in the Tracing section above.
     }
 
     // -----------------------------------------------------------------

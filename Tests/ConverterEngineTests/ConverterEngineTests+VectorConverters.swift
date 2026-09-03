@@ -107,8 +107,14 @@ extension ConverterEngineTests {
         XCTAssertEqual(args[1], "/tmp/in.png")
         XCTAssertEqual(args[2], "-o")
         XCTAssertEqual(args[3], "/tmp/out.svg")
-        XCTAssertTrue(args.contains("--colormode"))
-        XCTAssertTrue(args.contains("color"))
+        guard let clusteringIdx = args.firstIndex(of: "--clustering") else {
+            XCTFail("expected --clustering"); return
+        }
+        XCTAssertEqual(args[clusteringIdx + 1], "color-cluster")
+        guard let maxColorsIdx = args.firstIndex(of: "--max-colors") else {
+            XCTFail("expected --max-colors"); return
+        }
+        XCTAssertEqual(args[maxColorsIdx + 1], "32")
     }
 
     func test_vtracerArguments_monochromeBinary() {
@@ -116,10 +122,38 @@ extension ConverterEngineTests {
         let args = RasterVectorConverter.buildVTracerArguments(
             inputPath: "/tmp/in.png", outputPath: "/tmp/out.svg", config: config
         )
-        guard let idx = args.firstIndex(of: "--colormode") else {
-            XCTFail("expected --colormode"); return
+        guard let idx = args.firstIndex(of: "--clustering") else {
+            XCTFail("expected --clustering"); return
         }
-        XCTAssertEqual(args[idx + 1], "binary")
+        XCTAssertEqual(args[idx + 1], "bw")
+        // None of the flags from vtracer's pre-1.0 CLI (or fabricated ones
+        // that never existed in ANY version) may reappear — see Corrections
+        // #2 in the vector-tracers plan: as written before this fix, vtracer
+        // would exit with a clap usage error on every single invocation.
+        XCTAssertFalse(args.contains("--colormode"))
+        XCTAssertFalse(args.contains("--preserve-metadata"))
+        XCTAssertFalse(args.contains("--no-alpha"))
+        XCTAssertFalse(args.contains("--flatten"))
+    }
+
+    /// vtracer 1.0.0-alpha.4 is clap 4 with `rename_all = "kebab-case"` —
+    /// every long flag this builder emits must be kebab-case, and every
+    /// short flag one of the two vtracer defines (`-i`/`-o`).
+    func test_vtracerArguments_useKebabCaseFlags() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .illustration)
+        let args = RasterVectorConverter.buildVTracerArguments(
+            inputPath: "/tmp/in.png", outputPath: "/tmp/out.svg", config: config
+        )
+        let flagPattern = try! NSRegularExpression(pattern: "^--[a-z-]+$|^-[io]$")
+        // None of this builder's flag VALUES start with "-", so every
+        // "-"-prefixed token in the list is a flag, never a value.
+        for token in args where token.hasPrefix("-") {
+            let range = NSRange(token.startIndex..., in: token)
+            XCTAssertNotNil(
+                flagPattern.firstMatch(in: token, range: range),
+                "\(token) is not a valid vtracer 1.0 kebab-case flag"
+            )
+        }
     }
 
     func test_potraceArguments_svgOutput() {
@@ -133,6 +167,64 @@ extension ConverterEngineTests {
         XCTAssertTrue(args.contains("-s"))
         XCTAssertTrue(args.contains("--svg"))
         XCTAssertTrue(args.contains("/tmp/out.svg"))
+    }
+
+    /// `-r 72` makes 1 pt = 1 SVG user unit, which the ProRes SMIL assembly
+    /// depends on for its pixel `viewBox`.
+    func test_potraceArguments_includeResolution72() {
+        let config = RasterToVectorConfig(inputFormat: .png, preset: .logoIcon)
+        let args = RasterVectorConverter.buildPotraceArguments(
+            inputPath: "/tmp/in.bmp", outputPath: "/tmp/out.svg", config: config
+        )
+        guard let idx = args.firstIndex(of: "-r") else {
+            XCTFail("expected -r"); return
+        }
+        XCTAssertEqual(args[idx + 1], "72")
+    }
+
+    // MARK: - RasterVectorConverter.buildPrePassArguments (#473)
+
+    func test_prePassArguments_potraceProducesGrayBMP() {
+        let config = RasterToVectorConfig(inputFormat: .png, alpha: .discard, preset: .logoIcon)
+        let args = RasterVectorConverter.buildPrePassArguments(
+            inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.bmp", config: config, tool: "potrace"
+        )
+        XCTAssertTrue(args.contains("format=gray"))
+        guard let idx = args.firstIndex(of: "-c:v") else {
+            XCTFail("expected -c:v"); return
+        }
+        XCTAssertEqual(args[idx + 1], "bmp")
+        XCTAssertEqual(args.last, "/tmp/frame.bmp")
+    }
+
+    func test_prePassArguments_vtracerKeepsRGBA() {
+        let config = RasterToVectorConfig(
+            inputFormat: .png, alpha: .clipPathWithOpacity, preset: .illustration
+        )
+        let args = RasterVectorConverter.buildPrePassArguments(
+            inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.png", config: config, tool: "vtracer"
+        )
+        guard let idx = args.firstIndex(of: "-vf") else {
+            XCTFail("expected -vf"); return
+        }
+        XCTAssertEqual(args[idx + 1], "format=rgba")
+        guard let codecIdx = args.firstIndex(of: "-c:v") else {
+            XCTFail("expected -c:v"); return
+        }
+        XCTAssertEqual(args[codecIdx + 1], "png")
+    }
+
+    func test_prePassArguments_flattenUsesFilterComplex() {
+        let config = RasterToVectorConfig(inputFormat: .png, alpha: .flatten, preset: .illustration)
+        let args = RasterVectorConverter.buildPrePassArguments(
+            inputPath: "/tmp/in.png", intermediatePath: "/tmp/frame.png", config: config, tool: "vtracer"
+        )
+        XCTAssertTrue(args.contains("-filter_complex"))
+        XCTAssertFalse(args.contains("-vf"))
+        guard let idx = args.firstIndex(of: "-map") else {
+            XCTFail("expected -map"); return
+        }
+        XCTAssertEqual(args[idx + 1], "[out]")
     }
 
     func test_rsvgConvertArguments_dimensionsAndDPI() {
@@ -259,7 +351,40 @@ extension ConverterEngineTests {
         )
         XCTAssertTrue(wrapper.contains("id=\"frame-12\""))
         XCTAssertTrue(wrapper.contains("begin=\"0.500000s\""))    // 12 / 24 = 0.5s
-        XCTAssertTrue(wrapper.contains("fill=\"freeze\""))
+        // `<set … fill="remove">`, not `<animate … fill="freeze">` — freeze
+        // left every earlier frame's opacity at 1 once its own animation
+        // completed, so alpha frames stacked visibly instead of showing one
+        // at a time. `dur` is one frame period: 1/24 = 0.041667s.
+        XCTAssertTrue(wrapper.contains("fill=\"remove\""))
+        XCTAssertTrue(wrapper.contains("dur=\"0.041667s\""))
+        XCTAssertFalse(wrapper.contains("fill=\"freeze\""))
+    }
+
+    /// The historical bug: a second `-vf` when `frameStride > 1` clobbered
+    /// the first (ffmpeg keeps only the last `-vf`), silently dropping
+    /// `format=rgba`/the HDR tonemap chain; combined with `-r`, ffmpeg also
+    /// duplicated kept frames to hold the output rate, defeating the stride.
+    func test_proResFrameExtractionArguments_singleFilterChain() {
+        let strided = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/in.mov",
+            framePatternPath: "/tmp/frame_%06d.png",
+            config: ProResToVectorConfig(frameRate: .fps24, frameStride: 2)
+        )
+        let vfIndices = strided.indices.filter { strided[$0] == "-vf" }
+        XCTAssertEqual(vfIndices.count, 1, "expected exactly one -vf flag")
+        let chain = strided[vfIndices[0] + 1]
+        XCTAssertTrue(chain.contains("select="))
+        XCTAssertTrue(chain.contains("format="))
+        XCTAssertTrue(strided.contains("-fps_mode"))
+        XCTAssertFalse(strided.contains("-r"))
+
+        let unstrided = ProResToVectorConverter.buildFrameExtractionArguments(
+            inputPath: "/tmp/in.mov",
+            framePatternPath: "/tmp/frame_%06d.png",
+            config: ProResToVectorConfig(frameRate: .fps24, frameStride: 1)
+        )
+        XCTAssertTrue(unstrided.contains("-r"))
+        XCTAssertFalse(unstrided.contains("-fps_mode"))
     }
 
     func test_shouldWarnAboutOutputSize_longClip() {

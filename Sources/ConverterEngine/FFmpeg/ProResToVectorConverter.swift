@@ -18,7 +18,7 @@
 // re-expressed as a scalable vector asset for web/editor reuse.
 //
 // This file lands the deterministic configuration + argument builders.
-// Execution glue (frame dump → trace-each → SVG assembly) is a follow-up.
+// Execution lives in `ProResVectorExecutor` (#473).
 //
 // GitHub Issue #377 — ProRes with alpha → animated vector SVG conversion.
 // ============================================================================
@@ -180,8 +180,17 @@ public struct ProResToVectorConfig: Codable, Sendable {
 
 public enum ProResToVectorConverter: Sendable {
 
-    /// Builds the FFmpeg argument list for extracting RGBA PNG frames from
-    /// a ProRes 4444 source. The frames are the input to the tracing stage.
+    /// Builds the FFmpeg argument list for extracting PNG frames from a
+    /// ProRes 4444 source. The frames are the input to the tracing stage.
+    ///
+    /// Emits exactly ONE `-vf` chain — an earlier revision emitted two
+    /// `-vf` flags when `frameStride > 1`, and ffmpeg keeps only the LAST
+    /// one, silently dropping the `format=rgba` / HDR tonemap chain on every
+    /// strided extraction. `select=` runs before the tonemap so dropped
+    /// frames are never wastefully tonemapped, and stride uses `-fps_mode
+    /// vfr` (the modern spelling of `-vsync vfr`) instead of `-r <fps>` —
+    /// combining `-r` with `select=` made ffmpeg duplicate kept frames to
+    /// hold the output rate, defeating the stride entirely.
     public static func buildFrameExtractionArguments(
         inputPath: String,
         framePatternPath: String,
@@ -198,26 +207,59 @@ public enum ProResToVectorConverter: Sendable {
             args.append(contentsOf: ["-t", String(format: "%.3f", end)])
         }
 
-        // Tone-map HDR sources to SDR before tracing.
+        var prefixFilters: [String] = []
+        if config.frameStride > 1 {
+            prefixFilters.append("select=not(mod(n\\,\(config.frameStride)))")
+        }
         if config.sourceVariant.requiresTonemapping {
-            args.append(contentsOf: [
-                "-vf",
-                "zscale=t=linear:npl=100,tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=rgba"
-            ])
+            prefixFilters.append("zscale=t=linear:npl=100,tonemap=hable,zscale=t=bt709:m=bt709:r=tv")
+        }
+
+        // `.flatten` needs the two-input white-composite overlay
+        // (`RasterVectorConverter.whiteCompositeGraph`), which has labelled
+        // pads a plain `-vf` chain cannot express — that requires
+        // `-filter_complex` + `-map "[out]"`, exactly as the raster pre-pass
+        // does for the same graph. Every other alpha handling is a plain
+        // single-input/single-output filter and fits a `-vf` chain. Either
+        // way this emits exactly ONE filter flag, chaining `select=`/tonemap
+        // ahead of it — never a second `-vf` silently clobbering the first
+        // (the historical bug this rewrite fixes).
+        if config.alphaHandling == .flatten {
+            let prefix = prefixFilters.isEmpty ? "" : prefixFilters.joined(separator: ",") + ","
+            let graph = "[0:v]" + prefix + alphaFilter(for: .flatten) + "[out]"
+            args.append(contentsOf: ["-filter_complex", graph, "-map", "[out]"])
         } else {
-            args.append(contentsOf: ["-vf", "format=rgba"])
+            let filters = prefixFilters + [alphaFilter(for: config.alphaHandling)]
+            args.append(contentsOf: ["-vf", filters.joined(separator: ",")])
         }
 
         if config.frameStride > 1 {
-            args.append(contentsOf: ["-vf", "select=not(mod(n\\,\(config.frameStride)))"])
+            args.append(contentsOf: ["-fps_mode", "vfr"])   // keep only the selected frames
+        } else {
+            args.append(contentsOf: ["-r", String(format: "%.6f", config.frameRate.doubleValue)])
         }
         args.append(contentsOf: [
-            "-r", String(format: "%.6f", config.frameRate.doubleValue),
             "-vcodec", "png",
-            "-pix_fmt", "rgba",
+            "-pix_fmt", config.alphaHandling == .preservePerFrame ? "rgba" : "rgb24",
             framePatternPath,
         ])
         return args
+    }
+
+    /// The filter fragment for a given alpha-handling strategy (without any
+    /// input/output pad labels — the caller adds those). `.preservePerFrame`
+    /// and `.alphaMatteOnly` are single-input/single-output and fit directly
+    /// into a `-vf` chain; `.flatten`'s two-input overlay graph is only ever
+    /// used via the `-filter_complex` branch in `buildFrameExtractionArguments`.
+    private static func alphaFilter(for handling: ProResAlphaHandling) -> String {
+        switch handling {
+        case .preservePerFrame:
+            return "format=rgba"
+        case .flatten:
+            return RasterVectorConverter.whiteCompositeGraph + ",format=rgb24"
+        case .alphaMatteOnly:
+            return "alphaextract,format=gray"
+        }
     }
 
     /// Build the XML root element for an animated SVG container. Accepts the
@@ -272,6 +314,12 @@ public enum ProResToVectorConverter: Sendable {
 
     /// Build a per-frame `<g>` wrapper with SMIL timing, assuming the
     /// frame SVG fragment is inserted inside it by the caller.
+    ///
+    /// Uses `<set>` rather than `<animate … fill="freeze">`: `freeze` leaves
+    /// every EARLIER frame's opacity at 1 once its animation completes, so
+    /// alpha frames stacked visibly instead of showing one at a time.
+    /// `<set … fill="remove">` is visible only during its own `[begin, begin
+    /// + dur)` slot, which is what a frame-by-frame flip-book needs.
     public static func buildSMILFrameWrapper(
         frameIndex: Int,
         frameCount: Int,
@@ -281,13 +329,19 @@ public enum ProResToVectorConverter: Sendable {
         let durPerFrame = 1.0 / frameRate
         return """
         <g id="frame-\(frameIndex)" opacity="0">
-            <animate attributeName="opacity" \
-            from="0" to="1" \
+            <set attributeName="opacity" \
+            to="1" \
             begin="\(String(format: "%.6f", begin))s" \
             dur="\(String(format: "%.6f", durPerFrame))s" \
-            fill="freeze"/>
+            fill="remove"/>
         """
     }
+
+    /// Closing tags for the per-frame `<g>` wrapper and the outer `<svg>`
+    /// root, shared with `ProResVectorExecutor`'s assembly so the templates
+    /// live in one file.
+    public static let svgClosingTag = "</svg>"
+    public static let frameClosingTag = "</g>"
 
     /// Recommended warning threshold for output-size. Beyond ~10 seconds at
     /// 24 fps of colour-quantised tracing, animated SVG file sizes become

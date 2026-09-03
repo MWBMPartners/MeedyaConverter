@@ -513,6 +513,8 @@ struct PathSettingsTab: View {
     @Environment(AppViewModel.self) private var viewModel
     @AppStorage("customFFmpegPath") private var customFFmpegPath = ""
     @AppStorage("customFFprobePath") private var customFFprobePath = ""
+    @AppStorage("customPotracePath") private var customPotracePath = ""
+    @AppStorage("customVTracerPath") private var customVTracerPath = ""
 
     var body: some View {
         @Bindable var vm = viewModel
@@ -562,6 +564,34 @@ struct PathSettingsTab: View {
                 if let info = viewModel.engine.ffprobeInfo {
                     LabeledContent("Detected FFprobe", value: info.path)
                 }
+            }
+
+            // potrace/vtracer overrides — read by VectorConversionView /
+            // ProResVectorView (#473), not by EncodingEngine; empty means
+            // "auto-detect" via BundledToolLocator (Contents/Helpers →
+            // Homebrew/PATH), same convention as the FFmpeg fields above.
+            Section("Vector Tracing Tools") {
+                HStack {
+                    TextField("potrace Path", text: $customPotracePath,
+                              prompt: Text("Auto-detect"))
+                    Button("Browse...") {
+                        if let path = browseBinary() {
+                            customPotracePath = path
+                        }
+                    }
+                }
+                .accessibilityLabel("Custom potrace binary path")
+
+                HStack {
+                    TextField("vtracer Path", text: $customVTracerPath,
+                              prompt: Text("Auto-detect"))
+                    Button("Browse...") {
+                        if let path = browseBinary() {
+                            customVTracerPath = path
+                        }
+                    }
+                }
+                .accessibilityLabel("Custom vtracer binary path")
             }
         }
         .formStyle(.grouped)

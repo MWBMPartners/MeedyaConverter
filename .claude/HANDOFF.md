@@ -220,12 +220,17 @@ App-Sandbox warning), repository git fields, `pullProfiles` async, 3 new errors.
   in the Metadata Tag Editor → applies to the tag table. 37 tests. Keyed providers (TMDB/TVDB/Discogs/…) still
   need an API-key UI; fingerprint/album-disc-ID/`AutoTagger` are noted follow-ups. Plan:
   `.claude/plans/metadata-musicbrainz-lookup-plan.md`. CI green. Docs reconciled (README/Home/FAQ/rc4/suite-core).
-- **⏸️ Vector tracers (#473/#494) — NOT STARTED, needs a user decision on approach.** Requires: build & bundle
-  GPL binaries (potrace/vtracer) into `MeedyaDL-Tools` — **which has no macOS compile runner yet** — then a
-  MeedyaConverter bundle step + un-hide the nav entries (`NavigationItem.unavailable` includes
-  `.vectorConversion`/`.proresVector`) + wire `RasterVectorConverter`/`ProResToVectorConverter` execution.
-  Cross-repo, lands via a PR (not a direct push). The biggest remaining item; surfaced to the user for a
-  go-ahead on approach (set up the macOS build job + binaries via a PR, vs. defer).
+- **⏸️ Vector tracers (#473/#494) — Part 2 (this repo) DONE; Part 1 (mirror) pending.** Deep plan:
+  `.claude/plans/vector-tracers-plan.md`. Correction to the prior entry above: MeedyaDL-Tools' `populate.yml`
+  **already has** a `macos-latest` matrix leg (`build-python-tools`) — the actually-missing piece was a job that
+  compiles a C/Rust tool on it, which Part 1 of the plan adds (new `build-tracing-tools` job). MeedyaConverter
+  side: `RasterVectorExecutor`/`ProResVectorExecutor` (new) wire `RasterVectorConverter`/`ProResToVectorConverter`
+  to real potrace/vtracer subprocesses via `ExternalToolRunner`; the vtracer argument builder was rewritten
+  against the pinned `1.0.0-alpha.4` CLI (the old flags never existed in any released version); nav entries
+  un-hidden behind `#if APP_STORE` (not `isDirectBuild` — `release.yml` never sets it); `ToolBundleManifest
+  .directOnlyManifest` carries potrace (GPL, Direct-only), `defaultManifest` carries vtracer (MIT, everywhere).
+  `scripts/bundle-tracing-tools.sh` is written but its `MDLT_TAG` is a fail-closed placeholder — **nothing ships
+  until Part 1 merges to MeedyaDL-Tools `main` and that tag is pinned as the final commit.**
 
 **Deferred/disclosed (NOT to build this pass):** Direct licensing (Subscription hidden ✓), Distributed
 Render Farm (config-only + disclosed).

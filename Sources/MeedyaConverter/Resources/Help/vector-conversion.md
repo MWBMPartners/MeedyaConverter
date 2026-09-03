@@ -9,8 +9,9 @@
 MeedyaConverter includes two Tools-sidebar surfaces for turning raster
 content into editable, scalable SVG:
 
-- **Vector Conversion** — trace a single raster image (or an animated
-  raster like GIF/APNG/WebP) into an SVG.
+- **Vector Conversion** — trace a single raster image into an SVG (the
+  first frame only, even for an animated source format like GIF/APNG/WebP —
+  animated raster → animated SVG is not implemented).
 - **ProRes to Vector** — extract frames from an alpha-carrying ProRes 4444
   clip and assemble them into an animated SVG, for motion-graphics/VFX
   assets that need to become a scalable, editable vector asset.
@@ -21,11 +22,16 @@ options behave identically wherever they appear. Added in **issue #376**
 in the GUI in **issue #402** (Vector Conversion view) and **issue #404**
 (ProRes to Vector view) as part of the #381 UI-gap closure.
 
-> **Status:** both views are GUI-only today — there is no `meedya-convert`
-> CLI subcommand for vector/image conversion yet (bulk image conversion is
-> tracked separately as the future Phase 17). The settings you configure
-> here persist across launches; they describe the exact tracing pipeline
-> the engine will run.
+> **Status:** these tools run for real in **Direct builds only** — hidden in
+> the App Store build, because the App Sandbox cannot spawn a subprocess and
+> potrace (below) is GPL. The actual pipeline is: an ffmpeg pre-pass
+> normalises the source raster into the one format the chosen tracer can
+> read, then **potrace** or **vtracer** traces it to SVG (ProRes adds a frame
+> dump before, and a SMIL animation assembly after). There is no
+> `meedya-convert` CLI subcommand for vector/image conversion yet (bulk image
+> conversion is tracked separately as the future Phase 17). Settings persist
+> across launches via `@AppStorage`; a few of the options below are **not
+> applied** by the executor — see "Notes" for the exact list.
 
 ---
 
@@ -33,10 +39,10 @@ in the GUI in **issue #402** (Vector Conversion view) and **issue #404**
 
 **Tools → Vector Conversion**
 
-### Input formats
+### Source
 
-Any of the 30+ raster formats the engine recognises, grouped in the
-picker as:
+**Choose Image…** opens a file picker accepting any of the 30+ raster
+formats the engine recognises:
 
 | Group | Formats |
 | ----- | ------- |
@@ -46,10 +52,9 @@ picker as:
 | Legacy | TGA, PCX, ICO, DDS |
 | Netpbm | PBM, PGM, PPM, PAM |
 
-GIF, APNG, and WebP are treated as **animated** — selecting one of these
-reveals the Animation section (see below).
-
-Output is fixed at **SVG 2.0**.
+The format is detected from the file's extension and shown next to the file
+name; an unrecognised extension disables Convert. Output is fixed at
+**SVG 2.0**.
 
 ### Editability presets
 
@@ -85,25 +90,17 @@ Photorealistic modes — it's disabled for Outline and Monochrome.
 | Flatten against background | Composites onto a solid background colour — use when the target renderer can't honour transparency |
 | Discard alpha | Drops the alpha channel entirely |
 
-### Animation (animated inputs only)
+There is no Animation section here even for an animated source format
+(GIF/APNG/WebP) — `RasterVectorExecutor` traces the first frame only.
+Animated raster → animated SVG is a follow-up (#376), not implemented.
 
-Shown only when the input format is animated (GIF/APNG/WebP):
+### Curve simplification
 
-| Method | Description |
-| ------ | ----------- |
-| SMIL (default) | SVG `<animate>` / `<animateTransform>` / `<animateMotion>` |
-| CSS @keyframes | CSS `@keyframes` + `animation-delay` |
-| Hybrid | SMIL path morphing combined with CSS timing |
-| Static frame sequence | Exports per-frame PNGs + a frame list — no animation |
-
-### Other options
-
-- **Preserve EXIF / IPTC / XMP metadata** (default on) — copies source
-  metadata into the SVG's `<metadata>` block.
-- **OCR text regions** (default off) — detects text regions and emits them
-  as SVG `<text>` elements instead of traced paths.
-- **Curve simplification** (0.0–10.0, default 2.0) — tolerance for curve
-  simplification; `0` preserves every point, `10` smooths aggressively.
+Tolerance for curve simplification (0.0–10.0, default 2.0): `0` preserves
+every point, `10` smooths aggressively. This is the only option below the
+Alpha section — the "Preserve EXIF / IPTC / XMP metadata" and "OCR text
+regions" toggles that used to appear here were removed: no bundled tool
+implements either, so they never did anything.
 
 ---
 
@@ -119,6 +116,10 @@ the regular encoding pipeline for those.
 
 ### Source
 
+The clip you selected in the **Source** tab (`viewModel.selectedFile`) is
+the input; it needs a video stream with known width/height, or Convert stays
+disabled with a reason. Alongside it:
+
 | Option | Values |
 | ------ | ------ |
 | ProRes variant | ProRes 4444, ProRes 4444 XQ, ProRes 4444 (HDR) — the HDR variant is tone-mapped to SDR before tracing |
@@ -131,42 +132,40 @@ the regular encoding pipeline for those.
 
 | Option | Behaviour |
 | ------ | --------- |
-| Preserve per-frame (clip-paths) (default) | Converts pre-multiplied → straight alpha, emitting per-frame clip-paths |
-| Alpha matte only (monochrome) | Extracts the alpha matte as a monochrome animated SVG — useful for compositing workflows |
+| Preserve per-frame (clip-paths) (default) | Converts pre-multiplied → straight alpha, keeping RGBA through tracing |
+| Alpha matte only (monochrome) | Extracts the alpha matte as a monochrome animated SVG — always traced with potrace (a matte is monochrome by definition), regardless of the Tracing mode picker below |
 | Flatten against background | Composites against a background colour, dropping alpha |
 
 ### Tracing
 
-Embeds the same Preset / Tracing / Alpha / Other sections documented above
-under [Vector Conversion](#vector-conversion-raster--svg) — the per-frame
-tracing settings can legitimately differ from your stand-alone Vector
-Conversion preferences, since they're stored separately. The input format
-for per-frame tracing is always PNG (the extracted frames), so there's no
-separate Animation section here — that's controlled by the outer **Animation**
+Embeds the same Preset / Tracing / Alpha sections documented above under
+[Vector Conversion](#vector-conversion-raster--svg) — the per-frame tracing
+settings can legitimately differ from your stand-alone Vector Conversion
+preferences, since they're stored separately. The input format for per-frame
+tracing is always PNG (the extracted frames), so there's no separate
+Animation section here — that's controlled by the outer **Animation**
 section below.
 
 ### Animation
 
-The outer SVG's animation method — the same four options as Vector
-Conversion's Animation section (SMIL, CSS @keyframes, Hybrid, Static frame
-sequence), applied to the assembled multi-frame SVG rather than a single
-traced image.
+Only **SMIL** is offered — it is the only method `ProResVectorExecutor`
+implements. CSS @keyframes, Hybrid, and Static frame sequence are not
+implemented in this build.
 
-### Assembly
-
-- **Shape persistence** (default on) — tracks shape identity across frames
-  for consistent SVG element IDs (needed for clean CSS/SMIL animation of the
-  same shape over time).
-- **Keyframe extraction** (default on) — only re-traces frames with
-  significant visual change, animating between keyframes rather than
-  re-tracing every single frame.
+There is no Assembly section — the "Shape persistence" and "Keyframe
+extraction" toggles that used to appear here were removed: `ProResVectorExecutor`
+traces every frame independently and does not track shape identity or skip
+unchanged frames, so neither toggle did anything.
 
 ### Output-size warning
 
 A warning banner appears when your chosen frame rate, frame stride, and
 time range would produce more than about ten seconds' worth of traced
 frames, or whenever **Photorealistic** tracing is selected (which is
-always heavy regardless of duration):
+always heavy regardless of duration). It uses the real duration of the
+file selected in the Source tab when one is chosen; otherwise it falls back
+to a synthetic reference so the warning still means something before you've
+picked a clip:
 
 > **Output size may be large.** These settings can produce very large SVG
 > files. Consider increasing the frame stride, narrowing the time range,
@@ -176,12 +175,27 @@ always heavy regardless of duration):
 
 ## Notes
 
+- **Direct-only.** Both tools run only in the Direct `.dmg` build — hidden
+  in the App Store build, because the App Sandbox cannot spawn a subprocess
+  and potrace is GPL-2.0-or-later (bundled Direct-only per DR-0001; vtracer
+  is MIT and ships in every distribution, but is inert without potrace's
+  sibling being reachable too, since the nav item hides both together).
 - Both tools persist their settings per-view via `@AppStorage` (namespaced
   `vectorConversion.*` and `proresVector.*`), so your preferences survive
   app relaunches independently of each other.
-- Tracing is performed by external tools (`potrace`, `vtracer`) selected
-  automatically based on the tracing mode; SVG→raster rendering (for
-  preview) uses `rsvg-convert`.
+- Tracing is performed by real `potrace`/`vtracer` subprocesses, selected
+  automatically based on the tracing mode (or forced to potrace for a ProRes
+  alpha matte). Both are resolved via **Settings → Paths → Vector Tracing
+  Tools**: a Direct build finds them bundled in `Contents/Helpers`; a
+  dev/Homebrew build needs them on `PATH` or a path set there. Vector→raster
+  rendering (e.g. for a live preview) is not implemented — no tool is
+  bundled or invoked for that direction.
+- Options that are **not applied** by either executor (kept only for
+  JSON/AppStorage compatibility with existing profiles): "Preserve EXIF /
+  IPTC / XMP metadata", "OCR text regions" (Vector Conversion's former
+  "Other" section), and "Shape persistence" / "Keyframe extraction" (ProRes's
+  former "Assembly" section). Animated raster → animated SVG and every
+  ProRes animation method except SMIL are likewise not implemented.
 
 ---
 

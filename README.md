@@ -121,7 +121,7 @@ roadmap items, not working features, until their tracking issue closes.
 | 🏷️ **Media Metadata Lookup / Auto-Tagging** | **Partial.** **MusicBrainz** (keyless) lookup now executes for real — the Metadata Tag Editor's "Look Up…" searches recordings via `MusicBrainzLookupService` (with the required User-Agent + a ~1 req/sec throttle, through a testable `MetadataHTTPClient` seam) and applies a chosen match to the tag table. The **keyed** providers (TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles, OMDb) still only build request URLs — they need an API-key UI that isn't in this build; `AutoTagger`, audio fingerprinting and the album/disc-ID lookups remain present-but-uncalled follow-ups. Distinct from the metadata tag **editor**, which writes tags for real (#467). (#205, #493) |
 | 🔎 **AI Upscaling** | `AIUpscaler` exists only as a comment reference (#236, #477) |
 | 💿 **Optical Disc Ripping & Authoring** | Disc readers/authors are orphaned — disc **burning** above is the one part of this pipeline that's real (#476) |
-| 🎛️ **Vector / ProRes→Vector Conversion** | Argument builders exist; there is no executor and no source-file flow (#473) |
+| 🎛️ **Vector / ProRes→Vector Conversion** | **Partial — Direct builds only.** Raster → SVG and ProRes 4444 → animated SVG execute for real with bundled potrace/vtracer; OCR, metadata preservation, shape persistence, keyframe extraction and non-SMIL animation are not implemented. Hidden in App Store builds — the sandbox can't spawn potrace/vtracer/ffmpeg and potrace is GPL (#473) |
 
 > The full release breakdown lives in [PROJECT_STATUS.md](PROJECT_STATUS.md).
 

@@ -65,11 +65,19 @@ struct SidebarView: View {
             }
 
             // Images & Audio section — image conversion, cropping,
-            // background removal, and voice isolation. (Vector Conversion and
-            // ProRes-to-Vector are hidden until their converters can execute —
-            // NavigationItem.unavailable, Issue #473.)
+            // background removal, and voice isolation. Vector Conversion /
+            // ProRes-to-Vector are App-Store-hidden (see
+            // `NavigationItem.unavailable`) — the `if isAvailable` guard
+            // below means the hardcoded list here and that set can never
+            // disagree about what's actually reachable.
             Section("Images & Audio") {
                 sidebarLabel(for: .images)
+                if NavigationItem.vectorConversion.isAvailable {
+                    sidebarLabel(for: .vectorConversion)
+                }
+                if NavigationItem.proresVector.isAvailable {
+                    sidebarLabel(for: .proresVector)
+                }
                 sidebarLabel(for: .animatedImage)
                 sidebarLabel(for: .smartCrop)
                 sidebarLabel(for: .backgroundRemoval)

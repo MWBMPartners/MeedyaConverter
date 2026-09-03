@@ -41,7 +41,10 @@ fi
 
 # Basenames of the GPL command-line tools this project may bundle for Direct
 # builds. Keep in step with the GPL entries drafted in DR-0001 and with
-# ToolBundleManifest. `readom`/`icedax` are cdrkit siblings of `wodim`.
+# ToolBundleManifest. `readom`/`icedax` are cdrkit siblings of `wodim`; and
+# `potrace` (#473 vector tracing) is GPL-2.0-or-later — lives in
+# `ToolBundleManifest.directOnlyManifest`, never `defaultManifest`. `vtracer`
+# is MIT and deliberately NOT listed here.
 GPL_BINARIES=(
     cdrdao
     ddrescue
@@ -50,6 +53,7 @@ GPL_BINARIES=(
     icedax
     cdparanoia
     cd-paranoia
+    potrace
 )
 
 found=0

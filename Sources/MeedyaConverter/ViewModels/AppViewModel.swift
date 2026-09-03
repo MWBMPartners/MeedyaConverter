@@ -167,15 +167,25 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// hidden from the sidebar and not selectable so a user can't open a
     /// dead-end. Re-list here — nowhere else — to bring one back.
     ///
-    /// - `.vectorConversion` / `.proresVector` (#473): `RasterVectorConverter` /
-    ///   `ProResToVectorConverter` are argument-builders only; the tracing tools
-    ///   they need (potrace / vtracer / rsvg-convert) are GPL and not yet
-    ///   bundled, with no process runner.
+    /// - `.vectorConversion` / `.proresVector` are hidden ONLY in App Store
+    ///   builds (`-DAPP_STORE`, testflight.yml / dev-build.yml): the sandbox
+    ///   cannot spawn potrace/vtracer/ffmpeg, and potrace is GPL (DR-0001 #5
+    ///   — `#if APP_STORE` is the gate, since `release.yml` deliberately never
+    ///   sets `DIRECT`/`isDirectBuild`). In every other build they are
+    ///   visible; inside the view the Convert button is disabled with a
+    ///   reason when a required tool is not found — never a dead button.
+    ///   `RasterVectorExecutor`/`ProResVectorExecutor` (#473) run potrace and
+    ///   vtracer, which are MIT/GPL respectively — an earlier version of this
+    ///   comment claimed both were GPL, which was never true of vtracer.
     /// - `.cloudSync`: iCloud sync needs an iCloud/ubiquity entitlement the
     ///   Direct distribution does not carry (Direct is un-sandboxed, no iCloud
     ///   container), so every Upload/Download can only fail. Cloud *Storage*
     ///   (S3/Dropbox/Drive/OneDrive) is unaffected and stays available.
+    #if APP_STORE
     static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector, .cloudSync]
+    #else
+    static let unavailable: Set<NavigationItem> = [.cloudSync]
+    #endif
 
     /// Whether this item is currently reachable (see `unavailable`).
     var isAvailable: Bool { !NavigationItem.unavailable.contains(self) }

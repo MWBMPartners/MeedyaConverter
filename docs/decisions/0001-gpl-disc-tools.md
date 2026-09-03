@@ -175,3 +175,44 @@ Recorded here and on #494. The packaging work — acquiring and pinning the
 binaries, licence-text staging, source archival, the App-Store-exclusion build
 check, and moving the drafted entries into `defaultManifest` — is **not yet
 implemented** and remains tracked on #494.
+
+## Amendment 1 — 2026-09-03
+
+The packaging work above has now landed for the FIRST GPL tool, and two
+statements in the original decision text need correcting against what was
+actually built:
+
+(a) The first GPL tool actually shipped is **potrace** (#473 vector tracing),
+not a disc tool. `cdrdao`/`ddrescue`/`wodim`/`cdparanoia` remain unbundled —
+see (d) below.
+
+(b) The Direct-only mechanism is `ToolBundleManifest.directOnlyManifest` +
+`activeManifest`, gated on **`#if APP_STORE`** — not `isDirectBuild`/`DIRECT`,
+which `release.yml` deliberately never sets (Sparkle updates require it stay
+unset). Consequence #5 above ("gate on `isDirectBuild`") reads in practice as
+"hidden when `APP_STORE`, bundled and reachable otherwise": `defaultManifest`
+ships in every distribution (vtracer, MIT, lives there — it was never
+GPL-family despite some earlier drafts saying otherwise); `directOnlyManifest`
+holds potrace and is merged into `activeManifest` except under `#if APP_STORE`.
+The manifest invariant test, the bundle tripwire
+(`scripts/verify-no-gpl-in-appstore.sh`, which now also lists `potrace`), and
+the `#if APP_STORE` nav gate are three independent guards.
+
+(c) macOS "universal" (operational decision 3, above) is achieved on the
+**converter side** via `lipo` (`scripts/bundle-tracing-tools.sh`, mirroring
+`scripts/bundle-ffmpeg.sh`) — the mirror (`MeedyaDL-Tools`) publishes THIN
+per-arch assets only; there is no `lipo` step in that repo.
+
+(d) Correcting operational decision 4's inventory: `RawCDReadPlanner`,
+`DiscImagingController`, `CdrdaoTocParser`, and `BundledToolLocator` now exist
+(issue #495), and `DiscCommand` invokes `cdrdao` — yet `cdrdao` is still
+neither built by the mirror nor bundled by the converter. This is an open gap
+under the "same change" rule stated above (tools enter the bundle/manifest in
+the same change that first invokes them): `cdrdao` is invoked but not bundled.
+Tracked on #494/#495; **not fixed by this amendment** — potrace's packaging
+followed the rule correctly (the executor and the bundle step landed together)
+and is not a precedent for leaving `cdrdao` half-wired.
+
+The accepted decision text above is left as originally recorded; this
+amendment corrects it against what shipped, per the project's "no false
+comments" policy.

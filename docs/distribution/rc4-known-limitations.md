@@ -9,14 +9,12 @@ Release body when the tag is cut. Everything here was reconciled against the
 actual code (a pre-release readiness pass), not comments.
 
 > Assumes `wip/alpha-consolidation` is merged to `main` before the tag — several
-> items below (hidden vector tools, wired pipelines/chapters, etc.) reflect that
-> branch. If the tag is cut from `main` without that merge, re-verify.
+> items below (vector tools now executing, wired pipelines/chapters, etc.)
+> reflect that branch. If the tag is cut from `main` without that merge,
+> re-verify.
 
 ## Not in this build (hidden)
 
-- **Vector Conversion** and **ProRes → Vector** — the tracing engines can't
-  execute yet (no bundled potrace/vtracer/rsvg), so the views are hidden until
-  they can.
 - **Cloud Sync (iCloud)** — the Direct build carries no iCloud entitlement, so
   it could only fail; hidden. Cloud **Storage** (below) is unaffected.
 - **YouTube / Vimeo upload** — disabled pending OAuth app registration.
@@ -43,6 +41,13 @@ actual code (a pre-release readiness pass), not comments.
 
 ## Partial / configuration-only
 
+- **Direct-only: Vector Conversion** and **ProRes → Vector** now execute for
+  real — bundled potrace + vtracer trace raster images to SVG and ProRes 4444
+  clips to SMIL-animated SVG, with progress and Cancel. Not implemented: OCR
+  text regions, EXIF/IPTC/XMP metadata preservation, shape persistence,
+  keyframe extraction, and any animation method other than SMIL. Hidden in
+  App Store builds (a sandbox can't spawn potrace/vtracer/ffmpeg, and potrace
+  is GPL) — not applicable to this Direct build.
 - **Cloud uploads** cover **S3** (incl. S3-compatible endpoints), **Dropbox**,
   **Google Drive**, and **OneDrive**. GCS, Azure, and Backblaze-native are not
   selectable yet.

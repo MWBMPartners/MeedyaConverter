@@ -444,6 +444,24 @@ jobs:
           ls -la "${HELPERS_DIR}"
 
       # ---------------------------------------------------------------------
+      # Step 9c: Bundle vector tracing tools (Direct only — #473 / #494)
+      # ---------------------------------------------------------------------
+      # potrace (GPL-2.0-or-later) + vtracer (MIT). Universal via lipo from the
+      # mirror's per-arch builds, SHA-256 verified (F-011). Licence texts and
+      # the potrace written source offer land in Contents/Resources/Licenses
+      # (DR-0001 consequences 2–3). This step exists ONLY here: testflight.yml
+      # must never gain it (verify-no-gpl-in-appstore.sh is its tripwire).
+      # ---------------------------------------------------------------------
+      - name: Bundle vector tracing tools
+        run: |
+          APP_BUNDLE="MeedyaConverter.app"
+          chmod +x scripts/bundle-tracing-tools.sh
+          ./scripts/bundle-tracing-tools.sh \
+            "${APP_BUNDLE}/Contents/Helpers" \
+            "${APP_BUNDLE}/Contents/Resources/Licenses"
+          ls -la "${APP_BUNDLE}/Contents/Helpers" "${APP_BUNDLE}/Contents/Resources/Licenses"
+
+      # ---------------------------------------------------------------------
       # Step 10: Sign the app bundle
       # ---------------------------------------------------------------------
       # Use the codesign script to sign all binaries inside the .app bundle

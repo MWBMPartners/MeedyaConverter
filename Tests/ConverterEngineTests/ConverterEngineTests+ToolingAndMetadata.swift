@@ -21,13 +21,37 @@ extension ConverterEngineTests {
     func test_toolBundleManifest_defaultManifest() {
         let manifest = ToolBundleManifest.defaultManifest
         XCTAssertEqual(manifest.schemaVersion, 1)
-        XCTAssertEqual(manifest.tools.count, 6)
+        XCTAssertEqual(manifest.tools.count, 7)
         XCTAssertNotNil(manifest.tool(id: "dovi_tool"))
         XCTAssertNotNil(manifest.tool(id: "hlg_tools"))
         XCTAssertNotNil(manifest.tool(id: "hdr10plus_tool"))
         XCTAssertNotNil(manifest.tool(id: "mediainfo"))
         XCTAssertNotNil(manifest.tool(id: "fpcalc"))
         XCTAssertNotNil(manifest.tool(id: "subtitle_tonemap"))
+        XCTAssertNotNil(manifest.tool(id: "vtracer"))
+    }
+
+    /// potrace (GPL) lives ONLY in `directOnlyManifest`, never `defaultManifest`
+    /// (issue #494 / DR-0001) — vtracer (MIT) is the opposite: `defaultManifest`
+    /// only, never here.
+    func test_toolBundleManifest_directOnlyCarriesPotraceOnly() {
+        let direct = ToolBundleManifest.directOnlyManifest
+        XCTAssertEqual(direct.gplTools.map(\.id), ["potrace"])
+        XCTAssertEqual(direct.tool(id: "potrace")?.isGPLFamily, true)
+        XCTAssertNil(ToolBundleManifest.defaultManifest.tool(id: "potrace"))
+    }
+
+    /// `activeManifest` is `defaultManifest` alone under `#if APP_STORE`
+    /// (potrace must never reach an App Store bundle), and carries potrace
+    /// too in every other build (release.yml never sets `APP_STORE`).
+    func test_toolBundleManifest_activeManifestRespectsBuildType() {
+        let active = ToolBundleManifest.activeManifest
+        #if APP_STORE
+        XCTAssertTrue(active.isAppStoreSafe)
+        XCTAssertNil(active.tool(id: "potrace"))
+        #else
+        XCTAssertNotNil(active.tool(id: "potrace"))
+        #endif
     }
 
     /// The default manifest must contain NO GPL-family tool (issue #494 /
