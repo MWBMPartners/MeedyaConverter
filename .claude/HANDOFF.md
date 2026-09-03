@@ -220,17 +220,25 @@ App-Sandbox warning), repository git fields, `pullProfiles` async, 3 new errors.
   in the Metadata Tag Editor → applies to the tag table. 37 tests. Keyed providers (TMDB/TVDB/Discogs/…) still
   need an API-key UI; fingerprint/album-disc-ID/`AutoTagger` are noted follow-ups. Plan:
   `.claude/plans/metadata-musicbrainz-lookup-plan.md`. CI green. Docs reconciled (README/Home/FAQ/rc4/suite-core).
-- **⏸️ Vector tracers (#473/#494) — Part 2 (this repo) DONE; Part 1 (mirror) pending.** Deep plan:
-  `.claude/plans/vector-tracers-plan.md`. Correction to the prior entry above: MeedyaDL-Tools' `populate.yml`
-  **already has** a `macos-latest` matrix leg (`build-python-tools`) — the actually-missing piece was a job that
-  compiles a C/Rust tool on it, which Part 1 of the plan adds (new `build-tracing-tools` job). MeedyaConverter
-  side: `RasterVectorExecutor`/`ProResVectorExecutor` (new) wire `RasterVectorConverter`/`ProResToVectorConverter`
-  to real potrace/vtracer subprocesses via `ExternalToolRunner`; the vtracer argument builder was rewritten
-  against the pinned `1.0.0-alpha.4` CLI (the old flags never existed in any released version); nav entries
-  un-hidden behind `#if APP_STORE` (not `isDirectBuild` — `release.yml` never sets it); `ToolBundleManifest
-  .directOnlyManifest` carries potrace (GPL, Direct-only), `defaultManifest` carries vtracer (MIT, everywhere).
-  `scripts/bundle-tracing-tools.sh` is written but its `MDLT_TAG` is a fail-closed placeholder — **nothing ships
-  until Part 1 merges to MeedyaDL-Tools `main` and that tag is pinned as the final commit.**
+- **🟢 Vector tracers (#473/#494) — CODE DONE + CI-GREEN both sides; only merge + pin remain.** Deep plan:
+  `.claude/plans/vector-tracers-plan.md`.
+  - **Part 1 (mirror) — PR OPEN + GREEN, ready to merge:** `MeedyaSuite/MeedyaDL-Tools#26`
+    (branch `feat/vector-tracing-tools`). New `build-tracing-tools` job compiled potrace 1.16 (GPL, from source,
+    corresponding-source archived) + vtracer 1.0.0-alpha.4 (MIT) on macOS + Linux per-arch with SHA verification;
+    actionlint clean; artifacts produced. (Correction to earlier: `populate.yml` **already had** a `macos-latest`
+    leg; the missing piece was a C/Rust compile job — added.) **Merging cuts a dated release (outward-facing) —
+    left for the user's call.**
+  - **Part 2 (this repo) — LANDED + GREEN:** `32234bf` (feature) + `c07daae` (test arg-order) + `2ac0721`
+    (progress-clamp). `RasterVectorExecutor`/`ProResVectorExecutor` (new) wire the converters to real
+    potrace/vtracer via `ExternalToolRunner`; vtracer arg-builder rewritten to the pinned `1.0.0-alpha.4` CLI
+    (old flags never existed); nav un-hidden behind `#if APP_STORE`; potrace in `directOnlyManifest` (GPL,
+    Direct-only, tripwire green), vtracer in `defaultManifest` (MIT). Also fixed 3 real latent bugs (double `-vf`,
+    non-existent vtracer flags, SMIL fill stacking).
+  - **REMAINING (2 steps):** (1) user merges #26 → note the dated tag; (2) pin `MDLT_TAG` in
+    `scripts/bundle-tracing-tools.sh` (currently a fail-closed placeholder — exit 6 — so **no Direct release
+    ships until pinned**; CI Build & Test is unaffected). Plus the standing legal item: potrace GPL
+    corresponding-source **written-offer wording needs maintainer/legal sign-off** before the first Direct
+    release that carries potrace.
 
 **Deferred/disclosed (NOT to build this pass):** Direct licensing (Subscription hidden ✓), Distributed
 Render Farm (config-only + disclosed).
