@@ -34,8 +34,9 @@ Where the project actually stands right now, in plain terms:
   section below.
 - **NEW — foldable support requested across BOTH native mobile apps: filed as
   issues #500 (Apple iPhone Duo) and #501 (foldable Android).** Both are labelled
-  **`for-consideration`** — a mobile app has **not yet been scoped or committed**,
-  so these are ideas awaiting a go/no-go decision, not accepted roadmap work. Both
+  **`for-consideration`** + **`wishlist`** — a mobile app has **not yet been
+  scoped or committed**, so these are aspirational ideas awaiting a go/no-go
+  decision (may never be built), not accepted roadmap work. Both
   carry the same crucial caveat: **MeedyaConverter has no mobile app today** — it
   is macOS-only (`.macOS(.v15)`, no iOS or Android target), so each foldable issue
   presupposes first shipping that mobile app, which is unstarted. They should be
