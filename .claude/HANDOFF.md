@@ -5,7 +5,49 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-02 · VERSION 0.1.0
+**Last updated:** 2026-09-15 · VERSION 0.1.0
+
+## 📍 CURRENT STATE — 2026-09-15 (read this first)
+
+Where the project actually stands right now, in plain terms:
+
+- **Working branch `wip/alpha-consolidation` is the live state of the project.** It
+  is many commits ahead of `alpha` and is green (all this session's work passed
+  CI). `alpha` itself still holds the older `v0.1.0-alpha.3` code; the `wip` work
+  has **not** been merged to `alpha` yet. So if you are reading this copy on the
+  `alpha` branch: the handoff describes the `wip` state, which is ahead of the
+  code on `alpha`. (This handoff was pushed to `alpha` on request so the
+  project-status note is visible there; the code that goes with it lives on `wip`.)
+- **Landed on `wip` this cycle, all CI-green:** the six pre-release features
+  (Filter Graph attach-to-encode; Dual-HDR wrapper tool discovery; Voice
+  Isolation cleanup; Background Removal single-image save #300; Storage Analysis
+  real ffprobe #365; Team Profile real git #345; Smart Crop video-based #299;
+  MusicBrainz metadata lookup #205), the full 87-issue reconciliation with issue
+  comments, and the docs/memory refresh. Details in the dated sections below.
+- **Vector tracers (#473/#494) — code done + CI-green both sides; two steps left,
+  both need a person:** the mirror PR `MeedyaSuite/MeedyaDL-Tools#26` (builds
+  potrace + vtracer) is open and green and awaits a **merge decision** (merging
+  cuts a mirror release); after that, pin `MDLT_TAG` in
+  `scripts/bundle-tracing-tools.sh` (a fail-closed placeholder today). Plus a
+  standing legal item: the potrace GPL source-offer wording needs sign-off before
+  the first Direct release that ships potrace. Full detail in the vector-tracers
+  section below.
+- **NEW — iPhone Duo (Apple foldable) support requested: filed as issue #500.**
+  This is a **planned feature, not built.** It asks the Apple app to use the wide
+  inner display when the phone is fully open, behave on the cover display when
+  folded, and re-flow live across the fold. Crucial caveat recorded in the issue:
+  **the Apple app is macOS-only today** — there is no iOS/iPadOS target — so
+  iPhone Duo support presupposes first shipping an iOS build, which is unstarted.
+  Apple's own tooling (Xcode 27.1 beta) and deep docs were still rolling out
+  ("later this month") as of 2026-09-15, so the issue is written to plan from and
+  to be tightened once the SDK lands. See #500 for the full spec, device facts
+  (7.6″ inner display, adapt by size class not orientation, `NavigationSplitView`/
+  `TabView` adapt across poses) and open decisions.
+- **Still open, needing your calls:** merge of `MeedyaDL-Tools#26`; which of the
+  15 alpha proposals in `.claude/proposals-2026-09-02b.md` to build (top picks: a
+  reusable notarized-DMG workflow so `alpha` ships an app not just a CLI, and a
+  `DirectBuildGateProvider`); and the 8 issue-level decisions in
+  `.claude/reconciliation-2026-09-02.md`.
 
 ## 🎉 SESSION OUTCOME — MERGED & RELEASED (2026-08-04)
 
