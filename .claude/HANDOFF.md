@@ -32,17 +32,25 @@ Where the project actually stands right now, in plain terms:
   standing legal item: the potrace GPL source-offer wording needs sign-off before
   the first Direct release that ships potrace. Full detail in the vector-tracers
   section below.
-- **NEW — iPhone Duo (Apple foldable) support requested: filed as issue #500.**
-  This is a **planned feature, not built.** It asks the Apple app to use the wide
-  inner display when the phone is fully open, behave on the cover display when
-  folded, and re-flow live across the fold. Crucial caveat recorded in the issue:
-  **the Apple app is macOS-only today** — there is no iOS/iPadOS target — so
-  iPhone Duo support presupposes first shipping an iOS build, which is unstarted.
-  Apple's own tooling (Xcode 27.1 beta) and deep docs were still rolling out
-  ("later this month") as of 2026-09-15, so the issue is written to plan from and
-  to be tightened once the SDK lands. See #500 for the full spec, device facts
-  (7.6″ inner display, adapt by size class not orientation, `NavigationSplitView`/
-  `TabView` adapt across poses) and open decisions.
+- **NEW — foldable support requested across BOTH native mobile apps: filed as
+  issues #500 (Apple iPhone Duo) and #501 (foldable Android).** Both are
+  **planned features, not built**, and both carry the same crucial caveat:
+  **MeedyaConverter has no mobile app today** — it is macOS-only (`.macOS(.v15)`,
+  no iOS or Android target), so each foldable issue presupposes first shipping
+  that mobile app, which is unstarted. They should be planned together as
+  "foldable support across our native apps".
+  - **#500 — iPhone Duo (Apple foldable):** use the wide 7.6″ inner display when
+    open, the cover display when folded, re-flow live across the fold; adapt by
+    size class not orientation; `NavigationSplitView`/`TabView` adapt across
+    poses. Apple's tooling (Xcode 27.1 beta) + deep docs were still rolling out
+    ("later this month") as of 2026-09-15 — issue written to plan from, to be
+    tightened once the SDK lands.
+  - **#501 — foldable Android:** one adaptive (universal) app across folded /
+    open / **tabletop** / **book** postures via Jetpack WindowManager
+    (`FoldingFeature` state + hinge orientation), window size classes, and Compose
+    Material 3 adaptive scaffolds. Android's foldable APIs are mature + stable
+    (no "coming later" gap) — the issue is concrete on the "how"; the open
+    question is strategic (do we ship on Android, and in what form).
 - **Still open, needing your calls:** merge of `MeedyaDL-Tools#26`; which of the
   15 alpha proposals in `.claude/proposals-2026-09-02b.md` to build (top picks: a
   reusable notarized-DMG workflow so `alpha` ships an app not just a CLI, and a
