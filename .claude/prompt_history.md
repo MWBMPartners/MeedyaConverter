@@ -262,3 +262,30 @@ left open (larger remainders gated on the sibling repo / transport work).
   perceptual-hash algorithm or a UX decision; flagged for the user, not guessed.
 - Kept every new test **pure** (no ffmpeg execution in CI); proved the real paths
   out-of-band with a throwaway harness + real ffmpeg.
+
+## Session: 2026-09-17
+
+### Prompt: dvd-autorip skill evaluation + standing-rule refresh
+
+- User asked whether the MakeMKV Claude skill from a Reddit thread
+  (`threadgill-dev/dvd-autorip-skill`, MIT) could help copy/identify discs while
+  making disc images, and to file it as a GitHub issue without planning to build
+  it yet.
+- **Assessment (done on Opus — Fable fell back, see below):** useful as a
+  reference for its content-based identification technique and operational
+  lessons; **not** a drop-in (it is a Claude-in-the-loop plug-in and we must stay
+  offline-capable). The real decision is legal/policy: MakeMKV *decrypts*
+  protected discs, whereas our `DiscImagingController` deliberately *refuses* them.
+- **Filed #502** — a not-scheduled research spike, linked to #476 (orphaned disc
+  engine) and #205 (metadata lookup/auto-tag).
+- **New standing rules** added (`.claude/standing_tasks.md`): §16 plain-English
+  communication; W12 cross-LLM fallback; W13 cross-LLM review loop (Codex ⇄
+  Claude, fix-until-clean); W14 `.OpenAI/` memory mirror; §9↔W5 push-policy
+  reconciliation. Device-level copy of the fallback + plain-English rules at
+  `~/.claude/CLAUDE.md`.
+- **New `.OpenAI/` mirror** (`README.md`, `MEMORY.md`, `CONTEXT.md`) for
+  Codex/OpenAI continuity.
+- **Tooling:** Fable 5.1 returned "out of usage credits" (HTTP 429) when spawned
+  for the deep analysis → fell back to Opus (retry Fable next analysis run). Codex
+  CLI is **not installed** in this cloud session → the W13 review used an
+  independent Claude reviewer; a full Codex cross-review is still owed.

@@ -4,7 +4,8 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-02 (§15 — monitor CI/checks after every push/sync/PR, stay until green)
+> Last updated: 2026-09-17 (added §16 plain-English communication, W12 cross-LLM fallback,
+> W13 review loop, W14 `.OpenAI/` mirror; reconciled §9 push policy with W5)
 
 ## Mandatory Post-Action Tasks
 
@@ -312,3 +313,76 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
   created later. This avoids PR merge-race conditions.
 - Exception already in force: MWBM-intAppsAPI changes go to that repo's
   `feat/feature-targeting-consolidated` branch.
+
+---
+
+## Communication & Cross-LLM Standing Tasks (added 2026-09-17)
+
+> New deltas from the 2026-09-17 user directive. The rest of this file already
+> codified the Fable→Sonnet split (W3), dev-team plugin (W4), per-task
+> commit/push + issue/handoff updates (W5), thorough docs + Swagger UI (W6),
+> autonomy + upfront clarifications (W8), and no-PR-stacking (W9). These sections
+> add what was genuinely new.
+
+### §16. Plain-English communication (no jargon)
+
+- When explaining, reporting back, or writing user-facing text, use **plain,
+  easy-to-understand English**. Avoid unexplained technical jargon — it can
+  confuse even technically proficient readers.
+- Where a technical term is unavoidable, add a short plain-English gloss the
+  first time it appears (e.g. "notarisation — Apple's security stamp that lets
+  the app open without a warning").
+- This applies to chat replies, commit/PR summaries, issue bodies, and docs.
+- Code itself stays precise; this rule is about how we *explain* things.
+
+### W12. Cross-LLM fallback & recovery (tool-agnostic; repo- AND device-level)
+
+> Also written to the device-level `~/.claude/CLAUDE.md` so it applies across all
+> projects on this machine, phrased so we never have to name specific tools.
+
+- If the **primary** AI service or agent for a piece of work becomes unavailable
+  or runs out of usage credits/tokens (e.g. Claude Code / Codex / a Fable agent),
+  **hand off to another suitable service or model** and keep going — provided the
+  context and progress can carry over safely (handoff doc + committed state make
+  this safe).
+- **Switch back to the primary service frequently.** The cross-LLM review loop
+  (W13) is expected to catch methodology differences between services, but once
+  the primary is available again, run a **full review** with it.
+- Keep the **handoff document up to the minute** (W2) so any service can resume
+  cleanly — this is what makes fallback safe.
+- Concrete current mapping: analysis/planning → Fable, fall back to Opus, retry
+  Fable next run (W3); review → Codex, fall back to an independent Claude
+  reviewer when Codex is not reachable (W13). Do this flexibly — the rule is
+  "use whatever suitable tool is available", not a fixed roster.
+
+### W13. Cross-LLM review loop (Codex ⇄ Claude), fix-until-clean
+
+- Pass **all code** (and material docs/config) through a review process:
+  plan/implement with one service, then **review with a different one** (e.g.
+  build with Claude Code, review with Codex, and vice versa) for extra quality.
+- The reviewer **finds issues → they get fixed → re-review**, repeating **until
+  no issues remain**. Aim: GIRFT (Get It Right First Time).
+- **Fallback (per W12):** when Codex (or any configured external reviewer) is not
+  reachable in the current environment — e.g. no `codex` CLI on PATH in a cloud
+  session — run the review with an **independent Claude reviewer agent** and label
+  it clearly as the Claude-side fallback. Flag that a full **Codex cross-review**
+  is still owed and run it once Codex is reachable again.
+
+### W14. OpenAI / Codex memory & context mirror (`.OpenAI/`)
+
+- Mirror the durable Claude context into a **`.OpenAI/`** directory at the repo
+  root so Codex/OpenAI tooling has the same continuity Claude does.
+- After each task, update **both** `.claude/` (Claude memory/context/handoff) and
+  `.OpenAI/` (OpenAI/Codex memory + context). Keep them consistent; `.claude/` and
+  `.OpenAI/` should tell the same story.
+- `.OpenAI/` holds `MEMORY.md` (durable facts), `CONTEXT.md` (how-we-work +
+  pointers to the `.claude/` sources), and `README.md` (what the folder is).
+
+### §9 ↔ W5 reconciliation (push policy)
+
+- §9 above ("Stage & Commit After Each Dev Step — No Push") reflects the older
+  manual-push posture. **W5 supersedes it for the working branch:** on
+  `wip/alpha-consolidation`, each completed task is **committed AND pushed**, then
+  CI is watched to green (§15). Push to any **other** branch still needs explicit
+  user instruction. This matches the 2026-09-17 user directive and the session
+  task framing.

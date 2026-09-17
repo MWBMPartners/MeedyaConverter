@@ -584,6 +584,12 @@ carried over from an earlier draft):
   executor and no source-file flow (#473)
 - **Optical disc ripping & authoring** -- disc readers/authors are
   orphaned; disc **burning** is real and unaffected by this (#476)
+  - **Research idea on file (not scheduled):** #502 evaluates a content-based
+    "smart disc identification" approach (inspired by the MIT MakeMKV Claude skill
+    `threadgill-dev/dvd-autorip-skill`) that would feed the orphaned readers (#476)
+    and metadata auto-tagging (#205). Captured as a spike; the crux is a
+    legal/policy decision on MakeMKV (it decrypts protected discs, which our
+    imaging path deliberately refuses).
 
 ---
 

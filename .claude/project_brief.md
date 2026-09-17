@@ -1,8 +1,14 @@
 # MeedyaConverter — Project Brief
 
 > Saved for Claude AI context continuity across sessions.
-> Last updated: 2026-09-01
+> Last updated: 2026-09-17
 > **Live status lives in `.claude/HANDOFF.md`** — this brief is the durable overview.
+>
+> **2026-09-17:** governance refresh — new standing rules (§16 plain-English, W12
+> cross-LLM fallback, W13 review loop, W14 `.OpenAI/` mirror), a device-level rule
+> copy at `~/.claude/CLAUDE.md`, and a new `.OpenAI/` context mirror — plus one
+> research issue **#502** (smart, content-based disc identification; a
+> not-scheduled spike linked to #476 and #205). No code changed this session.
 
 ## Project Summary
 

@@ -5,9 +5,42 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-15 · VERSION 0.1.0
+**Last updated:** 2026-09-17 · VERSION 0.1.0
 
-## 📍 CURRENT STATE — 2026-09-15 (read this first)
+## 📍 CURRENT STATE — 2026-09-17 (read this first)
+
+This session was **governance + one research idea, not code.** Nothing in the
+Swift app, CLI, API, releases or CI changed — the 2026-09-15 block below is still
+accurate for the code. What changed this session:
+
+- **New research issue #502** — "smart, content-based disc identification for
+  ripping/imaging". Prompted by a user asking whether the MIT-licensed MakeMKV
+  Claude skill `threadgill-dev/dvd-autorip-skill` (from a Reddit thread) could help
+  copy and identify discs while making disc images. **Verdict in the issue:**
+  useful as a *reference/technique* (identify a disc from its own
+  subtitles/dialogue/runtime, not fuzzy title matching) and for operational
+  lessons — but **not a drop-in** (it is a Claude-in-the-loop plug-in; we must stay
+  offline-capable). The crux is a **legal/policy call on MakeMKV**: it *decrypts*
+  protected discs, whereas our `DiscImagingController` deliberately *refuses* them.
+  Filed as a **not-scheduled spike**, linked to #476 (orphaned disc engine) and
+  #205 (metadata lookup/auto-tag). No implementation started.
+- **New standing rules** in `.claude/standing_tasks.md`: §16 plain-English
+  communication; W12 cross-LLM fallback; W13 cross-LLM review loop (Codex ⇄ Claude,
+  fix-until-clean); W14 `.OpenAI/` memory mirror; and a §9↔W5 push-policy
+  reconciliation (push-per-task is the rule on `wip/alpha-consolidation`). A
+  device-level copy of the fallback + plain-English rules is at `~/.claude/CLAUDE.md`
+  (ephemeral in a cloud container — the durable copy is the repo file).
+- **New `.OpenAI/` folder** (`README.md`, `MEMORY.md`, `CONTEXT.md`) mirroring the
+  Claude context so Codex/OpenAI tooling has the same continuity. Update it
+  alongside `.claude/` after each task (W14).
+- **Tooling notes for next session:** Fable 5.1 returned **"out of usage credits"**
+  (HTTP 429) when spawned for the deep analysis, so this run fell back to **Opus**
+  per W3 — **retry Fable on the next analysis/planning run.** **Codex is not
+  installed** in this cloud session, so the review used an independent Claude
+  reviewer (W13 fallback); a **full Codex cross-review is still owed** when Codex is
+  reachable.
+
+## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:
 
