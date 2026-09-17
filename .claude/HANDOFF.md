@@ -65,8 +65,9 @@ accurate for the code. What changed this session:
   Sendable/Equatable synthesis, and SPM inclusion, and re-computed the scoring
   maths) and caught **one test bug** — a case-sensitive `reason.contains(...)`
   assertion that missed the capitalised string — now fixed. First push `2647c24`
-  (CI run 307) would fail that one test; the fix push follows. MakeMKV/decryption
-  still deferred.
+  (CI run 307) built fine but failed that one test; the fix `26977de` is
+  **CI-green (run 308)**. **Slice 1 is complete**, with a progress note on #502.
+  MakeMKV/decryption still deferred pending an explicit user decision.
   **Deliberately excluded pending an explicit user "yes": MakeMKV / any decryption**
   (reverses the "refuse protected discs" policy #492 — a legal decision). LATER
   slices: provider adapters that fetch real candidates (#205), wiring the orphaned
