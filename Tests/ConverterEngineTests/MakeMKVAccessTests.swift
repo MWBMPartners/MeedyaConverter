@@ -19,17 +19,21 @@ import ConverterEngine
 final class MakeMKVAccessTests: XCTestCase {
 
     private var defaults: UserDefaults!
-    private let suiteName = "MakeMKVAccessTests.suite"
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
+        // A UNIQUE suite per test instance: CI runs `swift test --parallel`, so a
+        // shared suite name would let one test's setUp wipe another's values
+        // mid-run. A fresh UUID suite is empty and isolated, no clearing needed.
+        suiteName = "MakeMKVAccessTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
+        suiteName = nil
         super.tearDown()
     }
 
