@@ -75,6 +75,10 @@ struct SettingsView: View {
                     AccurateRipSettingsTab()
                 }
 
+                Tab("MakeMKV", systemImage: "opticaldisc.fill") {
+                    MakeMKVSettingsTab()
+                }
+
                 Tab("Watch Folder", systemImage: "eye") {
                     WatchFolderView()
                 }
