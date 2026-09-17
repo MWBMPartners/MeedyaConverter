@@ -85,12 +85,16 @@ erode when incremental ticking is impractical.
 - Maintain .gitignore suitably for this project
 - Consider all dev environments: VSCode, Xcode, macOS, Windows, Raspberry Pi
 
-### 9. Stage & Commit After Each Dev Step (No Push)
+### 9. Stage, Commit & Push After Each Dev Step
 
 - After EACH dev step/task is actioned, STAGE changed files (`git add`) and COMMIT with a descriptive message
 - Do this incrementally — not in a batch at the end. Each logical unit of work gets its own commit
 - Commit messages should reference the task/issue number (e.g., "Phase 1.3: Integrate libmediainfo (#225)")
-- Do NOT push — push is manual only. We will push when ready
+- **Push policy (updated — see the "§9 ↔ W5 reconciliation" section near the end of
+  this file):** on the working branch `wip/alpha-consolidation`, **push after each
+  task** (per W5), then watch CI to green (§15). Pushing to any **other** branch still
+  needs explicit user instruction. The old "no push — manual only" wording is
+  **superseded** for the working branch.
 - Never skip staging — all changes must be tracked
 
 ### 10. Cleanup

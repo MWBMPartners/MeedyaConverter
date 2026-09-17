@@ -47,10 +47,12 @@ created later (no stacked PRs).
 ## Conventions
 
 - UK English in user-facing docs; proprietary copyright headers on source files.
-- Every commit references its issue number(s) and carries the required
-  co-author/session trailers.
-- Do not include AI model identifiers in commits, PRs, code, or any pushed
-  artifact — keep those to chat only.
+- Every commit references its issue number(s) and ends with the required
+  attribution trailers (`Co-Authored-By:` and the session link) — this is the
+  repo's established convention and the one sanctioned place a model name appears.
+- Outside those required attribution trailers, do **not** add AI model names into
+  code, PR/issue prose, commit subject lines, or any other pushed artifact — keep
+  that to chat.
 
 ## Canonical sources (read these first)
 

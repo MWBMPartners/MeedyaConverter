@@ -39,6 +39,15 @@ accurate for the code. What changed this session:
   installed** in this cloud session, so the review used an independent Claude
   reviewer (W13 fallback); a **full Codex cross-review is still owed** when Codex is
   reachable.
+- **Review pass done + fixes applied.** An independent Claude reviewer checked the
+  session's changes; three real fixes landed in a follow-up commit: (1) reconciled
+  the contradictory commit-trailer wording in `.OpenAI/CONTEXT.md`; (2) fixed §9 in
+  `.claude/standing_tasks.md` so it no longer says "no push" at the top while the
+  reconciliation sat at the bottom; (3) corrected a **stale** "metadata lookup is
+  dead in full / no URLSession" claim in `.claude/project_brief.md` — MusicBrainz
+  lookup has actually executed since `90f37a3` (#205). One reviewer sub-claim was
+  wrong and dismissed: commit `74d0f59` **does** carry the Co-Authored-By +
+  Claude-Session trailers (confirmed in the CI run metadata).
 
 ## 📍 PRIOR STATE — 2026-09-15
 

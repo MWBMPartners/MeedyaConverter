@@ -35,10 +35,15 @@ reopened or reused.
 - **CI covers this branch again (#496).** `build.yml` used to trigger only on `main`/`beta`/`alpha`,
   so the no-PR-stacking working branch had **no CI at all** between PRs. `'wip/**'` was added to the
   push triggers; every push now builds and tests.
-- **The metadata-LOOKUP subsystem is dead in full.** `Sources/ConverterEngine/Metadata/` contains no
-  `URLSession`, `URLRequest` or `JSONDecoder`; every provider client (MusicBrainz, TMDB, TheTVDB,
-  Discogs, FanArt.tv, OpenSubtitles, OMDb) is a URL **builder**; `AutoTagger` has no callers; no UI
-  offers a lookup. Metadata *writing* is real (#467). Do not describe lookup as available.
+- **Metadata lookup is now PARTLY live (corrected 2026-09-17; supersedes the
+  "dead in full" note).** As of `90f37a3` (2026-09-03), **MusicBrainz (keyless)
+  lookup executes** — `Sources/ConverterEngine/Metadata/MetadataHTTPClient.swift`
+  (`URLSessionMetadataHTTPClient`) plus `MusicBrainzLookupService.swift` perform a
+  real request and feed the tag editor (#205). The **keyed** providers (TMDB,
+  TheTVDB, Discogs, FanArt.tv, OpenSubtitles, OMDb) remain URL **builders**, and
+  `AutoTagger` (`Sources/ConverterEngine/FFmpeg/AutoTagger.swift`) still has no
+  production callers. Metadata *writing* is real (#467). So: describe MusicBrainz
+  lookup as available, and the keyed providers as still not wired.
 - **MusicBrainz "Search upgrades, Nov 30 2026": nothing breaks.** Verified against the announcement
   and all twelve linked SEARCH tickets, fetched first-hand. Decision taken: **Option B** — keep the
   builders, do not add an inline Swift client, because `docs/MeedyaSuite-core-integration.md` plans
