@@ -122,6 +122,27 @@ accurate for the code. What changed this session:
   disc-identification into the ripping flow (#476). MeedyaDB nice-to-haves:
   read/search browse endpoints + UI, admin (API-key CRUD, migration runner), Swagger-UI
   over an OpenAPI `api-docs.yaml`.
+- **#503 MakeMKV optional backend — SLICE 1 DONE + CI-GREEN (`8350640`, run 314).**
+  `Sources/ConverterEngine/Disc/MakeMKVBackend.swift` (+ `MakeMKVBackendTests.swift`)
+  is a **pure** `makemkvcon` argument-builder (`info` / `mkv` / `backup --decrypt`)
+  and robot-mode (`-r`) output parser (`parseRobotFields` handling quoted commas +
+  doubled-quote escapes; `parseInfo` → `MakeMKVDiscInfo` with drives/titles/streams;
+  `parseProgressLine` PRGC/PRGT/PRGV; `parseMessageLine` MSG; `parseDuration`). It
+  **locates nothing, runs nothing, enables nothing, bundles nothing, and changes NO
+  policy** — a test pins that the #492 copy-protection refuse-gate still refuses
+  protected discs. **Deep planning:** Fable retried and was **out of credits (429)
+  again** → planned on Opus; the independent review ran on **Opus** (Fable 429'd
+  there too) and returned **BLOCKERS: none**; two of its robustness nits (trailing
+  `\r` tolerance in the progress/message parsers; `TCOUNT` assign-on-success) were
+  folded in before push. **Retry Fable next run.** **Remaining slices of #503:**
+  (2) locator (`BundledToolLocator(toolName:"makemkvcon")`) + opt-in setting +
+  terms-acknowledgement gate (RenderFarm `InsecureTransportOverride` consent
+  pattern; GUI `@AppStorage` + explicit CLI flag; disc ripping is `studio` tier);
+  (3) executor via the `ExternalToolRunning` seam (progress/cancel like
+  `DiscImagingController`); (4) wire into the rip flow (#476) + feed titles into
+  disc identification (#502); (5) docs + third-party licence notes + honest
+  capability notes. MakeMKV is proprietary → **never bundled**, Direct-only distribution
+  discipline (DR-0001) still applies.
 
 ## 📍 PRIOR STATE — 2026-09-15
 

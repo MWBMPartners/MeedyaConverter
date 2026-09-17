@@ -47,13 +47,24 @@
   `Disc/DiscIdentification.swift` (`DiscSignals`, `DiscIdentifier`) ranks candidate
   identities against a disc's own content (running time, title, year). Offline,
   deterministic, no decryption. Later: provider adapters (#205), reader wiring
-  (#476), UI. MakeMKV/decryption deferred (legal decision).
+  (#476), UI. Keyless MusicBrainz Audio CD/TOC lookup landed (26fcb06). MeedyaDB
+  publishing hook landed (3a0108a) — see below.
+- **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,
+  2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
+  landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +
+  robot-mode parser only. It does NOT locate, run, enable, or bundle makemkvcon
+  and changes NO policy. Later slices add the locator + opt-in/terms gate (2),
+  the executor (3), rip-flow wiring (4), and docs/licences (5).
 - **Metadata lookup is largely dead:** MusicBrainz lookup executes (#205 slice),
   but the keyed providers (TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles,
   OMDb) only build request URLs, and `AutoTagger` has no callers. Metadata
   **writing** is real (#467). Tracking: **#205**.
-- **DRM posture:** the app deliberately detects and **refuses** copy-protected
-  discs; it does not decrypt (#492). This is a deliberate policy line.
+- **DRM posture:** the raw imaging path deliberately detects and **refuses**
+  copy-protected discs; it never decrypts (#492) — `DiscProtectionDetector.policy`.
+  This refuse-by-default line stays for every path EXCEPT the owner-approved,
+  off-by-default, consent-gated MakeMKV opt-in path (#503), which delegates
+  unlocking to the user-installed MakeMKV. Slice 1 (the pure backend) touches none
+  of this; a test pins that the refuse-gate still refuses.
 
 ## Third-party disc libraries (invoked as subprocesses, not linked)
 
