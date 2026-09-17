@@ -67,11 +67,22 @@ accurate for the code. What changed this session:
   assertion that missed the capitalised string — now fixed. First push `2647c24`
   (CI run 307) built fine but failed that one test; the fix `26977de` is
   **CI-green (run 308)**. **Slice 1 is complete**, with a progress note on #502.
-  MakeMKV/decryption still deferred pending an explicit user decision.
-  **Deliberately excluded pending an explicit user "yes": MakeMKV / any decryption**
-  (reverses the "refuse protected discs" policy #492 — a legal decision). LATER
-  slices: provider adapters that fetch real candidates (#205), wiring the orphaned
-  readers + subtitle pipeline (#476), `AutoTagger` consumption, and UI.
+- **DECISIONS (owner, 2026-09-17) — 4 answers that set the autonomous plan:**
+  1. **MakeMKV — APPROVED as an *optional, opt-in* backend** (owner accepted the legal
+     implications). REVERSES the refuse-protected stance ONLY on the opt-in path;
+     refuse-by-default stays everywhere else. Tracked in **#503** with guardrails (off by
+     default, not bundled — user installs MakeMKV, terms acknowledgement, honest UI).
+  2. **Identification next = keyless audio first** — a MusicBrainz Audio CD (disc/TOC)
+     lookup, no API keys, feeding `DiscIdentifier`.
+  3. **Full autonomy** — slice by slice, commit/push each, CI green, stop only for a genuine
+     blocker.
+  4. **Also tackle safe backlog** when this feature pauses (nothing release-, legal-, or
+     people-gated).
+  Work order: (a) keyless audio identification slice → (b) the #503 MakeMKV optional backend
+  → (c) safe backlog. LATER identification slices: video providers + API-key UI (#205),
+  wiring the orphaned readers + subtitle pipeline (#476), `AutoTagger` + UI. Fable is still
+  "out of usage credits" (3rd retry failed) → planning on Opus, retry Fable next run; Codex
+  still absent → Claude reviewer is the standing fallback (full Codex cross-review owed).
 
 ## 📍 PRIOR STATE — 2026-09-15
 
