@@ -143,6 +143,31 @@ accurate for the code. What changed this session:
   disc identification (#502); (5) docs + third-party licence notes + honest
   capability notes. MakeMKV is proprietary → **never bundled**, Direct-only distribution
   discipline (DR-0001) still applies.
+- **#503 SLICE 2 DONE + CI-GREEN (`fb8adc8`, run 317).** The **off-by-default opt-in
+  + terms-acknowledgement gate**, in two parts:
+  - **2a engine gate** (`da3d3e7`) — `Sources/ConverterEngine/Disc/MakeMKVAccess.swift`:
+    `MakeMKVConsent` (un-constructable except via `userAcknowledged(_:)`, mirroring the
+    render-farm `InsecureTransportOverride`), `MakeMKVConsentStore` (reads injectable
+    `UserDefaults`; `consent()` needs BOTH the `makemkv.enabled` toggle AND a non-blank
+    `makemkv.termsAcknowledgement` — off by default), and `MakeMKVGate.readiness(...)`
+    → `notEnabled` / `notInstalled(reason)` / `ready(binaryPath)` via `BundledToolLocator`.
+    Never launches makemkvcon; refuse-gate (#492) untouched (a 2a test still asserts it).
+  - **2b Settings UI** (`0091058`) — `Sources/MeedyaConverter/Views/MakeMKVSettingsTab.swift`
+    + a `Tab` in `SettingsView`'s Encoding group. `@AppStorage` on the shared keys;
+    toggle + (when on) acknowledgement + optional binary-path fields + a live honest
+    Status verdict — never a dead button.
+  - Both parts **reviewed clean on Opus** (Fable still 429 — retry next run). **CI-RED
+    LESSON (run 316→317):** the first push failed one test — `MakeMKVAccessTests` shared a
+    single `UserDefaults` suite name, and under `swift test --parallel` a sibling test's
+    `setUp` `removePersistentDomain` wiped a value mid-test. Fixed by a **unique UUID suite
+    per test instance** (`fb8adc8`). Reinforces the standing parallel-test rule: never share
+    a mutable global (UserDefaults suite, temp path, top-level type name) across test methods
+    — reviewers trace tests in isolation and miss `--parallel` races; CI is the real gate.
+  - **#503 remaining:** (3) executor via the `ExternalToolRunning` seam
+    (progress/cancel, streamed robot output → `MakeMKVBackend.parseProgressLine`);
+    (4) wire into the rip flow (#476) + a CLI opt-in flag (explicit consent, since the CLI
+    ignores GUI UserDefaults) + feed ripped titles into disc identification (#502);
+    (5) docs + third-party licence notes.
 
 ## 📍 PRIOR STATE — 2026-09-15
 

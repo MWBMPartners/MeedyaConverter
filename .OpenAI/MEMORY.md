@@ -53,8 +53,11 @@
   2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
   landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +
   robot-mode parser only. It does NOT locate, run, enable, or bundle makemkvcon
-  and changes NO policy. Later slices add the locator + opt-in/terms gate (2),
-  the executor (3), rip-flow wiring (4), and docs/licences (5).
+  and changes NO policy. Slice 2 landed CI-green (fb8adc8, run 317): the
+  off-by-default opt-in + terms gate — `MakeMKVAccess.swift` (`MakeMKVConsent`,
+  `MakeMKVConsentStore`, `MakeMKVGate.readiness`) + a `MakeMKVSettingsTab` (opt-in
+  toggle, terms field, path, honest status). Remaining: executor (3), rip-flow +
+  CLI wiring (4), docs/licences (5).
 - **Metadata lookup is largely dead:** MusicBrainz lookup executes (#205 slice),
   but the keyed providers (TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles,
   OMDb) only build request URLs, and `AutoTagger` has no callers. Metadata
@@ -80,3 +83,8 @@ subprocesses to keep the proprietary app code licence-clean.
 - `swift build` of the whole package fails only on `#Preview` macros (a
   CommandLineTools limitation) — not a code bug; do not "fix" the previews.
 - CI runs on every push to `wip/**` (#496).
+- **CI runs `swift test --parallel`** → never share a mutable global across test
+  methods (UserDefaults suite name, temp path, top-level type name): a sibling
+  test's setUp/teardown can wipe your state mid-run. Use a **unique UUID
+  UserDefaults suite per test instance**. Reviewers trace tests in isolation and
+  miss these races; only CI catches them (learned on #503 run 316→317).
