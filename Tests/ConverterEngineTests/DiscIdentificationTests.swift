@@ -56,7 +56,7 @@ final class DiscIdentificationTests: XCTestCase {
         XCTAssertEqual(ranked.count, 2)
         XCTAssertEqual(ranked.first?.candidate.externalId, "matrix")
         XCTAssertEqual(ranked.first?.score.confidence ?? 0, 1.0, accuracy: 0.0001)
-        XCTAssertTrue(ranked.first?.score.reason.contains("running time matches closely") ?? false)
+        XCTAssertTrue(ranked.first?.score.reason.contains("Running time matches closely") ?? false)
         // The wrong film is still scored but ranked lower.
         XCTAssertEqual(ranked.last?.candidate.externalId, "reloaded")
         XCTAssertLessThan(ranked.last?.score.confidence ?? 1, 1.0)
@@ -78,8 +78,9 @@ final class DiscIdentificationTests: XCTestCase {
         XCTAssertEqual(ranked.first?.candidate.externalId, "rightLength")
     }
 
-    /// When running time and title tie, a matching year should decide.
-    func test_rank_yearBreaksTie() {
+    /// When running time and title match equally, a matching year raises the
+    /// candidate's confidence and ranks it first.
+    func test_rank_matchingYearRanksHigher() {
         let signals = DiscSignals(
             discType: .dvdVideo,
             mainFeatureDurationSeconds: 120 * 60,

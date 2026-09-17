@@ -60,8 +60,13 @@ accurate for the code. What changed this session:
   Fable was out of credits on two retries; retry Fable next planning run).
   **Environment gap:** this cloud container has **no `swift` toolchain**, so the
   local build gate (W10) could not run — relying on the independent Claude reviewer
-  (Codex not installed) + **CI** as the compile gate. Status when this was written:
-  code + tests + docs done, independent review in flight, **not yet committed/pushed**.
+  (Codex not installed) + **CI** as the compile gate. Independent review came back
+  **compile-clean** (it verified every initialiser order, access level,
+  Sendable/Equatable synthesis, and SPM inclusion, and re-computed the scoring
+  maths) and caught **one test bug** — a case-sensitive `reason.contains(...)`
+  assertion that missed the capitalised string — now fixed. First push `2647c24`
+  (CI run 307) would fail that one test; the fix push follows. MakeMKV/decryption
+  still deferred.
   **Deliberately excluded pending an explicit user "yes": MakeMKV / any decryption**
   (reverses the "refuse protected discs" policy #492 — a legal decision). LATER
   slices: provider adapters that fetch real candidates (#205), wiring the orphaned
