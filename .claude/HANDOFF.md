@@ -48,6 +48,24 @@ accurate for the code. What changed this session:
   lookup has actually executed since `90f37a3` (#205). One reviewer sub-claim was
   wrong and dismissed: commit `74d0f59` **does** carry the Co-Authored-By +
   Claude-Session trailers (confirmed in the CI run metadata).
+- **IMPLEMENTED slice 1 of #502 (user said "let's do it", 2026-09-17).** Built the
+  SAFE half: an **offline disc-identification engine** —
+  `Sources/ConverterEngine/Disc/DiscIdentification.swift` (`DiscSignals`,
+  `DiscIdentityScore`, `ScoredDiscMatch`, `DiscIdentifier.rank/buildQuery`) — that
+  works out what a disc most likely is from its own content (running time, title
+  text, year) and ranks candidate `MetadataResult`s. Pure, deterministic, offline,
+  **no network / hardware / decryption**. Tests:
+  `Tests/ConverterEngineTests/DiscIdentificationTests.swift` (XCTest, public API).
+  Deep plan: `.claude/plans/disc-identification-plan.md` (written on **Opus** —
+  Fable was out of credits on two retries; retry Fable next planning run).
+  **Environment gap:** this cloud container has **no `swift` toolchain**, so the
+  local build gate (W10) could not run — relying on the independent Claude reviewer
+  (Codex not installed) + **CI** as the compile gate. Status when this was written:
+  code + tests + docs done, independent review in flight, **not yet committed/pushed**.
+  **Deliberately excluded pending an explicit user "yes": MakeMKV / any decryption**
+  (reverses the "refuse protected discs" policy #492 — a legal decision). LATER
+  slices: provider adapters that fetch real candidates (#205), wiring the orphaned
+  readers + subtitle pipeline (#476), `AutoTagger` consumption, and UI.
 
 ## 📍 PRIOR STATE — 2026-09-15
 

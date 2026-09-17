@@ -584,12 +584,18 @@ carried over from an earlier draft):
   executor and no source-file flow (#473)
 - **Optical disc ripping & authoring** -- disc readers/authors are
   orphaned; disc **burning** is real and unaffected by this (#476)
-  - **Research idea on file (not scheduled):** #502 evaluates a content-based
-    "smart disc identification" approach (inspired by the MIT MakeMKV Claude skill
-    `threadgill-dev/dvd-autorip-skill`) that would feed the orphaned readers (#476)
-    and metadata auto-tagging (#205). Captured as a spike; the crux is a
-    legal/policy decision on MakeMKV (it decrypts protected discs, which our
-    imaging path deliberately refuses).
+  - **Content-based disc identification — slice 1 implemented on branch (#502).**
+    A pure, offline ranking engine (`ConverterEngine/Disc/DiscIdentification.swift`
+    — `DiscSignals`, `DiscIdentifier.rank/buildQuery`) works out what a disc most
+    likely is from its own content (running time, title text, year) and ranks
+    candidate matches, reusing the existing `MetadataResult`/`MetadataSearchQuery`
+    types. Inspired by the MIT MakeMKV Claude skill `threadgill-dev/dvd-autorip-skill`.
+    It touches **no** network, hardware, or decryption. **Still to do (later
+    slices):** provider adapters that fetch real candidates (a MusicBrainz disc
+    lookup for audio CDs; the keyed video providers, #205), wiring to the orphaned
+    readers (#476) and a subtitle-text pipeline, `AutoTagger` consumption, and UI.
+    **MakeMKV / any decryption stays deferred** pending an explicit legal decision
+    (it unlocks protected discs, which our imaging path deliberately refuses).
 
 ---
 

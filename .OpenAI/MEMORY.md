@@ -43,6 +43,11 @@
 - **Disc ripping/authoring is orphaned** — `DVDReader`, `BlurayReader`,
   `DiscAuthor`, `DiscImager` and friends have no UI/CLI entry point. Umbrella
   issue: **#476**.
+- **Content-based disc identification — slice 1 (#502).** New pure engine
+  `Disc/DiscIdentification.swift` (`DiscSignals`, `DiscIdentifier`) ranks candidate
+  identities against a disc's own content (running time, title, year). Offline,
+  deterministic, no decryption. Later: provider adapters (#205), reader wiring
+  (#476), UI. MakeMKV/decryption deferred (legal decision).
 - **Metadata lookup is largely dead:** MusicBrainz lookup executes (#205 slice),
   but the keyed providers (TMDB, TheTVDB, Discogs, FanArt.tv, OpenSubtitles,
   OMDb) only build request URLs, and `AutoTagger` has no callers. Metadata

@@ -289,3 +289,20 @@ left open (larger remainders gated on the sibling repo / transport work).
   for the deep analysis → fell back to Opus (retry Fable next analysis run). Codex
   CLI is **not installed** in this cloud session → the W13 review used an
   independent Claude reviewer; a full Codex cross-review is still owed.
+
+### Prompt: "let's do it now" — implement the skill's idea (slice 1)
+
+- User asked to start implementing. Surfaced the one real decision upfront —
+  **MakeMKV unlocks copy protection**, which reverses our deliberate "refuse
+  protected discs" policy (#492); that is a legal call, deferred pending an
+  explicit "yes". Proceeded on the SAFE half.
+- **Built slice 1:** `Sources/ConverterEngine/Disc/DiscIdentification.swift` — a
+  pure, offline engine that ranks candidate identities against a disc's own content
+  (running time, title, year), reusing `MetadataResult`/`MetadataSearchQuery`.
+  Plus `DiscIdentificationTests.swift`. Plan in
+  `.claude/plans/disc-identification-plan.md`.
+- **Deep plan on Opus** (Fable out of credits on two retries — retry next time).
+- **No `swift` toolchain in this cloud container**, so the W10 local build gate
+  could not run; relying on the independent Claude reviewer + CI as the compile gate.
+- LATER slices (noted, not built): provider adapters (#205), reader/subtitle wiring
+  (#476), AutoTagger + UI. MakeMKV/decryption stays deferred.
