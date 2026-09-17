@@ -83,6 +83,45 @@ accurate for the code. What changed this session:
   wiring the orphaned readers + subtitle pipeline (#476), `AutoTagger` + UI. Fable is still
   "out of usage credits" (3rd retry failed) → planning on Opus, retry Fable next run; Codex
   still absent → Claude reviewer is the standing fallback (full Codex cross-review owed).
+- **SLICE 2 of #502 DONE + CI-GREEN (`26fcb06`).** Keyless **MusicBrainz Audio CD
+  (disc/TOC) lookup** — `Sources/ConverterEngine/Disc/MusicBrainzDiscLookup.swift`
+  (`MusicBrainzDiscMatch`, `MusicBrainzDiscLookupService`,
+  `musicBrainzTOCString(for:)`, `buildLookupRequest`, `lookup(disc:)` /
+  `lookup(tocString:)`, `parseDiscLookup`) — turns an Audio CD's own table of
+  contents into candidate releases with **no API keys**, feeding `DiscIdentifier`.
+  Reuses the existing `MetadataHTTPClient` seam + throttle + sanitizer (so it is
+  unit-tested with canned responses, no network in CI). `+ Tests`.
+- **SLICE 3 of #502 DONE + CI-GREEN (`3a0108a`, CI run 312 = success).** The
+  **MeedyaDB publishing hook** — `Sources/ConverterEngine/Disc/MeedyaDBPublisher.swift`
+  (+ `MeedyaDBPublisherTests.swift`, 11 tests). Contributes an identified disc's
+  identifiers to **MeedyaDB** (our combined all-in-one media database) via its
+  `disc_ingest` endpoint and returns a MeedyaDB id to store against the disc.
+  **Privacy posture (owner decision):** submission is **anonymised by default**
+  (structural facts + public identifiers only; the disc's printed label text is sent
+  ONLY in opt-in `.full` mode), and publishing is **off unless the user configures +
+  enables it** (base URL + `mdk_` API key). Independent Claude review = **NO BLOCKERS**
+  (3 non-blocking nits recorded as optional follow-ups: double-slash edge in baseURL
+  stripping, apiKey not whitespace-trimmed for the header, no end-to-end body-strip
+  test). No fixes needed. This closes the MeedyaConverter↔MeedyaDB integration loop
+  on the engine side.
+- **MeedyaDB repo bootstrapped (separate repo `MWBMPartners/MeedyaDB`, branch
+  `wip/bootstrap`, CI runs #1/#2 green).** Its own governance (`.claude/` + `.OpenAI/`
+  + handoff + copied standing rules), the API/schema design note
+  (`docs/api-schema-design.md`), the schema (`appWeb/.sql/schema.sql`, 16 tables), and
+  the **core JSON API** (`appWeb/public_html/api.php` + `includes/`: envelope, `mdk_`
+  key auth, repositories) — endpoints health / resolve / entity / **disc_ingest** /
+  identifier_add / link_add — with an installer, a PHP test harness, and CI that
+  installs the schema into a real MariaDB. PHP 8.5 / MySQL, DreamHost shared hosting
+  (no Composer), same house conventions as iHymns/WebMS-Intra/etc. The
+  `MeedyaDBPublisher` above targets its `disc_ingest` contract. Continuity lives in
+  that repo's `.claude/sessions/2026-09-17-HANDOFF.md`.
+- **WORK ORDER from here (autonomous):** (a) keyless audio ID slice ✅ →
+  (b) MeedyaDB publishing hook ✅ → **(c) #503 MakeMKV optional backend (NEXT)** →
+  (d) safe backlog. Still-owed wiring (not yet started): wire `MeedyaDBPublisher` +
+  a Settings UI (enable + baseURL + `mdk_` key) into the app, and wire
+  disc-identification into the ripping flow (#476). MeedyaDB nice-to-haves:
+  read/search browse endpoints + UI, admin (API-key CRUD, migration runner), Swagger-UI
+  over an OpenAPI `api-docs.yaml`.
 
 ## 📍 PRIOR STATE — 2026-09-15
 
