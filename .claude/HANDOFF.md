@@ -185,8 +185,23 @@ accurate for the code. What changed this session:
   matches a non-optional against an `Optional`; unwrap with `guard let` first. Second
   time a review missed a compile/parallel subtlety CI caught (slice 2 = `--parallel`
   race). **CI is the definitive compile/test gate; reviews are advisory for it.**
-- **#503 remaining after slice 3:** (4) wire into the rip flow (#476) + a CLI opt-in
-  flag + feed ripped titles into disc identification (#502); (5) docs + licence notes.
+- **#503 SLICE 4a DONE + CI-GREEN (`253f21e`, run 322).** The MakeMKV→identification
+  bridge — `Sources/ConverterEngine/Disc/MakeMKVIdentification.swift` (+ tests):
+  `MakeMKVIdentification.discSignals(from:discType:seedTitle:)` maps a `MakeMKVDiscInfo`
+  (from the executor's `info()`) into the #502 `DiscSignals` fingerprint
+  (`DiscIdentifier.rank` input) — main feature = longest title, all durations, chapters,
+  audio/subtitle languages, disc/volume label, seed title, `.music` hint for audio discs.
+  Pure; no policy change. **Self-reviewed + CI-gated** (verified against confirmed engine
+  APIs: `DiscType.hasAudio`, `MediaLookupType.music`, `DiscSignals` init) — no CI red.
+- **#503 REMAINING — needs an owner/architecture call (surfaced to user):**
+  **(4b) the rip-flow ENTRY POINT (#476).** #476 ("disc ripping engine has no entry
+  point") is a separate open epic; how to expose the (now-complete, consent-gated)
+  MakeMKV rip is a genuine product/architecture fork — CLI subcommand (lowest-risk,
+  testable; `Sources/meedya-convert/Commands/DiscCommand.swift` is the natural home;
+  CLI takes explicit `--i-accept-makemkv-terms` consent, not GUI UserDefaults), a GUI
+  rip flow, or both, and how far into #476 to go. **(5) docs + third-party licence notes.**
+  RECOMMENDED default if proceeding autonomously: a minimal CLI opt-in `makemkv`
+  subcommand first, GUI later. Engine layer (slices 1–4a) is DONE and independently usable.
 
 ## 📍 PRIOR STATE — 2026-09-15
 

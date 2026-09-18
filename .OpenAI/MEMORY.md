@@ -50,8 +50,9 @@
   (#476), UI. Keyless MusicBrainz Audio CD/TOC lookup landed (26fcb06). MeedyaDB
   publishing hook landed (3a0108a) — see below.
   MakeMKV backend (#503): slice 1 pure parser (8350640), slice 2 opt-in/terms gate
-  (fb8adc8), slice 3 executor (d6c7f15) — all CI-green. Remaining: rip-flow + CLI
-  wiring (4), docs/licences (5).
+  (fb8adc8), slice 3 executor (d6c7f15), slice 4a identification bridge (253f21e)
+  — all CI-green. Remaining: (4b) rip-flow ENTRY POINT (#476, an epic — architecture
+  call surfaced to owner: CLI vs GUI), (5) docs/licences.
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,
   2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
   landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +
