@@ -168,6 +168,25 @@ accurate for the code. What changed this session:
     (4) wire into the rip flow (#476) + a CLI opt-in flag (explicit consent, since the CLI
     ignores GUI UserDefaults) + feed ripped titles into disc identification (#502);
     (5) docs + third-party licence notes.
+- **#503 SLICE 3 DONE + CI-GREEN (`d6c7f15`, run 320).** The **executor** —
+  `Sources/ConverterEngine/Disc/MakeMKVExecutor.swift` (+ tests). `MakeMKVExecutor`
+  (Sendable struct) requires a `MakeMKVConsent` + resolved path at init (compile-time
+  gate), reads no `UserDefaults`. `info(source:)` runs `makemkvcon info` to completion
+  and parses; `rip(...)` streams typed `MakeMKVRipEvent` (progress/message) via
+  `AsyncThrowingStream` with cancel + exit→error mapping; `make(readiness:consent:)`
+  maps slice-2 output into `.notConsented`/`.launchFailed`. Injectable
+  `MakeMKVLineStreaming` seam (production `MakeMKVProcessRunner` reads **stdout** —
+  robot output is on stdout — line-buffered under NSLock, terminationHandler→
+  continuation, SIGCONT+terminate; real-process path is manual-matrix only, like
+  `ExternalToolRunner`) + a pure `MakeMKVLineAssembler` (byte-split on 0x0A, UTF-8-safe).
+  Deep design + review on **Opus** (Fable still 429 — retry next run); no policy change.
+  **CI-RED LESSON (run 319→320):** the review passed but the test target would not
+  compile — `guard case MakeMKVExecutorError.launchFailed = (error as? MakeMKVExecutorError)`
+  matches a non-optional against an `Optional`; unwrap with `guard let` first. Second
+  time a review missed a compile/parallel subtlety CI caught (slice 2 = `--parallel`
+  race). **CI is the definitive compile/test gate; reviews are advisory for it.**
+- **#503 remaining after slice 3:** (4) wire into the rip flow (#476) + a CLI opt-in
+  flag + feed ripped titles into disc identification (#502); (5) docs + licence notes.
 
 ## 📍 PRIOR STATE — 2026-09-15
 

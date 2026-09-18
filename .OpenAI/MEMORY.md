@@ -49,6 +49,9 @@
   deterministic, no decryption. Later: provider adapters (#205), reader wiring
   (#476), UI. Keyless MusicBrainz Audio CD/TOC lookup landed (26fcb06). MeedyaDB
   publishing hook landed (3a0108a) — see below.
+  MakeMKV backend (#503): slice 1 pure parser (8350640), slice 2 opt-in/terms gate
+  (fb8adc8), slice 3 executor (d6c7f15) — all CI-green. Remaining: rip-flow + CLI
+  wiring (4), docs/licences (5).
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,
   2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
   landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +
@@ -88,3 +91,8 @@ subprocesses to keep the proprietary app code licence-clean.
   test's setUp/teardown can wipe your state mid-run. Use a **unique UUID
   UserDefaults suite per test instance**. Reviewers trace tests in isolation and
   miss these races; only CI catches them (learned on #503 run 316→317).
+- **`swift build` (library/app) does NOT compile the test targets** — a test-only
+  compile error (e.g. matching an enum case against an `Optional` from `as?` without
+  unwrapping) passes the build step and only fails at `swift test`. Reviews miss these;
+  CI is the definitive compile gate (learned on #503 run 319→320). Unwrap `as?` with
+  `guard/if let` before a `case` pattern match.
