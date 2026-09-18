@@ -261,7 +261,8 @@ final class MakeMKVExecutorTests: XCTestCase {
                 runner: MockMakeMKVRunner()
             )
         ) { error in
-            guard case MakeMKVExecutorError.launchFailed = (error as? MakeMKVExecutorError) else {
+            guard let mkvError = error as? MakeMKVExecutorError,
+                  case .launchFailed = mkvError else {
                 return XCTFail("expected .launchFailed, got \(error)")
             }
         }
