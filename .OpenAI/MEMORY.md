@@ -63,6 +63,20 @@
 - **The app layer IS unit-testable**: it is a library target `MeedyaConverterCore` with
   `Tests/MeedyaConverterCoreTests` (`@testable import`). Do not assume SwiftUI code here
   is untestable — view models can and should be covered.
+- **#503 slice 4b SHIPPED (7ce4d04, run 329):** the MakeMKV rip screen (sidebar entry,
+  gated, scan → pick titles → rip with progress). Ripped files are just saved — no
+  auto-queue/auto-identify by owner decision. Remaining: slice 5 (docs/licences), and a
+  pre-decrypted VIDEO_TS/BDMV folder source is not offered yet.
+- **DUAL DISC IDs (b567642 + MeedyaDB 7569e99):** `compute(for:)` = music-only
+  (MusicBrainz-compatible, used for lookups AND as MeedyaDB's key);
+  `computeWholeDisc(for:)` = whole physical disc, sent as a `fulldisc-discid`
+  identifier when it differs. Identical on an ordinary CD. `musicBrainzTOCString`
+  changed in lockstep — Enhanced-CD lookups now ask about the music portion.
+- **`Task { [weak self] in await self?.f() }` infers `Task<()?, Never>`** and will not
+  match `Task<Void, Never>`. Always `guard let self else { return }` first. CI caught
+  this; the review did not.
+- **Never put backticks in `git commit -m "…"`** — the shell executes them and eats
+  words. Use `git commit -F <file>` with a quoted heredoc.
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,
   2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
   landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +

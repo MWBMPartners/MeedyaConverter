@@ -285,6 +285,58 @@ accurate for the code. What changed this session:
    built and tested but *nothing calls any of it* (the standing "builder exists but
    unwired" gap). Slice 5 (MakeMKV docs/licences) comes after.
 
+## 📍 2026-09-20 (later) — slice 4b SHIPPED + dual disc IDs SHIPPED, both CI-green
+
+- **#503 SLICE 4b DONE + CI-GREEN (`7ce4d04`, run 329).** The **MakeMKV rip screen** —
+  the owner-chosen entry point for the engine from slices 1–3. Sidebar entry (hidden in
+  App Store builds), gated state that always offers a way forward, then
+  source → scan → pick titles → destination → rip with live progress → outcome.
+  - `Sources/ConverterEngine/Disc/MakeMKVRipPlanning.swift` (pure: progress folding,
+    title formatting, default main-feature selection, run planning, aggregate progress,
+    plain-English failure text) + `MakeMKVRipViewModel` (`@MainActor @Observable`, with
+    the line-streaming seam injected so the whole scan→rip flow is unit-tested with
+    canned output) + `MakeMKVRipView`.
+  - **Ripped files are simply saved** — no auto-queueing or auto-identify (owner's call).
+  - Implemented by a Sonnet agent from `.claude/plans/makemkv-gui-rip-flow-plan.md`; it
+    caught three real problems itself (a shared failure message that would have said
+    "the rip was cancelled" on a *scan*; a singular/plural title count; and that
+    `Result<_, String>` does not compile because the failure type must be an `Error`).
+  - **CI-RED LESSON (run 328→329):** `Task { [weak self] in await self?.doThing() }`
+    infers `Task<()?, Never>`, which does not match a declared `Task<Void, Never>`.
+    `guard let self else { return }` first. **Third time this session CI caught what a
+    review did not, all the same class: code that reads correctly but does not
+    type-check.** For this repo's SwiftUI, reviews are for logic; CI is the compile gate.
+  - Known gap (deliberate, follow-up): the source picker offers drive / device / ISO but
+    not a pre-decrypted `VIDEO_TS`/`BDMV` folder (`MakeMKVSource.file`).
+- **DUAL DISC IDs DONE + CI-GREEN (`b567642`, run 329; MeedyaDB `7569e99`, run 8).**
+  Implements the owner's decision above.
+  - `MusicBrainzDiscID.musicSessionLeadOutSector(for:)` reports **where the music ends
+    and how it knows**: `.reportedSession` (the disc said so — exact),
+    `.derivedFromDataTrack` (data-track start − 11,400, the ONLY estimate, and refused
+    if it would land before the last music track), or `.singleSession` (a plain CD).
+    `sessionGapSectors` is written as `6750 + 4500 + 150` so it reads as lead-out +
+    lead-in + pregap rather than a magic number.
+  - `compute(for:)` = music-only (MusicBrainz-compatible); `computeWholeDisc(for:)` =
+    whole physical disc. **Identical on an ordinary CD** (pinned by a test).
+  - ⚠️ **`musicBrainzTOCString` changed in lockstep** — a deliberate behaviour change:
+    lookups for Enhanced CDs now ask about the music portion, which is what MusicBrainz
+    can actually answer, so those discs should start matching where before they never did.
+  - Submission sends music-only as the disc key + `fulldisc-discid` when it differs
+    (source `meedyaconverter`, NOT `musicbrainz` — they never produce that value).
+  - Expected IDs were computed independently before implementing and then confirmed by
+    CI: music-only `CPTueITWo5NCOrtwPU8RgeVxyrA-`, whole-disc
+    `gxp6QVA8pvq._RJLsqjz8ptjZXk-`, music-only TOC `1+2+88750+150+20150`.
+  - Still owed: a real Enhanced CD to confirm the estimated path (#504).
+- **MeedyaDB also gained OpenAPI + self-hosted Swagger UI** (`541fb0e`, run 7): a full
+  OpenAPI 3.1 description of the real API and a browsable page at `/api-docs/`. The
+  viewer is fetched by `tools/vendor-swagger-ui.sh` (plain curl, no Docker/Node — suits
+  shared hosting), served from our own host, and checksummed. Outbound fetch is blocked
+  in this container, so the assets could not be vendored here and the page says what to
+  run instead of failing silently.
+- **⚠️ ENVIRONMENT GOTCHA:** backticks inside a double-quoted `git commit -m "..."` are
+  executed by the shell and silently eat words from the message (it happened once and
+  was fixed by amending). **Use `git commit -F <file>` with a quoted heredoc.**
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:
