@@ -129,7 +129,13 @@ struct DiscTocCommand: AsyncParsableCommand {
         let usingTemp = tocPath == nil
         let resolvedTocPath = tocPath ?? NSTemporaryDirectory() + "meedya-disc-\(UUID().uuidString).toc"
         defer {
-            if usingTemp { try? FileManager.default.removeItem(atPath: resolvedTocPath) }
+            // Both files: cdrdao writes a .bin datafile beside the .toc.
+            if usingTemp {
+                try? FileManager.default.removeItem(atPath: resolvedTocPath)
+                try? FileManager.default.removeItem(
+                    atPath: (resolvedTocPath as NSString).deletingPathExtension + ".bin"
+                )
+            }
         }
 
         let controller = DiscImagingController(cdrdaoPath: cdrdao)
@@ -438,6 +444,27 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
     @Option(name: .customLong("cdrdao"), help: "Full path to the cdrdao binary (overrides discovery).")
     var cdrdaoPath: String?
 
+    // MARK: Validate
+
+    /// Rejects flag combinations that would quietly do less than the user
+    /// asked for. `--offline --submit` is the one that matters: it parses
+    /// fine, exits 0, and sends nothing, while also skipping the loud
+    /// "MeedyaDB isn't set up" check — a silent no-op in response to an
+    /// explicit instruction, which is exactly what this command must never do.
+    func validate() throws {
+        if offline && submit {
+            throw ValidationError(
+                "--offline and --submit can't be used together: --offline contacts nothing and sends nothing."
+            )
+        }
+        if offline && meedyaDBURL != nil {
+            throw ValidationError("--meedyadb-url has no effect with --offline, which sends nothing.")
+        }
+        if !submit && submissionMode == .full {
+            throw ValidationError("--submission full only means something with --submit.")
+        }
+    }
+
     // MARK: Run
 
     func run() async throws {
@@ -470,13 +497,22 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
 
         emit(result)
 
-        // A contribution the user explicitly asked for and that then failed
-        // is a real failure — exit non-zero so a script notices. Identifying
-        // nothing is NOT a failure: a disc MusicBrainz has never seen is a
-        // perfectly good answer.
-        if case .failed(let reason) = result.contribution {
+        // Identifying nothing is NOT a failure: a disc MusicBrainz has never
+        // seen is a perfectly good answer, and the disc IDs are still useful.
+        // But `--submit` is an explicit instruction, so ANY outcome where
+        // nothing reached MeedyaDB exits non-zero — a script must never read
+        // "exit 0" as "contributed" when nothing was.
+        switch result.contribution {
+        case .succeeded:
+            break
+        case .failed(let reason):
             printStderr("Contributing to MeedyaDB failed: \(reason)")
             throw ExitCode(ExitCodes.generalError.rawValue)
+        case .notAttempted(let reason):
+            if submit {
+                printStderr("--submit was asked for, but nothing was sent: \(reason)")
+                throw ExitCode(ExitCodes.generalError.rawValue)
+            }
         }
     }
 
@@ -514,7 +550,14 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
             }
 
             let scratchPath = NSTemporaryDirectory() + "meedya-identify-\(UUID().uuidString).toc"
-            defer { try? FileManager.default.removeItem(atPath: scratchPath) }
+            defer {
+                // cdrdao writes a .bin datafile beside the .toc even for a
+                // read-toc, so clear both or every run leaks a sidecar.
+                try? FileManager.default.removeItem(atPath: scratchPath)
+                try? FileManager.default.removeItem(
+                    atPath: (scratchPath as NSString).deletingPathExtension + ".bin"
+                )
+            }
 
             let controller = DiscImagingController(cdrdaoPath: cdrdao)
             do {
@@ -539,11 +582,17 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
     private func makeIdentifier() throws -> MusicDiscIdentifier {
         guard submit else { return MusicDiscIdentifier() }
 
+        // Trim exactly as `MeedyaDBPublisherConfig.isUsable` does. With the
+        // narrower `.whitespaces` an API key that is only a newline — easy to
+        // produce with MEEDYADB_API_KEY=$(some-command) — would pass this
+        // gate, then be rejected downstream as "not configured", which the
+        // engine correctly treats as "nothing sent". The run would exit 0
+        // having sent nothing, despite an explicit --submit.
         let apiKey = ProcessInfo.processInfo.environment[Self.apiKeyEnvironmentVariable] ?? ""
         let baseURL = meedyaDBURL ?? ""
         var missing: [String] = []
-        if baseURL.trimmingCharacters(in: .whitespaces).isEmpty { missing.append("--meedyadb-url") }
-        if apiKey.trimmingCharacters(in: .whitespaces).isEmpty { missing.append(Self.apiKeyEnvironmentVariable) }
+        if baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append("--meedyadb-url") }
+        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append(Self.apiKeyEnvironmentVariable) }
         guard missing.isEmpty else {
             printStderr("--submit needs MeedyaDB set up first. Missing: \(missing.joined(separator: " and ")).")
             throw ExitCode(ExitCodes.invalidArguments.rawValue)
@@ -574,7 +623,7 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
             print("  MusicBrainz is asked about the music portion; MeedyaDB records both.")
         }
         if let source = identity.leadOutSource {
-            print("Music session ends by:   \(Self.describe(source))")
+            print("Music session end from:  \(Self.describe(source))")
         }
         if let fingerprint = identity.tocFingerprint {
             print("TOC fingerprint:         \(fingerprint)")

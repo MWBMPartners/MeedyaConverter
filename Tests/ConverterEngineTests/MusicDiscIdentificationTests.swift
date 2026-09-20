@@ -145,6 +145,18 @@ final class MusicDiscIdentificationTests: XCTestCase {
         )
     }
 
+    /// The JSON body that actually reached the stub, decoded.
+    private func sentPayload(_ client: IdentifyStubHTTPClient) throws -> [String: Any] {
+        let body = try XCTUnwrap(client.lastBody, "expected a request body")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    }
+
+    /// The same body as raw text, for "this string appears nowhere" checks.
+    private func rawSentBody(_ client: IdentifyStubHTTPClient) throws -> String {
+        let body = try XCTUnwrap(client.lastBody, "expected a request body")
+        return try XCTUnwrap(String(data: body, encoding: .utf8))
+    }
+
     // MARK: - Identity only (offline, pure)
 
     func test_identity_plainAudioCD_musicAndWholeDiscIDsAgree() {
@@ -188,6 +200,82 @@ final class MusicDiscIdentificationTests: XCTestCase {
         XCTAssertEqual(identity.audioTrackCount, 0)
         XCTAssertFalse(identity.isUsable)
         XCTAssertFalse(identity.isEnhancedCD, "no music ID means we cannot claim it is an Enhanced CD")
+    }
+
+    func test_identity_prefersAnIDTheTOCAlreadyCarries() {
+        var toc = plainAudioCD()
+        toc.musicBrainzDiscId = "aStoredDiscID.From-TheDrive-"
+
+        let identity = MusicDiscIdentifier.identity(for: toc)
+
+        XCTAssertEqual(identity.musicDiscID, "aStoredDiscID.From-TheDrive-")
+        XCTAssertFalse(identity.isEnhancedCD,
+                       "a stored ID differing from the computed whole-disc ID must NOT look like a data session")
+        XCTAssertEqual(identity.leadOutSource, .singleSession)
+    }
+
+    func test_identity_blankStoredIDFallsBackToComputing() {
+        var toc = plainAudioCD()
+        toc.musicBrainzDiscId = "   "
+
+        let identity = MusicDiscIdentifier.identity(for: toc)
+
+        XCTAssertEqual(identity.musicDiscID, MusicDiscIdentifier.identity(for: plainAudioCD()).musicDiscID)
+    }
+
+    func test_identity_andSubmissionNeverDisagreeOnTheDiscID() async throws {
+        // The user is shown `identity.musicDiscID` and MeedyaDB is sent
+        // `submission.disc.musicBrainzDiscId`. If those two ever diverge we
+        // would be showing one thing and recording another.
+        var toc = plainAudioCD()
+        toc.musicBrainzDiscId = "aStoredDiscID.From-TheDrive-"
+
+        let identifier = MusicDiscIdentifier(lookupService: lookup(.success(emptyReleasesJSON, 200)))
+        let result = try await identifier.identify(toc: toc, contribute: false)
+        let submission = try XCTUnwrap(result.submission)
+
+        XCTAssertEqual(result.identity.musicDiscID, submission.disc.musicBrainzDiscId)
+    }
+
+    // MARK: - A damaged TOC is not the same as a disc with no music
+
+    func test_identity_audioTracksButUnmeasurableTOC_isReportedAsDamagedNotEmpty() {
+        // Audio tracks present, but the lead-out sits before the last track
+        // starts — the ID calculation cannot produce anything from this.
+        let toc = DiscTableOfContents(
+            discType: "Audio CD",
+            tracks: [
+                DiscTrack(number: 1, startSector: 0, sectorCount: 18_000, isData: false),
+                DiscTrack(number: 2, startSector: 18_000, sectorCount: 21_000, isData: false),
+            ],
+            leadOutSector: 10,
+            firstTrackNumber: 1,
+            lastTrackNumber: 2
+        )
+
+        let identity = MusicDiscIdentifier.identity(for: toc)
+
+        XCTAssertNil(identity.musicDiscID)
+        XCTAssertEqual(identity.audioTrackCount, 2)
+        XCTAssertFalse(identity.isUsable)
+        XCTAssertTrue(identity.hasUnreadableTableOfContents,
+                      "saying 'no audio tracks' under a line reading 'Audio tracks: 2' is a contradiction")
+    }
+
+    func test_identify_damagedTOC_usesTheDamagedWordingNotTheNoAudioWording() async throws {
+        let toc = DiscTableOfContents(
+            discType: "Audio CD",
+            tracks: [DiscTrack(number: 1, startSector: 5_000, sectorCount: 18_000, isData: false)],
+            leadOutSector: 10,
+            firstTrackNumber: 1,
+            lastTrackNumber: 1
+        )
+        let identifier = MusicDiscIdentifier(lookupService: lookup(.success(releasesJSON, 200)))
+
+        let result = try await identifier.identify(toc: toc, contribute: false)
+
+        XCTAssertEqual(result.contribution, .notAttempted(reason: MusicDiscIdentifier.unreadableTOCReason))
+        XCTAssertEqual(result.summary, "This disc's table of contents is incomplete, so it can't be identified.")
     }
 
     // MARK: - A data-only disc costs nothing
@@ -333,6 +421,59 @@ final class MusicDiscIdentificationTests: XCTestCase {
         XCTAssertEqual(dbClient.callCount, 0)
         XCTAssertEqual(result.contribution, .notAttempted(reason: MusicDiscIdentifier.notRequestedReason))
         XCTAssertNotNil(result.submission, "what WOULD have been sent is still worth showing the user")
+    }
+
+    // MARK: - Privacy: the label and the mode must reach the wire correctly
+    //
+    // The scrub itself is covered by MeedyaDBPublisherTests. These tests
+    // cover the WIRING one level up — that `identify` actually hands its
+    // `mode:` and `labelText:` to the publisher. Without them, hardcoding
+    // `mode: .full` in `contributeIfPossible` would leave every other test
+    // passing while anonymous users quietly started sending disc labels.
+
+    func test_identify_anonymousMode_neverPutsTheLabelOnTheWire() async throws {
+        let dbClient = IdentifyStubHTTPClient(.success(ingestJSON, 200))
+        let identifier = MusicDiscIdentifier(
+            lookupService: lookup(.success(releasesJSON, 200)),
+            publisher: publisher(dbClient)
+        )
+
+        let result = try await identifier.identify(
+            toc: plainAudioCD(),
+            labelText: "Private Home Label",
+            mode: .anonymous
+        )
+
+        XCTAssertTrue(result.contribution.didSubmit)
+        let sent = try sentPayload(dbClient)
+        XCTAssertEqual(sent["submission"] as? String, "anonymous",
+                       "the mode must reach the payload, not be assumed by the publisher's default")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"],
+                     "the label must never leave the machine in anonymous mode")
+        XCTAssertFalse(try rawSentBody(dbClient).contains("Private Home Label"),
+                       "and must not survive anywhere else in the payload either")
+    }
+
+    func test_identify_fullMode_doesSendTheLabel() async throws {
+        let dbClient = IdentifyStubHTTPClient(.success(ingestJSON, 200))
+        let identifier = MusicDiscIdentifier(
+            lookupService: lookup(.success(releasesJSON, 200)),
+            publisher: publisher(dbClient)
+        )
+
+        let result = try await identifier.identify(
+            toc: plainAudioCD(),
+            labelText: "Private Home Label",
+            mode: .full
+        )
+
+        XCTAssertTrue(result.contribution.didSubmit)
+        let sent = try sentPayload(dbClient)
+        XCTAssertEqual(sent["submission"] as? String, "full")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertEqual(disc["labelText"] as? String, "Private Home Label",
+                       "full mode is an explicit opt-in, so the label is expected here")
     }
 
     // MARK: - A real MeedyaDB failure IS a failure

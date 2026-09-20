@@ -79,7 +79,13 @@ public struct MusicDiscIdentity: Sendable, Equatable {
 
     /// The MusicBrainz-compatible Disc ID, covering the **music portion**
     /// only. This is the value MusicBrainz recognises and MeedyaDB keys on.
-    /// `nil` when the disc has no audio tracks at all.
+    /// `nil` when the disc has no audio tracks, or when its table of contents
+    /// is too damaged to measure.
+    ///
+    /// Prefers an ID the TOC already carries over computing a fresh one —
+    /// the same preference `MeedyaDBSubmissionBuilder.audioCD` applies, and
+    /// they MUST agree: otherwise we would show the user one ID and send
+    /// MeedyaDB a different one.
     public var musicDiscID: String?
 
     /// The same calculation over the **whole physical disc**, including any
@@ -114,17 +120,39 @@ public struct MusicDiscIdentity: Sendable, Equatable {
         self.audioTrackCount = audioTrackCount
     }
 
-    /// True when the music portion and the whole disc give different IDs —
-    /// i.e. there is a data session riding along, so this is an Enhanced CD.
+    /// True when the disc carries a data session as well as music — an
+    /// Enhanced CD / CD-Extra.
+    ///
+    /// Decided from the disc's STRUCTURE (which is what `leadOutSource`
+    /// records), not by comparing the two ID strings. Comparing them would
+    /// be wrong whenever the TOC carries a stored music ID: a stale or
+    /// foreign tag would differ from our computed whole-disc ID and make an
+    /// ordinary CD look Enhanced.
     public var isEnhancedCD: Bool {
-        guard let music = musicDiscID, let whole = wholeDiscID else { return false }
-        return music != whole
+        // Unwrap before the switch: bare `case .singleSession:` against an
+        // Optional does not compile — it would need `case .singleSession?:`.
+        guard let source = leadOutSource else { return false }
+        switch source {
+        case .reportedSession, .derivedFromDataTrack:
+            return true
+        case .singleSession:
+            return false
+        }
     }
 
-    /// False when the disc has no audio tracks, so there is nothing for
-    /// MusicBrainz to answer and nothing worth contributing.
+    /// False when there is nothing here to identify — either no audio tracks
+    /// at all, or audio tracks whose table of contents can't be measured.
+    /// `hasUnreadableTableOfContents` tells the two apart.
     public var isUsable: Bool {
         musicDiscID != nil && audioTrackCount > 0
+    }
+
+    /// True when the disc HAS audio tracks but no identifier could be worked
+    /// out from them — a truncated or malformed table of contents. Worth
+    /// distinguishing: telling someone a disc "has no audio tracks" directly
+    /// under a line reading "Audio tracks: 3" is a visible contradiction.
+    public var hasUnreadableTableOfContents: Bool {
+        audioTrackCount > 0 && musicDiscID == nil
     }
 }
 
@@ -148,9 +176,14 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
     /// including a successful lookup that simply found nothing.
     public var lookupFailure: String?
 
-    /// Exactly what was (or would have been) sent to MeedyaDB. Kept even
-    /// when nothing was sent, so a caller can show the user what a
-    /// contribution would contain before they switch it on.
+    /// The submission INPUTS — what a contribution was built from. Kept even
+    /// when nothing was sent, so a caller can show the user what one would
+    /// contain before they switch it on.
+    ///
+    /// Not the wire payload: in `.anonymous` mode the publisher strips
+    /// `labelText` before sending, so these inputs can hold a label that
+    /// never leaves the machine. Anything presenting this as "what was sent"
+    /// must apply that same removal first.
     public var submission: MeedyaDBDiscSubmissionInputs?
 
     public var contribution: MeedyaDBContribution
@@ -176,7 +209,9 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
     /// label. Never mentions a MeedyaDB step the user didn't ask for.
     public var summary: String {
         guard identity.isUsable else {
-            return "This disc has no audio tracks, so there is nothing to identify."
+            return identity.hasUnreadableTableOfContents
+                ? "This disc's table of contents is incomplete, so it can't be identified."
+                : "This disc has no audio tracks, so there is nothing to identify."
         }
         if let first = matches.first {
             let who = first.artist.map { "\($0) — " } ?? ""
@@ -231,8 +266,14 @@ public struct MusicDiscIdentifier: Sendable {
     /// network, no subprocess, no disc access. Safe to call on any TOC,
     /// including a malformed or empty one (every field just comes back nil).
     public static func identity(for toc: DiscTableOfContents) -> MusicDiscIdentity {
-        MusicDiscIdentity(
-            musicDiscID: MusicBrainzDiscID.compute(for: toc),
+        // Same stored-ID preference as `MeedyaDBSubmissionBuilder.audioCD`,
+        // deliberately duplicated rather than approximated: if these two ever
+        // disagree we would print one ID and submit another.
+        let stored = toc.musicBrainzDiscId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preferred = (stored?.isEmpty == false ? stored : nil) ?? MusicBrainzDiscID.compute(for: toc)
+
+        return MusicDiscIdentity(
+            musicDiscID: preferred,
             wholeDiscID: MusicBrainzDiscID.computeWholeDisc(for: toc),
             leadOutSource: MusicBrainzDiscID.musicSessionLeadOutSector(for: toc)?.source,
             tocFingerprint: MusicBrainzDiscLookupService.musicBrainzTOCString(for: toc),
@@ -269,7 +310,11 @@ public struct MusicDiscIdentifier: Sendable {
         guard identity.isUsable else {
             return MusicDiscIdentificationResult(
                 identity: identity,
-                contribution: .notAttempted(reason: Self.noAudioReason)
+                contribution: .notAttempted(
+                    reason: identity.hasUnreadableTableOfContents
+                        ? Self.unreadableTOCReason
+                        : Self.noAudioReason
+                )
             )
         }
 
@@ -357,6 +402,8 @@ public struct MusicDiscIdentifier: Sendable {
 
     public static let noAudioReason =
         "This disc has no audio tracks, so there is nothing to identify or contribute."
+    public static let unreadableTOCReason =
+        "This disc's table of contents is incomplete, so no identifier could be worked out from it."
     public static let notRequestedReason =
         "Contributing to MeedyaDB wasn't requested, so nothing was sent."
     public static let noIdentityReason =
