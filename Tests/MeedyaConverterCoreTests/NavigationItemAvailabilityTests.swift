@@ -31,6 +31,17 @@ final class NavigationItemAvailabilityTests: XCTestCase {
         XCTAssertFalse(NavigationItem.cloudSync.isAvailable)
     }
 
+    /// MakeMKV's whole purpose is unlocking copy-protected discs, which the
+    /// App Store sandbox/policy doesn't permit (#503, slice 4b) — hidden
+    /// only in App Store builds, same gate shape as the vector tools above.
+    func test_makemkvRipAvailabilityFollowsBuildType() {
+        #if APP_STORE
+        XCTAssertFalse(NavigationItem.makemkvRip.isAvailable)
+        #else
+        XCTAssertTrue(NavigationItem.makemkvRip.isAvailable)
+        #endif
+    }
+
     func test_ordinaryToolsRemainAvailable() {
         for item in [NavigationItem.source, .queue, .images, .watermark, .multiOutput] {
             XCTAssertTrue(item.isAvailable, "\(item) should be available")

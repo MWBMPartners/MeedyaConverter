@@ -71,6 +71,12 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Disc burning — write to physical optical media.
     case burn = "Burn"
 
+    /// MakeMKV disc rip flow — scan a DVD/Blu-ray/disc image and rip
+    /// selected titles to .mkv via the optional, opt-in MakeMKV backend
+    /// (Issue #503, slice 4b). Gated behind its own consent toggle in
+    /// Settings, independent of the raw-imaging disc tools.
+    case makemkvRip = "MakeMKV Rip"
+
     /// Video trimming, splitting, and snipping.
     case trimEdit = "Trim / Edit"
 
@@ -181,8 +187,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     ///   Direct distribution does not carry (Direct is un-sandboxed, no iCloud
     ///   container), so every Upload/Download can only fail. Cloud *Storage*
     ///   (S3/Dropbox/Drive/OneDrive) is unaffected and stays available.
+    /// - `.makemkvRip` (#503, slice 4b): MakeMKV's whole purpose is
+    ///   unlocking copy-protected discs, which the App Store sandbox
+    ///   cannot support (no raw device access) and App Store policy does
+    ///   not permit distributing — the same posture as the vector tools'
+    ///   GPL exclusion above (DR-0001), gated the same way. The user still
+    ///   installs MakeMKV themselves; nothing about it is bundled either way.
     #if APP_STORE
-    static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector, .cloudSync]
+    static let unavailable: Set<NavigationItem> = [.vectorConversion, .proresVector, .cloudSync, .makemkvRip]
     #else
     static let unavailable: Set<NavigationItem> = [.cloudSync]
     #endif
@@ -208,6 +220,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .vectorConversion:  return "scribble.variable"
         case .proresVector:      return "film.fill"
         case .burn:              return "opticaldisc"
+        case .makemkvRip:        return "opticaldisc.fill"
         case .trimEdit:          return "scissors"
         case .analyze:           return "waveform.and.magnifyingglass"
         case .metadataTags:      return "tag"
@@ -258,6 +271,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .vectorConversion:  return "Convert raster images to vector SVG"
         case .proresVector:      return "Convert ProRes 4444 video to animated SVG"
         case .burn:              return "Burn disc"
+        case .makemkvRip:        return "Scan a disc and rip selected titles with MakeMKV"
         case .trimEdit:          return "Trim and edit video"
         case .analyze:           return "Analyse media files"
         case .metadataTags:      return "Edit metadata tags"

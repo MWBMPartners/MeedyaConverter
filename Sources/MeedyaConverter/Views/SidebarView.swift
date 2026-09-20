@@ -49,6 +49,13 @@ struct SidebarView: View {
             // Tools section — editing, analysis, batch operations.
             Section("Tools") {
                 sidebarLabel(for: .burn)
+                // MakeMKV rip flow (#503, slice 4b) is hidden in App Store
+                // builds (see `NavigationItem.unavailable`) — same guard
+                // shape as Vector Conversion / ProRes-to-Vector below, so
+                // the hardcoded list here and that set can never disagree.
+                if NavigationItem.makemkvRip.isAvailable {
+                    sidebarLabel(for: .makemkvRip)
+                }
                 sidebarLabel(for: .trimEdit)
                 sidebarLabel(for: .analyze)
                 sidebarLabel(for: .metadataTags)

@@ -125,6 +125,8 @@ struct ContentView: View {
             ProResVectorView()
         case .burn:
             BurnSettingsView()
+        case .makemkvRip:
+            MakeMKVRipView()
         case .trimEdit:
             VideoTrimmerView()
         case .analyze:
