@@ -32,6 +32,7 @@ struct DiscCommand: AsyncParsableCommand {
         subcommands: [
             DiscDrivesCommand.self,
             DiscTocCommand.self,
+            DiscIdentifyCommand.self,
             DiscImageCommand.self,
         ]
     )
@@ -361,6 +362,351 @@ struct DiscImageCommand: AsyncParsableCommand {
         } catch {
             printStderr("Finalisation failed: \(error.localizedDescription)")
             throw ExitCode(ExitCodes.encodingFailed.rawValue)
+        }
+    }
+}
+
+// MARK: - disc identify
+
+/// What to send to MeedyaDB. A CLI-local mirror of the engine's
+/// `MeedyaDBSubmissionMode` rather than a retroactive `ExpressibleByArgument`
+/// conformance on an imported type, which Swift 6 warns about.
+enum DiscSubmissionModeArgument: String, ExpressibleByArgument, CaseIterable {
+    case anonymous
+    case full
+
+    var engineMode: MeedyaDBSubmissionMode {
+        switch self {
+        case .anonymous: return .anonymous
+        case .full: return .full
+        }
+    }
+}
+
+/// `meedya-convert disc identify` — work out what a music disc actually is.
+///
+/// Computes the disc's own IDs from its table of contents (offline and
+/// deterministic), asks MusicBrainz which release it is, and — only when
+/// explicitly asked with `--submit` — contributes the result to MeedyaDB.
+///
+/// Sending anything to MeedyaDB is opt-in on every single run: contributing
+/// is an outward-facing act, so it never happens because of a stored setting
+/// the user has forgotten about. The API key is read from the environment
+/// (`MEEDYADB_API_KEY`), never taken as an argument, because arguments are
+/// visible to every other user on the machine through `ps`.
+struct DiscIdentifyCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "identify",
+        abstract: "Identify a music disc, and optionally contribute it to MeedyaDB."
+    )
+
+    /// The environment variable the MeedyaDB API key is read from.
+    static let apiKeyEnvironmentVariable = "MEEDYADB_API_KEY"
+
+    @Option(name: .customLong("device"), help: "cdrdao --device string to read the disc from (e.g. /dev/sr0).")
+    var device: String?
+
+    @Option(name: .customLong("toc"), help: "Identify a .toc file read earlier, instead of a disc in a drive.")
+    var tocFile: String?
+
+    @Option(name: .customLong("driver"), help: "cdrdao --driver value (e.g. generic-mmc). Only used with --device.")
+    var driver: String?
+
+    @Flag(name: .customLong("fast"), help: "Use --fast-toc when reading the disc (skips the deep ISRC/pregap scan).")
+    var fastToc = false
+
+    @Flag(name: .customLong("offline"), help: "Work out the disc IDs only. Contacts nothing, sends nothing.")
+    var offline = false
+
+    @Flag(name: .customLong("submit"), help: "Contribute the result to MeedyaDB. Never happens unless you ask.")
+    var submit = false
+
+    // The environment variable is named literally here: a property
+    // initializer cannot reach the static above it.
+    @Option(name: .customLong("meedyadb-url"), help: "MeedyaDB base URL. The API key comes from MEEDYADB_API_KEY.")
+    var meedyaDBURL: String?
+
+    @Option(name: .customLong("label"), help: "What is printed on the disc. Only ever sent with --submission full.")
+    var label: String?
+
+    @Option(name: .customLong("submission"), help: "What to send: anonymous (default) or full.")
+    var submissionMode: DiscSubmissionModeArgument = .anonymous
+
+    @Option(name: .customLong("format"), help: "Output format: text (default), json.")
+    var outputFormat: DiscOutputFormat = .text
+
+    @Option(name: .customLong("cdrdao"), help: "Full path to the cdrdao binary (overrides discovery).")
+    var cdrdaoPath: String?
+
+    // MARK: Run
+
+    func run() async throws {
+        let toc = try await loadTableOfContents()
+
+        // --offline stops here, before anything leaves the machine.
+        if offline {
+            let identity = MusicDiscIdentifier.identity(for: toc)
+            let result = MusicDiscIdentificationResult(
+                identity: identity,
+                contribution: .notAttempted(reason: "--offline was used, so nothing was sent.")
+            )
+            emit(result)
+            return
+        }
+
+        let identifier = try makeIdentifier()
+        let result: MusicDiscIdentificationResult
+        do {
+            result = try await identifier.identify(
+                toc: toc,
+                labelText: label,
+                contribute: submit,
+                mode: submissionMode.engineMode
+            )
+        } catch is CancellationError {
+            printStderr("Cancelled.")
+            throw ExitCode(ExitCodes.interrupted.rawValue)
+        }
+
+        emit(result)
+
+        // A contribution the user explicitly asked for and that then failed
+        // is a real failure — exit non-zero so a script notices. Identifying
+        // nothing is NOT a failure: a disc MusicBrainz has never seen is a
+        // perfectly good answer.
+        if case .failed(let reason) = result.contribution {
+            printStderr("Contributing to MeedyaDB failed: \(reason)")
+            throw ExitCode(ExitCodes.generalError.rawValue)
+        }
+    }
+
+    // MARK: Loading the TOC
+
+    private func loadTableOfContents() async throws -> DiscTableOfContents {
+        switch (device, tocFile) {
+        case (nil, nil), (.some, .some):
+            printStderr("Choose exactly one source: --device <drive> to read a disc, or --toc <file> to read a saved .toc.")
+            throw ExitCode(ExitCodes.invalidArguments.rawValue)
+
+        case (nil, .some(let path)):
+            let text: String
+            do {
+                text = try String(contentsOfFile: path, encoding: .utf8)
+            } catch {
+                printStderr("Could not read \(path): \(error.localizedDescription)")
+                throw ExitCode(ExitCodes.inputNotFound.rawValue)
+            }
+            do {
+                return try CdrdaoTocParser.parse(text)
+            } catch {
+                printStderr("\(path) is not a .toc this tool understands: \(error.localizedDescription)")
+                throw ExitCode(ExitCodes.validationFailed.rawValue)
+            }
+
+        case (.some(let devicePath), nil):
+            let locator = BundledToolLocator(toolName: "cdrdao", userOverridePath: cdrdaoPath)
+            let cdrdao: String
+            do {
+                cdrdao = try locator.locate()
+            } catch {
+                printStderr("cdrdao not found: \(error.localizedDescription)")
+                throw ExitCode(ExitCodes.inputNotFound.rawValue)
+            }
+
+            let scratchPath = NSTemporaryDirectory() + "meedya-identify-\(UUID().uuidString).toc"
+            defer { try? FileManager.default.removeItem(atPath: scratchPath) }
+
+            let controller = DiscImagingController(cdrdaoPath: cdrdao)
+            do {
+                return try await controller.readTableOfContents(
+                    device: devicePath,
+                    driver: driver,
+                    fastToc: fastToc,
+                    tocPath: scratchPath
+                )
+            } catch {
+                printStderr("Reading the disc failed: \(error.localizedDescription)")
+                throw ExitCode(ExitCodes.encodingFailed.rawValue)
+            }
+        }
+    }
+
+    // MARK: Building the identifier
+
+    /// Fails loudly when `--submit` was asked for but MeedyaDB isn't set up.
+    /// Silently skipping would be worse: the user asked to contribute and
+    /// would be told nothing was wrong while nothing was sent.
+    private func makeIdentifier() throws -> MusicDiscIdentifier {
+        guard submit else { return MusicDiscIdentifier() }
+
+        let apiKey = ProcessInfo.processInfo.environment[Self.apiKeyEnvironmentVariable] ?? ""
+        let baseURL = meedyaDBURL ?? ""
+        var missing: [String] = []
+        if baseURL.trimmingCharacters(in: .whitespaces).isEmpty { missing.append("--meedyadb-url") }
+        if apiKey.trimmingCharacters(in: .whitespaces).isEmpty { missing.append(Self.apiKeyEnvironmentVariable) }
+        guard missing.isEmpty else {
+            printStderr("--submit needs MeedyaDB set up first. Missing: \(missing.joined(separator: " and ")).")
+            throw ExitCode(ExitCodes.invalidArguments.rawValue)
+        }
+
+        return MusicDiscIdentifier(
+            meedyaDB: MeedyaDBPublisherConfig(baseURL: baseURL, apiKey: apiKey, enabled: true)
+        )
+    }
+
+    // MARK: Output
+
+    private func emit(_ result: MusicDiscIdentificationResult) {
+        switch outputFormat {
+        case .text:
+            printIdentification(result)
+        case .json:
+            printJSON(DiscIdentifyReport(result))
+        }
+    }
+
+    private func printIdentification(_ result: MusicDiscIdentificationResult) {
+        let identity = result.identity
+        print("Disc ID (music portion): \(identity.musicDiscID ?? "—")")
+        if identity.isEnhancedCD, let whole = identity.wholeDiscID {
+            print("Disc ID (whole disc):    \(whole)")
+            print("  This is an Enhanced CD: it carries a data session as well as the music.")
+            print("  MusicBrainz is asked about the music portion; MeedyaDB records both.")
+        }
+        if let source = identity.leadOutSource {
+            print("Music session ends by:   \(Self.describe(source))")
+        }
+        if let fingerprint = identity.tocFingerprint {
+            print("TOC fingerprint:         \(fingerprint)")
+        }
+        print("Audio tracks:            \(identity.audioTrackCount)")
+        print("")
+        print(result.summary)
+
+        for match in result.matches {
+            var line = "  \(match.title)"
+            if let artist = match.artist { line += " — \(artist)" }
+            var details: [String] = []
+            if let year = match.year { details.append(String(year)) }
+            if let country = match.country { details.append(country) }
+            if let tracks = match.trackCount { details.append("\(tracks) tracks") }
+            if !details.isEmpty { line += " (\(details.joined(separator: ", ")))" }
+            print(line)
+            print("    MusicBrainz release: \(match.id)")
+        }
+
+        print("")
+        switch result.contribution {
+        case .succeeded(let ingest):
+            print("MeedyaDB: sent. Disc \(ingest.discPublicId)"
+                + (ingest.matched ? ", matched to a known release." : ", recorded as a new disc."))
+            if let release = ingest.releasePublicId {
+                print("          Release \(release)")
+            }
+        case .notAttempted(let reason):
+            print("MeedyaDB: nothing sent — \(reason)")
+        case .failed(let reason):
+            print("MeedyaDB: FAILED — \(reason)")
+        }
+    }
+
+    private static func describe(_ source: MusicBrainzDiscID.LeadOutSource) -> String {
+        switch source {
+        case .singleSession:
+            return "the end of the disc (there is only one session)"
+        case .reportedSession:
+            return "the session table the drive reported"
+        case .derivedFromDataTrack:
+            return "where the data track starts, minus the standard session gap"
+        }
+    }
+}
+
+// MARK: - disc identify — JSON shape
+
+/// The machine-readable form of an identification run. Written out by hand
+/// rather than making the engine types `Encodable`, so the JSON contract
+/// scripts depend on is owned here and can't drift when an engine type gains
+/// a field.
+private struct DiscIdentifyReport: Encodable {
+
+    struct Identity: Encodable {
+        var musicDiscId: String?
+        var wholeDiscId: String?
+        var leadOutSource: String?
+        var tocFingerprint: String?
+        var audioTrackCount: Int
+        var isEnhancedCd: Bool
+    }
+
+    struct Match: Encodable {
+        var musicBrainzReleaseId: String
+        var title: String
+        var artist: String?
+        var date: String?
+        var country: String?
+        var trackCount: Int?
+    }
+
+    struct Contribution: Encodable {
+        /// One of `succeeded`, `notAttempted`, `failed`.
+        var status: String
+        var reason: String?
+        var discPublicId: String?
+        var matched: Bool?
+        var releasePublicId: String?
+    }
+
+    var identity: Identity
+    var matches: [Match]
+    var lookupFailure: String?
+    var identified: Bool
+    var summary: String
+    var contribution: Contribution
+
+    init(_ result: MusicDiscIdentificationResult) {
+        identity = Identity(
+            musicDiscId: result.identity.musicDiscID,
+            wholeDiscId: result.identity.wholeDiscID,
+            // Explicit closure types: a multi-statement closure whose body is
+            // a switch is exactly the shape Swift's inference gives up on.
+            leadOutSource: result.identity.leadOutSource.map { (source: MusicBrainzDiscID.LeadOutSource) -> String in
+                switch source {
+                case .singleSession: return "singleSession"
+                case .reportedSession: return "reportedSession"
+                case .derivedFromDataTrack: return "derivedFromDataTrack"
+                }
+            },
+            tocFingerprint: result.identity.tocFingerprint,
+            audioTrackCount: result.identity.audioTrackCount,
+            isEnhancedCd: result.identity.isEnhancedCD
+        )
+        matches = result.matches.map { match in
+            Match(
+                musicBrainzReleaseId: match.id,
+                title: match.title,
+                artist: match.artist,
+                date: match.date,
+                country: match.country,
+                trackCount: match.trackCount
+            )
+        }
+        lookupFailure = result.lookupFailure
+        identified = result.isIdentified
+        summary = result.summary
+        switch result.contribution {
+        case .succeeded(let ingest):
+            contribution = Contribution(
+                status: "succeeded",
+                reason: nil,
+                discPublicId: ingest.discPublicId,
+                matched: ingest.matched,
+                releasePublicId: ingest.releasePublicId
+            )
+        case .notAttempted(let reason):
+            contribution = Contribution(status: "notAttempted", reason: reason)
+        case .failed(let reason):
+            contribution = Contribution(status: "failed", reason: reason)
         }
     }
 }
