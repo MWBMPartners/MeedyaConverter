@@ -82,16 +82,12 @@ final class MusicBrainzDiscIDTests: XCTestCase {
 
     // MARK: - From a table of contents
 
-    func test_compute_fromTOC_excludesDataTrackAndAppliesPregap() {
-        // Two audio tracks plus a data track that must be ignored.
-        // Lead-out 250000 + 150 = 250150; offsets 0+150 and 20000+150.
-        //
-        // This pins data-track exclusion, the pregap, and that the Disc ID and the
-        // lookup string always describe the SAME tracks. It does NOT claim the ID
-        // matches MusicBrainz for a real multi-session CD-Extra — for those,
-        // MusicBrainz uses the first session's lead-out, not the disc's physical
-        // one. See the LIMITATION note in MusicBrainzDiscID.swift.
-        let toc = DiscTableOfContents(
+    // An Enhanced CD: music in session 1, a data track in session 2. The disc does
+    // not report its sessions, so the end of the music session is inferred from
+    // where the data track starts, less the 11,400-sector gap: 100000 - 11400 =
+    // 88600, +150 pregap = 88750.
+    private func enhancedCD() -> DiscTableOfContents {
+        DiscTableOfContents(
             tracks: [
                 DiscTrack(number: 1, startSector: 0),
                 DiscTrack(number: 2, startSector: 20_000),
@@ -99,9 +95,62 @@ final class MusicBrainzDiscIDTests: XCTestCase {
             ],
             leadOutSector: 250_000
         )
+    }
+
+    private let expectedMusicOnlyDiscID = "CPTueITWo5NCOrtwPU8RgeVxyrA-"
+
+    func test_enhancedCD_musicOnlyIDMeasuresToTheEndOfTheMusic() {
+        // compute(for:) is the MusicBrainz-compatible one: music portion only.
+        XCTAssertEqual(MusicBrainzDiscID.compute(for: enhancedCD()), expectedMusicOnlyDiscID)
+        // The lookup string MUST describe the same disc as the ID.
+        XCTAssertEqual(
+            MusicBrainzDiscLookupService.musicBrainzTOCString(for: enhancedCD()),
+            "1+2+88750+150+20150"
+        )
+    }
+
+    func test_enhancedCD_wholeDiscIDMeasuresToTheEndOfTheDisc() {
+        // The finer physical key: includes the data session.
+        XCTAssertEqual(MusicBrainzDiscID.computeWholeDisc(for: enhancedCD()), expectedDiscID)
+        XCTAssertNotEqual(
+            MusicBrainzDiscID.compute(for: enhancedCD()),
+            MusicBrainzDiscID.computeWholeDisc(for: enhancedCD()),
+            "on an Enhanced CD the two IDs must differ"
+        )
+    }
+
+    func test_enhancedCD_leadOutIsDerivedFromTheDataTrack() {
+        let leadOut = MusicBrainzDiscID.musicSessionLeadOutSector(for: enhancedCD())
+        XCTAssertEqual(leadOut?.sector, 100_000 - MusicBrainzDiscID.sessionGapSectors)
+        XCTAssertEqual(leadOut?.source, .derivedFromDataTrack)
+        XCTAssertEqual(MusicBrainzDiscID.sessionGapSectors, 11_400)
+    }
+
+    func test_enhancedCD_prefersTheSessionLayoutWhenTheDiscReportsIt() {
+        // When the disc says where session 1 ends, use that exactly — no estimate.
+        var toc = enhancedCD()
+        toc.sessions = [
+            DiscSession(number: 1, firstTrack: 1, lastTrack: 2, leadOutSector: 90_000),
+            DiscSession(number: 2, firstTrack: 3, lastTrack: 3, leadOutSector: 250_000),
+        ]
+        let leadOut = MusicBrainzDiscID.musicSessionLeadOutSector(for: toc)
+        XCTAssertEqual(leadOut?.sector, 90_000)
+        XCTAssertEqual(leadOut?.source, .reportedSession)
+    }
+
+    func test_plainAudioCD_bothIDsAreIdentical() {
+        // No data track: the physical lead-out IS the music lead-out, so an ordinary
+        // CD is completely unaffected by the Enhanced-CD handling.
+        let toc = DiscTableOfContents(
+            tracks: [
+                DiscTrack(number: 1, startSector: 0),
+                DiscTrack(number: 2, startSector: 20_000),
+            ],
+            leadOutSector: 250_000
+        )
         XCTAssertEqual(MusicBrainzDiscID.compute(for: toc), expectedDiscID)
-        // The Disc ID and the lookup string must describe the same tracks.
-        XCTAssertEqual(MusicBrainzDiscLookupService.musicBrainzTOCString(for: toc), "1+2+250150+150+20150")
+        XCTAssertEqual(MusicBrainzDiscID.computeWholeDisc(for: toc), expectedDiscID)
+        XCTAssertEqual(MusicBrainzDiscID.musicSessionLeadOutSector(for: toc)?.source, .singleSession)
     }
 
     func test_compute_fromTOC_nilWhenNoAudioTracks() {

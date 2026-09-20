@@ -16,8 +16,21 @@ import ConverterEngine
 
 final class MeedyaDBSubmissionBuilderTests: XCTestCase {
 
-    // Enhanced CD: two audio tracks + a data track that must be excluded.
+    // An ordinary single-session audio CD — the common case, where the music-only
+    // and whole-disc IDs are identical.
     private func audioTOC() -> DiscTableOfContents {
+        DiscTableOfContents(
+            tracks: [
+                DiscTrack(number: 1, startSector: 0),
+                DiscTrack(number: 2, startSector: 20_000),
+            ],
+            leadOutSector: 250_000
+        )
+    }
+
+    // An Enhanced CD: the same music plus a data track in a second session. Here the
+    // two IDs differ, and both are contributed.
+    private func enhancedCD() -> DiscTableOfContents {
         DiscTableOfContents(
             tracks: [
                 DiscTrack(number: 1, startSector: 0),
@@ -29,6 +42,7 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
     }
 
     private let expectedDiscID = "gxp6QVA8pvq._RJLsqjz8ptjZXk-"
+    private let expectedMusicOnlyDiscID = "CPTueITWo5NCOrtwPU8RgeVxyrA-"
 
     // MARK: - Audio CD
 
@@ -38,7 +52,7 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
         XCTAssertEqual(inputs.disc.discType, "audio_cd")
         XCTAssertEqual(inputs.disc.musicBrainzDiscId, expectedDiscID)
         XCTAssertEqual(inputs.disc.tocFingerprint, "1+2+250150+150+20150")
-        XCTAssertEqual(inputs.disc.trackCount, 2, "the data track must not be counted")
+        XCTAssertEqual(inputs.disc.trackCount, 2)
         XCTAssertNil(inputs.disc.labelText, "no label supplied")
     }
 
@@ -136,6 +150,35 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
 
     func test_audioCD_hasUsableIdentityWhenItCarriesADiscID() {
         XCTAssertTrue(MeedyaDBSubmissionBuilder.audioCD(toc: audioTOC()).hasUsableIdentity)
+    }
+
+    // MARK: - Enhanced CD: both IDs contributed
+
+    func test_enhancedCD_submitsMusicOnlyAsTheKeyAndWholeDiscAsAnExtraIdentifier() {
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(toc: enhancedCD())
+
+        // The matching key is the music-only ID — the one MusicBrainz recognises.
+        XCTAssertEqual(inputs.disc.musicBrainzDiscId, expectedMusicOnlyDiscID)
+        XCTAssertEqual(inputs.disc.tocFingerprint, "1+2+88750+150+20150")
+        XCTAssertEqual(inputs.disc.trackCount, 2, "the data track must not be counted")
+
+        // Both IDs go up: music-only for matching, whole-disc as the finer key.
+        XCTAssertEqual(inputs.identifiers.count, 2)
+        XCTAssertEqual(inputs.identifiers[0].idType, "musicbrainz-discid")
+        XCTAssertEqual(inputs.identifiers[0].idValue, expectedMusicOnlyDiscID)
+        XCTAssertEqual(inputs.identifiers[1].idType, "fulldisc-discid")
+        XCTAssertEqual(inputs.identifiers[1].idValue, expectedDiscID)
+        XCTAssertEqual(inputs.identifiers[1].source, "meedyaconverter",
+                       "the whole-disc ID is ours, not MusicBrainz's")
+    }
+
+    func test_plainAudioCD_doesNotDuplicateTheSameIDTwice() {
+        // On an ordinary CD the two IDs are identical, so the whole-disc identifier
+        // would add nothing and is skipped.
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(toc: audioTOC())
+        XCTAssertEqual(inputs.identifiers.count, 1)
+        XCTAssertEqual(inputs.identifiers[0].idType, "musicbrainz-discid")
+        XCTAssertEqual(inputs.disc.musicBrainzDiscId, expectedDiscID)
     }
 
     // MARK: - Video disc

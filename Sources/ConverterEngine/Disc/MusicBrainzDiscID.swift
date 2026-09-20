@@ -22,15 +22,34 @@
 // caller assigns it, so `AudioDiscFidelity.buildCDTOCArguments` still embeds no
 // `MUSICBRAINZ_DISCID` tag. Wiring that up is tracked separately.
 //
-// LIMITATION — multi-session (Enhanced / CD-Extra) discs: MusicBrainz uses the
-// **first session's** lead-out, whereas this uses the disc's physical lead-out
-// (`toc.leadOutSector`). For a CD-Extra — audio in session 1, a data track in
-// session 2 — those differ, so the ID computed here will not match MusicBrainz's.
-// Plain Red Book audio CDs (the overwhelming majority, and the only case the disc
-// stack targets today) are unaffected. This mirrors the same assumption already
-// baked into `MusicBrainzDiscLookupService.musicBrainzTOCString`, so the two always
-// agree with each other; correcting both in lockstep (and verifying libdiscid's
-// session-gap constant) is tracked as a follow-up.
+// TWO IDs, deliberately (owner decision, 2026-09-20 — see #504):
+//
+//   • `compute(for:)` — the **music portion only**, measured to the end of the music
+//     session. This is what MusicBrainz recognises, so it is what lookups use and
+//     what MeedyaDB matches on.
+//   • `computeWholeDisc(for:)` — the **whole physical disc**, including any data
+//     session. MusicBrainz never produces this, but it is the finer physical key:
+//     two pressings of the same album with different bonus content share a
+//     music-only ID yet differ here. Contributed alongside, so a disc can be both
+//     matched against the wider world and told apart from its siblings.
+//
+// On an ordinary single-session audio CD — the overwhelming majority — the two are
+// identical, so nothing changes for most discs. They differ only on an Enhanced /
+// CD-Extra disc (music in session 1, a data track in session 2).
+//
+// How the end of the music session is found, best first:
+//   1. the disc reported its sessions → use session 1's own lead-out (exact);
+//   2. otherwise infer it from where the data track starts, less the standard
+//      session gap of 11,400 sectors (6750 lead-out + 4500 lead-in + 150 pregap);
+//   3. no data track at all → it is a plain audio CD, so the disc's lead-out is the
+//      music lead-out.
+// Only step 2 is an estimate, and it is the one thing still wanting confirmation
+// against a real Enhanced CD on the hardware matrix (#504). Step 2 is also refused
+// if it would place the lead-out before the last music track.
+//
+// `MusicBrainzDiscLookupService.musicBrainzTOCString` uses the SAME music-session
+// lead-out and must always move in step with this, or the ID and the lookup would
+// describe different discs.
 //
 // The algorithm is MusicBrainz's published one:
 //   1. Build an ASCII string of UPPERCASE hex:
@@ -61,12 +80,88 @@ import Foundation
 /// Pure computation of a MusicBrainz Disc ID.
 public enum MusicBrainzDiscID {
 
-    /// The Disc ID for a table of contents, or `nil` when the disc carries no
-    /// audio tracks (a pure data disc) or the TOC is malformed.
+    /// The standard gap between two sessions on a CD, in sectors: the first
+    /// session's lead-out (6750) + the second session's lead-in (4500) + the
+    /// 150-frame pregap. Used only to *derive* where the music session ended on a
+    /// multi-session disc that does not report its sessions.
+    public static let sessionGapSectors = 6750 + 4500 + 150   // 11,400
+
+    /// How the end of the music session was established.
+    public enum LeadOutSource: Sendable, Equatable {
+        /// An ordinary single-session audio CD — the disc's lead-out *is* the music
+        /// lead-out, so this is exact.
+        case singleSession
+        /// The disc reported its session layout and we used session 1's own
+        /// lead-out. Exact, and needs no assumptions.
+        case reportedSession
+        /// A multi-session disc that did not report sessions: inferred from where
+        /// the data track starts, minus `sessionGapSectors`. **This is the only
+        /// estimated path** — see #504; it wants confirming against a real
+        /// Enhanced CD on the hardware matrix.
+        case derivedFromDataTrack
+    }
+
+    /// Where the **music** session ends, plus how we know. `nil` when the disc has
+    /// no audio tracks at all.
     ///
-    /// Data tracks are excluded and the 150-frame pregap is applied, matching
-    /// `MusicBrainzDiscLookupService.musicBrainzTOCString(for:)`.
+    /// For an ordinary audio CD this is simply the disc's lead-out. For an Enhanced
+    /// CD (music in session 1, a data track in session 2) the physical lead-out sits
+    /// beyond the data track, which is not what MusicBrainz measures — hence this.
+    public static func musicSessionLeadOutSector(
+        for toc: DiscTableOfContents
+    ) -> (sector: Int, source: LeadOutSource)? {
+        let audioTracks = toc.tracks.filter { !$0.isData }
+        guard let lastAudioStart = audioTracks.map({ $0.startSector }).max() else { return nil }
+
+        // 1. Best case: the disc told us where session 1 ends.
+        if toc.sessions.count > 1,
+           let firstSession = toc.sessions.first(where: { $0.number == 1 }),
+           firstSession.leadOutSector > lastAudioStart {
+            return (firstSession.leadOutSector, .reportedSession)
+        }
+
+        // 2. Otherwise infer it from the first data track that follows the music.
+        let dataAfterMusic = toc.tracks
+            .filter { $0.isData && $0.startSector > lastAudioStart }
+            .map { $0.startSector }
+            .min()
+        if let dataStart = dataAfterMusic {
+            let derived = dataStart - sessionGapSectors
+            // Only trust the estimate if it still lands after the last music track.
+            if derived > lastAudioStart {
+                return (derived, .derivedFromDataTrack)
+            }
+        }
+
+        // 3. A plain single-session audio CD.
+        return (toc.leadOutSector, .singleSession)
+    }
+
+    /// The **MusicBrainz-compatible** Disc ID: the music portion of the disc only.
+    /// This is the one MusicBrainz recognises, so it is what lookups and MeedyaDB's
+    /// matching key should use. `nil` when the disc carries no audio tracks.
+    ///
+    /// Data tracks are excluded and the 150-frame pregap applied, matching
+    /// `MusicBrainzDiscLookupService.musicBrainzTOCString(for:)` — the two MUST stay
+    /// in step or the ID and the lookup would describe different discs.
     public static func compute(for toc: DiscTableOfContents) -> String? {
+        guard let leadOut = musicSessionLeadOutSector(for: toc) else { return nil }
+        return compute(for: toc, leadOutSector: leadOut.sector)
+    }
+
+    /// The **whole physical disc**, including any data session — what a drive sees
+    /// end to end. MusicBrainz does not use this, but it is the finer physical key:
+    /// two pressings of the same album with different bonus content share a
+    /// music-only ID yet differ here. Recorded alongside the music-only ID so a disc
+    /// can be both matched *and* told apart.
+    ///
+    /// On an ordinary single-session audio CD this equals `compute(for:)`.
+    public static func computeWholeDisc(for toc: DiscTableOfContents) -> String? {
+        compute(for: toc, leadOutSector: toc.leadOutSector)
+    }
+
+    /// Shared body: the audio tracks of `toc` measured to an explicit lead-out.
+    private static func compute(for toc: DiscTableOfContents, leadOutSector: Int) -> String? {
         let audioTracks = toc.tracks
             .filter { !$0.isData }
             .sorted { $0.number < $1.number }
@@ -74,7 +169,7 @@ public enum MusicBrainzDiscID {
         return compute(
             firstTrack: first.number,
             lastTrack: last.number,
-            leadOutOffset: toc.leadOutSector + 150,
+            leadOutOffset: leadOutSector + 150,
             trackOffsets: audioTracks.map { $0.startSector + 150 }
         )
     }

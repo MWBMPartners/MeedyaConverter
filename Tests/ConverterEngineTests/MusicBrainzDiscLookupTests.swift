@@ -67,8 +67,14 @@ final class MusicBrainzDiscLookupTests: XCTestCase {
             ],
             leadOut: 250000
         )
-        // first=1, last=2, leadOut+150=250150, offsets +150 = 150, 20150.
-        XCTAssertEqual(MusicBrainzDiscLookupService.musicBrainzTOCString(for: t), "1+2+250150+150+20150")
+        // first=1, last=2, offsets +150 = 150, 20150.
+        //
+        // The lead-out is measured to the end of the MUSIC session, not the physical
+        // end of the disc: this is an Enhanced CD, so the music session ends where
+        // the data track starts, less the standard 11,400-sector session gap —
+        // 100000 - 11400 = 88600, +150 = 88750. That is what MusicBrainz matches on,
+        // and it must agree with MusicBrainzDiscID.compute(for:).
+        XCTAssertEqual(MusicBrainzDiscLookupService.musicBrainzTOCString(for: t), "1+2+88750+150+20150")
     }
 
     func test_tocString_nilWhenNoAudioTracks() {

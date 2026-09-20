@@ -77,6 +77,12 @@ public enum MeedyaDBSubmissionBuilder {
     public static let musicBrainzReleaseIDType = "musicbrainz-release"
     /// Source label recorded alongside MusicBrainz identifiers.
     public static let musicBrainzSource = "musicbrainz"
+    /// Identifier type for the whole-disc ID (music **and** any data session).
+    /// Deliberately not named `musicbrainz-…`: MusicBrainz never produces this
+    /// value, so labelling it as theirs would be wrong.
+    public static let fullDiscIDType = "fulldisc-discid"
+    /// Source label for values this app computes itself.
+    public static let selfComputedSource = "meedyaconverter"
 
     // MARK: Music discs
 
@@ -128,6 +134,18 @@ public enum MeedyaDBSubmissionBuilder {
                 idType: musicBrainzDiscIDType,
                 idValue: discID,
                 source: musicBrainzSource
+            ))
+        }
+        // Also contribute the whole-disc ID when it differs — i.e. on an Enhanced
+        // CD, where the music-only ID is what MusicBrainz matches but the whole-disc
+        // ID distinguishes this pressing from another with different bonus content.
+        // On a plain audio CD the two are identical and this adds nothing, so it is
+        // skipped rather than duplicated.
+        if let wholeDiscID = MusicBrainzDiscID.computeWholeDisc(for: toc), wholeDiscID != discID {
+            identifiers.append(MeedyaDBIdentifier(
+                idType: fullDiscIDType,
+                idValue: wholeDiscID,
+                source: selfComputedSource
             ))
         }
 

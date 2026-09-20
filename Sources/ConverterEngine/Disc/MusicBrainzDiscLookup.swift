@@ -117,11 +117,16 @@ public struct MusicBrainzDiscLookupService: Sendable {
             .filter { !$0.isData }
             .sorted { $0.number < $1.number }
         guard let first = audioTracks.first, let last = audioTracks.last else { return nil }
+        // Measured to the end of the MUSIC session, not the physical end of the
+        // disc — that is what MusicBrainz matches on, and it is what differs on an
+        // Enhanced CD. MUST stay in step with `MusicBrainzDiscID.compute(for:)`, or
+        // the lookup and the disc's ID would describe different discs.
+        guard let musicLeadOut = MusicBrainzDiscID.musicSessionLeadOutSector(for: toc) else { return nil }
         let offsets = audioTracks.map { $0.startSector + 150 }
         return AudioCDReader.buildMusicBrainzTOC(
             firstTrack: first.number,
             lastTrack: last.number,
-            leadOutOffset: toc.leadOutSector + 150,
+            leadOutOffset: musicLeadOut.sector + 150,
             trackOffsets: offsets
         )
     }
