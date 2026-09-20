@@ -220,6 +220,14 @@ erode when incremental ticking is impractical.
 - Reaffirmed and broadened per user directive 2026-09-01: previously scoped to
   *deep* analysis/planning; now applies to **all** analysis and planning, with
   implementation on **Sonnet**.
+- **Ultrathink first, and use workflows to plan AND do the work** (added
+  2026-09-20, user directive). Before starting a piece of work, think harder
+  about it than feels necessary — reason through the real scope, the risks, what
+  could go wrong, and the right order of work — *then* start. Use **workflows /
+  orchestrated agents** to help both **plan** and **carry out** the work, rather
+  than doing everything in a single pass. This sits on top of (does not replace)
+  the sequential-Fable rule above: planning agents still run one at a time, and
+  implementation still goes to Sonnet/Haiku (Opus only when genuinely complex).
 
 ### W4. Use available plugins
 

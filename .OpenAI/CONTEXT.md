@@ -18,6 +18,9 @@ created later (no stacked PRs).
    **Opus** for that run and retry Fable next time. Implementation → **Sonnet**
    (Haiku for trivial edits; **Opus** only when genuinely complex). Philosophy:
    **GIRFT — Get It Right First Time**, spending usage efficiently.
+   **Ultrathink first, and use workflows to plan AND do the work** (2026-09-20):
+   think harder about scope, risks and ordering *before* starting, and orchestrate
+   the work through workflows/agents rather than one single pass.
 2. **Cross-LLM review loop.** Build with one service, review with a different one
    (Claude Code ⇄ Codex). Reviewer finds issues → fix → re-review, until clean.
    If Codex is not reachable in the current environment, review with an
