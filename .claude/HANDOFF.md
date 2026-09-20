@@ -203,6 +203,58 @@ accurate for the code. What changed this session:
   RECOMMENDED default if proceeding autonomously: a minimal CLI opt-in `makemkv`
   subcommand first, GUI later. Engine layer (slices 1–4a) is DONE and independently usable.
 
+## 📍 2026-09-20 — owner picked the GUI; music-disc identity closed
+
+- **OWNER DECISION: #503 slice 4b = the GUI rip flow** (not the CLI). Design complete and
+  saved at **`.claude/plans/makemkv-gui-rip-flow-plan.md`** — read that before touching 4b.
+  It is grounded in real file:line evidence and includes a ranked list of **compile traps**
+  with the proven in-repo alternative for each. Key correction it surfaced: the app layer
+  **is** a testable library target (`MeedyaConverterCore` + `Tests/MeedyaConverterCoreTests`),
+  so the scan→select→rip view model IS unit-testable with a mock `MakeMKVLineStreaming` —
+  an earlier assumption that it was untestable was wrong.
+- **NEW STANDING RULE (user, 2026-09-20): "ultrathink first + use workflows to plan AND do
+  the work."** Added to W3 in `.claude/standing_tasks.md`, mirrored in `.OpenAI/CONTEXT.md`,
+  **and** copied to the MeedyaDB repo and to the device-level `~/.claude/CLAUDE.md`
+  (tool-agnostic wording). It sits on top of the sequential-Fable rule; it does not replace it.
+- **MUSIC DISCS now identifiable AND contributable — `e017f89`, CI run 325 GREEN (#502).**
+  The owner asked whether music discs could be identified and their ID submitted to MeedyaDB
+  the way video discs are. They could be *identified* already (keyless MusicBrainz TOC lookup,
+  slice 2 / `26fcb06`) — and that path is **stronger** than video's, because a CD's track
+  layout is a near-fingerprint, so it is an exact hit rather than a ranked guess. Two real gaps
+  were closed:
+  1. **`Sources/ConverterEngine/Disc/MusicBrainzDiscID.swift`** — computes the canonical
+     MusicBrainz **Disc ID**. `DiscTableOfContents.musicBrainzDiscId` had existed from day one
+     and **nothing ever filled it**; the lookup service only built the *query* TOC string, never
+     the disc's identity. Published algorithm (hex TOC → SHA-1 → base64 with `.`/`_`/`-`
+     substitutions). Data tracks excluded + 150-frame pregap applied, so the Disc ID and the
+     lookup string always describe the same tracks. **Verification:** the spec-derivable
+     hash-input string is asserted directly, and the one non-inspectable constant was
+     cross-checked against an independent implementation (a Python reimplementation run here).
+     Real pressed discs remain a manual-matrix item.
+  2. **`Sources/ConverterEngine/Disc/MeedyaDBSubmissionBuilder.swift`** — the missing join.
+     **Nothing had ever built a MeedyaDB submission at all**, so `MeedyaDBPublisher` had no
+     production caller. Now `audioCD(toc:matches:labelText:)` and
+     `videoDisc(info:discType:ranked:labelText:)` both produce
+     `MeedyaDBDiscSubmissionInputs`. Music: disc carries its Disc ID + TOC fingerprint + audio
+     track count, Disc ID goes up as a `musicbrainz-discid` identifier, each matched release is
+     a candidate with its `musicbrainz-release` id; several pressings can share one TOC so
+     confidence is split evenly (1/N) rather than faking a single answer. Video: type/title
+     count/label + ranked candidates carrying provider id (`tmdb`/`tvdb`/…) and scorer
+     confidence. Privacy unchanged — the publisher still drops `labelText` outside opt-in
+     `.full` mode, and publishing stays off unless configured and enabled.
+- **MeedyaDB side (`3f2a35d` on `wip/bootstrap`):** `tblIdentifierTypes` was created but
+  **never seeded**, leaving `identifier_add` unable to accept any type our apps use
+  (`disc_ingest` does not validate types, so ingest itself already worked). Seeded 15 types
+  idempotently (`INSERT IGNORE` + `uq_idtype`) incl. `musicbrainz-discid`; added `disc` to the
+  documented `Scope` vocabulary; CI now asserts the seed landed and stays duplicate-free across
+  the two installs it already did.
+- **⚠️ STILL UNWIRED (the pervasive defect in this repo).** Everything above is engine-level.
+  `MeedyaDBPublisher`, `MusicBrainzDiscLookupService`, `MakeMKVIdentification`,
+  `DiscIdentifier.rank` and now `MeedyaDBSubmissionBuilder` are each referenced **only by their
+  own tests** — no production caller yet. The GUI rip flow (4b) is the first thing that puts a
+  real caller behind a button. A follow-up should wire the audio path (read TOC → look up →
+  build submission → publish) into the Audio CD flow.
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:

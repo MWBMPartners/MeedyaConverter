@@ -10,11 +10,27 @@
 // Computes the canonical **MusicBrainz Disc ID** for an Audio CD.
 //
 // Why this exists: `DiscTableOfContents` has carried a `musicBrainzDiscId` field
-// all along, but nothing ever filled it, and `MusicBrainzDiscLookupService` only
-// produced the *lookup* TOC string (`1+2+250150+150+20150`). The lookup string is
-// a query parameter; the Disc ID is the disc's stable, near-unique **identity** —
-// and it is what MeedyaDB stores (its `tblDiscs.MusicBrainzDiscId` is a UNIQUE
-// column). Without this, an identified music disc had no ID to submit.
+// all along and nothing has ever computed a value for it, while
+// `MusicBrainzDiscLookupService` only produced the *lookup* TOC string
+// (`1+2+250150+150+20150`). The lookup string is a query parameter; the Disc ID is
+// the disc's stable, near-unique **identity** — and it is what MeedyaDB stores (its
+// `tblDiscs.MusicBrainzDiscId` is a UNIQUE column). Without this, an identified
+// music disc had no ID to submit.
+//
+// NOTE: this type computes the ID on demand; it does NOT write it back onto the
+// TOC. `DiscTableOfContents.musicBrainzDiscId` therefore remains unset unless a
+// caller assigns it, so `AudioDiscFidelity.buildCDTOCArguments` still embeds no
+// `MUSICBRAINZ_DISCID` tag. Wiring that up is tracked separately.
+//
+// LIMITATION — multi-session (Enhanced / CD-Extra) discs: MusicBrainz uses the
+// **first session's** lead-out, whereas this uses the disc's physical lead-out
+// (`toc.leadOutSector`). For a CD-Extra — audio in session 1, a data track in
+// session 2 — those differ, so the ID computed here will not match MusicBrainz's.
+// Plain Red Book audio CDs (the overwhelming majority, and the only case the disc
+// stack targets today) are unaffected. This mirrors the same assumption already
+// baked into `MusicBrainzDiscLookupService.musicBrainzTOCString`, so the two always
+// agree with each other; correcting both in lockstep (and verifying libdiscid's
+// session-gap constant) is tracked as a follow-up.
 //
 // The algorithm is MusicBrainz's published one:
 //   1. Build an ASCII string of UPPERCASE hex:
@@ -79,6 +95,8 @@ public enum MusicBrainzDiscID {
             trackOffsets: trackOffsets
         ) else { return nil }
 
+        // SHA-1 is not a security choice here: the MusicBrainz Disc ID format
+        // specifies it, so any other hash would produce IDs nobody else recognises.
         let digest = Insecure.SHA1.hash(data: Data(input.utf8))
         return Data(digest).base64EncodedString()
             .replacingOccurrences(of: "+", with: ".")
@@ -98,6 +116,10 @@ public enum MusicBrainzDiscID {
         guard firstTrack >= 1, lastTrack >= firstTrack, lastTrack <= 99 else { return nil }
         guard trackOffsets.count == lastTrack - firstTrack + 1 else { return nil }
         guard leadOutOffset >= 0, trackOffsets.allSatisfy({ $0 >= 0 }) else { return nil }
+        // The lead-out is by definition past the last track; a TOC that says
+        // otherwise is malformed (e.g. a default-constructed one with leadOut 0),
+        // and would otherwise yield a confident-looking but meaningless ID.
+        guard leadOutOffset > (trackOffsets.max() ?? 0) else { return nil }
 
         // Slot 0 is the lead-out; slots 1…99 are indexed by TRACK NUMBER.
         var slots = [Int](repeating: 0, count: 100)
@@ -106,8 +128,10 @@ public enum MusicBrainzDiscID {
             slots[firstTrack + index] = offset
         }
 
-        var output = hex(firstTrack, width: 2) + hex(lastTrack, width: 2)
+        var output = ""
         output.reserveCapacity(804)
+        output += hex(firstTrack, width: 2)
+        output += hex(lastTrack, width: 2)
         for slot in slots {
             output += hex(slot, width: 8)
         }

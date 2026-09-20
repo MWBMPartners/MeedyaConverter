@@ -83,8 +83,14 @@ final class MusicBrainzDiscIDTests: XCTestCase {
     // MARK: - From a table of contents
 
     func test_compute_fromTOC_excludesDataTrackAndAppliesPregap() {
-        // Enhanced CD: two audio tracks plus a data track that must be ignored.
+        // Two audio tracks plus a data track that must be ignored.
         // Lead-out 250000 + 150 = 250150; offsets 0+150 and 20000+150.
+        //
+        // This pins data-track exclusion, the pregap, and that the Disc ID and the
+        // lookup string always describe the SAME tracks. It does NOT claim the ID
+        // matches MusicBrainz for a real multi-session CD-Extra — for those,
+        // MusicBrainz uses the first session's lead-out, not the disc's physical
+        // one. See the LIMITATION note in MusicBrainzDiscID.swift.
         let toc = DiscTableOfContents(
             tracks: [
                 DiscTrack(number: 1, startSector: 0),
@@ -106,7 +112,20 @@ final class MusicBrainzDiscIDTests: XCTestCase {
         XCTAssertNil(MusicBrainzDiscID.compute(for: toc))
     }
 
-    func test_compute_isDeterministicAndDiscTypeSensitive() {
+    func test_hashInput_rejectsLeadOutBeforeLastTrack() {
+        // A default-constructed TOC (lead-out 0) would otherwise yield a
+        // confident-looking but meaningless ID.
+        XCTAssertNil(MusicBrainzDiscID.hashInput(
+            firstTrack: 1, lastTrack: 2, leadOutOffset: 150, trackOffsets: [150, 20_150]))
+        XCTAssertNil(MusicBrainzDiscID.compute(
+            firstTrack: 1, lastTrack: 1, leadOutOffset: 150, trackOffsets: [150]))
+        let emptyTOC = DiscTableOfContents(
+            tracks: [DiscTrack(number: 1, startSector: 0)], leadOutSector: 0
+        )
+        XCTAssertNil(MusicBrainzDiscID.compute(for: emptyTOC))
+    }
+
+    func test_compute_isDeterministicAndOffsetSensitive() {
         let a = MusicBrainzDiscID.compute(
             firstTrack: 1, lastTrack: 2, leadOutOffset: 250_150, trackOffsets: [150, 20_150])
         let again = MusicBrainzDiscID.compute(

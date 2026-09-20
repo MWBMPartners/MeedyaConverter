@@ -51,8 +51,18 @@
   publishing hook landed (3a0108a) — see below.
   MakeMKV backend (#503): slice 1 pure parser (8350640), slice 2 opt-in/terms gate
   (fb8adc8), slice 3 executor (d6c7f15), slice 4a identification bridge (253f21e)
-  — all CI-green. Remaining: (4b) rip-flow ENTRY POINT (#476, an epic — architecture
-  call surfaced to owner: CLI vs GUI), (5) docs/licences.
+  — all CI-green. **4b = GUI rip flow (owner chose it, 2026-09-20)**; design at
+  `.claude/plans/makemkv-gui-rip-flow-plan.md` (includes a ranked compile-trap list).
+  Remaining after 4b: (5) docs/licences.
+- **Music discs are identifiable AND contributable (e017f89, CI run 325).** A CD's track
+  layout is a near-fingerprint, so the MusicBrainz lookup is an EXACT hit — stronger than
+  the video path's ranked guess. `MusicBrainzDiscID` computes the canonical Disc ID
+  (`DiscTableOfContents.musicBrainzDiscId` had existed unfilled since day one), and
+  `MeedyaDBSubmissionBuilder` turns either kind of disc (music or video) into
+  `MeedyaDBPublisher` inputs — previously nothing built a submission at all.
+- **The app layer IS unit-testable**: it is a library target `MeedyaConverterCore` with
+  `Tests/MeedyaConverterCoreTests` (`@testable import`). Do not assume SwiftUI code here
+  is untestable — view models can and should be covered.
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,
   2026-09-17, accepting the legal implications) — no longer "deferred". Slice 1
   landed CI-green (8350640, run 314): `MakeMKVBackend` is a **pure** arg-builder +

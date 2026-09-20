@@ -128,6 +128,14 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
         XCTAssertNil(inputs.disc.musicBrainzDiscId)
         XCTAssertNil(inputs.disc.trackCount)
         XCTAssertTrue(inputs.identifiers.isEmpty)
+        XCTAssertFalse(
+            inputs.hasUsableIdentity,
+            "a bare disc type and nothing else is an unmergeable row — callers should skip it"
+        )
+    }
+
+    func test_audioCD_hasUsableIdentityWhenItCarriesADiscID() {
+        XCTAssertTrue(MeedyaDBSubmissionBuilder.audioCD(toc: audioTOC()).hasUsableIdentity)
     }
 
     // MARK: - Video disc
@@ -145,9 +153,62 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
         XCTAssertEqual(inputs.disc.discType, "bluray")
         XCTAssertEqual(inputs.disc.trackCount, 2)
         XCTAssertNil(inputs.disc.musicBrainzDiscId, "video discs have no audio TOC")
-        XCTAssertNil(inputs.disc.tocFingerprint)
         XCTAssertEqual(inputs.disc.labelText, "BIG_MOVIE_DISC", "falls back to the volume name")
         XCTAssertTrue(inputs.identifiers.isEmpty)
+    }
+
+    func test_videoDisc_carriesAStructuralFingerprintSoItCanBeDeduplicated() {
+        // Title durations, longest first — no personal data, so it is safe to send
+        // even in anonymous mode, and it gives MeedyaDB something to match on.
+        let inputs = MeedyaDBSubmissionBuilder.videoDisc(info: videoInfo(), discType: .bluray)
+        XCTAssertEqual(inputs.disc.tocFingerprint, "mkv:2:7041,252")
+        XCTAssertTrue(inputs.hasUsableIdentity)
+
+        // It must survive the anonymous scrub that strips the label.
+        let anonymous = MeedyaDBPublisher.buildSubmission(
+            disc: inputs.disc, identifiers: inputs.identifiers,
+            candidates: inputs.candidates, mode: .anonymous
+        )
+        XCTAssertNil(anonymous.disc.labelText)
+        XCTAssertEqual(anonymous.disc.tocFingerprint, "mkv:2:7041,252")
+    }
+
+    func test_videoDisc_blankVolumeNameFallsThroughToDiscName() {
+        // MakeMKV can report an empty volume name; a plain ?? chain would send "".
+        let info = MakeMKVBackend.parseInfo("""
+        CINFO:2,0,"The Disc Name"
+        CINFO:32,0,""
+        TINFO:0,9,0,"1:00:00"
+        """)
+        let inputs = MeedyaDBSubmissionBuilder.videoDisc(info: info, discType: .dvdVideo)
+        XCTAssertEqual(inputs.disc.labelText, "The Disc Name")
+    }
+
+    func test_videoDisc_titlesWithoutDurationsYieldNoFingerprint() {
+        let info = MakeMKVBackend.parseInfo(#"TINFO:0,2,0,"Untimed""#)
+        let inputs = MeedyaDBSubmissionBuilder.videoDisc(info: info, discType: .dvdVideo)
+        XCTAssertNil(inputs.disc.tocFingerprint)
+        XCTAssertFalse(inputs.hasUsableIdentity, "nothing to match on — the caller should skip it")
+    }
+
+    func test_videoDisc_onlyIdentityProvidersBecomeIdentifiers() {
+        func ranked(_ source: MetadataSource, _ externalId: String) -> ScoredDiscMatch {
+            ScoredDiscMatch(
+                candidate: MetadataResult(source: source, externalId: externalId, title: "X"),
+                score: DiscIdentityScore(confidence: 0.5)
+            )
+        }
+        let inputs = MeedyaDBSubmissionBuilder.videoDisc(
+            info: videoInfo(), discType: .bluray,
+            ranked: [ranked(.omdb, "tt0137523"), ranked(.fanArtTV, "art-1"), ranked(.tvdb, "81189")]
+        )
+        XCTAssertEqual(inputs.candidates.count, 3)
+        // OMDb's external id IS an IMDb id, so it is recorded as one.
+        XCTAssertEqual(inputs.candidates[0].identifiers.first?.idType, "imdb")
+        XCTAssertEqual(inputs.candidates[0].identifiers.first?.source, "omdb")
+        // Artwork is not identity.
+        XCTAssertTrue(inputs.candidates[1].identifiers.isEmpty)
+        XCTAssertEqual(inputs.candidates[2].identifiers.first?.idType, "tvdb")
     }
 
     func test_videoDisc_rankedCandidatesCarryProviderIDAndConfidence() {
