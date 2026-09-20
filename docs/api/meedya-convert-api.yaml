@@ -1245,6 +1245,107 @@ paths:
         "200": { description: "TOC read and printed." }
         "404": { description: "Exit 3 — no disc / device unreadable." }
 
+  /disc-identify:
+    post:
+      operationId: discIdentify
+      summary: Identify a music disc, and optionally contribute it to MeedyaDB.
+      description: |
+        `meedya-convert disc identify (--device <dev> | --toc <file>)
+        [--driver <d>] [--fast] [--offline] [--submit --meedyadb-url <url>]
+        [--submission anonymous|full] [--label <text>] [--format text|json]`.
+
+        Works out the disc's own identifiers from its table of contents — the
+        MusicBrainz-compatible ID for the music portion, and, on an Enhanced
+        CD, a second ID covering the whole physical disc — then asks
+        MusicBrainz which release it is.
+
+        Reads either a disc in a drive (`--device`, via cdrdao, Direct
+        distribution only) or a `.toc` file saved earlier (`--toc`), which
+        needs no drive and no special permissions. Exactly one of the two.
+
+        Partial failures do not abandon the run: if MusicBrainz cannot be
+        reached, the locally computed identifiers are still reported, and
+        still contributed when asked. A disc MusicBrainz has never seen is a
+        normal result, not an error, and does not affect the exit code.
+
+        Privacy: contributing is opt-in on every run (`--submit`) rather than
+        a stored setting. `--submission anonymous` (the default) sends only
+        identifiers, the TOC fingerprint and structural facts — never the
+        disc label, file paths or any user detail. The MeedyaDB API key is
+        read from the `MEEDYADB_API_KEY` environment variable and is never
+        accepted as an argument, because arguments are visible to other users
+        on the machine. `--offline` contacts nothing at all.
+      tags:
+        - Disc
+      parameters:
+        - name: --device
+          in: query
+          required: false
+          description: "cdrdao --device string (e.g. /dev/sr0). Mutually exclusive with --toc."
+          schema: { type: string }
+        - name: --toc
+          in: query
+          required: false
+          description: "A .toc file read earlier, instead of a disc. Mutually exclusive with --device."
+          schema: { type: string }
+        - name: --driver
+          in: query
+          required: false
+          description: "cdrdao --driver value; only used with --device."
+          schema: { type: string }
+        - name: --fast
+          in: query
+          required: false
+          description: "Use --fast-toc when reading the disc."
+          schema: { type: boolean, default: false }
+        - name: --offline
+          in: query
+          required: false
+          description: "Work out the identifiers only; contact nothing and send nothing."
+          schema: { type: boolean, default: false }
+        - name: --submit
+          in: query
+          required: false
+          description: "Contribute the result to MeedyaDB. Never happens unless asked. Cannot be combined with --offline."
+          schema: { type: boolean, default: false }
+        - name: --meedyadb-url
+          in: query
+          required: false
+          description: "MeedyaDB base URL. The API key comes from the MEEDYADB_API_KEY environment variable."
+          schema: { type: string }
+        - name: --submission
+          in: query
+          required: false
+          description: "What to send: anonymous (default) or full. full additionally sends --label."
+          schema: { type: string, enum: [anonymous, full], default: anonymous }
+        - name: --label
+          in: query
+          required: false
+          description: "What is printed on the disc. Only ever sent with --submission full."
+          schema: { type: string }
+        - name: --format
+          in: query
+          required: false
+          schema: { type: string, enum: [text, json], default: text }
+      responses:
+        "200":
+          description: |
+            Exit 0 — the disc was identified, or honestly reported as not
+            recognised. When --submit was used, the contribution succeeded.
+        "400":
+          description: |
+            Exit 2 — neither or both of --device/--toc; --offline with
+            --submit or --meedyadb-url; --submission full without --submit;
+            or --submit without a MeedyaDB URL and MEEDYADB_API_KEY.
+        "404":
+          description: "Exit 3 — no disc, device unreadable, or the .toc file is missing."
+        "422":
+          description: "Exit 6 — the .toc file could not be parsed."
+        "500":
+          description: |
+            Exit 1 — --submit was used and nothing reached MeedyaDB, whether
+            the send failed or there was nothing worth sending.
+
   /disc-image:
     post:
       operationId: discImage

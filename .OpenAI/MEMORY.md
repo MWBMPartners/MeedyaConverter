@@ -72,9 +72,41 @@
   `computeWholeDisc(for:)` = whole physical disc, sent as a `fulldisc-discid`
   identifier when it differs. Identical on an ordinary CD. `musicBrainzTOCString`
   changed in lockstep — Enhanced-CD lookups now ask about the music portion.
+- **IDENTIFICATION NOW ACTUALLY RUNS for music discs (996cc19 + 1bee778).** New
+  `MusicDiscIdentifier` chains an already-read TOC → disc IDs → MusicBrainz → MeedyaDB
+  submission → publish, plus a CLI `meedya-convert disc identify` (`--device` reads a
+  real disc via the cdrdao path `disc toc` already used; `--toc` reads a saved file;
+  `--offline` contacts nothing). Reading the disc stays in `DiscImagingController`, so
+  the chain is testable with no hardware.
+  **The failure posture is the design, not an oversight:** a MusicBrainz outage keeps the
+  locally computed IDs and STILL contributes (an unknown disc is the interesting one);
+  MeedyaDB off/unconfigured is `.notAttempted`, NEVER `.failed` (that is everyone until
+  the server is live); cancellation is never folded into `.failed`; a disc with no audio
+  short-circuits before the network. `identify` throws only `CancellationError`.
+  Contributing is opt-in per run (`--submit`); the API key is env-only (`MEEDYADB_API_KEY`)
+  because argv is world-readable via `ps`.
+- **Nothing in the app constructs `MeedyaDBPublisherConfig` yet** — no settings tab, no
+  UserDefaults keys. `APIKeyProvider.meedyaDB` already exists in `APIKeyManager.swift`;
+  the key belongs in the **Keychain**, not `@AppStorage` (plain-text UserDefaults).
+- **Video-disc identification still has the same gap** — `MeedyaDBSubmissionBuilder.videoDisc`
+  has no production caller.
+- **`RawCDReadPlanner.buildMacOSUnmountArguments` is deliberately unwired** and is a real
+  blocker for reading a disc from the GUI on macOS: the medium must be unmounted before
+  cdrdao can claim the device, and the `--device` → `diskutil` node mapping needs hardware
+  to verify. Expect "device busy" on an auto-mounted disc.
 - **`Task { [weak self] in await self?.f() }` infers `Task<()?, Never>`** and will not
   match `Task<Void, Never>`. Always `guard let self else { return }` first. CI caught
   this; the review did not.
+- **A bare enum case does not match against an `Optional` in a `switch`** — `case .foo:`
+  over a `T?` needs `case .foo?:` or an unwrap first. Same family as the `as?` trap below.
+- **Cancel methods must ONLY cancel.** Clearing the busy flag / task handle / message in
+  the canceller as well as in the task's own tail lets a stale task clobber whatever
+  started next. Leaving the busy flag set until the task itself tidies up also closes the
+  re-entry window for free (learned on the rip screen, run 331).
+- **Test the WIRING, not just the layer.** The label-scrubbing privacy rule was tested in
+  `MeedyaDBPublisherTests`, one layer below the code that passes `mode:` in — so
+  hardcoding `.full` at the call site would have left every test green while real data
+  leaked. Cover the call site, by asserting on the bytes that reach the seam.
 - **Never put backticks in `git commit -m "…"`** — the shell executes them and eats
   words. Use `git commit -F <file>` with a quoted heredoc.
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,

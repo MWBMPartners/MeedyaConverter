@@ -337,6 +337,109 @@ accurate for the code. What changed this session:
   executed by the shell and silently eat words from the message (it happened once and
   was fixed by amending). **Use `git commit -F <file>` with a quoted heredoc.**
 
+## 📍 2026-09-20 (latest) — rip screen hardened + IDENTIFICATION NOW ACTUALLY RUNS
+
+Branch `wip/alpha-consolidation`. Three commits, CI-green through `996cc19` (run 332);
+`1bee778` pushed and awaiting its run.
+
+### 1. Rip-screen review findings closed (`a1f4652`, run 331 green)
+
+The cross-review of slice 4b found **no blockers** but three MAJOR items. All fixed,
+plus four MINORs the fixes exposed.
+
+- **MAJOR-1 — `cancelScan()` raced its own task.** It eagerly cleared `isScanning`,
+  `scanTask` and wrote `scanErrorMessage`, all of which the cancelled task's tail also
+  writes. A stale task could land on top of a *newer* scan: re-enabling the button,
+  orphaning `scanTask`, overwriting the new message. It now **only cancels**, exactly as
+  `cancelRip()` already did. Note the second-order effect that makes this a real close
+  rather than a narrowing: because `isScanning` now stays true until the cancelled task
+  finishes, `scan()`'s own guard blocks a new scan for that whole window, so the race
+  has nowhere left to happen.
+- **MAJOR-2 — a scan could not be cancelled from the UI at all.** Cancel button added to
+  the Titles progress row (the same place the rip's Cancel sits — deliberately ONE
+  cancel affordance, not two).
+- **MAJOR-3 — disabled buttons said nothing.** `scanBlockedReason` / `ripBlockedReason`
+  on the view model (not in the view, so the wording is unit-tested) name the next step.
+- MINOR-2 (`rip()` cleared live state above its already-running guard, so a second press
+  wiped the running rip's log), MINOR-3 (`isCancellingScan`/`isCancellingRip` — without
+  them the new Cancel button looks inert for minutes while makemkvcon winds down),
+  MINOR-5 (stale cross-operation banners).
+- MINOR-4 — **real in-flight cancellation is now tested.** `BlockingMakeMKVRunner` parks
+  a call until the task is cancelled, with a start signal so tests reach the mid-flight
+  state deterministically — no sleeping, no polling, safe under `--parallel`.
+
+### 2. Music-disc identification WIRED END TO END (`996cc19` run 332 green, `1bee778`)
+
+**This was the "everything is built and nothing calls it" gap, now closed for music.**
+Confirmed by grep beforehand: `MusicBrainzDiscID`, `MusicBrainzDiscLookupService`,
+`MeedyaDBSubmissionBuilder` and `MeedyaDBPublisher` were each referenced ONLY by their
+own tests.
+
+- **A real TOC reader already existed** — `DiscImagingController.readTableOfContents`
+  (cdrdao `read-toc`), already used by `meedya-convert disc toc`. The gap was never
+  "nothing can read a disc"; it was that nothing chained reader → identify → contribute.
+- **NEW `Sources/ConverterEngine/Disc/MusicDiscIdentification.swift`** —
+  `MusicDiscIdentifier.identify(toc:labelText:contribute:mode:)` does that chaining.
+  Reading the disc is deliberately NOT part of it (that needs hardware), so the whole
+  flow is unit-testable with no disc, no network, no MeedyaDB.
+- **NEW CLI `meedya-convert disc identify`** — `--device` (reads a real disc) or `--toc`
+  (a file saved earlier); text or JSON; `--offline` computes IDs and contacts nothing.
+
+**⚠️ THE FAILURE POSTURE IS THE DESIGN — do not "tidy" it into something tidier.** A CD's
+track layout is a near-fingerprint, so the locally computed IDs are valuable alone:
+- a MusicBrainz outage does **not** throw and does **not** abandon the run — the IDs are
+  kept and the contribution still goes ahead, because a disc MusicBrainz has never heard
+  of is exactly the one MeedyaDB most wants;
+- MeedyaDB being off or unconfigured is **`.notAttempted`, never `.failed`** — that is
+  everyone's situation until the server is live, and must never show as an error;
+- cancellation stays cancellation and is never folded into `.failed`;
+- a disc with no audio tracks short-circuits **before** the network (zero requests).
+- The only error `identify` throws is `CancellationError`.
+
+**Privacy decisions in the CLI:** contributing is opt-in on *every run* (`--submit`),
+never a stored setting someone ticked and forgot; the API key comes from
+`MEEDYADB_API_KEY` and is **never** an argument, because arguments are visible to other
+users via `ps`; `--submit` exits non-zero whenever nothing reached MeedyaDB, so a script
+can never read "exit 0" as "contributed".
+
+### 3. Review of the above (`1bee778`) — no compile errors, two real defects
+
+- **MAJOR — the privacy wiring was untested.** Nothing passed `labelText`/`mode` through
+  `identify()`, so hardcoding `mode: .full` would have left every test green while
+  anonymous users began sending disc labels. The scrub was tested one layer *down*, in
+  the publisher, which cannot catch a wiring mistake above it. Now two tests decode the
+  body that actually reached the wire.
+- **MAJOR — `--offline --submit`** parsed, exited 0 and sent nothing while skipping the
+  loud "MeedyaDB isn't set up" gate. `validate()` now rejects it.
+- MINORs: trim mismatch (a newline-only API key passed the CLI gate then failed quietly
+  downstream); "no audio tracks" printed under "Audio tracks: 3" for a *damaged* TOC, now
+  a distinct state; `identity(for:)` always computed the disc ID while the builder prefers
+  a stored one, so shown ID ≠ sent ID — now the same preference, and `isEnhancedCD` is
+  decided **structurally** (from `leadOutSource`) rather than by comparing ID strings,
+  which a stale stored tag would break; cdrdao's `.bin` sidecar was leaking from both
+  `disc identify` and the pre-existing `disc toc`.
+- **Filed, not fixed:** the submission builder can attach a spurious `fulldisc-discid` to
+  a plain CD when the TOC carries a stored ID, because it compares a *stored* value with
+  a *computed* one. Pre-existing and unreachable today (nothing writes that field).
+
+### NEXT, in order
+
+1. **MeedyaDB config source** — nothing constructs `MeedyaDBPublisherConfig` in the app.
+   Needs a settings tab + `meedyadb.enabled`/`meedyadb.baseURL` (house style: an engine
+   `Keys` enum like `MakeMKVConsentStore`) and the API key in the **Keychain** —
+   `APIKeyProvider.meedyaDB = "meedya_db"` already exists in `APIKeyManager.swift`.
+   NOT `@AppStorage`: that is plain-text `UserDefaults`.
+2. **A GUI screen** for identify (NavigationItem case + `systemImage` + `accessibilityLabel`
+   arms + `ContentView.detailView` arm + a SidebarView row).
+3. #503 slice 5 — MakeMKV docs/licences.
+4. Video-disc identification has the same wiring gap; `MeedyaDBSubmissionBuilder.videoDisc`
+   exists and has no production caller.
+
+**⚠️ Known blocker for a GUI disc read on macOS:** `RawCDReadPlanner.buildMacOSUnmountArguments`
+is deliberately unwired — the medium must be unmounted before cdrdao can claim the device,
+and mapping a cdrdao `--device` string to a `diskutil` node needs real hardware to verify.
+Expect "device busy" on an auto-mounted disc until that is resolved.
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:
