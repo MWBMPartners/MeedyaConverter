@@ -150,6 +150,11 @@ final class MakeMKVRipViewModel {
     // MARK: - Scan / Titles
 
     private(set) var isScanning = false
+    /// True between `cancelScan()` and the scan task actually finishing.
+    /// `makemkvcon info` can take a while to notice and exit, and because
+    /// `cancelScan()` deliberately clears no state (see its doc comment),
+    /// without this the Cancel button would look inert for that whole time.
+    private(set) var isCancellingScan = false
     private(set) var discInfo: MakeMKVDiscInfo?
     private(set) var titleSummaries: [Int: MakeMKVTitleSummary] = [:]
     private(set) var scanErrorMessage: String?
@@ -168,6 +173,24 @@ final class MakeMKVRipViewModel {
         !isScanning && !isRipping && resolvedSource != nil
     }
 
+    /// Why the Scan button is disabled, in plain English, or `nil` when it
+    /// is enabled — a disabled button must never leave the user guessing.
+    /// `nil` while scanning too: the button already reads "Scanning…", so a
+    /// caption saying the same thing would just be noise.
+    var scanBlockedReason: String? {
+        if isScanning { return nil }
+        if isRipping { return "A rip is in progress. Wait for it to finish before scanning." }
+        guard resolvedSource == nil else { return nil }
+        switch sourceKind {
+        case .opticalDrive:
+            return "Enter the drive number to scan \u{2014} 0 is the first drive."
+        case .devicePath:
+            return "Enter the device path of the drive to scan."
+        case .discImage:
+            return "Choose a disc image file to scan."
+        }
+    }
+
     @ObservationIgnored
     nonisolated(unsafe) private var scanTask: Task<Void, Never>?
 
@@ -177,8 +200,15 @@ final class MakeMKVRipViewModel {
     /// back so tests can `await` it deterministically instead of polling.
     @discardableResult
     func scan() -> Task<Void, Never>? {
-        scanErrorMessage = nil
+        // Guard first, then clear — same reason as in `rip()`.
         guard !isScanning, !isRipping else { return nil }
+
+        scanErrorMessage = nil
+        // Also drop the previous rip's banner: leaving "Rip complete…" on
+        // screen while a new scan runs describes work that is no longer
+        // what the screen is doing.
+        outcomeMessage = nil
+        outcomeIsError = false
 
         let executor: MakeMKVExecutor
         switch gatedExecutor() {
@@ -195,6 +225,7 @@ final class MakeMKVRipViewModel {
         }
 
         isScanning = true
+        isCancellingScan = false
         discInfo = nil
         titleSummaries = [:]
         selectedTitleIndices = []
@@ -226,16 +257,21 @@ final class MakeMKVRipViewModel {
             scanErrorMessage = MakeMKVRipPlanning.failureSummary(for: error)
         }
         isScanning = false
+        isCancellingScan = false
         scanTask = nil
     }
 
-    /// Cancels an in-progress scan.
+    /// Cancels an in-progress scan. Like `cancelRip()`, this ONLY cancels —
+    /// cleanup (`isScanning`, `scanTask`, the "cancelled" message) happens
+    /// inside `performScan` once it notices, in its `catch is CancellationError`
+    /// branch. Clearing that state here too would let a cancelled task's tail
+    /// land *after* a newer scan has already started and clobber it: the
+    /// newer scan's `isScanning`/`scanTask` would be wiped and its error
+    /// message overwritten by the old run's.
     func cancelScan() {
-        guard scanTask != nil else { return }
+        guard scanTask != nil, isScanning else { return }
+        isCancellingScan = true
         scanTask?.cancel()
-        scanTask = nil
-        isScanning = false
-        scanErrorMessage = "The scan was cancelled."
     }
 
     // MARK: - Destination
@@ -245,6 +281,10 @@ final class MakeMKVRipViewModel {
     // MARK: - Run
 
     private(set) var isRipping = false
+    /// True between `cancelRip()` and the rip task actually finishing —
+    /// the rip's counterpart to `isCancellingScan`, for the same reason:
+    /// MakeMKV only notices cancellation between events.
+    private(set) var isCancellingRip = false
     private(set) var ripProgress: RipProgress?
     private(set) var outcomeMessage: String?
     private(set) var outcomeIsError = false
@@ -268,6 +308,24 @@ final class MakeMKVRipViewModel {
             && !destinationPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Why the Rip button is disabled, in plain English, or `nil` when it is
+    /// enabled. `nil` while ripping: the progress row replaces the button
+    /// entirely, so there is no disabled control left to explain. When more
+    /// than one thing is missing this names the first step, not all of them.
+    var ripBlockedReason: String? {
+        if isRipping { return nil }
+        if isScanning { return "Scanning the disc. The rip can start once the scan finishes." }
+        if selectedTitleIndices.isEmpty {
+            return orderedTitles.isEmpty
+                ? "Scan the disc first, then choose which titles to rip."
+                : "Select at least one title to rip."
+        }
+        if destinationPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Choose a destination folder to save the ripped titles in."
+        }
+        return nil
+    }
+
     @ObservationIgnored
     nonisolated(unsafe) private var ripTask: Task<Void, Never>?
 
@@ -278,12 +336,18 @@ final class MakeMKVRipViewModel {
     /// calls into the injected runner.
     @discardableResult
     func rip() -> Task<Void, Never>? {
+        // The already-running guard comes FIRST: clearing above it would let
+        // a second press wipe the live progress and message log of the rip
+        // that is still running, then return `nil` having changed nothing else.
+        guard !isScanning, !isRipping else { return nil }
+
         outcomeMessage = nil
         outcomeIsError = false
         messages = []
         ripProgress = nil
-
-        guard !isScanning, !isRipping else { return nil }
+        // And the mirror of the clear in `scan()`: a leftover scan error
+        // is not about the rip the user just started.
+        scanErrorMessage = nil
 
         let executor: MakeMKVExecutor
         switch gatedExecutor() {
@@ -312,6 +376,7 @@ final class MakeMKVRipViewModel {
 
         let titleCount = selectedTitleIndices.count
         isRipping = true
+        isCancellingRip = false
         // As above: unwrap before awaiting, or the task's type becomes `Task<()?, Never>`.
         let task = Task { [weak self] in
             guard let self else { return }
@@ -416,6 +481,7 @@ final class MakeMKVRipViewModel {
 
         ripProgress = nil
         isRipping = false
+        isCancellingRip = false
         ripTask = nil
     }
 
@@ -442,6 +508,8 @@ final class MakeMKVRipViewModel {
     /// inside the running task itself once it notices the cancellation —
     /// see the three cancellation points in `executeRip`.
     func cancelRip() {
+        guard ripTask != nil, isRipping else { return }
+        isCancellingRip = true
         ripTask?.cancel()
     }
 

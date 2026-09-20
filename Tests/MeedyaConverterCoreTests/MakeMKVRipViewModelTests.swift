@@ -71,6 +71,94 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         }
     }
 
+    // MARK: - Blocking mock runner (for REAL cancellation / mid-flight tests)
+
+    /// Behaves like `MockMakeMKVRunner` for the first `blockingFromCall`
+    /// calls, then emits that call's lines and **suspends indefinitely**
+    /// until the task is cancelled — the only way to observe the view model
+    /// while work is genuinely in flight. `waitUntilCallStarted()` lets a
+    /// test reach that point deterministically, with no sleeping or polling.
+    private final class BlockingMakeMKVRunner: MakeMKVLineStreaming, @unchecked Sendable {
+        private let lock = NSLock()
+        private let scripts: [MockMakeMKVRunner.Script]
+        private let blockingFromCall: Int
+        private var callCount = 0
+        private var blocked: CheckedContinuation<Void, any Error>?
+        private var wasCancelled = false
+        private var didReachBlockingCall = false
+        private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+        init(blockingFromCall: Int, scripts: [MockMakeMKVRunner.Script]) {
+            self.blockingFromCall = blockingFromCall
+            self.scripts = scripts
+        }
+
+        var invocationCount: Int { lock.withLock { callCount } }
+
+        /// Suspends until the blocking call has been entered and is parked.
+        func waitUntilCallStarted() async {
+            await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
+                let alreadyStarted: Bool = lock.withLock {
+                    if didReachBlockingCall { return true }
+                    startWaiters.append(waiter)
+                    return false
+                }
+                if alreadyStarted { waiter.resume() }
+            }
+        }
+
+        func run(
+            binaryPath: String,
+            arguments: [String],
+            onStdoutLine: @escaping @Sendable (String) -> Void
+        ) async throws -> Int32 {
+            let (index, shouldBlock): (Int, Bool) = lock.withLock {
+                let current = callCount
+                callCount += 1
+                return (current, current >= blockingFromCall)
+            }
+            let script = scripts.isEmpty
+                ? MockMakeMKVRunner.Script()
+                : scripts[min(index, scripts.count - 1)]
+            for line in script.lines { onStdoutLine(line) }
+            guard shouldBlock else {
+                if let error = script.throwError { throw error }
+                return script.exitCode
+            }
+
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                    // Cancellation can arrive before we park, so re-check
+                    // under the lock rather than parking forever.
+                    let (cancelImmediately, waiters): (Bool, [CheckedContinuation<Void, Never>]) = lock.withLock {
+                        let alreadyCancelled = wasCancelled
+                        if !alreadyCancelled { blocked = continuation }
+                        // Release the waiters on BOTH paths — a waiter left
+                        // pending after an already-cancelled call would hang
+                        // the test rather than fail it.
+                        didReachBlockingCall = true
+                        let pending = startWaiters
+                        startWaiters = []
+                        return (alreadyCancelled, pending)
+                    }
+                    for waiter in waiters { waiter.resume() }
+                    if cancelImmediately {
+                        continuation.resume(throwing: CancellationError())
+                    }
+                }
+            } onCancel: {
+                let parked: CheckedContinuation<Void, any Error>? = lock.withLock {
+                    wasCancelled = true
+                    let current = blocked
+                    blocked = nil
+                    return current
+                }
+                parked?.resume(throwing: CancellationError())
+            }
+            return script.exitCode
+        }
+    }
+
     // MARK: - Thread-safe mutable gate (for the "gate flips mid-session" test)
 
     private final class GateBox: @unchecked Sendable {
@@ -497,5 +585,234 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         XCTAssertEqual(vm.messages.count, 200)
         XCTAssertEqual(vm.messages.first, "Message 50", "the oldest 50 of 250 messages should have been dropped")
         XCTAssertEqual(vm.messages.last, "Message 249")
+    }
+
+    // MARK: - Real (in-flight) cancellation
+
+    func test_cancelScan_leavesAllCleanupToTheRunningTask() async {
+        let runner = BlockingMakeMKVRunner(blockingFromCall: 0, scripts: [])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        guard let task = vm.scan() else { return XCTFail("expected a scan task") }
+        await runner.waitUntilCallStarted()
+
+        XCTAssertTrue(vm.isScanning)
+        XCTAssertFalse(vm.isCancellingScan)
+
+        vm.cancelScan()
+
+        // The heart of the fix: `cancelScan()` must ONLY cancel. If it also
+        // cleared `isScanning`/`scanTask` and wrote the message itself, the
+        // task's own tail would later land on top of whatever came next.
+        XCTAssertTrue(vm.isScanning, "still scanning until the task itself winds down")
+        XCTAssertTrue(vm.isCancellingScan, "the UI needs to show the cancel was heard")
+        XCTAssertNil(vm.scanErrorMessage, "the message is the task's to write, not the canceller's")
+
+        await task.value
+
+        XCTAssertFalse(vm.isScanning)
+        XCTAssertFalse(vm.isCancellingScan)
+        XCTAssertEqual(vm.scanErrorMessage, "The scan was cancelled.")
+    }
+
+    func test_scan_whileScanning_isRejectedAndLeavesTheRunningScanAlone() async {
+        let runner = BlockingMakeMKVRunner(blockingFromCall: 0, scripts: [])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        guard let task = vm.scan() else { return XCTFail("expected a scan task") }
+        await runner.waitUntilCallStarted()
+
+        XCTAssertNil(vm.scan(), "a second scan must not start while one is running")
+        XCTAssertEqual(runner.invocationCount, 1, "and must not reach the runner")
+        XCTAssertTrue(vm.isScanning)
+
+        vm.cancelScan()
+        await task.value
+    }
+
+    func test_cancelRip_reportsCancellingWhileTheTaskWindsDown() async {
+        let runner = BlockingMakeMKVRunner(
+            blockingFromCall: 1,
+            scripts: [.init(lines: singleTitleInfoLines, exitCode: 0), .init()]
+        )
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+        vm.destinationPath = uniqueDestinationPath()
+
+        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task") }
+        await runner.waitUntilCallStarted()
+
+        XCTAssertTrue(vm.isRipping)
+        XCTAssertFalse(vm.isCancellingRip)
+
+        vm.cancelRip()
+        XCTAssertTrue(vm.isRipping, "still ripping until the task notices")
+        XCTAssertTrue(vm.isCancellingRip)
+
+        await ripTask.value
+
+        XCTAssertFalse(vm.isRipping)
+        XCTAssertFalse(vm.isCancellingRip)
+        XCTAssertTrue(vm.outcomeIsError)
+        XCTAssertEqual(
+            vm.outcomeMessage,
+            "The rip was cancelled. Any files already written remain in the destination folder."
+        )
+    }
+
+    func test_rip_whileRipping_isRejectedWithoutWipingTheLiveState() async {
+        // Two titles out of three → two sequential runs. The first run
+        // completes (populating messages/progress), the second blocks, so by
+        // the time `waitUntilCallStarted()` returns there is genuine live
+        // state on screen for a second press to wipe.
+        let runner = BlockingMakeMKVRunner(
+            blockingFromCall: 2,
+            scripts: [
+                .init(lines: threeTitleInfoLines, exitCode: 0),
+                .init(lines: ripLinesSuccess, exitCode: 0),
+                .init(),
+            ]
+        )
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+
+        vm.selectedTitleIndices = [0, 1]
+        vm.destinationPath = uniqueDestinationPath()
+
+        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task") }
+        await runner.waitUntilCallStarted()
+
+        XCTAssertFalse(vm.messages.isEmpty, "the first run's messages should be on screen")
+        let messagesBefore = vm.messages
+        let progressBefore = vm.ripProgress
+
+        XCTAssertNil(vm.rip(), "a second rip must not start while one is running")
+        XCTAssertEqual(runner.invocationCount, 3, "scan + 2 rip runs — no extra call")
+        XCTAssertEqual(vm.messages, messagesBefore, "a rejected press must not clear the live log")
+        XCTAssertEqual(vm.ripProgress, progressBefore, "nor the live progress")
+
+        vm.cancelRip()
+        await ripTask.value
+    }
+
+    // MARK: - Disabled buttons always say why
+
+    func test_scanBlockedReason_namesTheMissingPieceForEachSourceKind() {
+        let vm = makeReadyViewModel(runner: MockMakeMKVRunner(scripts: []))
+
+        vm.sourceKind = .opticalDrive
+        vm.discIndexText = ""
+        XCTAssertEqual(vm.scanBlockedReason, "Enter the drive number to scan \u{2014} 0 is the first drive.")
+
+        vm.discIndexText = "0"
+        XCTAssertNil(vm.scanBlockedReason, "nothing to explain once the button is enabled")
+        XCTAssertTrue(vm.canScan)
+
+        vm.sourceKind = .devicePath
+        vm.devicePath = "   "
+        XCTAssertEqual(vm.scanBlockedReason, "Enter the device path of the drive to scan.")
+
+        vm.sourceKind = .discImage
+        vm.isoPath = ""
+        XCTAssertEqual(vm.scanBlockedReason, "Choose a disc image file to scan.")
+    }
+
+    func test_ripBlockedReason_namesTheNextStepInOrder() async {
+        let runner = MockMakeMKVRunner(scripts: [.init(lines: singleTitleInfoLines, exitCode: 0)])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        XCTAssertEqual(vm.ripBlockedReason, "Scan the disc first, then choose which titles to rip.")
+
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+
+        // The lone title is auto-selected, so the destination is next.
+        XCTAssertEqual(vm.ripBlockedReason, "Choose a destination folder to save the ripped titles in.")
+
+        vm.selectedTitleIndices = []
+        XCTAssertEqual(
+            vm.ripBlockedReason,
+            "Select at least one title to rip.",
+            "once titles are on screen the wording must stop telling the user to scan"
+        )
+
+        vm.selectedTitleIndices = [0]
+        vm.destinationPath = uniqueDestinationPath()
+        XCTAssertNil(vm.ripBlockedReason)
+        XCTAssertTrue(vm.canRip)
+    }
+
+    func test_blockedReasons_coverEveryDisabledStateOfTheirButton() async {
+        // The contract the view relies on: whenever the button is disabled
+        // and still on screen, there is a reason to show. (While the work is
+        // running the button is replaced by a progress row, so `nil` there
+        // is correct, not a gap — asserted explicitly below.)
+        let runner = BlockingMakeMKVRunner(blockingFromCall: 0, scripts: [])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+        vm.destinationPath = uniqueDestinationPath()
+
+        XCTAssertFalse(vm.canRip)
+        XCTAssertNotNil(vm.ripBlockedReason)
+
+        guard let task = vm.scan() else { return XCTFail("expected a scan task") }
+        await runner.waitUntilCallStarted()
+
+        XCTAssertFalse(vm.canScan)
+        XCTAssertNil(vm.scanBlockedReason, "the button already reads 'Scanning…'")
+        XCTAssertEqual(vm.ripBlockedReason, "Scanning the disc. The rip can start once the scan finishes.")
+
+        vm.cancelScan()
+        await task.value
+    }
+
+    // MARK: - Stale cross-operation banners
+
+    func test_startingAScan_clearsAPreviousRipOutcome() async {
+        let runner = MockMakeMKVRunner(scripts: [
+            .init(lines: singleTitleInfoLines, exitCode: 0),
+            .init(lines: ripLinesSuccess, exitCode: 0),
+            .init(lines: singleTitleInfoLines, exitCode: 0),
+        ])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+        guard let firstScan = vm.scan() else { return XCTFail("expected a scan task") }
+        await firstScan.value
+        vm.destinationPath = uniqueDestinationPath()
+        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task") }
+        await ripTask.value
+        XCTAssertNotNil(vm.outcomeMessage)
+
+        guard let secondScan = vm.scan() else { return XCTFail("expected a second scan task") }
+        XCTAssertNil(vm.outcomeMessage, "a finished rip's banner must not hang over a new scan")
+        await secondScan.value
+    }
+
+    func test_startingARip_clearsAPreviousScanError() async {
+        let runner = MockMakeMKVRunner(scripts: [
+            .init(lines: [], exitCode: 1),
+            .init(lines: ripLinesSuccess, exitCode: 0),
+        ])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+        guard let failedScan = vm.scan() else { return XCTFail("expected a scan task") }
+        await failedScan.value
+        XCTAssertNotNil(vm.scanErrorMessage, "the failed scan should have left a banner")
+
+        // The user picks a title by hand and rips anyway — the failed scan's
+        // banner is about the scan, not this rip, so it must go.
+        vm.selectedTitleIndices = [0]
+        vm.destinationPath = uniqueDestinationPath()
+
+        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task") }
+        XCTAssertNil(vm.scanErrorMessage, "a stale scan error must not hang over a running rip")
+        await ripTask.value
     }
 }

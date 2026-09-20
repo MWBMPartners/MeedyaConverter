@@ -130,6 +130,9 @@ struct MakeMKVRipView: View {
                 }
             }
 
+            // While a scan runs this reads "Scanning…" and is disabled; the
+            // way to stop it is the Cancel button in the Titles section's
+            // progress row just below, mirroring where the rip's Cancel sits.
             Button {
                 viewModel.scan()
             } label: {
@@ -140,6 +143,13 @@ struct MakeMKVRipView: View {
             }
             .disabled(!viewModel.canScan)
             .accessibilityLabel(viewModel.isScanning ? "Scanning disc" : "Scan disc for titles")
+
+            // MAJOR-3: a disabled button always says why it is disabled.
+            if let reason = viewModel.scanBlockedReason {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if let scanError = viewModel.scanErrorMessage {
                 Label(scanError, systemImage: "exclamationmark.triangle")
@@ -155,9 +165,20 @@ struct MakeMKVRipView: View {
     private var titlesSection: some View {
         Section("Titles") {
             if viewModel.isScanning {
+                // MAJOR-2: a scan of a Blu-ray can run for minutes. Without
+                // this Cancel the only way out is to navigate away, which
+                // throws the whole screen (and any result) away — the same
+                // "never a dead end" rule the gated view follows.
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("Scanning disc\u{2026}").foregroundStyle(.secondary)
+                    Text(viewModel.isCancellingScan
+                         ? "Cancelling the scan\u{2026}"
+                         : "Scanning disc\u{2026} this can take a few minutes on a Blu-ray.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel", role: .cancel) { viewModel.cancelScan() }
+                        .disabled(viewModel.isCancellingScan)
+                        .accessibilityLabel("Cancel the disc scan")
                 }
             } else if viewModel.orderedTitles.isEmpty {
                 Text("Scan the disc to see its titles.")
@@ -229,10 +250,14 @@ struct MakeMKVRipView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text(viewModel.ripProgress?.runLabel ?? "Ripping\u{2026}")
+                        Text(viewModel.isCancellingRip
+                             ? "Cancelling the rip\u{2026}"
+                             : (viewModel.ripProgress?.runLabel ?? "Ripping\u{2026}"))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Cancel", role: .cancel) { viewModel.cancelRip() }
+                            .disabled(viewModel.isCancellingRip)
+                            .accessibilityLabel("Cancel the rip")
                     }
                     if let progress = viewModel.ripProgress {
                         ProgressView(value: progress.overallFraction)
@@ -252,6 +277,13 @@ struct MakeMKVRipView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!viewModel.canRip)
                 .accessibilityLabel("Rip the selected titles to the destination folder")
+
+                // MAJOR-3: say why, rather than presenting a dead button.
+                if let reason = viewModel.ripBlockedReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Text("Titles are ripped one at a time. Leaving this screen cancels a rip in progress.")
