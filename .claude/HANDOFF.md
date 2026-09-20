@@ -255,6 +255,36 @@ accurate for the code. What changed this session:
   real caller behind a button. A follow-up should wire the audio path (read TOC → look up →
   build submission → publish) into the Audio CD flow.
 
+## 📍 OWNER DECISIONS — 2026-09-20 (answered via questions; drive the work order)
+
+1. **Enhanced/CD-Extra disc IDs → record BOTH (owner's own proposal, better than the
+   options offered).** Use the **music-only** portion for MusicBrainz and similar
+   lookups (that is the ID they recognise), but store **both** IDs in MeedyaDB — the
+   music-only one as the matching key, and the **whole-disc** one as an extra
+   identifier — for "full, proper coverage".
+   - *Why it works:* `DiscSession.leadOutSector` already exists
+     (`AudioDiscFidelity.swift`), so when a disc reports its session layout we can use
+     session 1's **actual** lead-out — no guessed constant. Only when session info is
+     absent do we fall back to deriving it from the data track's start minus the
+     standard session gap; that fallback is the ONLY unverified part and must be
+     confirmed on a real Enhanced CD (see #504).
+   - *Design:* `musicBrainzDiscId` = music-only (MusicBrainz-compatible);
+     whole-disc ID goes up as a separate identifier (needs a new seeded type in the
+     MeedyaDB repo). On a plain audio CD the two are identical, so nothing changes for
+     the vast majority. The whole-disc ID is the MORE precise physical key (same album,
+     different bonus content ⇒ same music-only ID, different whole-disc ID).
+   - `musicBrainzTOCString` must move in lockstep with the music-only calculation or the
+     ID and the lookup would describe different discs.
+2. **After a MakeMKV rip: just save the files.** No auto-queueing, no auto-identify in
+   this first version — keep the hardware-dependent path simple and diagnosable.
+3. **MeedyaDB: build the wiring now, deploy later.** Both sides are already CI-proven
+   against the same contract; deployment needs hosting/DB credentials only the owner can
+   provide. Wiring now means it works the day it is deployed.
+4. **Next after the rip screen: make identification actually run** — read disc →
+   identify → contribute, **music CDs first**. This is the priority because every part is
+   built and tested but *nothing calls any of it* (the standing "builder exists but
+   unwired" gap). Slice 5 (MakeMKV docs/licences) comes after.
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:
