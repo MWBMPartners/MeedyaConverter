@@ -199,8 +199,11 @@ final class MakeMKVRipViewModel {
         titleSummaries = [:]
         selectedTitleIndices = []
 
+        // Unwrap `self` first: `await self?.x()` makes the closure return `()?`, so
+        // the task would be a `Task<()?, Never>` and not match `Task<Void, Never>`.
         let task = Task { [weak self] in
-            await self?.performScan(source: source, executor: executor)
+            guard let self else { return }
+            await self.performScan(source: source, executor: executor)
         }
         scanTask = task
         return task
@@ -309,8 +312,10 @@ final class MakeMKVRipViewModel {
 
         let titleCount = selectedTitleIndices.count
         isRipping = true
+        // As above: unwrap before awaiting, or the task's type becomes `Task<()?, Never>`.
         let task = Task { [weak self] in
-            await self?.executeRip(
+            guard let self else { return }
+            await self.executeRip(
                 source: source, destination: destination, executor: executor,
                 selectors: selectors, titleCount: titleCount)
         }
