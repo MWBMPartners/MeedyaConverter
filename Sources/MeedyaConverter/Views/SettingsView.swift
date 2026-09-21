@@ -109,6 +109,13 @@ struct SettingsView: View {
                     MediaServerSettingsView()
                 }
 
+                // Contributing identified discs to the shared MeedyaDB
+                // database. Off by default; the API key lives in the
+                // Keychain, not in this app's settings file.
+                Tab("MeedyaDB", systemImage: "opticaldisc") {
+                    MeedyaDBSettingsTab()
+                }
+
                 // `point.3.connected.trianglepath.dotted` rather than
                 // `network`: the latter is already used by the SFTP
                 // sidebar entry in the AppViewModel, and a distributed
