@@ -595,6 +595,50 @@ needs no MakeMKV, and gets an EXACT MusicBrainz hit rather than a ranked guess.
 - **A scan clears the previous disc's identification.** Leaving the last film's
   name on screen while a different disc is scanned is worse than showing nothing.
 
+### CROSS-REVIEW OF THE ABOVE — two MAJORs, fixed in `4689693` (no blockers)
+
+The review found **nothing that failed to compile and nothing that failed CI**
+(run 356 was green on build, all tests and SwiftLint before the fixes landed).
+Both defects were in the new VIEW wiring, not the engine, and both were the
+house recurring shape yet again — promise and delivery drifting apart.
+
+- **MAJOR — a scan could start while an identification was still running.**
+  `scan()` guarded `!isScanning, !isRipping` but not `!isIdentifying`, so the
+  Scan button stayed live through a run that can take a dozen TMDB requests.
+  `scan()` clears `identifyResult`; the in-flight run's tail then writes the
+  OLD disc's answer straight back, and the previous film's name sits under a
+  different disc. **The test that "covered" this only ran the SEQUENTIAL case**
+  — identify, await, then scan — which is the easy half and proves nothing
+  about the interleave the live button invites.
+  Fixed by making scanning and identifying exclude each other. Worth keeping
+  the second-order reason: an in-flight run now always reaches its own tail
+  BEFORE a new scan can begin, so everything it writes is written before
+  `scan()` clears — and `scan()` clears it. **The guard, not the clearing, is
+  what makes the race impossible** — the identical insight that fixed
+  `cancelScan()` earlier. The new test parks the lookup so a run is genuinely
+  in flight.
+- **MAJOR — the contribution notice could go stale.** The screen read the
+  MeedyaDB verdict only in `.onAppear`. **Settings is a separate window on
+  macOS**, so this screen never disappears while someone changes a setting
+  there and `.onAppear` never fires again: the notice kept saying contributing
+  was off while the run (correctly re-reading the setting) contributed, or
+  promised one that had just been switched off. `DiscIdentifyView` already
+  watched the keys with `@AppStorage` + `.onChange`; the rip screen now does
+  too. ⚠️ **`.onAppear` is not "re-read rather than cached" on macOS.** The
+  Keychain-held API key still cannot be watched — same limit on both screens.
+- **MINOR, filed as #507, not fixed here.** With MeedyaDB on but unconfigured,
+  the after-the-run line says contributing "wasn't requested" when it was.
+  Both screens collapse the three-state `MeedyaDBReadiness` into a `Bool`
+  before `MeedyaDBContributor` sees it, so `.incomplete` is indistinguishable
+  from "never asked". Fixing it belongs in the shared contributor — patching
+  one screen would start exactly the drift that type exists to prevent.
+- **Checked and clean** (don't re-check): the TMDB key seam is genuinely
+  connected to the Settings field, the submission-mode picker is genuinely
+  read, `.onDisappear`/`deinit` cancel the new task, and no real-world MakeMKV
+  type string produces a WRONG disc type under the current check order. Some
+  builds report a UHD disc as plain "Blu-ray disc" — a downgrade the editable
+  picker and its caption are the designed answer to, not a defect.
+
 ## 📋 QUEUED — not scheduled
 
 Work the owner has asked for but not scheduled. Each has a GitHub issue; the issue is

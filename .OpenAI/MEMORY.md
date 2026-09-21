@@ -101,6 +101,19 @@
   **Its check order is load-bearing** ("UHD Blu-ray" contains "blu-ray", "HD DVD"
   contains "dvd"), pinned by tests — the same class of mistake as CI run 349.
   Identification starts no subprocess, so it is deliberately not re-gated.
+  **Cross-review then found two MAJORs in the VIEW wiring (fixed `4689693`), both
+  the same promise-vs-delivery shape:** (a) `scan()` did not guard on
+  `isIdentifying`, so a scan started mid-identification let the OLD disc's result
+  write itself back after the clear — the "covering" test only ran the SEQUENTIAL
+  case; scanning and identifying now exclude each other, which works because an
+  in-flight run always reaches its tail BEFORE a new scan begins, and `scan()`
+  clears what it wrote (the guard, not the clearing, closes the race); (b) the
+  contribution notice was refreshed only in `.onAppear`, and **Settings is a
+  separate window on macOS so `.onAppear` never re-fires** — the screen said
+  contributing was off while the run contributed. Watch the settings keys with
+  `@AppStorage` + `.onChange`, as `DiscIdentifyView` already did. #507 filed for a
+  MINOR: `.incomplete` MeedyaDB readiness is collapsed into a Bool, so a
+  half-configured setup reports "wasn't requested" when it was.
 - **QUEUED (#505, not scheduled): a persistent submission queue.** When MeedyaDB is
   down a contribution is currently LOST — recorded as `.failed` and shown, but never
   retried. #505 covers retaining it, surviving restarts, backing off, and
