@@ -136,12 +136,19 @@ public enum MeedyaDBSubmissionBuilder {
                 source: musicBrainzSource
             ))
         }
-        // Also contribute the whole-disc ID when it differs — i.e. on an Enhanced
-        // CD, where the music-only ID is what MusicBrainz matches but the whole-disc
-        // ID distinguishes this pressing from another with different bonus content.
-        // On a plain audio CD the two are identical and this adds nothing, so it is
-        // skipped rather than duplicated.
-        if let wholeDiscID = MusicBrainzDiscID.computeWholeDisc(for: toc), wholeDiscID != discID {
+        // Also contribute the whole-disc ID when the disc really has a data session
+        // riding along — an Enhanced CD, where the music-only ID is what MusicBrainz
+        // matches but the whole-disc ID distinguishes this pressing from another with
+        // different bonus content. On a plain audio CD the two are identical and this
+        // adds nothing, so it is skipped rather than duplicated.
+        //
+        // The comparison is between the two COMPUTED values, never against `discID`:
+        // `discID` may be a value the TOC already carried, and a stored, stale or
+        // foreign tag would differ from our computed whole-disc ID on an ordinary
+        // single-session CD — attaching a "whole disc" identifier to a disc that has
+        // no data session at all, i.e. wrong data in a shared database.
+        let computedMusicID = MusicBrainzDiscID.compute(for: toc)
+        if let wholeDiscID = MusicBrainzDiscID.computeWholeDisc(for: toc), wholeDiscID != computedMusicID {
             identifiers.append(MeedyaDBIdentifier(
                 idType: fullDiscIDType,
                 idValue: wholeDiscID,

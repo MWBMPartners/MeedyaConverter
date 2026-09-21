@@ -277,4 +277,42 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
         XCTAssertEqual(candidate.identifiers.first?.idValue, "550")
         XCTAssertEqual(candidate.identifiers.first?.source, "tmdb")
     }
+
+    // MARK: - A stored disc ID must not fake a data session
+
+    func test_audioCD_storedDiscIDDoesNotAttachAFullDiscIdentifierToAPlainCD() {
+        // A TOC can arrive carrying a MusicBrainz ID already (a drive-supplied
+        // value, a MUSICBRAINZ_DISCID tag in a .toc file, a future libdiscid
+        // path). That stored value is preferred as the disc's ID, but it must
+        // NOT be what decides whether a whole-disc identifier is attached:
+        // comparing a stored value against a computed one makes an ordinary
+        // single-session CD look like it has a data session riding along, and
+        // sends MeedyaDB a "whole disc" identifier for a disc that has none.
+        var toc = audioTOC()
+        toc.musicBrainzDiscId = "aStoredDiscID.From-TheDrive-"
+
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(toc: toc)
+
+        XCTAssertEqual(inputs.disc.musicBrainzDiscId, "aStoredDiscID.From-TheDrive-",
+                       "the stored ID is still preferred as the disc's own ID")
+        XCTAssertTrue(
+            inputs.identifiers.allSatisfy { $0.idType != MeedyaDBSubmissionBuilder.fullDiscIDType },
+            "a plain audio CD has no data session, so no whole-disc identifier belongs on it"
+        )
+    }
+
+    func test_audioCD_enhancedCDStillGetsItsFullDiscIdentifierWithAStoredID() {
+        // The mirror of the above: a real Enhanced CD must keep its whole-disc
+        // identifier even when the TOC carries a stored music ID.
+        var toc = enhancedCD()
+        toc.musicBrainzDiscId = "aStoredDiscID.From-TheDrive-"
+
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(toc: toc)
+
+        XCTAssertEqual(inputs.disc.musicBrainzDiscId, "aStoredDiscID.From-TheDrive-")
+        XCTAssertTrue(
+            inputs.identifiers.contains { $0.idType == MeedyaDBSubmissionBuilder.fullDiscIDType },
+            "a disc with a data session still needs its whole-disc identifier"
+        )
+    }
 }
