@@ -120,10 +120,24 @@
   the canceller as well as in the task's own tail lets a stale task clobber whatever
   started next. Leaving the busy flag set until the task itself tidies up also closes the
   re-entry window for free (learned on the rip screen, run 331).
-- **Test the WIRING, not just the layer.** The label-scrubbing privacy rule was tested in
-  `MeedyaDBPublisherTests`, one layer below the code that passes `mode:` in — so
-  hardcoding `.full` at the call site would have left every test green while real data
-  leaked. Cover the call site, by asserting on the bytes that reach the seam.
+- **⚠️ THE RECURRING DEFECT IN THIS PROJECT IS A MISSING CONNECTION BETWEEN TWO CORRECT
+  COMPONENTS — not a broken component.** Three times now, every unit passed its own tests
+  while the wire between two of them was absent or wrong:
+  1. the privacy `mode:` not passed from `identify()` into the publisher (would have
+     leaked disc labels while every test stayed green);
+  2. the identify SCREEN building its publisher once from the disabled default and never
+     handing it the MeedyaDB config it had just read — so it promised a contribution on
+     screen and sent nothing (`ba922a9`);
+  3. the stored submission-mode setting having zero readers, so a privacy control in
+     Settings did nothing at all.
+  In each case the tests asserted the PROMISE (a flag, a layer's own behaviour) rather
+  than the DELIVERY. **Assert on the bytes that reach the outermost seam**, from the
+  entry point a user actually touches. A test fixture that wires ready settings to a
+  disabled collaborator reproduces the bug instead of catching it — check the fixture
+  mirrors production wiring, not just production types.
+- **Derive a promise and its fulfilment from ONE value.** The screen's "will contribute"
+  and the run's actual publisher now both come from `meedyaDBReadiness?.config`, so they
+  cannot disagree. Two independent reads of "is it on?" is how (2) happened.
 - **Never put backticks in `git commit -m "…"`** — the shell executes them and eats
   words. Use `git commit -F <file>` with a quoted heredoc.
 - **MakeMKV (#503) is APPROVED as an *optional, opt-in* backend** (owner,

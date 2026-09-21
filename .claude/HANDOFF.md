@@ -498,6 +498,31 @@ asked for the rest of the queue to be worked autonomously. All four answers appl
   be a default argument evaluated at a nonisolated call site. `DiscIdentifyViewModel`
   inlines its TOC-reader default closure for exactly that reason.
 
+### CROSS-REVIEW OF THE ABOVE — one blocker, fixed in `ba922a9` (run 343 green)
+
+No compile errors. But two real defects, both the same shape and both in the new screen:
+
+- **BLOCKER — the screen could promise a contribution and never send one.** It held ONE
+  `MusicDiscIdentifier` built at construction; the production default builds it with an
+  empty, DISABLED publisher, and the MeedyaDB config it had just read was never handed
+  to it. Fully configured, the screen showed "This disc will also be contributed" and
+  then "MeedyaDB publishing is turned off", having sent nothing. The identifier is now
+  built PER RUN from the config in force, and `contribute` is derived from that SAME
+  value, so promise and delivery cannot drift apart.
+- **MAJOR — the Settings privacy picker was a dead control.** `MeedyaDBConfigStore
+  .submissionMode(in:)` had zero readers; the screen always sent anonymously while the
+  tab warned about sending the disc label. Only ever under-sent, but it broke the rule
+  written into that same file: a setting that is on and silently doing nothing is worse
+  than one that is off. Now read per run; the disc's CD-Text rides along as the label
+  (still stripped by the publisher unless the mode is `full`).
+- Plus: the retry re-read whatever the form said rather than the drive it had just
+  released; a hung `diskutil` could not be cancelled; "permission denied" made the
+  screen assert a fact that may be false.
+
+**The tests were structured so neither could be caught** — they asserted the PROMISE,
+never the delivery, and the fixture paired ready settings with a disabled publisher,
+mirroring the bug. Three tests now assert on the bytes reaching the wire.
+
 ### NEXT
 
 1. **#205 — the keyed metadata providers.** This is now the binding constraint on video
