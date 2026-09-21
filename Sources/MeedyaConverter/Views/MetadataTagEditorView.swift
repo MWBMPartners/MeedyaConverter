@@ -56,6 +56,9 @@ struct MetadataTagEditorView: View {
 
     /// Whether the MusicBrainz lookup sheet is presented.
     @State private var showingLookup = false
+    /// The film lookup (#205). A separate flag rather than an enum so the
+    /// existing music sheet's presentation is untouched.
+    @State private var showingTMDBLookup = false
 
     /// Whether editing an existing tag (true) or adding a new one (false).
     @State private var isEditingExisting = false
@@ -113,6 +116,14 @@ struct MetadataTagEditorView: View {
                         preferredAlbum: seed.album,
                         fileDurationSeconds: viewModel.selectedFile?.duration,
                         onApply: applyLookupMatch
+                    )
+                }
+                .sheet(isPresented: $showingTMDBLookup) {
+                    let seed = TMDBTagMapping.seedQuery(tags: tags, filename: viewModel.selectedFile?.fileName ?? "")
+                    TMDBLookupSheet(
+                        initialTitle: seed.title,
+                        initialYear: seed.year,
+                        onApply: applyTMDBMatch
                     )
                 }
 
@@ -214,13 +225,24 @@ struct MetadataTagEditorView: View {
             Divider()
                 .frame(height: 16)
 
+            // One button, two databases: asking the user to know whether
+            // their file is "a MusicBrainz thing" or "a TMDB thing" would be
+            // making our plumbing their problem.
             Button {
-                showingLookup = true
+                if looksLikeVideo {
+                    showingTMDBLookup = true
+                } else {
+                    showingLookup = true
+                }
             } label: {
                 Label("Look Up…", systemImage: "magnifyingglass")
             }
             .disabled(viewModel.selectedFile == nil || isWriting)
-            .accessibilityLabel("Look up metadata on MusicBrainz")
+            .accessibilityLabel(
+                looksLikeVideo
+                    ? "Look up film details on TMDB"
+                    : "Look up metadata on MusicBrainz"
+            )
 
             Spacer()
 
@@ -514,9 +536,13 @@ struct MetadataTagEditorView: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
 
+            // Names the database the button will ACTUALLY use, which now
+            // depends on the file. Saying "MusicBrainz" in front of a film
+            // would send the user looking for a music database.
             Text(
                 "Add tags manually, use a template, click a common tag "
-                + "suggestion below, or use Look Up… to fetch them from MusicBrainz."
+                + "suggestion below, or use Look Up… to fetch them from "
+                + (looksLikeVideo ? "TMDB." : "MusicBrainz.")
             )
             .font(.caption)
             .foregroundStyle(.tertiary)
@@ -532,6 +558,26 @@ struct MetadataTagEditorView: View {
     /// Merge a chosen MusicBrainz match into the tag table (pure mapping in
     /// `MusicBrainzTagMapping.applying`); the user still reviews and writes via
     /// "Write Tags…". Nothing touches the file here.
+    /// Whether the selected file is a film rather than music.
+    ///
+    /// ⚠️ NOT `hasVideo`: ffprobe reports embedded cover art as a video
+    /// stream, so that would send every artwork-tagged MP3 to the film
+    /// database. `looksLikeVideoContent` excludes still-image streams and
+    /// also requires a container that can actually hold video.
+    private var looksLikeVideo: Bool {
+        viewModel.selectedFile?.looksLikeVideoContent ?? false
+    }
+
+    private func applyTMDBMatch(_ result: MetadataResult, includeIdentifiers: Bool) {
+        tags = TMDBTagMapping.applying(result, to: tags, includeIdentifiers: includeIdentifiers)
+        selectedTagID = nil
+        viewModel.appendLog(
+            .info,
+            "TMDB match applied: \(result.title) (\(result.externalId))",
+            category: .metadata
+        )
+    }
+
     private func applyLookupMatch(
         _ match: MusicBrainzRecordingMatch,
         release: MusicBrainzRecordingMatch.Release?,
