@@ -532,6 +532,69 @@ mirroring the bug. Three tests now assert on the bytes reaching the wire.
 3. MeedyaDB hosting + credentials before anything can actually be submitted.
 4. `AutoTagger` still has no callers (#205).
 
+## 📍 2026-09-21 — VIDEO IDENTIFICATION IS NOW REACHABLE (`a9f7646`)
+
+The handoff said "Video disc identification wired end to end (`202ef0a`)". That
+was true of the ENGINE chain and false of the app: **`VideoDiscIdentifier` had no
+production constructor at all.** All eighteen were in tests.
+`TMDBDiscCandidates.provider(service:)` — the thing that feeds it candidates —
+appeared only inside a doc comment, and the CLI's `disc identify` is music-only.
+Fully built, fully tested, and no way in.
+
+### ⚠️ THE RECURRING DEFECT, FOR THE FOURTH TIME
+
+Two correct components, no connection between them, and tests that assert the
+PROMISE rather than the DELIVERY. The previous three were the identify screen's
+disabled publisher, the dead submission-mode picker, and the untested privacy
+wiring. **When a piece of work "lands", grep for a PRODUCTION caller before
+believing it.** `grep -rn 'TypeName(' Sources/ Tests/` and look at which
+directory the hits are in — if they are all under `Tests/`, it does not ship.
+
+### Where it went, and why not the Identify Disc screen
+
+The **MakeMKV Rip screen**. A film disc has no table of contents: its structure
+only exists once MakeMKV has scanned it, and that screen already holds the scan
+result (`discInfo`) and the consent gate. Doing it on the Identify Disc screen
+would mean a second scan (minutes on a Blu-ray) and a second copy of the consent
+gate. The Identify Disc screen now carries one line saying where to go, so the
+feature is discoverable and not merely reachable.
+
+Music is the other way round for a good reason: it reads a TOC with cdrdao,
+needs no MakeMKV, and gets an EXACT MusicBrainz hit rather than a ranked guess.
+
+### The things worth knowing later
+
+- **`MakeMKVIdentification.suggestedDiscType(from:)` is a SUGGESTION, and returns
+  an Optional to force callers to say so.** The identifier needs a `DiscType` and
+  nothing could supply one. That file's header says MakeMKV's type strings are
+  localised free text and are not relied on — still true: the picker is
+  pre-filled, always editable, and simply stays EMPTY when MakeMKV said nothing
+  recognisable, with the button explaining it needs an answer. A wrong disc type
+  reaches a shared database and cannot be walked back.
+- **⚠️ The order of the checks in `suggestedDiscType` is load-bearing.** Every
+  later pattern is a substring of an earlier one's real strings: "UHD Blu-ray
+  disc" contains "blu-ray", "HD DVD disc" contains "dvd". Reordering them
+  silently DOWNGRADES discs. A test pins every pair — this is the same class of
+  mistake as CI run 349's noise list, so it is pinned rather than trusted.
+- **Substring matching survives localisation** ("Disque Blu-ray" still matches)
+  because the surrounding words get translated while the format names are proper
+  nouns. That is why it is `contains`, not equality.
+- **Identification starts NO subprocess** — it works from the scan already in
+  hand — so it is deliberately NOT put back through `gatedExecutor()`. The gate
+  was satisfied by the scan that produced the data; re-checking would refuse to
+  name a disc the user had legitimately scanned. A test pins that identifying
+  adds no second MakeMKV call.
+- **It does not block on `isRipping`** either, for the same reason: no tool, no
+  file, so there is no cause to make someone wait out an hour-long rip.
+- **All three of the identify screen's shipped defects are designed out, not
+  re-fixed.** The identifier is built PER RUN from the config in force (a stored
+  one promises a contribution and sends nothing); the submission mode is read per
+  run (or the Settings picker is a dead control); the label comes from the same
+  `DiscSignals` that were ranked (so what is shown and what is sent cannot
+  disagree).
+- **A scan clears the previous disc's identification.** Leaving the last film's
+  name on screen while a different disc is scanned is worse than showing nothing.
+
 ## 📋 QUEUED — not scheduled
 
 Work the owner has asked for but not scheduled. Each has a GitHub issue; the issue is

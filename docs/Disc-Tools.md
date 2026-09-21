@@ -33,6 +33,10 @@ your files, your library, or anything about you.
 
 **Where:** *Identify Disc* in the sidebar, or `meedya-convert disc identify`.
 
+This is for **music discs**. DVDs and Blu-rays are identified on the MakeMKV
+Rip screen instead — see [Identifying a film disc](#identifying-a-film-disc) —
+because a film disc has to be scanned before there is anything to go on.
+
 A music CD's track layout is very nearly a fingerprint: the exact lengths of
 the tracks, measured to a 75th of a second, almost never repeat across
 different albums. MeedyaConverter turns that layout into an identifier and
@@ -149,6 +153,32 @@ leaving the screen cancels anything in progress.
 
 **Ripped files are simply saved.** They are not added to the queue and not
 identified automatically — what happens to them next is up to you.
+
+### Identifying a film disc
+
+Once a disc has been scanned, the same screen can work out **what film or
+programme it is**. You do not have to rip anything to use this.
+
+It works from what the scan already found — the running time of the main
+feature, how many chapters it has, which audio and subtitle languages are on
+it — and compares that against [TMDB](https://www.themoviedb.org), if you have
+added a TMDB key in Settings → Metadata.
+
+**This is a best guess, and the app says so.** A music CD gives an exact
+answer; a film disc does not. The result reads like *"Best guess: Big Movie
+(92% confident)"*, and the percentage is there to be taken seriously — a
+low one means check before you trust it.
+
+**Choose the disc type before identifying.** The app pre-fills this from what
+MakeMKV reports, but MakeMKV's wording varies, so the menu is always yours to
+change. If it could not tell, the menu is left empty and the Identify button
+explains that it needs an answer. This is deliberate: the disc type is part of
+what gets contributed, and a wrong one is difficult to undo later.
+
+**Without a TMDB key it still does something useful.** The disc's own
+structure is enough to record that the disc exists, so it can still be
+contributed to MeedyaDB — nobody can put a name to it yet, that is all. The
+same is true if TMDB is unreachable: the run finishes rather than failing.
 
 ---
 

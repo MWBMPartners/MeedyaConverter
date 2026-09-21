@@ -85,6 +85,22 @@
   short-circuits before the network. `identify` throws only `CancellationError`.
   Contributing is opt-in per run (`--submit`); the API key is env-only (`MEEDYADB_API_KEY`)
   because argv is world-readable via `ps`.
+- **VIDEO IDENTIFICATION IS NOW REACHABLE (`a9f7646`).** It had been "wired end to
+  end" since `202ef0a` in the ENGINE only: `VideoDiscIdentifier` had NO production
+  constructor (all eighteen were in tests) and `TMDBDiscCandidates.provider(service:)`
+  appeared only in a doc comment. **This was the FOURTH instance of the same defect
+  shape: two correct components, no connection, tests asserting the PROMISE not the
+  DELIVERY.** Before believing a feature landed, grep for a production caller and
+  check whether every hit is under `Tests/`. It now lives on the **MakeMKV Rip
+  screen**, because a film disc's structure only exists after a MakeMKV scan and that
+  screen already holds both the scan result and the consent gate; the Identify Disc
+  screen (music, cdrdao, exact MusicBrainz hit) points at it so it is discoverable.
+  New `MakeMKVIdentification.suggestedDiscType(from:)` is a SUGGESTION returning an
+  Optional — the picker is pre-filled but always editable and stays empty when
+  MakeMKV said nothing readable, because a wrong disc type reaches a shared database.
+  **Its check order is load-bearing** ("UHD Blu-ray" contains "blu-ray", "HD DVD"
+  contains "dvd"), pinned by tests — the same class of mistake as CI run 349.
+  Identification starts no subprocess, so it is deliberately not re-gated.
 - **QUEUED (#505, not scheduled): a persistent submission queue.** When MeedyaDB is
   down a contribution is currently LOST — recorded as `.failed` and shown, but never
   retried. #505 covers retaining it, surviving restarts, backing off, and

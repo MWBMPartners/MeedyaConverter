@@ -27,7 +27,9 @@ the drive.
 
 ## Identifying a disc
 
-Choose **Identify Disc** in the sidebar.
+Choose **Identify Disc** in the sidebar. That screen is for **music discs** —
+DVDs and Blu-rays are identified on the MakeMKV Rip screen instead, because a
+film disc has to be scanned first before there is anything to go on.
 
 A music CD's track layout is very nearly a fingerprint: the exact lengths of
 the tracks, measured to a 75th of a second, almost never repeat across
@@ -109,6 +111,29 @@ leaving the screen cancels anything in progress.
 
 Ripped files are simply saved. They are not added to the queue and not
 identified automatically — what happens to them next is up to you.
+
+### Identifying a film disc
+
+Once you have scanned a disc, the same screen can work out **what film or
+programme it is**. You do not have to rip anything to use this.
+
+It uses what the scan already found — the running time of the main feature,
+the chapter count, the audio and subtitle languages — and compares that with
+[TMDB](https://www.themoviedb.org) if you have added a TMDB key in
+Settings → Metadata.
+
+**It is a best guess, and it says so.** A music CD gives an exact answer; a
+film disc does not. You will see something like *"Best guess: Big Movie
+(92% confident)"* — and a low percentage is worth checking before trusting.
+
+**Check the disc type first.** It is pre-filled from what MakeMKV reports, but
+that wording varies, so the menu is yours to change. If MakeMKV gave no clear
+answer the menu is left empty and the button says it needs one. The disc type
+is part of what gets contributed, and a wrong one is hard to undo.
+
+**No TMDB key is fine.** The disc's own structure is still enough to record
+that the disc exists, so it can still be contributed — it just has no name
+attached yet. The same applies if TMDB cannot be reached.
 
 ---
 
