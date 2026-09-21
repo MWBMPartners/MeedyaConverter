@@ -507,8 +507,12 @@ MeedyaConverter bundles or uses the following open-source components, each under
 | libdvdread / libdvdnav | GPL 2 | DVD reading |
 | libbluray | LGPL 2.1 | Blu-ray reading |
 | libmediainfo | BSD-2-Clause | Detailed media file analysis |
+| cdrdao | GPL 2 | Reading a CD's table of contents; audio CD imaging |
+| **MakeMKV** | **Proprietary — NOT bundled** | **Optional, off-by-default DVD/Blu-ray title extraction ([Disc tools](docs/Disc-Tools.md))** |
 
 > GPL tools are invoked as subprocesses (not linked), maintaining license compatibility with the proprietary application code.
+
+> **MakeMKV is the exception to that table.** It is separate, proprietary software that you install yourself — MeedyaConverter never bundles it, never ships a key for it, and cannot use it until you both install it and switch it on in Settings, acknowledging MakeMKV's own terms. Every other disc path in MeedyaConverter detects copy protection and **refuses** it; MeedyaConverter never decrypts anything itself. See [Disc tools](docs/Disc-Tools.md).
 
 ---
 

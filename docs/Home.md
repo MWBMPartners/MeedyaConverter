@@ -15,6 +15,7 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 | [Getting Started](Getting-Started) | Installation, first encode, basic workflow |
 | [User Guide](User-Guide) | Profiles, HDR, containers, streaming, pipelines, scheduling, and all features |
 | [CLI Reference](CLI-Reference) | `meedya-convert` commands, options, batch scripting |
+| [Disc Tools](Disc-Tools) | Identifying discs, the optional MakeMKV backend, contributing to MeedyaDB |
 | [Architecture](Architecture) | System design, modules, data flow |
 | [Building from Source](Building-from-Source) | Prerequisites, clone, build, test, conditional builds |
 | [Contributing](../CONTRIBUTING.md) | Code style, PR process, branch strategy, linting |

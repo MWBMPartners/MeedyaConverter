@@ -305,6 +305,12 @@ enum HelpTopicRegistry {
             summary: "Convert vector artwork and rasterise for delivery.",
             sortOrder: 70
         ),
+        "disc-tools.md": Metadata(
+            title: "Disc Tools",
+            systemImage: "opticaldisc",
+            summary: "Identify discs, rip with MakeMKV, and contribute to MeedyaDB.",
+            sortOrder: 75
+        ),
         "render-farm.md": Metadata(
             title: "Render Farm",
             systemImage: "server.rack",
