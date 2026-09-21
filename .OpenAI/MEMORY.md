@@ -98,6 +98,23 @@
   (c) **ffprobe reports cover art as a VIDEO STREAM**, so `MediaFile.hasVideo` is true
   for an artwork-tagged MP3. Use `looksLikeVideoContent` for any "film or song?"
   decision; `hasVideo` sends music to the film database.
+- **⚠️ REDACT BEFORE TRUNCATING, always.** A server error body was cut to 200
+  characters and *then* searched for the API key. A proxy echoing the request URL
+  sends a v3 key back as 32 plain hex characters, and a cut through the middle left a
+  31-character fragment that `replacingOccurrences(of: wholeKey)` could never match —
+  and 31 of 32 hex characters is the key. Redact the whole string, then cut. A test
+  that only looks for the WHOLE secret cannot catch this: sweep substrings.
+- **Motion JPEG is a real video codec**, not just cover art (old camcorder .avi/.mov).
+  `EmbeddedArtwork` uses the codec to narrow and the FRAME RATE to decide, with a
+  plausibility range of 1…1000 fps — ffprobe reports an attached picture as `90000/1`
+  through `r_frame_rate`, which `FFmpegProbe` prefers, so "has a frame rate" is not
+  enough.
+- **A disc volume label is not a title.** `TMDBDiscCandidates.discNoiseTokens` may only
+  hold words that can NEVER be a film title alone. "ray" (Ray, 2004), "side" (The Blind
+  Side), "a"/"b" (Plan B) all had to come out; "blu ray" is matched as a PAIR instead.
+  The last remaining token is never stripped ("1917", "300", "1984" are films). A
+  trailing four-digit number may be part of the title ("Blade Runner 2049"), so an
+  empty year-filtered search is retried WITHOUT the year — a year filter can only hide.
 - **Only providers that RUN get a settings field.** TheTVDB, OMDb, Discogs, FanArt.tv,
   OpenSubtitles remain URL-builders with no caller and are named in the UI as
   not-yet-connected. Adding a key box for them would be the dead-control defect again.

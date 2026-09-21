@@ -581,6 +581,35 @@ that matters — it is what would name a film on a disc, and what tags a video f
   forgotten. Offering a box for a provider nothing calls is the dead-control defect
   this project keeps shipping.
 
+### Cross-review of the TMDB work — 1 blocker + 4 logic errors, all fixed (`07915e3`, run 350 ✅)
+
+CI was green on all of it beforehand, which is the point: every one of these builds,
+passes and is wrong.
+
+- **BLOCKER — a partial API key could escape.** Error snippets were truncated to 200
+  characters and *then* redacted; a proxy echoing the request URL could leave a
+  31-of-32-character fragment that whole-key matching cannot see. Redaction now
+  precedes truncation. The old sweep test could not have caught it (whole key only);
+  the new one echoes the key across the cut and sweeps 8/12/16/24-char substrings.
+- **The label cleaner destroyed real titles** — *Ray*, *1917*, *300*, *1984*,
+  *The Blind Side*, *Plan B*. See the memory entry for the rules that replaced it.
+- **"BLADE_RUNNER_2049" searched for Blade Runner released in 2049.** Empty
+  year-filtered searches now retry without the year.
+- **Motion JPEG was written off as cover art**, silently removing the film lookup for
+  camcorder files. Frame rate decides now.
+- **The settings caption claimed disc naming worked.** It does not in this build —
+  reworded to claim only the tag lookup. Same overclaiming defect as the night before,
+  in the very section whose own comment forbids it.
+- Plus: a stuck spinner on a cancel race; a music video having no route back to
+  MusicBrainz (now a menu keeping the smart default AND offering both); a legacy
+  unlabelled TMDB key shadowing a new one; `Bearer eyJ…` pasted verbatim going into
+  the URL; and a test named "passes the year to TMDB" that never looked at a request.
+
+**One CI failure (run 349), self-inflicted:** fixing the noise list, I removed seven
+words when the review had named four — `bd` had an existing test. Changing a shared
+constant means re-reading what depends on it. The fix was verified by running all 23
+cases (old tests + new) through the rules before pushing, not by eye.
+
 ### ⚠️ STILL NOT WIRED: TMDB → video disc identification
 
 `VideoDiscIdentifier` gained a `candidateProvider` seam and `TMDBDiscCandidates`
