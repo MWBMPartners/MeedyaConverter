@@ -174,3 +174,81 @@ public enum MeedyaDBGate {
         }
     }
 }
+
+// MARK: - MeedyaDBContributor
+
+/// Sends an already-built submission to MeedyaDB, turning every outcome into
+/// a `MeedyaDBContribution` rather than an error.
+///
+/// This is the shared half of the music and video identification runs, and it
+/// lives in ONE place deliberately: the failure posture here is a set of
+/// judgement calls (see below), and two copies of it would drift. Whenever a
+/// new kind of disc learns to contribute, it should reuse this rather than
+/// re-deciding what counts as a failure.
+///
+/// The posture, in one place:
+///   * publishing switched off or not configured is `.notAttempted`, NEVER
+///     `.failed` — that is the normal state for anyone without a MeedyaDB
+///     account, and must not be shown as an error;
+///   * a genuine rejection or network failure is `.failed`, recorded rather
+///     than thrown, so a caller can show it without a `do`/`catch`;
+///   * cancellation is rethrown untouched. The user stopping a run is not
+///     MeedyaDB rejecting it, and reporting it as a failure would be a lie;
+///   * a submission with nothing matchable in it is skipped rather than sent,
+///     because a row nobody can ever merge is noise in a shared database.
+public struct MeedyaDBContributor: Sendable {
+
+    /// Public and named so callers can recognise these cases without string
+    /// matching, and so tests pin the wording. Treat an edit as a
+    /// user-facing copy change.
+    public static let notRequestedReason =
+        "Contributing to MeedyaDB wasn't requested, so nothing was sent."
+    public static let noIdentityReason =
+        "This disc didn't produce a usable identifier, so nothing was sent."
+
+    private let publisher: MeedyaDBPublisher
+
+    /// The default publisher has an empty, disabled config, so a contributor
+    /// built with no arguments is a usable production object that quietly
+    /// skips the upload — which is what everyone gets until MeedyaDB is set up.
+    public init(
+        publisher: MeedyaDBPublisher = MeedyaDBPublisher(config: MeedyaDBPublisherConfig())
+    ) {
+        self.publisher = publisher
+    }
+
+    /// - Throws: `CancellationError`, and nothing else.
+    public func contribute(
+        _ submission: MeedyaDBDiscSubmissionInputs,
+        requested: Bool,
+        mode: MeedyaDBSubmissionMode
+    ) async throws -> MeedyaDBContribution {
+        guard requested else {
+            return .notAttempted(reason: Self.notRequestedReason)
+        }
+        guard submission.hasUsableIdentity else {
+            return .notAttempted(reason: Self.noIdentityReason)
+        }
+
+        do {
+            let result = try await publisher.submit(
+                disc: submission.disc,
+                identifiers: submission.identifiers,
+                candidates: submission.candidates,
+                mode: mode
+            )
+            return .succeeded(result)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as MeedyaDBPublishError {
+            switch error {
+            case .disabled, .notConfigured:
+                return .notAttempted(reason: error.localizedDescription)
+            case .invalidURL, .unauthorized, .rateLimited, .httpStatus, .transport, .malformedResponse:
+                return .failed(reason: error.localizedDescription)
+            }
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
+    }
+}

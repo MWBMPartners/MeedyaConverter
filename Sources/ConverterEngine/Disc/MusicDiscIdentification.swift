@@ -238,14 +238,17 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
 public struct MusicDiscIdentifier: Sendable {
 
     private let lookupService: MusicBrainzDiscLookupService
-    private let publisher: MeedyaDBPublisher
+    /// The contribute half is shared with the video path (`MeedyaDBContributor`)
+    /// so the failure posture is decided in exactly one place and cannot drift
+    /// between the two kinds of disc.
+    private let contributor: MeedyaDBContributor
 
     public init(
         lookupService: MusicBrainzDiscLookupService = MusicBrainzDiscLookupService(),
         publisher: MeedyaDBPublisher = MeedyaDBPublisher(config: MeedyaDBPublisherConfig())
     ) {
         self.lookupService = lookupService
-        self.publisher = publisher
+        self.contributor = MeedyaDBContributor(publisher: publisher)
     }
 
     /// Convenience for the common case: default lookup, MeedyaDB from a
@@ -354,44 +357,15 @@ public struct MusicDiscIdentifier: Sendable {
 
     // MARK: - Contribution
 
-    /// Throws `CancellationError` and nothing else — every other outcome is
-    /// a `MeedyaDBContribution` case. Cancellation must NOT be folded into
-    /// `.failed`: the user stopping a run is not MeedyaDB rejecting it, and
-    /// reporting it as a failure would be a lie on screen.
+    /// Delegates to the shared `MeedyaDBContributor` — see its doc comment
+    /// for the failure posture. Kept as a named method so the call site in
+    /// `identify` stays readable.
     private func contributeIfPossible(
         _ submission: MeedyaDBDiscSubmissionInputs,
         contribute: Bool,
         mode: MeedyaDBSubmissionMode
     ) async throws -> MeedyaDBContribution {
-        guard contribute else {
-            return .notAttempted(reason: Self.notRequestedReason)
-        }
-        guard submission.hasUsableIdentity else {
-            return .notAttempted(reason: Self.noIdentityReason)
-        }
-
-        do {
-            let result = try await publisher.submit(
-                disc: submission.disc,
-                identifiers: submission.identifiers,
-                candidates: submission.candidates,
-                mode: mode
-            )
-            return .succeeded(result)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as MeedyaDBPublishError {
-            switch error {
-            case .disabled, .notConfigured:
-                // Not a failure: the normal state for anyone who hasn't set
-                // MeedyaDB up, which is everyone until the server is live.
-                return .notAttempted(reason: error.localizedDescription)
-            case .invalidURL, .unauthorized, .rateLimited, .httpStatus, .transport, .malformedResponse:
-                return .failed(reason: error.localizedDescription)
-            }
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
+        try await contributor.contribute(submission, requested: contribute, mode: mode)
     }
 
     // MARK: - Plain-English reasons
@@ -404,8 +378,9 @@ public struct MusicDiscIdentifier: Sendable {
         "This disc has no audio tracks, so there is nothing to identify or contribute."
     public static let unreadableTOCReason =
         "This disc's table of contents is incomplete, so no identifier could be worked out from it."
-    public static let notRequestedReason =
-        "Contributing to MeedyaDB wasn't requested, so nothing was sent."
-    public static let noIdentityReason =
-        "This disc didn't produce a usable identifier, so nothing was sent."
+    /// Forwarded from `MeedyaDBContributor`, which now owns the wording for
+    /// both kinds of disc. Kept here so existing callers keep working and so
+    /// the two can never say different things.
+    public static let notRequestedReason = MeedyaDBContributor.notRequestedReason
+    public static let noIdentityReason = MeedyaDBContributor.noIdentityReason
 }
