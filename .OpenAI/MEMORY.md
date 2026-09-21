@@ -114,6 +114,13 @@
   `@AppStorage` + `.onChange`, as `DiscIdentifyView` already did. #507 filed for a
   MINOR: `.incomplete` MeedyaDB readiness is collapsed into a Bool, so a
   half-configured setup reports "wasn't requested" when it was.
+- **QUEUED (#508): `AutoTagger` IS NEVER CALLED.** Every reference outside its own file
+  is a test of a pure static helper; `buildMetadataArguments(result:config:)` has no
+  caller anywhere. `FFmpegArgumentBuilder` has its OWN private metadata builder using
+  the job's existing tags — nothing connects a LOOKUP to an encode. The fifth instance
+  of the shape. **The check: `grep -rn 'TypeName' Sources/ Tests/` — if every hit
+  outside the type's own file is under `Tests/`, it does not ship.**
+- **QUEUED (#507): half-configured MeedyaDB reports "wasn't requested" when it was.**
 - **QUEUED (#505, not scheduled): a persistent submission queue.** When MeedyaDB is
   down a contribution is currently LOST — recorded as `.failed` and shown, but never
   retried. #505 covers retaining it, surviving restarts, backing off, and

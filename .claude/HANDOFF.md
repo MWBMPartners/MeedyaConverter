@@ -644,10 +644,17 @@ house recurring shape yet again — promise and delivery drifting apart.
 Work the owner has asked for but not scheduled. Each has a GitHub issue; the issue is
 the source of truth, these are one-line pointers.
 
+> ⚠️ **The check that found #502's gap and #508: before believing a feature landed,**
+> `grep -rn 'TypeName' Sources/ Tests/ --include=*.swift` — **if every hit outside the
+> type's own file is under `Tests/`, it does not ship.** Five instances so far, all the
+> same shape: two correct components, no connection, tests asserting the promise.
+
 | Issue | What | Raised |
 | --- | --- | --- |
 | **#505** | **Persistent submission queue** — retain a MeedyaDB contribution when the service is down, survive restarts, retry with backoff, and make the queue exportable/importable between installs. | 2026-09-21 |
 | **#506** | **Settings export/import** — move a MeedyaConverter setup between installations as one versioned JSON file. Raised as the "necessary, implied" feature behind #505, which depends on it. | 2026-09-21 |
+| **#507** | **Half-configured MeedyaDB says "wasn't requested"** when it was — both screens flatten the three-state readiness into a Bool before the shared contributor sees it. Fix belongs in `MeedyaDBContributor`, not one screen. | 2026-09-21 |
+| **#508** | **`AutoTagger` is never called** — looked-up metadata is never embedded during an encode. The fifth "no production caller" find; part of #205. | 2026-09-21 |
 
 ### #505, the parts that need care (full reasoning in the issue)
 
