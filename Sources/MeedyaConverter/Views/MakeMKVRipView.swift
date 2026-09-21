@@ -128,6 +128,18 @@ struct MakeMKVRipView: View {
                     TextField("Disc image", text: $viewModel.isoPath, prompt: Text("Choose a .iso file\u{2026}"))
                     Button("Choose\u{2026}") { chooseISO() }
                 }
+            case .discFolder:
+                HStack {
+                    TextField("Disc folder", text: $viewModel.folderPath, prompt: Text("Choose a folder\u{2026}"))
+                    Button("Choose\u{2026}") { chooseDiscFolder() }
+                }
+                Text(
+                    "Choose the folder that CONTAINS the VIDEO_TS or BDMV folder, not "
+                    + "VIDEO_TS/BDMV itself. These files are already decrypted \u{2014} "
+                    + "nothing is unlocked here."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             // While a scan runs this reads "Scanning…" and is disabled; the
@@ -333,6 +345,25 @@ struct MakeMKVRipView: View {
         panel.prompt = "Choose"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         viewModel.destinationPath = url.path
+    }
+
+    /// Picks the PARENT of a `VIDEO_TS`/`BDMV` folder, which is what
+    /// `makemkvcon` expects. If the user picks `VIDEO_TS` itself — the
+    /// obvious mistake — step up to its parent rather than handing MakeMKV a
+    /// path it will reject with an unhelpful message.
+    private func chooseDiscFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Disc Folder"
+        panel.message = "Choose the folder that contains VIDEO_TS or BDMV."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let name = url.lastPathComponent.uppercased()
+        let resolved = (name == "VIDEO_TS" || name == "BDMV") ? url.deletingLastPathComponent() : url
+        viewModel.folderPath = resolved.path
     }
 
     private func chooseISO() {

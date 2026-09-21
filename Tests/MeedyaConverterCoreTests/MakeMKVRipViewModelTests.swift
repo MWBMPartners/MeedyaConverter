@@ -297,6 +297,34 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         XCTAssertEqual(vm.resolvedSource, .iso("/Volumes/Movies/disc.iso"))
         vm.isoPath = ""
         XCTAssertNil(vm.resolvedSource)
+
+        vm.sourceKind = .discFolder
+        vm.folderPath = "  /Volumes/Movies/My Film  "
+        XCTAssertEqual(vm.resolvedSource, .file("/Volumes/Movies/My Film"))
+        vm.folderPath = "   "
+        XCTAssertNil(vm.resolvedSource)
+    }
+
+    func test_everySourceKindResolvesAndExplainsItself() {
+        // A new source kind must be wired into BOTH resolvedSource and
+        // scanBlockedReason. Iterating allCases means adding a case without
+        // wiring it up fails here rather than shipping a picker entry that
+        // silently does nothing.
+        let vm = makeReadyViewModel(runner: MockMakeMKVRunner(scripts: []))
+
+        for kind in MakeMKVRipViewModel.SourceKind.allCases {
+            vm.sourceKind = kind
+            vm.discIndexText = ""
+            vm.devicePath = ""
+            vm.isoPath = ""
+            vm.folderPath = ""
+
+            XCTAssertNil(vm.resolvedSource, "\(kind.rawValue) with nothing filled in must not resolve")
+            XCTAssertNotNil(
+                vm.scanBlockedReason,
+                "\(kind.rawValue) must explain what is missing rather than leaving a dead button"
+            )
+        }
     }
 
     // MARK: - Scan: success / failure / cancel
@@ -721,6 +749,10 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         vm.sourceKind = .discImage
         vm.isoPath = ""
         XCTAssertEqual(vm.scanBlockedReason, "Choose a disc image file to scan.")
+
+        vm.sourceKind = .discFolder
+        vm.folderPath = ""
+        XCTAssertEqual(vm.scanBlockedReason, "Choose the folder that contains VIDEO_TS or BDMV.")
     }
 
     func test_ripBlockedReason_namesTheNextStepInOrder() async {

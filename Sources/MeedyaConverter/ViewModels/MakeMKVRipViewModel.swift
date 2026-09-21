@@ -111,14 +111,16 @@ final class MakeMKVRipViewModel {
 
     // MARK: - Source
 
-    /// The kind of source the user is pointing at. Deliberately narrower
-    /// than `MakeMKVSource` (which also has `.file`, a pre-decrypted
-    /// VIDEO_TS/BDMV folder) — this GUI flow covers the three sources a
-    /// rip normally starts from; `.file` is a follow-up if it's wanted.
+    /// The kind of source the user is pointing at — every case
+    /// `MakeMKVSource` offers.
     enum SourceKind: String, CaseIterable, Identifiable {
         case opticalDrive = "Optical Drive"
         case devicePath = "Device Path"
         case discImage = "Disc Image (ISO)"
+        /// A folder of already-decrypted disc files — the parent of a
+        /// `VIDEO_TS` or `BDMV` directory. Nothing is unlocked here: the
+        /// files have already been decrypted by whatever produced them.
+        case discFolder = "Disc Folder (VIDEO_TS / BDMV)"
         var id: String { rawValue }
     }
 
@@ -128,6 +130,7 @@ final class MakeMKVRipViewModel {
     var discIndexText: String = "0"
     var devicePath: String = ""
     var isoPath: String = ""
+    var folderPath: String = ""
 
     /// The current fields resolved to an engine `MakeMKVSource`, or `nil`
     /// when they don't describe one yet (blank path, non-numeric drive
@@ -144,6 +147,9 @@ final class MakeMKVRipViewModel {
         case .discImage:
             let trimmed = isoPath.trimmingCharacters(in: .whitespaces)
             return trimmed.isEmpty ? nil : .iso(trimmed)
+        case .discFolder:
+            let trimmed = folderPath.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : .file(trimmed)
         }
     }
 
@@ -188,6 +194,8 @@ final class MakeMKVRipViewModel {
             return "Enter the device path of the drive to scan."
         case .discImage:
             return "Choose a disc image file to scan."
+        case .discFolder:
+            return "Choose the folder that contains VIDEO_TS or BDMV."
         }
     }
 
