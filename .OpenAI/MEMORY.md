@@ -92,8 +92,21 @@
   submissions today (MusicBrainz/TMDB are read-only, so a failed lookup is retried, not
   queued); queue transient failures only (401/400 never); **never queue while
   contributions are OFF**, and store the already-scrubbed payload so a later mode
-  change cannot widen what is sent; there is **no settings export/import feature yet**,
-  so the export half has no host.
+  change cannot widen what is sent. The export half now HAS a host: **#506**, below.
+- **QUEUED (#506, not scheduled): settings export/import between installs.** Raised by
+  the owner as the necessary, implied feature behind #505; #505 depends on it and its
+  queue becomes one CATEGORY in #506's envelope rather than a second file format.
+  **The trap: the export must be an ALLOW-LIST, never a dump of `UserDefaults`.** Two
+  credentials sit in plain defaults today, verified — `mediaServerAPIKey`
+  (`MediaServerSettingsView.swift:42`) and `webhookCustomHeaders`
+  (`WebhookSettingsView.swift:55`, free-form JSON people put `Authorization: Bearer` in).
+  A deny-list would silently widen the moment someone adds another `…apiKey` key.
+  Credentials never travel at all — import should instead name which services still need
+  a key. Machine-specific settings must not travel either: tool paths break across an
+  Intel/Apple-Silicon Homebrew prefix, and `accurateRip.driveOffset` is a physical
+  property of ONE drive (copying it makes good rips fail verification). Copy the
+  encoding-profile split that already works: engine owns format + validation, view owns
+  the panels, CLI gets the same verbs.
 - **#205: TMDB NOW EXECUTES (20d34be → 04f4605).** MusicBrainz already worked; the
   KEYED providers were the dead half. `TMDBLookupService` runs real searches and
   detail fetches through the `MetadataHTTPClient` seam; reachable from Settings →

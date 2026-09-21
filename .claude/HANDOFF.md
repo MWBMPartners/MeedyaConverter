@@ -540,6 +540,7 @@ the source of truth, these are one-line pointers.
 | Issue | What | Raised |
 | --- | --- | --- |
 | **#505** | **Persistent submission queue** — retain a MeedyaDB contribution when the service is down, survive restarts, retry with backoff, and make the queue exportable/importable between installs. | 2026-09-21 |
+| **#506** | **Settings export/import** — move a MeedyaConverter setup between installations as one versioned JSON file. Raised as the "necessary, implied" feature behind #505, which depends on it. | 2026-09-21 |
 
 ### #505, the parts that need care (full reasoning in the issue)
 
@@ -556,14 +557,43 @@ the source of truth, these are one-line pointers.
   agreed to). Store the **already-scrubbed wire payload**, not the inputs — queueing
   inputs means a later switch to `full` would send a label that was queued under
   `anonymous`. The user must be able to see and delete what is held.
-- **Export/import has no host yet.** There is no settings export/import in this
-  codebase (verified). So #505 either ships standalone or drives that feature —
-  a decision to make, not an assumption. Import means submitting someone else's data
-  under your API key: validate the file, say so plainly, and never put credentials in
-  an export.
+- **Export/import now has a host: #506.** The open question ("standalone, or drive the
+  creation of settings export/import?") was ANSWERED by the owner on 2026-09-21 — it
+  drives it. The queue is **one category inside #506's envelope**, not a second bespoke
+  file format. Import still means submitting someone else's data under your API key:
+  validate the file, say so plainly, and never put credentials in an export.
 - Also: backoff with a ceiling, a dead-letter state rather than infinite retry,
   de-duplicate on enqueue, cap the queue, and store it in Application Support as JSON
   with atomic writes — not `UserDefaults`.
+
+### #506, the parts that need care (full reasoning in the issue)
+
+- **⚠️ The export must be an ALLOW-LIST, never a dump.** Two credentials are sitting in
+  plain `UserDefaults` right now, verified: `mediaServerAPIKey`
+  (`MediaServerSettingsView.swift:42`) and `webhookCustomHeaders`
+  (`WebhookSettingsView.swift:55`), which is free-form JSON people put
+  `Authorization: Bearer …` into. A whole-defaults export would carry both. A
+  deny-list is the wrong shape — the next `@AppStorage("…apiKey")` anyone adds would
+  silently widen the export and nobody would notice until a settings file was emailed
+  to someone. Pin it with a test that fails when a new key is added without a decision.
+- **Credentials never go in the file at all.** Not encrypted, not opt-in. Settings files
+  get emailed and dropped in shared folders. Import should instead TELL the user which
+  services still need a key and where to put it. (The SMTP password and every
+  `APIKeyProvider` key are already correctly in the Keychain — follow that pattern.)
+- **Some settings must not travel.** Tool paths (`customFFmpegPath` and friends) break
+  across an Intel/Apple-Silicon Homebrew prefix change, and `accurateRip.driveOffset` is
+  a **physical property of one optical drive** — copying it produces rips that fail
+  verification and look like bad discs. Hence categories, with a "this machine" group
+  excluded by default.
+- **Copy the encoding-profile pattern, it already works.** Engine owns the format and
+  validation (`profileStore.exportProfile`/`importProfile`), the view owns the panels
+  (`ProfileManagementView`), the CLI gets the same verbs (`ProfilesCommand`). That split
+  is what makes the format testable without a UI.
+- Also: versioned envelope, validate-then-apply (never half-apply), preview by category
+  before writing, merge by default, and refuse unknown keys rather than writing them
+  into `UserDefaults`.
+- Separate pre-existing bug worth fixing on the way past: `mediaServerAPIKey` should move
+  to `APIKeyManager`/Keychain. The export must be safe either way.
 
 ## 📍 2026-09-21 — #205: TMDB EXECUTES, and is reachable
 
