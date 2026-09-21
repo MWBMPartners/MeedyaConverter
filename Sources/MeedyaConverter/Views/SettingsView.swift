@@ -304,8 +304,22 @@ struct MetadataSettingsTab: View {
         )
     }
 
+    /// Not `@Observable`, so it never drives a redraw on its own — every
+    /// change goes through `refreshKeys()`.
+    @State private var keyManager = APIKeyManager()
+    /// What the user is typing. Cleared the moment it is saved, so a pending
+    /// key never lingers in memory longer than it must.
+    @State private var pendingTMDBKey: String = ""
+    /// Whether a key exists — NOT the key itself.
+    @State private var hasTMDBKey = false
+
+    private var trimmedTMDBKey: String {
+        pendingTMDBKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         Form {
+            providerKeysSection
             Section("Provider backend") {
                 Picker("Strategy", selection: backend) {
                     ForEach(SuiteCoreMetadataBackend.allCases, id: \.self) { option in
@@ -344,6 +358,7 @@ struct MetadataSettingsTab: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Metadata")
+        .onAppear { refreshKeys() }
     }
 
     // MARK: - Helpers
@@ -393,6 +408,98 @@ struct MetadataSettingsTab: View {
             Text("Bypassing MeedyaSuite-core. Using the built-in providers "
                  + "even when suite-core is linked.")
         }
+    }
+
+    // MARK: - Provider keys (#205)
+    //
+    // ⚠️ ONLY PROVIDERS THAT ACTUALLY RUN GET A FIELD HERE. Offering a box
+    // for a provider nothing calls would be a control that silently does
+    // nothing — which is worse than plainly not offering it. TMDB executes
+    // (`TMDBLookupService`); the rest are still URL builders with no caller,
+    // and are named below so their absence reads as honest rather than
+    // forgotten.
+    //
+    // The key goes to the Keychain, never `@AppStorage`: that is a
+    // plain-text plist in the user's Library. Same rule as MeedyaDB's tab.
+
+    @ViewBuilder
+    private var providerKeysSection: some View {
+        Section("Film and TV database (TMDB)") {
+            if hasTMDBKey {
+                Label("A key is saved in your Keychain", systemImage: "key.fill")
+                    .foregroundStyle(.green)
+                Text("For your safety the saved key is never shown again. You can "
+                     + "replace it by entering a new one, or remove it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // SecureField, never TextField: a key must not be readable over
+            // the user's shoulder or captured in a screen recording.
+            SecureField(
+                hasTMDBKey ? "Replace the saved key" : "TMDB API key",
+                text: $pendingTMDBKey,
+                prompt: Text("API key or read access token")
+            )
+            .accessibilityLabel(hasTMDBKey ? "Replace the saved TMDB API key" : "TMDB API key")
+
+            HStack {
+                Button(hasTMDBKey ? "Replace Key" : "Save Key") { saveTMDBKey() }
+                    .disabled(trimmedTMDBKey.isEmpty)
+                if hasTMDBKey {
+                    Button("Remove Key", role: .destructive) { removeTMDBKey() }
+                }
+                Spacer()
+                Link("Get a key\u{2026}", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
+            }
+
+            Text("TMDB gives you two credentials and either works here: the short "
+                 + "\"API Key\" or the much longer \"API Read Access Token\". Paste "
+                 + "whichever you have.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("Used to name films when identifying a video disc, and to look up "
+                 + "tags for video files. Saved to your Keychain, never to the app's "
+                 + "settings file.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section("Other providers") {
+            Text("TheTVDB, OMDb, Discogs, FanArt.tv and OpenSubtitles are not "
+                 + "connected yet, so there is nowhere useful to put their keys. "
+                 + "They will appear here as each one starts working.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("MusicBrainz needs no key and already works.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Re-reads the Keychain. The key is held in a local for the length of
+    /// this call only — never in view state.
+    private func refreshKeys() {
+        let stored = keyManager.key(for: .tmdb)?.apiKey
+        hasTMDBKey = !(stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func saveTMDBKey() {
+        let key = trimmedTMDBKey
+        guard !key.isEmpty else { return }
+        keyManager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: key, label: "TMDB"))
+        pendingTMDBKey = ""
+        refreshKeys()
+    }
+
+    private func removeTMDBKey() {
+        // Both the labelled entry and any unlabelled one, so "Remove" means
+        // removed rather than "removed the one I happened to name".
+        keyManager.removeKey(provider: .tmdb, label: "TMDB")
+        keyManager.removeKey(provider: .tmdb)
+        pendingTMDBKey = ""
+        refreshKeys()
     }
 }
 
