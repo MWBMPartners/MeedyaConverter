@@ -56,6 +56,10 @@ struct SidebarView: View {
                 if NavigationItem.makemkvRip.isAvailable {
                     sidebarLabel(for: .makemkvRip)
                 }
+                // Not gated: the saved-table-of-contents path needs no raw
+                // device access, and the drive path fails honestly where
+                // cdrdao is absent — the same posture as Burn above.
+                sidebarLabel(for: .discIdentify)
                 sidebarLabel(for: .trimEdit)
                 sidebarLabel(for: .analyze)
                 sidebarLabel(for: .metadataTags)

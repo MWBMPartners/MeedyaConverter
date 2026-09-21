@@ -77,6 +77,12 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     /// Settings, independent of the raw-imaging disc tools.
     case makemkvRip = "MakeMKV Rip"
 
+    /// Work out what a music disc actually is from its table of contents,
+    /// and — only when MeedyaDB is switched on in Settings — contribute it
+    /// (Issue #502). Reads a drive or a `.toc` file saved earlier; never
+    /// decrypts anything.
+    case discIdentify = "Identify Disc"
+
     /// Video trimming, splitting, and snipping.
     case trimEdit = "Trim / Edit"
 
@@ -221,6 +227,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .proresVector:      return "film.fill"
         case .burn:              return "opticaldisc"
         case .makemkvRip:        return "opticaldisc.fill"
+        case .discIdentify:      return "questionmark.circle"
         case .trimEdit:          return "scissors"
         case .analyze:           return "waveform.and.magnifyingglass"
         case .metadataTags:      return "tag"
@@ -272,6 +279,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .proresVector:      return "Convert ProRes 4444 video to animated SVG"
         case .burn:              return "Burn disc"
         case .makemkvRip:        return "Scan a disc and rip selected titles with MakeMKV"
+        case .discIdentify:      return "Identify a music disc and optionally contribute it to MeedyaDB"
         case .trimEdit:          return "Trim and edit video"
         case .analyze:           return "Analyse media files"
         case .metadataTags:      return "Edit metadata tags"

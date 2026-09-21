@@ -127,6 +127,8 @@ struct ContentView: View {
             BurnSettingsView()
         case .makemkvRip:
             MakeMKVRipView()
+        case .discIdentify:
+            DiscIdentifyView()
         case .trimEdit:
             VideoTrimmerView()
         case .analyze:
