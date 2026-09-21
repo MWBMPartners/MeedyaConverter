@@ -532,6 +532,39 @@ mirroring the bug. Three tests now assert on the bytes reaching the wire.
 3. MeedyaDB hosting + credentials before anything can actually be submitted.
 4. `AutoTagger` still has no callers (#205).
 
+## 📋 QUEUED — not scheduled
+
+Work the owner has asked for but not scheduled. Each has a GitHub issue; the issue is
+the source of truth, these are one-line pointers.
+
+| Issue | What | Raised |
+| --- | --- | --- |
+| **#505** | **Persistent submission queue** — retain a MeedyaDB contribution when the service is down, survive restarts, retry with backoff, and make the queue exportable/importable between installs. | 2026-09-21 |
+
+### #505, the parts that need care (full reasoning in the issue)
+
+- **Only MeedyaDB receives submissions today.** MusicBrainz and TMDB are read-only for
+  us — a failed *lookup* has nothing to queue, it should just be retried. Build the
+  queue provider-agnostic anyway: MusicBrainz disc-ID submission is the obvious next
+  producer.
+- **Queue transient failures only.** Transport/5xx/429 yes; 401 and 400 never — a bad
+  key or a malformed payload does not fix itself, and retrying is a loop that hammers
+  someone's server. The decision belongs in **`MeedyaDBContributor`**, already the
+  single home of the contribute failure posture.
+- **⚠️ Privacy.** Never queue while contributions are OFF (otherwise the app stockpiles
+  data the user declined to send, and switching it on later fires a backlog they never
+  agreed to). Store the **already-scrubbed wire payload**, not the inputs — queueing
+  inputs means a later switch to `full` would send a label that was queued under
+  `anonymous`. The user must be able to see and delete what is held.
+- **Export/import has no host yet.** There is no settings export/import in this
+  codebase (verified). So #505 either ships standalone or drives that feature —
+  a decision to make, not an assumption. Import means submitting someone else's data
+  under your API key: validate the file, say so plainly, and never put credentials in
+  an export.
+- Also: backoff with a ceiling, a dead-letter state rather than infinite retry,
+  de-duplicate on enqueue, cap the queue, and store it in Application Support as JSON
+  with atomic writes — not `UserDefaults`.
+
 ## 📍 2026-09-21 — #205: TMDB EXECUTES, and is reachable
 
 Owner said "proceed with #205 autonomously". Reading the issue properly first

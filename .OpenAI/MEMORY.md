@@ -85,6 +85,15 @@
   short-circuits before the network. `identify` throws only `CancellationError`.
   Contributing is opt-in per run (`--submit`); the API key is env-only (`MEEDYADB_API_KEY`)
   because argv is world-readable via `ps`.
+- **QUEUED (#505, not scheduled): a persistent submission queue.** When MeedyaDB is
+  down a contribution is currently LOST — recorded as `.failed` and shown, but never
+  retried. #505 covers retaining it, surviving restarts, backing off, and
+  exporting/importing the queue between installs. Care points: only MeedyaDB receives
+  submissions today (MusicBrainz/TMDB are read-only, so a failed lookup is retried, not
+  queued); queue transient failures only (401/400 never); **never queue while
+  contributions are OFF**, and store the already-scrubbed payload so a later mode
+  change cannot widen what is sent; there is **no settings export/import feature yet**,
+  so the export half has no host.
 - **#205: TMDB NOW EXECUTES (20d34be → 04f4605).** MusicBrainz already worked; the
   KEYED providers were the dead half. `TMDBLookupService` runs real searches and
   detail fetches through the `MetadataHTTPClient` seam; reachable from Settings →
