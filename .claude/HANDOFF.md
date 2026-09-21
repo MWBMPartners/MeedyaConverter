@@ -532,6 +532,64 @@ mirroring the bug. Three tests now assert on the bytes reaching the wire.
 3. MeedyaDB hosting + credentials before anything can actually be submitted.
 4. `AutoTagger` still has no callers (#205).
 
+## 📍 2026-09-21 — #205: TMDB EXECUTES, and is reachable
+
+Owner said "proceed with #205 autonomously". Reading the issue properly first
+changed the plan: **MusicBrainz already worked** (wired into the tag editor's
+Look Up sheet, Sept 3). What was dead was the **keyed** providers. TMDB is the one
+that matters — it is what would name a film on a disc, and what tags a video file.
+
+| Commit | What | Run |
+| --- | --- | --- |
+| `20d34be` | `TMDBLookupService` (real execution) + `TMDBDiscCandidates` + candidate seam | 346 ✅ |
+| `d5bba98` | TMDB key field in Settings → Metadata | 346 ✅ |
+| `448768e` | `TMDBTagMapping` + `EmbeddedArtwork` cover-art detection | 347 ✅ |
+| `04f4605` | TMDB lookup sheet in the tag editor | 347 ✅ |
+
+### The three things that would bite a later session
+
+1. **THE API KEY HAS TWO FORMS AND ONE OF THEM TRAVELS IN THE URL.** TMDB issues a
+   v3 API key (32 hex, query parameter only) *and* a v4 read access token (a JWT,
+   `Authorization: Bearer`). Both work; people paste whichever they find, so
+   `usesBearerToken(_:)` detects which. Because a v3 key is in the URL, **no error
+   in `TMDBLookupService` may ever carry a URL** — they carry an endpoint NAME
+   (`search/movie`) — and server text goes through `redacting(_:)`. A test sweeps
+   five failure paths asserting the key is in none of their messages. **Keep that
+   sweep if you add an error case.**
+2. **SEARCH RESULTS HAVE NO RUNNING TIME.** Only `/movie/{id}` does. Running time is
+   by far the strongest signal `DiscIdentifier.rank` has, so a result set without it
+   ranks every candidate alike — noise that *looks* like working code. `withRuntimes`
+   fills it in for the top few (capped: one request each). TMDB reports `0` for
+   "unknown", treated as absent — a zero-length film would score terribly.
+3. **ffprobe REPORTS COVER ART AS A VIDEO STREAM.** `MediaFile.hasVideo` is therefore
+   TRUE for an artwork-tagged MP3. Anything deciding "film or song?" must use
+   **`looksLikeVideoContent`** (excludes still-image codecs AND requires a container
+   that can hold video). Using `hasVideo` sends music files to the film database.
+
+### Deliberate limits
+
+- **Films only.** TMDB gives one running time for a film but an array of typical
+  episode lengths for a series — not the same quantity, so ranking a series against
+  a disc's main feature would be wrong. TV needs its own comparison rule.
+- **`SuiteCoreMetadataAdapter` still throws `.notImplemented` for TMDB.** It has no
+  access to an API key, it is never instantiated anywhere in `Sources`, and wiring a
+  real lookup into an unwired router would add nothing while breaking
+  `ConverterEngineTests+SuiteCore.swift`'s pinned "every other source throws" test.
+- **Only TMDB gets a key field.** TheTVDB, OMDb, Discogs, FanArt.tv and OpenSubtitles
+  are still URL builders with no caller; the settings tab NAMES them and says they
+  will appear as each starts working, so their absence reads as honest rather than
+  forgotten. Offering a box for a provider nothing calls is the dead-control defect
+  this project keeps shipping.
+
+### ⚠️ STILL NOT WIRED: TMDB → video disc identification
+
+`VideoDiscIdentifier` gained a `candidateProvider` seam and `TMDBDiscCandidates`
+builds one — but **nothing in production constructs it**, because
+`VideoDiscIdentifier` itself has no production caller. The Identify Disc screen is
+music-only; the CLI is music-only. The cheapest real route is the **MakeMKV Rip
+screen**, which already scans a disc into `MakeMKVDiscInfo`: offer "Identify this
+disc" after a scan and feed that info straight in. That is the next piece.
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:

@@ -85,15 +85,39 @@
   short-circuits before the network. `identify` throws only `CancellationError`.
   Contributing is opt-in per run (`--submit`); the API key is env-only (`MEEDYADB_API_KEY`)
   because argv is world-readable via `ps`.
+- **#205: TMDB NOW EXECUTES (20d34be → 04f4605).** MusicBrainz already worked; the
+  KEYED providers were the dead half. `TMDBLookupService` runs real searches and
+  detail fetches through the `MetadataHTTPClient` seam; reachable from Settings →
+  Metadata (key, Keychain) and the tag editor's Look Up sheet for video files.
+  **Three traps, all now handled and all worth remembering:**
+  (a) TMDB issues TWO credentials — a v3 key (query string) and a v4 JWT (Bearer
+  header); both valid, so detect rather than reject. Because v3 rides in the URL,
+  NO error may carry a URL — endpoint names only, plus `redacting(_:)`.
+  (b) Search results carry NO running time; only `/movie/{id}` does, and running time
+  is the strongest ranking signal — without it every candidate scores alike.
+  (c) **ffprobe reports cover art as a VIDEO STREAM**, so `MediaFile.hasVideo` is true
+  for an artwork-tagged MP3. Use `looksLikeVideoContent` for any "film or song?"
+  decision; `hasVideo` sends music to the film database.
+- **Only providers that RUN get a settings field.** TheTVDB, OMDb, Discogs, FanArt.tv,
+  OpenSubtitles remain URL-builders with no caller and are named in the UI as
+  not-yet-connected. Adding a key box for them would be the dead-control defect again.
+- **`SuiteCoreMetadataAdapter` is never instantiated in `Sources`** — wiring providers
+  into it changes nothing user-visible and breaks its pinned "everything else throws"
+  test. Wire providers to real call sites instead.
 - **VIDEO identification is wired too (202ef0a), and the app has an Identify Disc
   screen (8df1936) + a MeedyaDB settings tab (6f4ee66).** `MeedyaDBContributor`
   (`MeedyaDBAccess.swift`) is now the ONE home of the contribute failure posture,
   shared by music and video — two copies of those judgement calls would drift.
 - **Video identification is a RANKED GUESS, never an exact hit** (music is exact, from
-  the TOC). The summary deliberately says "Best guess: X (98% confident)". Candidates
-  are passed IN by the caller because every video provider is keyed and unwired (#205),
-  so `candidates: []` is normal — the disc is still contributed on its structural
-  fingerprint. **#205 is now the binding constraint on video identification.**
+  the TOC). The summary deliberately says "Best guess: X (98% confident)".
+  `VideoDiscIdentifier` takes candidates from the caller, or from an optional
+  `candidateProvider` seam; `TMDBDiscCandidates.provider(service:)` builds a real one
+  now that TMDB executes. **But nothing in production constructs it yet**, because
+  `VideoDiscIdentifier` has no production caller at all — the Identify Disc screen and
+  the CLI are both music-only. `candidates: []` therefore remains the live behaviour,
+  and the disc is still contributed on its structural fingerprint alone.
+  **The cheapest route to closing this: the MakeMKV Rip screen already scans a disc
+  into `MakeMKVDiscInfo` — offer "Identify this disc" after a scan and feed it in.**
 - **Unmounting a disc is NEVER automatic** (owner decision, 2026-09-21): `DiscBusyDetector`
   decides whether to offer the remedy, and the user presses the button.
   `buildMacOSUnmountArguments` is no longer unwired — its "needs hardware to map the

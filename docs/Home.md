@@ -106,12 +106,19 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 - Per-stream metadata overrides (title, language, disposition)
 - Kodi/Plex/Jellyfin naming templates and NFO sidecar path generation
 
-> **Partially available.** Online metadata *lookup* now works for **MusicBrainz**
-> (keyless): the Metadata Tag Editor's "Look Up…" button searches recordings via
-> `MusicBrainzLookupService` (User-Agent + 1 req/sec throttle) and applies a
-> chosen match to the tag table. The **keyed** providers — TMDB, TheTVDB,
-> Discogs, FanArt.tv, OMDb — still only build request URLs; they need an API-key
-> UI that isn't in this build. Album/disc-ID lookups, audio fingerprinting
+> **Partially available.** Online metadata *lookup* works for **MusicBrainz**
+> (keyless, for music) and **TMDB** (for films, using a key you add in Settings ›
+> Metadata). The Metadata Tag Editor's "Look Up…" button picks the right one for
+> the file — MusicBrainz for music, TMDB for video — and applies the chosen match
+> to the tag table. TMDB accepts either credential it issues: the short API key
+> or the long read access token.
+>
+> The remaining **keyed** providers — TheTVDB, Discogs, FanArt.tv, OMDb,
+> OpenSubtitles — still only build request URLs and have no key field, because a
+> key box for a provider nothing calls would be a control that does nothing. They
+> will appear as each one starts working. TMDB covers films only for now: TMDB
+> reports a single running time for a film but a list of episode lengths for a
+> series, which needs its own handling. Audio fingerprinting
 > (`AudioFingerprinter`) and `AutoTagger` remain present-but-uncalled follow-ups.
 > Tracked in #205 / #467 / #493.
 

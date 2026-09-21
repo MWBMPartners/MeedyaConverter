@@ -212,14 +212,20 @@ Only for:
 - **Webhooks and media-server notifications** (only when you configure them as post-encode actions).
 - **Subscription verification** (StoreKit/RevenueCat for purchase validation).
 
-- **MusicBrainz metadata lookup**, but only when *you* click "Look Up…" in the
-  Metadata Tag Editor: it sends your search terms (title/artist) to
-  `musicbrainz.org` to fetch candidate tags. The keyed providers (TMDB, TheTVDB,
-  Discogs, …) are still not wired, so they make no requests.
+- **Metadata lookup**, but only when *you* click "Look Up…" in the Metadata Tag
+  Editor. For a music file it sends your search terms (title/artist) to
+  `musicbrainz.org`; for a video file it sends the title and year you typed to
+  `api.themoviedb.org`, using the TMDB key you added yourself in Settings ›
+  Metadata. With no key stored, the film lookup makes no requests at all and
+  says so instead. The remaining keyed providers (TheTVDB, Discogs, FanArt.tv,
+  OMDb, OpenSubtitles) are still not wired, so they make no requests.
+- **Disc identification and MeedyaDB contributions**, described in
+  [Disc Tools](Disc-Tools.md) — identification asks MusicBrainz about a music
+  disc's track layout, and contributing is off until you switch it on.
 
 MeedyaConverter never sends your media *files*, encoding settings, or usage
-patterns to any server; the MusicBrainz lookup sends only the search text you
-enter, on demand.
+patterns to any server. A lookup sends only the search text you enter, on
+demand.
 
 ### Does MeedyaConverter include DRM?
 
