@@ -35,14 +35,27 @@ public enum TMDBDiscCandidates {
     /// Tokens that appear in disc volume labels but never in a film's title.
     /// Stripped from the end of a label before searching, because
     /// "BIG_MOVIE_DISC_1" finds nothing while "big movie" finds the film.
+    /// ⚠️ EVERY ENTRY HERE IS A WORD THAT CAN NEVER BE A FILM TITLE ON ITS
+    /// OWN. That bar is deliberately high, because stripping a word that IS
+    /// part of a title searches for the wrong thing — and the ranker may then
+    /// confidently mis-rank the result, which is worse than finding nothing.
+    ///
+    /// Words removed after review, with the films that proved them unsafe:
+    /// "ray" (Ray, 2004), "side" (The Blind Side), "a"/"b" (Plan B, Side B).
+    /// "ray" is still handled, but only as the pair "blu ray" — see below.
     static let discNoiseTokens: Set<String> = [
         "disc", "disc1", "disc2", "disc3", "disc4", "disk",
         "d1", "d2", "d3", "d4",
-        "dvd", "dvd5", "dvd9", "bluray", "blu", "ray", "bd", "bdrom", "uhd",
+        "dvd", "dvd5", "dvd9", "bluray", "bdrom", "uhd",
         "ntsc", "pal", "region", "r1", "r2", "r4",
         "ws", "fs", "widescreen", "fullscreen",
-        "se", "ce", "extended", "remastered",
-        "side", "a", "b",
+        "remastered",
+    ]
+
+    /// Two-word noise phrases, matched only as an adjacent pair at the end.
+    /// "RAY" alone is a film; "BLU RAY" never is.
+    static let discNoisePairs: [[String]] = [
+        ["blu", "ray"],
     ]
 
     /// Turn a disc's volume label into something worth searching for.
@@ -69,13 +82,41 @@ public enum TMDBDiscCandidates {
 
         // Strip noise from the END only. A leading "BD" might genuinely be
         // part of a title, and dropping interior words would mangle one.
-        while let last = tokens.last,
-              discNoiseTokens.contains(last.lowercased()) || isDiscNumber(last) {
-            tokens.removeLast()
+        var didStrip = true
+        while didStrip {
+            didStrip = false
+
+            // Pairs first: "BLU RAY" goes together, so that "RAY" on its own
+            // is never mistaken for noise.
+            for pair in discNoisePairs where tokens.count > pair.count {
+                let tail = tokens.suffix(pair.count).map { $0.lowercased() }
+                if tail == pair {
+                    tokens.removeLast(pair.count)
+                    didStrip = true
+                    break
+                }
+            }
+            if didStrip { continue }
+
+            guard let last = tokens.last else { break }
+            // NEVER strip the last remaining token. "1917", "300" and "1984"
+            // are films; "RAY" is a film. A label of one word is that word,
+            // whatever it looks like.
+            guard tokens.count > 1 else { break }
+            if discNoiseTokens.contains(last.lowercased()) || isDiscNumber(last) {
+                tokens.removeLast()
+                didStrip = true
+            }
         }
 
         // A label that was ONLY noise leaves nothing to search for.
         guard !tokens.isEmpty else { return nil }
+
+        // One token left that is itself pure noise means the whole label was.
+        if tokens.count == 1,
+           discNoiseTokens.contains(tokens[0].lowercased()) {
+            return nil
+        }
 
         let title = tokens.joined(separator: " ")
         return title.count >= 2 ? title : nil
@@ -118,10 +159,20 @@ public enum TMDBDiscCandidates {
     ) -> @Sendable (DiscSignals) async throws -> [MetadataResult] {
         { signals in
             guard let title = searchTitle(from: signals) else { return [] }
-            let results = try await service.searchMovies(
-                title: title,
-                year: searchYear(from: signals)
-            )
+            let year = searchYear(from: signals)
+
+            var results = try await service.searchMovies(title: title, year: year)
+
+            // A trailing four-digit number can be part of the TITLE rather
+            // than a release year — "BLADE_RUNNER_2049" reads as the film
+            // "Blade Runner" released in 2049, which matches nothing. A year
+            // filter can only ever hide results, so when one returns nothing
+            // the search is worth repeating without it and letting the
+            // running-time ranking sort out which film it is.
+            if results.isEmpty, year != nil {
+                results = try await service.searchMovies(title: title, year: nil)
+            }
+
             // Running time is the signal that actually discriminates, so it
             // is worth the extra requests to have it before ranking.
             return try await service.withRuntimes(results, limit: maxDetailFetches)

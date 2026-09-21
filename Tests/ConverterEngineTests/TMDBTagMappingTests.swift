@@ -40,8 +40,8 @@ final class TMDBTagMappingTests: XCTestCase {
         )
     }
 
-    private func stream(_ type: StreamType, codec: String?) -> MediaStream {
-        MediaStream(streamIndex: 0, streamType: type, codecName: codec)
+    private func stream(_ type: StreamType, codec: String?, fps: Double? = nil) -> MediaStream {
+        MediaStream(streamIndex: 0, streamType: type, codecName: codec, frameRate: fps)
     }
 
     // MARK: - Embedded artwork is not video
@@ -62,6 +62,36 @@ final class TMDBTagMappingTests: XCTestCase {
                 "\(codec) is moving video"
             )
         }
+    }
+
+    func test_motionJPEGVideoIsNotWrittenOffAsCoverArt() {
+        // Motion JPEG is the real video codec of a whole class of camcorder
+        // .avi/.mov files. Calling it artwork silently removes the film
+        // lookup for those files, and the user never learns why.
+        XCTAssertFalse(
+            EmbeddedArtwork.isStillImage(stream(.video, codec: "mjpeg", fps: 30)),
+            "a 30fps MJPEG stream moves"
+        )
+        XCTAssertFalse(EmbeddedArtwork.isStillImage(stream(.video, codec: "png", fps: 25)))
+
+        let camcorder = MediaFile(
+            fileURL: URL(fileURLWithPath: "/tmp/holiday.avi"),
+            containerFormat: .avi,
+            streams: [stream(.video, codec: "mjpeg", fps: 30), stream(.audio, codec: "pcm_s16le")]
+        )
+        XCTAssertTrue(camcorder.looksLikeVideoContent, "this is a real video file")
+    }
+
+    func test_coverArtsNonsenseFrameRateIsNotMistakenForMotion() {
+        // ffprobe reports an attached picture as 90000/1 through
+        // `r_frame_rate`, which this project's prober prefers. "Has a frame
+        // rate at all" would therefore call cover art a film.
+        XCTAssertTrue(
+            EmbeddedArtwork.isStillImage(stream(.video, codec: "mjpeg", fps: 90000)),
+            "90000fps is ffprobe's placeholder, not a real rate"
+        )
+        XCTAssertTrue(EmbeddedArtwork.isStillImage(stream(.video, codec: "mjpeg", fps: 0)))
+        XCTAssertTrue(EmbeddedArtwork.isStillImage(stream(.video, codec: "mjpeg", fps: nil)))
     }
 
     func test_unknownCodecIsTreatedAsVideoNotArtwork() {

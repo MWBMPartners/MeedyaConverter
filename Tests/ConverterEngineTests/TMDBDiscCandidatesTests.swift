@@ -26,6 +26,8 @@ private final class CandidateStubHTTPClient: MetadataHTTPClient, @unchecked Send
     init(payloads: [Data]) { self.payloads = payloads }
 
     var callCount: Int { lock.withLock { requests.count } }
+    var calls: [URLRequest] { lock.withLock { requests } }
+    var firstRequest: URLRequest? { lock.withLock { requests.first } }
     var lastRequest: URLRequest? { lock.withLock { requests.last } }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -86,6 +88,41 @@ final class TMDBDiscCandidatesTests: XCTestCase {
         XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "ALIEN")), "ALIEN")
     }
 
+    func test_searchTitle_doesNotDestroyRealTitlesThatLookLikeNoise() {
+        // Each of these was silently broken by the first version of the
+        // stripping rules. A word that IS part of a title must never be
+        // treated as disc noise: the search then finds the wrong film, and
+        // the ranker may rank it confidently.
+        let realTitles = [
+            "RAY": "RAY",                       // Ray (2004)
+            "1917": "1917",                     // a title that is only a number
+            "300": "300",
+            "1984": "1984",
+            "THE_BLIND_SIDE": "THE BLIND SIDE", // "side" is not noise
+            "PLAN_B": "PLAN B",                 // nor is a bare letter
+            "SIDE_B": "SIDE B",
+        ]
+        for (label, expected) in realTitles {
+            XCTAssertEqual(
+                TMDBDiscCandidates.searchTitle(from: signals(label: label)),
+                expected,
+                "\(label) is a real film title, not disc noise"
+            )
+        }
+    }
+
+    func test_searchTitle_stillStripsBluRayAsAPair() {
+        // "RAY" alone is a film; "BLU RAY" never is. Handling it as a pair is
+        // what lets both be true.
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "ROCK_STAR_BLU_RAY")), "ROCK STAR")
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "THE_FILM_BLURAY")), "THE FILM")
+    }
+
+    func test_searchTitle_neverStripsTheLastRemainingToken() {
+        // A label of one word is that word, whatever it looks like.
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "2012")), "2012")
+    }
+
     // MARK: - Year extraction
 
     func test_searchYear_findsAPlausibleYear() {
@@ -140,8 +177,12 @@ final class TMDBDiscCandidatesTests: XCTestCase {
         let ranked = DiscIdentifier.rank(signals: signals(label: "FIGHT_CLUB_1999"), candidates: candidates)
 
         XCTAssertEqual(ranked.count, 1)
-        let confidence = try XCTUnwrap(ranked.first).score.confidence
-        XCTAssertLessThan(confidence, 1.0, "a 22-minute gap is not a perfect match")
+        let best = try XCTUnwrap(ranked.first)
+        XCTAssertEqual(
+            best.candidate.runtimeMinutes, 139,
+            "the ranking is only meaningful because the running time was fetched"
+        )
+        XCTAssertLessThan(best.score.confidence, 1.0, "a 22-minute gap is not a perfect match")
     }
 
     func test_provider_returnsNothingRatherThanSearchingForNoise() async throws {
@@ -162,7 +203,39 @@ final class TMDBDiscCandidatesTests: XCTestCase {
 
         _ = try await provider(signals(label: "FIGHT_CLUB_1999"))
 
-        // The LAST request is the detail fetch, so check the first.
-        XCTAssertGreaterThanOrEqual(client.callCount, 1)
+        // The FIRST request is the search; the last is the detail fetch.
+        let searchURL = try XCTUnwrap(client.firstRequest?.url?.absoluteString)
+        XCTAssertTrue(searchURL.contains("year=1999"), "the label's year should narrow the search")
+    }
+
+    func test_provider_sendsNoYearWhenTheLabelHasNone() async throws {
+        let client = CandidateStubHTTPClient(payloads: [searchJSON, detailsJSON])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service)
+
+        _ = try await provider(signals(label: "FIGHT_CLUB"))
+
+        let searchURL = try XCTUnwrap(client.firstRequest?.url?.absoluteString)
+        XCTAssertFalse(searchURL.contains("year="), "inventing a year would hide the right film")
+    }
+
+    func test_provider_retriesWithoutTheYearWhenItFindsNothing() async throws {
+        // "BLADE_RUNNER_2049" reads as the film "Blade Runner" released in
+        // 2049, which matches nothing. A year filter can only ever HIDE
+        // results, so an empty year-filtered search is worth repeating
+        // without it and letting running time decide which film it is.
+        let empty = Data(#"{"results":[]}"#.utf8)
+        let client = CandidateStubHTTPClient(payloads: [empty, searchJSON, detailsJSON])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service)
+
+        let candidates = try await provider(signals(label: "BLADE_RUNNER_2049"))
+
+        XCTAssertEqual(candidates.count, 1, "the retry should have found the film")
+        XCTAssertTrue(client.calls.count >= 2, "a first search, then a retry without the year")
+        let first = try XCTUnwrap(client.calls.first?.url?.absoluteString)
+        let second = try XCTUnwrap(client.calls.dropFirst().first?.url?.absoluteString)
+        XCTAssertTrue(first.contains("year=2049"))
+        XCTAssertFalse(second.contains("year="), "the retry must drop the year, not repeat it")
     }
 }

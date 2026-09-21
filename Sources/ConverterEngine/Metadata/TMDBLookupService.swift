@@ -89,8 +89,27 @@ public struct TMDBLookupService: Sendable {
         apiKey: String,
         httpClient: any MetadataHTTPClient = URLSessionMetadataHTTPClient()
     ) {
-        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = Self.cleanedCredential(apiKey)
         self.httpClient = httpClient
+    }
+
+    /// Tidy a pasted credential into the form TMDB expects.
+    ///
+    /// Two paste mistakes are common enough to be worth handling rather than
+    /// failing on: copying `Bearer eyJ…` verbatim out of the documentation,
+    /// and copying a read access token out of a wrapped web page so it
+    /// carries interior line breaks. Left alone, the first is treated as a v3
+    /// key and lands in the URL (rejected), and the second puts a newline in
+    /// an HTTP header.
+    public static func cleanedCredential(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["Bearer ", "bearer ", "BEARER "] where value.hasPrefix(prefix) {
+            value = String(value.dropFirst(prefix.count))
+            break
+        }
+        // Remove any remaining whitespace ANYWHERE: no valid TMDB credential
+        // contains any, and a stray newline in a header is a hard failure.
+        return value.filter { !$0.isWhitespace }
     }
 
     // MARK: Credentials (pure)
@@ -101,7 +120,7 @@ public struct TMDBLookupService: Sendable {
     /// of which decodes from `{"` and so always begins `eyJ`. v3 keys are 32
     /// hex characters and contain no dots, so the two can never be confused.
     public static func usesBearerToken(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = cleanedCredential(key)
         return trimmed.hasPrefix("eyJ") && trimmed.split(separator: ".").count == 3
     }
 
@@ -127,7 +146,7 @@ public struct TMDBLookupService: Sendable {
         queryItems: [URLQueryItem],
         apiKey: String
     ) -> URLRequest? {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = cleanedCredential(apiKey)
         guard var components = URLComponents(string: "\(MetadataSource.tmdb.baseURL)\(path)") else {
             return nil
         }
@@ -303,13 +322,23 @@ public struct TMDBLookupService: Sendable {
         default:
             throw TMDBLookupError.httpStatus(
                 statusCode: response.statusCode,
-                bodySnippet: Self.redacting(Self.bodySnippet(data), key: apiKey)
+                bodySnippet: Self.bodySnippet(data, redactingKey: apiKey)
             )
         }
     }
 
-    static func bodySnippet(_ data: Data) -> String {
-        String(data: data, encoding: .utf8).map { String($0.prefix(200)) } ?? ""
+    /// A short, safe excerpt of a server error body.
+    ///
+    /// ⚠️ REDACTS FIRST, THEN TRUNCATES — the order is the whole point. A
+    /// server that echoes the request URL (a proxy, a captive portal) sends
+    /// back `api_key=<32 hex characters>` verbatim. Truncating first can cut
+    /// through the middle of that key, leaving a 31-character fragment that
+    /// `replacingOccurrences(of: key)` can no longer match — and 31 of 32 hex
+    /// characters is, for practical purposes, the key. Redacting the whole
+    /// body before it is cut means there is no fragment to survive.
+    static func bodySnippet(_ data: Data, redactingKey key: String) -> String {
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return String(redacting(text, key: key).prefix(200))
     }
 
     // MARK: Parsing (pure)

@@ -32,18 +32,41 @@ import Foundation
 /// what we have to go on.
 public enum EmbeddedArtwork {
 
-    /// Codecs that only ever appear as a still image in a media file.
+    /// Codecs an embedded cover image is usually stored in.
+    ///
+    /// ⚠️ NOT "codecs that are always a still image" — Motion JPEG is the
+    /// real video codec of a whole class of camcorder `.avi`/`.mov` files,
+    /// and PNG and GIF can move too. The codec narrows it down; the frame
+    /// rate decides.
     public static let stillImageCodecs: Set<String> = [
         "mjpeg", "jpeg", "jpg", "png", "bmp", "gif", "webp",
         "tiff", "ppm", "pgm", "targa", "tga", "smc", "qdraw",
     ]
 
-    /// Whether `stream` is a still image rather than moving video.
+    /// Frame rates a real moving picture reports.
+    ///
+    /// The lower bound excludes a rate of 0, which is what an attached
+    /// picture reports through `avg_frame_rate`. The upper bound excludes the
+    /// nonsense `90000/1` that ffprobe reports for an attached picture
+    /// through `r_frame_rate` — which matters here because this project's
+    /// prober prefers `r_frame_rate` (`FFmpegProbe.swift`), so "has a frame
+    /// rate at all" would call cover art a film.
+    static let plausibleMovingFrameRates: ClosedRange<Double> = 1.0...1000.0
+
+    /// Whether `stream` is an embedded still image rather than moving video.
     public static func isStillImage(_ stream: MediaStream) -> Bool {
         guard let codec = stream.codecName?.lowercased(), !codec.isEmpty else {
             return false
         }
-        return stillImageCodecs.contains(codec)
+        guard stillImageCodecs.contains(codec) else { return false }
+
+        // A plausible frame rate means it moves — a Motion JPEG camcorder
+        // file is real video and must not be written off as artwork, or the
+        // film lookup silently becomes unavailable for it.
+        if let fps = stream.frameRate, plausibleMovingFrameRates.contains(fps) {
+            return false
+        }
+        return true
     }
 }
 

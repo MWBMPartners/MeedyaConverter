@@ -459,9 +459,8 @@ struct MetadataSettingsTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("Used to name films when identifying a video disc, and to look up "
-                 + "tags for video files. Saved to your Keychain, never to the app's "
-                 + "settings file.")
+            Text("Used to look up tags for video files in the Metadata editor. "
+                 + "Saved to your Keychain, never to the app's settings file.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -488,6 +487,11 @@ struct MetadataSettingsTab: View {
     private func saveTMDBKey() {
         let key = trimmedTMDBKey
         guard !key.isEmpty else { return }
+        // Clear an unlabelled entry first. `key(for:)` returns the FIRST
+        // active match, so a key saved by an older build without our label
+        // would permanently shadow the one just entered — the field would
+        // appear to save and nothing would change.
+        keyManager.removeKey(provider: .tmdb)
         keyManager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: key, label: "TMDB"))
         pendingTMDBKey = ""
         refreshKeys()

@@ -198,6 +198,11 @@ struct TMDBLookupSheet: View {
         selectedID = nil
 
         searchTask = Task {
+            // `defer`, not a line at the end: the cancellation guard below
+            // returns EARLY, and without this the spinner would keep
+            // spinning with Search disabled and Cancel doing nothing,
+            // recoverable only by closing the sheet.
+            defer { isSearching = false }
             do {
                 let found = try await service.searchMovies(title: queryTitle, year: year)
                 // Running times come only from the details endpoint, and they
@@ -214,7 +219,6 @@ struct TMDBLookupSheet: View {
             } catch {
                 statusMessage = "Error: \(error.localizedDescription)"
             }
-            isSearching = false
         }
     }
 }

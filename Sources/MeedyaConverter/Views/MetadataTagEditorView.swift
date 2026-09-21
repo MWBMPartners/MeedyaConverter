@@ -227,21 +227,28 @@ struct MetadataTagEditorView: View {
 
             // One button, two databases: asking the user to know whether
             // their file is "a MusicBrainz thing" or "a TMDB thing" would be
-            // making our plumbing their problem.
-            Button {
+            // making our plumbing their problem, so clicking it picks by file
+            // type. But the menu keeps BOTH reachable — a music video is an
+            // .mp4 of a song, and routing purely by type would leave it no way
+            // to reach MusicBrainz at all.
+            Menu {
+                Button("Look Up on TMDB\u{2026} (films)") { showingTMDBLookup = true }
+                Button("Look Up on MusicBrainz\u{2026} (music)") { showingLookup = true }
+            } label: {
+                Label("Look Up\u{2026}", systemImage: "magnifyingglass")
+            } primaryAction: {
                 if looksLikeVideo {
                     showingTMDBLookup = true
                 } else {
                     showingLookup = true
                 }
-            } label: {
-                Label("Look Up…", systemImage: "magnifyingglass")
             }
+            .menuStyle(.button)
             .disabled(viewModel.selectedFile == nil || isWriting)
             .accessibilityLabel(
                 looksLikeVideo
-                    ? "Look up film details on TMDB"
-                    : "Look up metadata on MusicBrainz"
+                    ? "Look up film details on TMDB, or choose another database"
+                    : "Look up metadata on MusicBrainz, or choose another database"
             )
 
             Spacer()
@@ -555,9 +562,6 @@ struct MetadataTagEditorView: View {
 
     // MARK: - Actions
 
-    /// Merge a chosen MusicBrainz match into the tag table (pure mapping in
-    /// `MusicBrainzTagMapping.applying`); the user still reviews and writes via
-    /// "Write Tags…". Nothing touches the file here.
     /// Whether the selected file is a film rather than music.
     ///
     /// ⚠️ NOT `hasVideo`: ffprobe reports embedded cover art as a video
@@ -568,6 +572,9 @@ struct MetadataTagEditorView: View {
         viewModel.selectedFile?.looksLikeVideoContent ?? false
     }
 
+    /// Merge a chosen TMDB match into the tag table (pure mapping in
+    /// `TMDBTagMapping.applying`); the user still reviews and writes via
+    /// "Write Tags…". Nothing touches the file here.
     private func applyTMDBMatch(_ result: MetadataResult, includeIdentifiers: Bool) {
         tags = TMDBTagMapping.applying(result, to: tags, includeIdentifiers: includeIdentifiers)
         selectedTagID = nil
@@ -578,6 +585,9 @@ struct MetadataTagEditorView: View {
         )
     }
 
+    /// Merge a chosen MusicBrainz match into the tag table (pure mapping in
+    /// `MusicBrainzTagMapping.applying`); the user still reviews and writes via
+    /// "Write Tags…". Nothing touches the file here.
     private func applyLookupMatch(
         _ match: MusicBrainzRecordingMatch,
         release: MusicBrainzRecordingMatch.Release?,

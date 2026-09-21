@@ -341,4 +341,63 @@ final class TMDBLookupServiceTests: XCTestCase {
             }
         }
     }
+
+    func test_aKeyStraddlingTheSnippetCutCannotLeakEvenPartially() async {
+        // The regression this exists for: the body used to be TRUNCATED to
+        // 200 characters and only then searched for the key. A server that
+        // echoes the request URL — a proxy, a captive portal — sends the key
+        // back verbatim, and a cut through the middle of it left a
+        // 31-of-32-character fragment that `contains(wholeKey)` could never
+        // match. 31 of 32 hex characters is, in practice, the key.
+        let padding = String(repeating: "x", count: 190)
+        let body = Data("\(padding) request failed for api_key=\(v3Key) at /search/movie".utf8)
+        let client = TMDBStubHTTPClient(.success(body, 500))
+        let service = TMDBLookupService(apiKey: v3Key, httpClient: client)
+
+        do {
+            _ = try await service.searchMovies(title: "Fight Club")
+            XCTFail("HTTP 500 should throw")
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            XCTAssertFalse(message.contains(v3Key), "the whole key leaked")
+            // Sweep every long substring: a fragment is as good as the key.
+            let chars = Array(v3Key)
+            for length in [8, 12, 16, 24] where chars.count >= length {
+                for start in 0...(chars.count - length) {
+                    let fragment = String(chars[start..<(start + length)])
+                    XCTAssertFalse(
+                        message.contains(fragment),
+                        "a \(length)-character fragment of the key survived: \(message)"
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Pasted credentials
+
+    func test_cleanedCredential_handlesTheTwoCommonPasteMistakes() {
+        // Copying "Bearer eyJ…" verbatim out of TMDB's documentation, and
+        // copying a token out of a wrapped web page so it carries line breaks.
+        XCTAssertEqual(TMDBLookupService.cleanedCredential("Bearer \(v4Token)"), v4Token)
+        XCTAssertEqual(TMDBLookupService.cleanedCredential("  bearer \(v4Token)  "), v4Token)
+        XCTAssertEqual(TMDBLookupService.cleanedCredential("eyJhbGci\nOiJIUzI1NiJ9.eyJ\n.sig"),
+                       "eyJhbGciOiJIUzI1NiJ9.eyJ.sig")
+        XCTAssertEqual(TMDBLookupService.cleanedCredential("  \(v3Key)  "), v3Key)
+    }
+
+    func test_aBearerPrefixedTokenIsStillRecognisedAsATokenNotAKey() throws {
+        XCTAssertTrue(
+            TMDBLookupService.usesBearerToken("Bearer \(v4Token)"),
+            "pasting the whole header value must not send the token into the URL"
+        )
+        let request = try XCTUnwrap(TMDBLookupService.buildRequest(
+            path: "/search/movie",
+            queryItems: [],
+            apiKey: "Bearer \(v4Token)"
+        ))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(v4Token)")
+        let url = try XCTUnwrap(request.url?.absoluteString)
+        XCTAssertFalse(url.contains("eyJ"), "the token must not end up in the URL")
+    }
 }

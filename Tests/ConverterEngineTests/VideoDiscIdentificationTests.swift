@@ -272,6 +272,100 @@ final class VideoDiscIdentificationTests: XCTestCase {
         }
     }
 
+    // MARK: - The candidate-provider seam
+
+    func test_providerSuppliesCandidatesWhenTheCallerHasNone() async throws {
+        let identifier = VideoDiscIdentifier(
+            publisher: publisher(VideoIdentifyStubHTTPClient(.success(ingestJSON, 200))),
+            // Built inline rather than via a helper: the closure is
+            // `@Sendable` and XCTestCase is not Sendable, so capturing
+            // `self` here would not compile.
+            candidateProvider: { _ in
+                [MetadataResult(
+                    source: .tmdb,
+                    externalId: "tmdb-provider",
+                    title: "From The Provider",
+                    year: 2011,
+                    runtimeMinutes: 117
+                )]
+            }
+        )
+
+        let result = try await identifier.identify(info: featureDisc(), discType: .dvdVideo)
+
+        XCTAssertEqual(result.bestMatch?.candidate.title, "From The Provider")
+        XCTAssertNil(result.lookupFailure)
+    }
+
+    func test_callerSuppliedCandidatesWinOverTheProvider() async throws {
+        // The caller knows more than a volume-label search ever will, so the
+        // provider must not override or supplement them.
+        let identifier = VideoDiscIdentifier(
+            publisher: publisher(VideoIdentifyStubHTTPClient(.success(ingestJSON, 200))),
+            candidateProvider: { _ in
+                XCTFail("the provider must not run when the caller supplied candidates")
+                return []
+            }
+        )
+
+        let result = try await identifier.identify(
+            info: featureDisc(),
+            discType: .dvdVideo,
+            candidates: [candidate(title: "From The Caller", runtimeMinutes: 117)]
+        )
+
+        XCTAssertEqual(result.ranked.count, 1)
+        XCTAssertEqual(result.bestMatch?.candidate.title, "From The Caller")
+    }
+
+    func test_providerFailureDoesNotAbandonTheRun() async throws {
+        // Same posture as the music path: the disc's structure is still worth
+        // contributing when the lookup fails, and the outage is REPORTED
+        // rather than hidden.
+        let client = VideoIdentifyStubHTTPClient(.success(ingestJSON, 200))
+        let identifier = VideoDiscIdentifier(
+            publisher: publisher(client),
+            candidateProvider: { _ in throw URLError(.notConnectedToInternet) }
+        )
+
+        let result = try await identifier.identify(info: featureDisc(), discType: .dvdVideo)
+
+        XCTAssertNotNil(result.lookupFailure, "the outage must be reported, not swallowed")
+        XCTAssertFalse(result.hasCandidates)
+        XCTAssertEqual(client.callCount, 1, "the disc is still contributed on its structure")
+        XCTAssertTrue(result.contribution.didSubmit)
+        XCTAssertTrue(result.summary.hasPrefix("Couldn't check with the film database:"))
+    }
+
+    func test_providerCancellationPropagates() async {
+        let identifier = VideoDiscIdentifier(
+            publisher: publisher(VideoIdentifyStubHTTPClient(.success(ingestJSON, 200))),
+            candidateProvider: { _ in throw CancellationError() }
+        )
+
+        do {
+            _ = try await identifier.identify(info: featureDisc(), discType: .dvdVideo)
+            XCTFail("cancellation must stop the run, not be treated as an outage")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("expected CancellationError, got \(error)")
+        }
+    }
+
+    func test_noProviderMeansNoLookupFailure() async throws {
+        // Nothing was configured, so nothing failed — `lookupFailure` must
+        // stay nil rather than reporting an absence as an error.
+        let identifier = VideoDiscIdentifier(
+            publisher: publisher(VideoIdentifyStubHTTPClient(.success(ingestJSON, 200)))
+        )
+
+        let result = try await identifier.identify(info: featureDisc(), discType: .dvdVideo)
+
+        XCTAssertNil(result.lookupFailure)
+        XCTAssertEqual(result.summary, "Nothing to compare this disc against yet, so it hasn't been named.")
+    }
+
     // MARK: - Privacy: the label must not leak in anonymous mode
 
     func test_identify_anonymousMode_neverPutsTheLabelOnTheWire() async throws {
