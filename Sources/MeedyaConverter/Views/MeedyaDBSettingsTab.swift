@@ -14,10 +14,15 @@
 // ⚠️ THE API KEY IS NEVER SHOWN AND NEVER STORED IN SETTINGS.
 // `@AppStorage` writes to `UserDefaults`, which is a plain-text plist in the
 // user's Library. The key goes to the system Keychain through
-// `APIKeyManager` (provider `.meedyaDB`), and is read back only for a moment
-// to work out whether one exists. It is never held in view state, never put
-// in a plain `TextField`, and never echoed back on screen — once saved, the
-// only things offered are "replace it" and "remove it".
+// `APIKeyManager` (provider `.meedyaDB`). It is never put in a plain
+// `TextField` and never echoed back on screen — once saved, the only things
+// offered are "replace it" and "remove it".
+//
+// Precisely: the key is not kept in a property of its own, but `readiness`
+// does hold a `MeedyaDBPublisherConfig` containing it for the view's
+// lifetime, because that is what the verdict is computed from. Nothing
+// renders, logs or copies it from there. Worth knowing rather than glossing:
+// "never in memory" would be a comfortable thing to write and untrue.
 // ============================================================================
 
 import SwiftUI

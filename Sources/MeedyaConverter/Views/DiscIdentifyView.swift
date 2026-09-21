@@ -69,8 +69,8 @@ struct DiscIdentifyView: View {
             case .drive:
                 TextField("Drive", text: $viewModel.devicePath, prompt: Text("/dev/rdisk2"))
                 Text(
-                    "The drive holding the disc. On a Mac this is usually /dev/rdisk2 \u{2014} "
-                    + "Disk Utility shows the number."
+                    "The drive holding the disc, usually /dev/rdisk2. Disk Utility shows "
+                    + "it as \"disk2\" \u{2014} add the \"r\" in front of \"disk\"."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -99,10 +99,10 @@ struct DiscIdentifyView: View {
                          : (viewModel.statusMessage ?? "Working\u{2026}"))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    if viewModel.isWorking {
-                        Button("Cancel", role: .cancel) { viewModel.cancel() }
-                            .disabled(viewModel.isCancelling)
-                    }
+                    // Also during the unmount: diskutil can block for a long
+                    // time on a process that refuses to release the disc.
+                    Button("Cancel", role: .cancel) { viewModel.cancel() }
+                        .disabled(viewModel.isCancelling)
                 }
             } else {
                 Button {
@@ -137,17 +137,19 @@ struct DiscIdentifyView: View {
             Section("The drive is in use") {
                 Label(
                     viewModel.errorMessage
-                        ?? "Something else on your Mac is using this drive.",
+                        ?? "This drive can't be opened right now.",
                     systemImage: "lock.circle"
                 )
                 .foregroundStyle(.orange)
                 .font(.callout)
 
                 Text(
-                    "macOS mounts a disc as soon as you put it in, and it has to let go "
-                    + "before the disc can be read properly. Releasing it closes the disc "
-                    + "in Finder and in any other app using it \u{2014} the disc stays in "
-                    + "the drive, and you can eject it as usual afterwards."
+                    "Usually this is because macOS mounts a disc as soon as you put it "
+                    + "in, and it has to let go before the disc can be read properly. "
+                    + "Releasing it closes the disc in Finder and in any other app using "
+                    + "it \u{2014} the disc stays in the drive, and you can eject it as "
+                    + "usual afterwards.\n\nIf releasing it doesn't help, this account "
+                    + "may not be allowed to read the drive directly."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

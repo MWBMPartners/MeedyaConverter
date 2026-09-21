@@ -41,7 +41,17 @@ final class DiscIdentifyViewModel {
 
     // MARK: - Injected seams
 
-    private let identifier: MusicDiscIdentifier
+    /// Builds the identifier for ONE run from the MeedyaDB config in force at
+    /// that moment. It must be a factory, not a stored identifier: a stored
+    /// one is built once with whatever config existed at construction — which
+    /// for the production default is an empty, DISABLED publisher — so the
+    /// screen would promise a contribution ("This disc will also be
+    /// contributed") and then report "publishing is turned off", having sent
+    /// nothing. Being told nothing was wrong while nothing was sent is the
+    /// one behaviour this feature must not have.
+    private let identifierFactory: @Sendable (MeedyaDBPublisherConfig?) -> MusicDiscIdentifier
+    /// How much to send, read fresh per run from the user's setting.
+    private let submissionModeProvider: @Sendable () -> MeedyaDBSubmissionMode
     private let unmounter: DiscUnmounter
     /// Reads a table of contents from a real drive. Returns the TOC or
     /// throws — the same contract `DiscImagingController` has.
@@ -51,7 +61,13 @@ final class DiscIdentifyViewModel {
     private let meedyaDBReadinessProvider: @Sendable () -> MeedyaDBReadiness
 
     init(
-        identifier: MusicDiscIdentifier = MusicDiscIdentifier(),
+        identifierFactory: @escaping @Sendable (MeedyaDBPublisherConfig?) -> MusicDiscIdentifier = { config in
+            guard let config else { return MusicDiscIdentifier() }
+            return MusicDiscIdentifier(meedyaDB: config)
+        },
+        submissionModeProvider: @escaping @Sendable () -> MeedyaDBSubmissionMode = {
+            MeedyaDBConfigStore.submissionMode(in: .standard)
+        },
         unmounter: DiscUnmounter = DiscUnmounter(),
         tocReader: @escaping @Sendable (String) async throws -> DiscTableOfContents = { devicePath in
             // Inlined rather than referencing a static on this @MainActor
@@ -74,7 +90,8 @@ final class DiscIdentifyViewModel {
             MeedyaDBGate.readiness(in: .standard, apiKey: APIKeyManager().key(for: .meedyaDB)?.apiKey)
         }
     ) {
-        self.identifier = identifier
+        self.identifierFactory = identifierFactory
+        self.submissionModeProvider = submissionModeProvider
         self.unmounter = unmounter
         self.tocReader = tocReader
         self.tocFileReader = tocFileReader
@@ -133,6 +150,13 @@ final class DiscIdentifyViewModel {
     /// button — never an automatic unmount.
     private(set) var busyDevicePath: String?
 
+    /// The exact source that hit the busy failure. The retry re-reads THIS,
+    /// not whatever the form says by then — otherwise editing the drive field
+    /// (or switching to the saved-file source) between the failure and
+    /// pressing the button would release one drive and then read something
+    /// else entirely.
+    private var busySource: Source?
+
     var canStart: Bool {
         guard !isWorking, !isUnmounting else { return false }
         switch sourceKind {
@@ -167,11 +191,6 @@ final class DiscIdentifyViewModel {
     func identify() -> Task<Void, Never>? {
         guard !isWorking, !isUnmounting else { return nil }
 
-        errorMessage = nil
-        busyDevicePath = nil
-        result = nil
-        refreshMeedyaDBReadiness()
-
         let source: Source
         switch sourceKind {
         case .drive:
@@ -188,16 +207,43 @@ final class DiscIdentifyViewModel {
             source = .tocFile(path)
         }
 
+        return startRun(source: source)
+    }
+
+    /// Starts a run against an already-resolved source. Shared by `identify()`
+    /// and the retry after an unmount, so both build their identifier from the
+    /// CURRENT MeedyaDB settings rather than anything captured earlier.
+    @discardableResult
+    private func startRun(source: Source) -> Task<Void, Never>? {
+        errorMessage = nil
+        busyDevicePath = nil
+        busySource = nil
+        result = nil
+
+        refreshMeedyaDBReadiness()
+        // The config decides BOTH whether to contribute and which publisher
+        // the identifier gets. Deriving `contribute` from the same value the
+        // identifier is built from is what keeps the promise on screen and
+        // what actually happens from drifting apart.
+        let config = meedyaDBReadiness?.config
+        let identifier = identifierFactory(config)
+        let contribute = config != nil
+        let mode = submissionModeProvider()
+
         isWorking = true
         isCancelling = false
         statusMessage = source.startingMessage
-        let contribute = willContribute
 
         // Unwrap self first: `await self?.run(...)` makes the closure return
         // `()?`, so the task would be `Task<()?, Never>` and not match.
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performRun(source: source, contribute: contribute)
+            await self.performRun(
+                source: source,
+                identifier: identifier,
+                contribute: contribute,
+                mode: mode
+            )
         }
         work = task
         return task
@@ -215,7 +261,12 @@ final class DiscIdentifyViewModel {
         }
     }
 
-    private func performRun(source: Source, contribute: Bool) async {
+    private func performRun(
+        source: Source,
+        identifier: MusicDiscIdentifier,
+        contribute: Bool,
+        mode: MeedyaDBSubmissionMode
+    ) async {
         do {
             let toc = try await loadTOC(source)
             guard !Task.isCancelled else { throw CancellationError() }
@@ -224,18 +275,30 @@ final class DiscIdentifyViewModel {
                 ? "Identifying the disc and contributing it\u{2026}"
                 : "Identifying the disc\u{2026}"
 
-            let outcome = try await identifier.identify(toc: toc, contribute: contribute)
+            // CD-Text is the only "label" the app can know about a disc. It
+            // is passed for every run but only ever reaches the wire in
+            // `.full` mode — the publisher strips it otherwise.
+            let outcome = try await identifier.identify(
+                toc: toc,
+                labelText: toc.cdText?.albumTitle,
+                contribute: contribute,
+                mode: mode
+            )
             result = outcome
             statusMessage = nil
         } catch is CancellationError {
             errorMessage = "Identification was cancelled."
+            statusMessage = nil
         } catch {
             // A held drive is not a read failure — offer the remedy that
             // actually works rather than a generic error.
             if case .drive(let device) = source, DiscBusyDetector.looksBusy(error) {
                 busyDevicePath = device
+                busySource = source
                 errorMessage =
-                    "Something else on your Mac is using this drive, so the disc can't be read yet."
+                    "This drive can't be opened right now. Usually that means something "
+                    + "else on your Mac is using it \u{2014} though it can also mean this "
+                    + "account isn't allowed to read the drive directly."
             } else {
                 errorMessage = error.localizedDescription
             }
@@ -259,7 +322,11 @@ final class DiscIdentifyViewModel {
     /// Cancels an in-progress run. ONLY cancels — cleanup happens inside the
     /// running task, so a stale run can never clobber a newer one.
     func cancel() {
-        guard work != nil, isWorking else { return }
+        // Also cancellable during the unmount: `diskutil unmountDisk` can
+        // block for a long time on a process that refuses to let go, and a
+        // spinner with no way out is exactly the dead end this screen is
+        // meant to avoid.
+        guard work != nil, isWorking || isUnmounting else { return }
         isCancelling = true
         work?.cancel()
     }
@@ -272,27 +339,30 @@ final class DiscIdentifyViewModel {
     /// called from the button the user presses — never automatically.
     @discardableResult
     func unmountAndRetry() -> Task<Void, Never>? {
-        guard !isWorking, !isUnmounting, let device = busyDevicePath else { return nil }
+        guard !isWorking, !isUnmounting,
+              let device = busyDevicePath,
+              let source = busySource else { return nil }
 
         isUnmounting = true
+        isCancelling = false
         statusMessage = "Asking macOS to release the drive\u{2026}"
         errorMessage = nil
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performUnmount(device: device)
+            await self.performUnmount(device: device, retrying: source)
         }
         work = task
         return task
     }
 
-    private func performUnmount(device: String) async {
+    private func performUnmount(device: String, retrying source: Source) async {
         do {
             let outcome = try await unmounter.unmount(devicePath: device)
             isUnmounting = false
+            isCancelling = false
             switch outcome {
             case .unmounted:
-                busyDevicePath = nil
                 statusMessage = nil
                 work = nil
                 // Await the retry from here so the task this method belongs
@@ -300,7 +370,7 @@ final class DiscIdentifyViewModel {
                 // (or a test) that awaits `unmountAndRetry()` would otherwise
                 // return while the re-read was still in flight, and have to
                 // poll to find out when it finished.
-                if let retry = identify() {
+                if let retry = startRun(source: source) {
                     await retry.value
                 }
             case .failed(let reason):
@@ -310,11 +380,13 @@ final class DiscIdentifyViewModel {
             }
         } catch is CancellationError {
             isUnmounting = false
+            isCancelling = false
             statusMessage = nil
             errorMessage = "Releasing the drive was cancelled."
             work = nil
         } catch {
             isUnmounting = false
+            isCancelling = false
             statusMessage = nil
             errorMessage = error.localizedDescription
             work = nil

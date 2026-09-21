@@ -13,8 +13,10 @@
 //   * a held drive offers the UNMOUNT remedy, a real read failure does not;
 //   * unmounting NEVER happens on its own — only from the explicit action;
 //   * cancel() only cancels, so a stale run cannot clobber a newer one;
-//   * the screen says whether it will contribute BEFORE the run, and never
-//     contributes when MeedyaDB isn't ready.
+//   * the screen says whether it will contribute BEFORE the run, never
+//     contributes when MeedyaDB isn't ready, and — the regression that
+//     prompted these — ACTUALLY contributes when it says it will, with the
+//     submission mode the user chose.
 //
 // Every seam is per-instance, so this is safe under `swift test --parallel`.
 // ============================================================================
@@ -89,24 +91,58 @@ final class DiscIdentifyViewModelTests: XCTestCase {
     private func makeViewModel(
         toc: TOCReaderBox,
         unmountRunner: StubToolRunner = StubToolRunner(),
-        meedyaDBReady: Bool = false
+        meedyaDBReady: Bool = false,
+        publishClient: PublishStubHTTPClient? = nil,
+        submissionMode: MeedyaDBSubmissionMode = .anonymous
     ) -> DiscIdentifyViewModel {
         let readiness: MeedyaDBReadiness = meedyaDBReady
             ? .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
             : .off(reason: MeedyaDBGate.offReason)
+        let publisherClient = publishClient ?? PublishStubHTTPClient()
 
         return DiscIdentifyViewModel(
-            identifier: MusicDiscIdentifier(
-                lookupService: MusicBrainzDiscLookupService(
+            // The factory mirrors production: the run's publisher is built
+            // from the config in force, so a test can prove a ready run
+            // actually reaches the wire rather than only promising to.
+            identifierFactory: { config in
+                let lookup = MusicBrainzDiscLookupService(
                     httpClient: OfflineStubHTTPClient(),
                     throttle: MusicBrainzRequestThrottle(minimumInterval: .zero)
                 )
-            ),
+                guard let config else {
+                    return MusicDiscIdentifier(lookupService: lookup)
+                }
+                return MusicDiscIdentifier(
+                    lookupService: lookup,
+                    publisher: MeedyaDBPublisher(config: config, httpClient: publisherClient)
+                )
+            },
+            submissionModeProvider: { submissionMode },
             unmounter: DiscUnmounter(runner: unmountRunner, diskutilPath: "/usr/sbin/diskutil"),
             tocReader: { _ in try toc.next() },
             tocFileReader: { _ in "" },
             meedyaDBReadinessProvider: { readiness }
         )
+    }
+
+    /// Accepts a MeedyaDB submission and records the body that reached it.
+    private final class PublishStubHTTPClient: MetadataHTTPClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var bodies: [Data] = []
+
+        var callCount: Int { lock.withLock { bodies.count } }
+        var lastBody: Data? { lock.withLock { bodies.last } }
+
+        func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            lock.withLock { bodies.append(request.httpBody ?? Data()) }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://db.example")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(#"{"discPublicId":"disc_1","matched":false}"#.utf8), response)
+        }
     }
 
     /// Always reports "nothing found" so a run finishes without a network.
@@ -162,7 +198,7 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         // There is no drive to release when reading a saved file, whatever
         // the error text happens to say.
         let vm = DiscIdentifyViewModel(
-            identifier: MusicDiscIdentifier(),
+            identifierFactory: { _ in MusicDiscIdentifier() },
             unmounter: DiscUnmounter(runner: StubToolRunner()),
             tocReader: { _ in throw CancellationError() },
             tocFileReader: { _ in throw DiscImagingError.processFailure(exitCode: 1, stderr: "Resource busy") },
@@ -220,6 +256,32 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         XCTAssertFalse(vm.isUnmounting)
     }
 
+    func test_unmountAndRetry_reReadsTheDriveThatFailed_notWhateverTheFormSaysNow() async {
+        // Between the busy failure and pressing the button the user might
+        // edit the field, or switch to the saved-file source. Releasing one
+        // drive and then reading something else would be worse than useless.
+        let runner = StubToolRunner(exitCode: 0)
+        let toc = TOCReaderBox([.failure(busyError()), .success(audioCD())])
+        let vm = makeViewModel(toc: toc, unmountRunner: runner)
+        vm.sourceKind = .drive
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let first = vm.identify() else { return XCTFail("expected a task") }
+        await first.value
+        XCTAssertEqual(vm.busyDevicePath, "/dev/rdisk2")
+
+        // The user wanders off and changes the source before retrying.
+        vm.sourceKind = .tocFile
+        vm.tocFilePath = "/tmp/something-else.toc"
+
+        guard let retry = vm.unmountAndRetry() else { return XCTFail("expected an unmount task") }
+        await retry.value
+
+        XCTAssertEqual(toc.readCount, 2, "the retry must re-read the DRIVE that was released")
+        XCTAssertNotNil(vm.result)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func test_unmountAndRetry_isANoOpWhenNothingIsHeld() {
         let vm = makeViewModel(toc: TOCReaderBox([.success(audioCD())]))
         XCTAssertNil(vm.unmountAndRetry(), "nothing is being held, so there is nothing to release")
@@ -256,6 +318,67 @@ final class DiscIdentifyViewModelTests: XCTestCase {
 
         let contribution = try XCTUnwrap(vm.result?.contribution)
         XCTAssertFalse(contribution.didSubmit)
+    }
+
+    func test_meedyaDBReady_actuallyContributesAndDoesNotJustPromiseTo() async throws {
+        // The regression this exists for: the view model used to hold ONE
+        // identifier built at construction with an empty, disabled publisher,
+        // so a fully configured MeedyaDB produced the green "will be
+        // contributed" line, then "publishing is turned off", and sent
+        // nothing. Promising and not delivering is the one behaviour this
+        // screen must not have.
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())]),
+            meedyaDBReady: true,
+            publishClient: publishClient
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "a ready MeedyaDB must actually be reached")
+        let contribution = try XCTUnwrap(vm.result?.contribution)
+        XCTAssertTrue(contribution.didSubmit, "the promise on screen must be kept: \(contribution)")
+    }
+
+    func test_submissionMode_reachesTheWire() async throws {
+        // The Settings picker was a dead control: the stored mode was read by
+        // nothing, so "send the disc's label" silently did nothing.
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())]),
+            meedyaDBReady: true,
+            publishClient: publishClient,
+            submissionMode: .full
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "full",
+                       "the user's choice must reach the payload, not be assumed")
+    }
+
+    func test_anonymousIsTheDefaultOnTheWire() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())]),
+            meedyaDBReady: true,
+            publishClient: publishClient
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous")
     }
 
     func test_meedyaDBReady_saysItWillContribute() {
