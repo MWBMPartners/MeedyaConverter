@@ -75,6 +75,42 @@ public enum MakeMKVIdentification {
         )
     }
 
+    // MARK: Disc type
+
+    /// A BEST-EFFORT SUGGESTION of what kind of disc this is, read from
+    /// MakeMKV's own disc-type attribute (`CINFO:1`).
+    ///
+    /// ⚠️ A SUGGESTION, NEVER A FACT — and that distinction is the whole
+    /// point of this function returning an Optional. The header of this file
+    /// says MakeMKV's type strings are localised free text and are not relied
+    /// on, and that stays true: nothing here may become the disc type on its
+    /// own. A caller must present this as a pre-filled choice the user can
+    /// change, and must have an answer for `nil`. Identifying a Blu-ray as a
+    /// DVD would send the wrong disc type to MeedyaDB — wrong data in a shared
+    /// database, which is worse than asking.
+    ///
+    /// Matching on substrings rather than whole strings is deliberate, because
+    /// the surrounding words are what gets localised while the format names
+    /// are proper nouns: a French install saying "Disque Blu-ray" still
+    /// matches, and anything unrecognised returns `nil` rather than guessing.
+    ///
+    /// ⚠️ THE ORDER OF THESE CHECKS IS LOAD-BEARING. Every later pattern is a
+    /// substring of an earlier one's real-world strings:
+    ///   * "UHD Blu-ray disc" contains "blu-ray", so UHD must be tested first;
+    ///   * "HD DVD disc" contains "dvd", so HD DVD must be tested before DVD.
+    /// Reordering them silently downgrades discs. A test pins every pair.
+    public static func suggestedDiscType(from info: MakeMKVDiscInfo) -> DiscType? {
+        guard let raw = info.discAttributes.value(for: .type) else { return nil }
+        let text = raw.lowercased()
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        if text.contains("uhd") || text.contains("4k") { return .uhdBluray }
+        if text.contains("hd dvd") || text.contains("hd-dvd") || text.contains("hddvd") { return .hdDvd }
+        if text.contains("blu-ray") || text.contains("bluray") || text.contains("blu ray") { return .bluray }
+        if text.contains("dvd") { return .dvdVideo }
+        return nil
+    }
+
     // MARK: Helpers
 
     /// The distinct language codes of a title's streams of a given MakeMKV type

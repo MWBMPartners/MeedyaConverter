@@ -83,6 +83,18 @@ struct DiscIdentifyView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            // This screen reads a music disc's table of contents with cdrdao.
+            // A film disc has no such thing: it has to be scanned by MakeMKV
+            // first, which the Rip screen already does. Without this line the
+            // video path is reachable but undiscoverable \u{2014} someone looking
+            // to name a film would come here and find no way to do it.
+            Text(
+                "This screen is for music discs. To identify a DVD or Blu-ray, "
+                + "scan it on the MakeMKV Rip screen and use Identify This Disc there."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

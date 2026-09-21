@@ -70,4 +70,60 @@ final class MakeMKVIdentificationTests: XCTestCase {
         XCTAssertTrue(signals.audioLanguages.isEmpty)
         XCTAssertEqual(signals.seedTitle, "Untimed Title") // falls back to the first title's name
     }
+
+    // MARK: - suggestedDiscType
+
+    /// Build an info whose only disc attribute is MakeMKV's type string.
+    private func info(type: String) -> MakeMKVDiscInfo {
+        MakeMKVBackend.parseInfo("CINFO:1,0,\"\(type)\"")
+    }
+
+    func test_suggestedDiscType_readsTheOrdinaryStrings() {
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "DVD disc")), .dvdVideo)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "Blu-ray disc")), .bluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "UHD Blu-ray disc")), .uhdBluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "HD DVD disc")), .hdDvd)
+    }
+
+    /// ⚠️ THE POINT OF THIS TEST. Every one of these strings matches MORE THAN
+    /// ONE of the patterns, so each pins the ORDER of the checks rather than
+    /// the checks themselves. Reordering `suggestedDiscType` downgrades a disc
+    /// silently — a UHD Blu-ray filed as an ordinary Blu-ray, an HD DVD filed
+    /// as a DVD — and only these assertions would notice.
+    func test_suggestedDiscType_theMoreSpecificFormatWinsOverItsSubstring() {
+        // "UHD Blu-ray disc" also contains "blu-ray".
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "UHD Blu-ray disc")), .uhdBluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "Blu-ray UHD")), .uhdBluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "4K Blu-ray disc")), .uhdBluray)
+        // "HD DVD disc" also contains "dvd".
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "HD DVD disc")), .hdDvd)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "HD-DVD")), .hdDvd)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "HDDVD disc")), .hdDvd)
+    }
+
+    func test_suggestedDiscType_spellingAndCaseDoNotMatter() {
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "BLURAY DISC")), .bluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "blu ray disc")), .bluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "dvd")), .dvdVideo)
+    }
+
+    /// The surrounding words are what a localised MakeMKV translates; the
+    /// format names are proper nouns and survive. Substring matching is what
+    /// buys this, so it is worth an assertion.
+    func test_suggestedDiscType_survivesALocalisedTypeString() {
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "Disque Blu-ray")), .bluray)
+        XCTAssertEqual(MakeMKVIdentification.suggestedDiscType(from: info(type: "Disco DVD")), .dvdVideo)
+    }
+
+    /// An unrecognised, absent or blank type must produce NO suggestion rather
+    /// than a guess — the caller asks the user instead. A wrong disc type goes
+    /// into a shared database and cannot be walked back.
+    func test_suggestedDiscType_isNilRatherThanAGuess() {
+        XCTAssertNil(MakeMKVIdentification.suggestedDiscType(from: info(type: "Something else entirely")))
+        XCTAssertNil(MakeMKVIdentification.suggestedDiscType(from: info(type: "")))
+        XCTAssertNil(MakeMKVIdentification.suggestedDiscType(from: info(type: "   ")))
+        XCTAssertNil(MakeMKVIdentification.suggestedDiscType(from: MakeMKVDiscInfo()))
+        // A scan that found a NAME but no type must not fall back to the name.
+        XCTAssertNil(MakeMKVIdentification.suggestedDiscType(from: MakeMKVBackend.parseInfo(#"CINFO:2,0,"BLURAY_MOVIE""#)))
+    }
 }

@@ -847,4 +847,293 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         XCTAssertNil(vm.scanErrorMessage, "a stale scan error must not hang over a running rip")
         await ripTask.value
     }
+
+    // MARK: - Identify the disc (#502)
+
+    /// A scan transcript carrying everything identification needs: MakeMKV's
+    /// own disc type (CINFO:1), a volume name (CINFO:32) and title durations.
+    private let identifiableInfoLines: [String] = [
+        "TCOUNT:2",
+        #"CINFO:1,0,"Blu-ray disc""#,
+        #"CINFO:32,0,"BIG_MOVIE_DISC""#,
+        #"TINFO:0,2,0,"Feature""#,
+        #"TINFO:0,9,0,"1:30:00""#,
+        #"TINFO:1,9,0,"0:05:00""#,
+    ]
+
+    /// The same disc, but with a type string MakeMKV localised into something
+    /// unrecognisable — the case where the user must choose.
+    private let unknownTypeInfoLines: [String] = [
+        "TCOUNT:1",
+        #"CINFO:1,0,"Some unfamiliar medium""#,
+        #"TINFO:0,9,0,"1:30:00""#,
+    ]
+
+    /// Accepts a MeedyaDB submission and records the body that reached it.
+    /// A copy of the identify screen's stub on purpose: these two screens
+    /// must be provable independently.
+    private final class PublishStubHTTPClient: MetadataHTTPClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var bodies: [Data] = []
+
+        var callCount: Int { lock.withLock { bodies.count } }
+        var lastBody: Data? { lock.withLock { bodies.last } }
+
+        func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            lock.withLock { bodies.append(request.httpBody ?? Data()) }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://db.example")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(#"{"discPublicId":"disc_1","matched":false}"#.utf8), response)
+        }
+    }
+
+    private func makeIdentifyViewModel(
+        runner: MockMakeMKVRunner,
+        meedyaDBReady: Bool = false,
+        publishClient: PublishStubHTTPClient? = nil,
+        submissionMode: MeedyaDBSubmissionMode = .anonymous,
+        candidateProvider: (@Sendable (DiscSignals) async throws -> [MetadataResult])? = nil
+    ) -> MakeMKVRipViewModel {
+        let readiness: MeedyaDBReadiness = meedyaDBReady
+            ? .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
+            : .off(reason: MeedyaDBGate.offReason)
+        let client = publishClient ?? PublishStubHTTPClient()
+
+        return MakeMKVRipViewModel(
+            runner: runner,
+            readinessProvider: { .ready(binaryPath: "/usr/local/bin/makemkvcon") },
+            consentProvider: { .userAcknowledged("I accept") },
+            // Mirrors production: the run's publisher is built from the config
+            // in force, so a test can prove a ready MeedyaDB is actually
+            // REACHED rather than only promised.
+            videoIdentifierFactory: { config, _ in
+                guard let config else {
+                    return VideoDiscIdentifier(candidateProvider: candidateProvider)
+                }
+                return VideoDiscIdentifier(
+                    publisher: MeedyaDBPublisher(config: config, httpClient: client),
+                    candidateProvider: candidateProvider
+                )
+            },
+            submissionModeProvider: { submissionMode },
+            meedyaDBReadinessProvider: { readiness },
+            // No TMDB key in CI, and none of these tests should ever want one.
+            tmdbKeyProvider: { nil }
+        )
+    }
+
+    /// Scan first — identification works from what the scan found.
+    @discardableResult
+    private func scanned(_ vm: MakeMKVRipViewModel) async -> MakeMKVRipViewModel {
+        vm.discIndexText = "0"
+        if let task = vm.scan() { await task.value }
+        return vm
+    }
+
+    func test_scan_prefillsTheDiscTypeFromMakeMKVsOwnString() async {
+        let vm = makeIdentifyViewModel(runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]))
+        await scanned(vm)
+
+        XCTAssertEqual(vm.suggestedDiscType, .bluray)
+        XCTAssertEqual(vm.selectedDiscType, .bluray, "the picker should arrive pre-filled")
+        XCTAssertNil(vm.identifyBlockedReason, "with a type and a scan, Identify should be ready")
+    }
+
+    /// A type string we can't read must leave the choice to the user rather
+    /// than guessing. A wrong disc type reaches a shared database.
+    func test_scan_withAnUnreadableType_asksTheUserRatherThanGuessing() async {
+        let vm = makeIdentifyViewModel(runner: MockMakeMKVRunner(scripts: [.init(lines: unknownTypeInfoLines)]))
+        await scanned(vm)
+
+        XCTAssertNil(vm.suggestedDiscType)
+        XCTAssertNil(vm.selectedDiscType)
+        XCTAssertFalse(vm.canIdentify)
+        XCTAssertEqual(vm.identifyBlockedReason, "Choose what kind of disc this is first.")
+        XCTAssertNil(vm.identify(), "no disc type means no run at all")
+    }
+
+    func test_identify_beforeAnyScan_isBlockedAndStartsNothing() {
+        let vm = makeIdentifyViewModel(runner: MockMakeMKVRunner(scripts: []))
+
+        XCTAssertFalse(vm.canIdentify)
+        XCTAssertEqual(vm.identifyBlockedReason, "Scan the disc first, then it can be identified.")
+        XCTAssertNil(vm.identify())
+    }
+
+    /// ⚠️ THE REGRESSION THAT MATTERS. The identify screen once held a single
+    /// identifier built at construction with an empty, DISABLED publisher, so
+    /// a fully configured MeedyaDB produced "this disc will also be
+    /// contributed" and then sent nothing. This asserts on the BYTES that
+    /// reached the wire, not on the promise.
+    func test_identify_readyMeedyaDB_actuallyReachesTheWire() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            meedyaDBReady: true,
+            publishClient: publishClient
+        )
+        await scanned(vm)
+        // What the view does on appear. Without it `willContribute` is simply
+        // unread, and asserting on it would prove nothing.
+        vm.refreshMeedyaDBReadiness()
+        XCTAssertTrue(vm.willContribute, "the screen promises a contribution here")
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "a ready MeedyaDB must actually be reached")
+        let contribution = try XCTUnwrap(vm.identifyResult?.contribution)
+        XCTAssertTrue(contribution.didSubmit, "the promise on screen must be kept: \(contribution)")
+    }
+
+    func test_identify_submissionModeAndLabelReachTheWire() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            meedyaDBReady: true,
+            publishClient: publishClient,
+            submissionMode: .full
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "full",
+                       "the user's choice must reach the payload, not be assumed")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertEqual(disc["labelText"] as? String, "BIG_MOVIE_DISC",
+                       "full mode was chosen, so the label must actually be passed through")
+        XCTAssertEqual(disc["discType"] as? String, DiscType.bluray.rawValue)
+    }
+
+    /// The default must under-send, never over-send.
+    func test_identify_anonymousIsTheDefaultAndStripsTheLabel() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            meedyaDBReady: true,
+            publishClient: publishClient
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"], "anonymous mode must not send what is printed on the disc")
+    }
+
+    /// MeedyaDB switched off is the normal state for most people. It must
+    /// still identify, must send nothing, and must not look like an error.
+    func test_identify_withoutMeedyaDB_stillIdentifiesAndSendsNothing() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            meedyaDBReady: false,
+            publishClient: publishClient
+        )
+        await scanned(vm)
+        vm.refreshMeedyaDBReadiness()
+        XCTAssertFalse(vm.willContribute)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 0, "nothing may be sent when contributing is off")
+        let result = try XCTUnwrap(vm.identifyResult)
+        XCTAssertFalse(result.contribution.didSubmit)
+        XCTAssertNil(vm.identifyErrorMessage, "contributing being off is not an error")
+        XCTAssertNotNil(result.signals.mainFeatureDurationSeconds, "the disc was still identified")
+    }
+
+    /// A film database being unreachable must not abandon the run: the disc's
+    /// own structure is still worth contributing, exactly as a MusicBrainz
+    /// outage does not stop the music path.
+    func test_identify_lookupFailure_stillIdentifiesAndStillContributes() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            meedyaDBReady: true,
+            publishClient: publishClient,
+            candidateProvider: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        let result = try XCTUnwrap(vm.identifyResult)
+        XCTAssertNotNil(result.lookupFailure, "the failure should be recorded\u{2026}")
+        XCTAssertNil(vm.identifyErrorMessage, "\u{2026}but not shown as the run failing")
+        XCTAssertEqual(publishClient.callCount, 1, "the disc is still worth contributing")
+    }
+
+    /// Scanning a DIFFERENT disc must not leave the previous one's name on
+    /// screen. Showing the wrong film is worse than showing nothing.
+    func test_scan_clearsThePreviousDiscsIdentification() async {
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [
+                .init(lines: identifiableInfoLines),
+                .init(lines: unknownTypeInfoLines),
+            ])
+        )
+        await scanned(vm)
+        if let task = vm.identify() { await task.value }
+        XCTAssertNotNil(vm.identifyResult, "precondition: the first disc was identified")
+
+        // A second scan, of a different disc.
+        if let task = vm.scan() { await task.value }
+
+        XCTAssertNil(vm.identifyResult, "the previous disc's result must not survive")
+        XCTAssertNil(vm.identifyErrorMessage)
+        XCTAssertNil(vm.selectedDiscType, "and its disc type must not carry over either")
+    }
+
+    func test_cancelIdentify_reportsCancellationAndKeepsNoResult() async {
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            candidateProvider: { _ in
+                // Cancelled before it can finish; a cancelled task's sleep
+                // throws immediately, so this needs no real waiting.
+                try await Task.sleep(nanoseconds: 60 * NSEC_PER_SEC)
+                return []
+            }
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        XCTAssertTrue(vm.isIdentifying)
+        vm.cancelIdentify()
+        XCTAssertTrue(vm.isCancellingIdentify, "the button must not look inert while unwinding")
+        await task.value
+
+        XCTAssertFalse(vm.isIdentifying)
+        XCTAssertFalse(vm.isCancellingIdentify)
+        XCTAssertNil(vm.identifyResult)
+        XCTAssertEqual(vm.identifyErrorMessage, "Identifying the disc was cancelled.")
+    }
+
+    /// Identification starts no subprocess: it works from the scan's result.
+    /// If this ever regresses into launching MakeMKV again, a Blu-ray would
+    /// be re-scanned for minutes just to be named.
+    func test_identify_runsNoExtraMakeMKVCall() async {
+        let runner = MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)])
+        let vm = makeIdentifyViewModel(runner: runner)
+        await scanned(vm)
+        XCTAssertEqual(runner.invocationCount, 1, "precondition: just the scan")
+
+        if let task = vm.identify() { await task.value }
+
+        XCTAssertEqual(runner.invocationCount, 1, "identification must not touch the tool")
+    }
 }

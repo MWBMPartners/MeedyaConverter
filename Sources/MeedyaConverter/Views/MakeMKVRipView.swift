@@ -63,13 +63,19 @@ struct MakeMKVRipView: View {
             }
         }
         .navigationTitle("MakeMKV Rip")
-        .onAppear { viewModel.refreshGate() }
+        .onAppear {
+            viewModel.refreshGate()
+            // Re-read rather than cache: switching MeedyaDB on in Settings
+            // must take effect without relaunching.
+            viewModel.refreshMeedyaDBReadiness()
+        }
         .onChange(of: makemkvEnabled) { viewModel.refreshGate() }
         .onChange(of: makemkvAcknowledgement) { viewModel.refreshGate() }
         .onChange(of: makemkvBinaryPath) { viewModel.refreshGate() }
         .onDisappear {
             viewModel.cancelRip()
             viewModel.cancelScan()
+            viewModel.cancelIdentify()
         }
     }
 
@@ -96,6 +102,7 @@ struct MakeMKVRipView: View {
         Form {
             sourceSection
             titlesSection
+            identifySection
             destinationSection
             runSection
             outcomeSection
@@ -236,6 +243,140 @@ struct MakeMKVRipView: View {
             .compactMap { $0 }
             .joined(separator: ", ")
         return details.isEmpty ? summary.displayName : "\(summary.displayName) — \(details)"
+    }
+
+    // MARK: - Identify
+
+    /// Naming the disc from what the scan found. Separate from ripping on
+    /// purpose: knowing what a disc IS is useful whether or not it is about
+    /// to be ripped, and contributing it helps the next person identify the
+    /// same disc.
+    @ViewBuilder
+    private var identifySection: some View {
+        Section("Identify This Disc") {
+            if viewModel.discInfo == nil {
+                Text("Scan the disc first. Identifying uses what the scan finds \u{2014} running time, chapters and languages \u{2014} to work out which film or programme this is.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                discTypePicker
+                identifyControls
+                if let result = viewModel.identifyResult {
+                    identifyOutcome(result)
+                }
+                if let error = viewModel.identifyErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    /// The disc type, pre-filled from MakeMKV's own type string but always
+    /// the user's to change. The caption says where the value came from,
+    /// because a silently pre-filled field is one people don't check.
+    private var discTypePicker: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Picker("Disc Type", selection: Binding(
+                get: { viewModel.selectedDiscType },
+                set: { viewModel.selectedDiscType = $0 }
+            )) {
+                Text("Choose\u{2026}").tag(DiscType?.none)
+                ForEach(MakeMKVRipViewModel.identifiableDiscTypes, id: \.self) { type in
+                    Text(type.displayName).tag(DiscType?.some(type))
+                }
+            }
+            .disabled(viewModel.isIdentifying)
+
+            Text(discTypeCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var discTypeCaption: String {
+        if let suggested = viewModel.suggestedDiscType {
+            return "MakeMKV reported this as a \(suggested.displayName). Change it if that's wrong."
+        }
+        return "MakeMKV didn't say what kind of disc this is, so please choose."
+    }
+
+    @ViewBuilder
+    private var identifyControls: some View {
+        if viewModel.isIdentifying {
+            HStack {
+                ProgressView().controlSize(.small)
+                Text(viewModel.isCancellingIdentify
+                     ? "Cancelling\u{2026}"
+                     : "Identifying the disc\u{2026}")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel", role: .cancel) { viewModel.cancelIdentify() }
+                    .disabled(viewModel.isCancellingIdentify)
+                    .accessibilityLabel("Cancel identifying the disc")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Button("Identify Disc") { viewModel.identify() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!viewModel.canIdentify)
+
+                if let reason = viewModel.identifyBlockedReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                contributionNotice
+            }
+        }
+    }
+
+    /// What this run WILL do about contributing, said before it runs. The
+    /// view model derives the actual behaviour from the same value, so this
+    /// can never promise something the run doesn't do.
+    @ViewBuilder
+    private var contributionNotice: some View {
+        if viewModel.willContribute {
+            Text("This disc will also be contributed to MeedyaDB.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if let reason = viewModel.meedyaDBReadiness?.reason {
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The result. `summary` deliberately states its own confidence — a
+    /// ranked guess presented as fact is how a disc ends up filed under the
+    /// wrong film — so it is shown as written rather than reworded here.
+    private func identifyOutcome(_ result: VideoDiscIdentificationResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(result.summary)
+                .font(.callout)
+            contributionOutcome(result.contribution)
+        }
+    }
+
+    @ViewBuilder
+    private func contributionOutcome(_ contribution: MeedyaDBContribution) -> some View {
+        switch contribution {
+        case .succeeded:
+            Label("Contributed to MeedyaDB.", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .notAttempted(let reason):
+            // Not an error: this is the normal state for anyone who hasn't
+            // set MeedyaDB up, and must not be dressed as a failure.
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed(let reason):
+            Label("Couldn't contribute to MeedyaDB: \(reason)", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
     }
 
     // MARK: - Destination

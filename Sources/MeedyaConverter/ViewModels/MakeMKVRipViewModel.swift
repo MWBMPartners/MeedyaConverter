@@ -41,14 +41,57 @@ final class MakeMKVRipViewModel {
     private let readinessProvider: @Sendable () -> MakeMKVReadiness
     private let consentProvider: @Sendable () -> MakeMKVConsent?
 
+    /// Builds the video identifier for ONE run, from the MeedyaDB config and
+    /// the TMDB key in force at that moment.
+    ///
+    /// ⚠️ A FACTORY, NOT A STORED IDENTIFIER, and the identify screen learned
+    /// this the expensive way. A stored one is built once with whatever
+    /// existed at construction — for the production default, an empty and
+    /// DISABLED publisher — so the screen would say "this disc will also be
+    /// contributed" and then report that publishing was off, having sent
+    /// nothing. Being told nothing was wrong while nothing was sent is the
+    /// one behaviour this must not have.
+    private let videoIdentifierFactory: @Sendable (MeedyaDBPublisherConfig?, TMDBLookupService?) -> VideoDiscIdentifier
+    /// How much to send, read fresh per run from the user's setting. Read per
+    /// run rather than cached, so the Settings picker is never a dead control.
+    private let submissionModeProvider: @Sendable () -> MeedyaDBSubmissionMode
+    private let meedyaDBReadinessProvider: @Sendable () -> MeedyaDBReadiness
+    /// The stored TMDB credential, or `nil`. Without one the disc is still
+    /// identified from its own structure and still contributed — that is a
+    /// normal state, not a failure.
+    private let tmdbKeyProvider: @Sendable () -> String?
+
     init(
         runner: any MakeMKVLineStreaming = MakeMKVProcessRunner(),
         readinessProvider: @escaping @Sendable () -> MakeMKVReadiness = { MakeMKVGate.readiness(in: .standard) },
-        consentProvider: @escaping @Sendable () -> MakeMKVConsent? = { MakeMKVConsentStore.consent(in: .standard) }
+        consentProvider: @escaping @Sendable () -> MakeMKVConsent? = { MakeMKVConsentStore.consent(in: .standard) },
+        videoIdentifierFactory: @escaping @Sendable (MeedyaDBPublisherConfig?, TMDBLookupService?) -> VideoDiscIdentifier = { config, service in
+            let candidateProvider = service.map { TMDBDiscCandidates.provider(service: $0) }
+            guard let config else {
+                return VideoDiscIdentifier(candidateProvider: candidateProvider)
+            }
+            return VideoDiscIdentifier(
+                publisher: MeedyaDBPublisher(config: config),
+                candidateProvider: candidateProvider
+            )
+        },
+        submissionModeProvider: @escaping @Sendable () -> MeedyaDBSubmissionMode = {
+            MeedyaDBConfigStore.submissionMode(in: .standard)
+        },
+        meedyaDBReadinessProvider: @escaping @Sendable () -> MeedyaDBReadiness = {
+            MeedyaDBGate.readiness(in: .standard, apiKey: APIKeyManager().key(for: .meedyaDB)?.apiKey)
+        },
+        tmdbKeyProvider: @escaping @Sendable () -> String? = {
+            APIKeyManager().key(for: .tmdb)?.apiKey
+        }
     ) {
         self.runner = runner
         self.readinessProvider = readinessProvider
         self.consentProvider = consentProvider
+        self.videoIdentifierFactory = videoIdentifierFactory
+        self.submissionModeProvider = submissionModeProvider
+        self.meedyaDBReadinessProvider = meedyaDBReadinessProvider
+        self.tmdbKeyProvider = tmdbKeyProvider
     }
 
     // MARK: - Gate
@@ -237,6 +280,12 @@ final class MakeMKVRipViewModel {
         discInfo = nil
         titleSummaries = [:]
         selectedTitleIndices = []
+        // A previous disc's identification must not survive into this one.
+        // Leaving the old name on screen while a different disc is scanned
+        // is worse than showing nothing: it names the wrong film.
+        identifyResult = nil
+        identifyErrorMessage = nil
+        selectedDiscType = nil
 
         // Unwrap `self` first: `await self?.x()` makes the closure return `()?`, so
         // the task would be a `Task<()?, Never>` and not match `Task<Void, Never>`.
@@ -256,6 +305,11 @@ final class MakeMKVRipViewModel {
                 uniqueKeysWithValues: info.titles.map { ($0.index, MakeMKVTitleSummary(title: $0)) }
             )
             selectedTitleIndices = MakeMKVRipPlanning.defaultSelection(for: info.titles)
+            // Pre-fill the disc type from MakeMKV's own type string. A
+            // SUGGESTION only — it stays editable, and stays nil when MakeMKV
+            // said nothing recognisable, which leaves the Identify button
+            // blocked with a caption asking for it rather than guessing.
+            selectedDiscType = MakeMKVIdentification.suggestedDiscType(from: info)
         } catch is CancellationError {
             // Scanning never writes a destination file, unlike a rip, so
             // this deliberately does NOT reuse `failureSummary`'s
@@ -521,6 +575,184 @@ final class MakeMKVRipViewModel {
         ripTask?.cancel()
     }
 
+    // MARK: - Identify the disc (#502)
+
+    // Identification needs NO MakeMKV executor and starts no subprocess: it
+    // works entirely from the `discInfo` the scan already produced, plus an
+    // optional TMDB lookup. It is therefore deliberately NOT put through
+    // `gatedExecutor()` — the gate was already satisfied by the scan that
+    // produced this data, and re-checking it here would refuse to name a
+    // disc the user had already legitimately scanned.
+    //
+    // This lives on the rip screen rather than the Identify Disc screen
+    // because a video disc's structure only exists once MakeMKV has scanned
+    // it, and that scan can take minutes on a Blu-ray. Asking for a second
+    // scan on another screen would be slower and would duplicate the consent
+    // gate. Music is the other way round: it reads a table of contents with
+    // cdrdao, needs no MakeMKV at all, and so has its own screen.
+
+    /// The kinds of disc this screen can identify. Audio discs are absent on
+    /// purpose: they are identified from a table of contents on the Identify
+    /// Disc screen, which gets an exact MusicBrainz match rather than the
+    /// ranked guess this path produces.
+    static let identifiableDiscTypes: [DiscType] = [.dvdVideo, .bluray, .uhdBluray, .hdDvd, .vcd, .svcd]
+
+    /// What kind of disc this is. Pre-filled from MakeMKV's own type string
+    /// after a scan (see `MakeMKVIdentification.suggestedDiscType`) and freely
+    /// changeable — the suggestion is never treated as fact, because the wrong
+    /// disc type would go into a shared database and cannot be walked back.
+    var selectedDiscType: DiscType?
+
+    /// MakeMKV's suggestion for the current scan, for a caption explaining
+    /// where the pre-filled value came from. `nil` when it had no opinion.
+    var suggestedDiscType: DiscType? {
+        discInfo.flatMap { MakeMKVIdentification.suggestedDiscType(from: $0) }
+    }
+
+    private(set) var isIdentifying = false
+    /// True between `cancelIdentify()` and the task noticing — the same
+    /// reason `isCancellingScan` exists: a TMDB request in flight can take a
+    /// moment to unwind, and the button must not look inert meanwhile.
+    private(set) var isCancellingIdentify = false
+    private(set) var identifyResult: VideoDiscIdentificationResult?
+    private(set) var identifyErrorMessage: String?
+
+    /// Whether contributing is switched on and usable. Re-read rather than
+    /// cached, so turning MeedyaDB on in Settings takes effect immediately.
+    private(set) var meedyaDBReadiness: MeedyaDBReadiness?
+
+    func refreshMeedyaDBReadiness() {
+        meedyaDBReadiness = meedyaDBReadinessProvider()
+    }
+
+    /// Whether the next run will try to contribute.
+    ///
+    /// ⚠️ This is the PROMISE the screen makes, and `identify()` derives what
+    /// it actually does from the very same provider, immediately before the
+    /// run. They must never be computed from different things — a screen that
+    /// promises a contribution and silently sends nothing is the specific
+    /// failure this wiring exists to avoid.
+    var willContribute: Bool {
+        meedyaDBReadiness?.isReady == true
+    }
+
+    var canIdentify: Bool {
+        !isScanning && !isIdentifying && discInfo != nil && selectedDiscType != nil
+    }
+
+    /// Why the Identify button is disabled, or `nil` when it is enabled. A
+    /// disabled control must always name the next step.
+    ///
+    /// Note this does NOT block on `isRipping`: identification runs no tool
+    /// and touches no file, so there is no reason to make someone wait out a
+    /// rip that may take an hour.
+    var identifyBlockedReason: String? {
+        if isIdentifying { return nil }
+        if isScanning { return "Wait for the scan to finish \u{2014} identifying uses what it finds." }
+        if discInfo == nil { return "Scan the disc first, then it can be identified." }
+        if selectedDiscType == nil { return "Choose what kind of disc this is first." }
+        return nil
+    }
+
+    @ObservationIgnored
+    nonisolated(unsafe) private var identifyTask: Task<Void, Never>?
+
+    /// Identifies the scanned disc and, when MeedyaDB is on and configured,
+    /// contributes it. Synchronous entry point like `scan()`/`rip()`; the
+    /// task is returned so tests can await it rather than poll.
+    @discardableResult
+    func identify() -> Task<Void, Never>? {
+        guard !isScanning, !isIdentifying else { return nil }
+        guard let info = discInfo else {
+            identifyErrorMessage = "Scan the disc first, then it can be identified."
+            return nil
+        }
+        guard let discType = selectedDiscType else {
+            identifyErrorMessage = "Choose what kind of disc this is first."
+            return nil
+        }
+
+        identifyErrorMessage = nil
+        identifyResult = nil
+
+        // Everything the run depends on is resolved ONCE, here, and the
+        // identifier is built from those same values. `contribute` is derived
+        // from the config that was just read rather than from a separate
+        // check, so what the screen promised and what it does cannot drift.
+        refreshMeedyaDBReadiness()
+        let config = meedyaDBReadiness?.config
+        let contribute = config != nil
+        let mode = submissionModeProvider()
+        let identifier = videoIdentifierFactory(config, Self.tmdbService(from: tmdbKeyProvider()))
+
+        isIdentifying = true
+        isCancellingIdentify = false
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performIdentify(
+                info: info,
+                discType: discType,
+                identifier: identifier,
+                contribute: contribute,
+                mode: mode
+            )
+        }
+        identifyTask = task
+        return task
+    }
+
+    private func performIdentify(
+        info: MakeMKVDiscInfo,
+        discType: DiscType,
+        identifier: VideoDiscIdentifier,
+        contribute: Bool,
+        mode: MeedyaDBSubmissionMode
+    ) async {
+        // The label is taken from the signals rather than read off `info`
+        // again, so what is sent can never disagree with what was ranked.
+        // It only leaves the machine in `.full` mode — the publisher strips
+        // it otherwise.
+        let label = VideoDiscIdentifier.signals(for: info, discType: discType).label
+
+        do {
+            identifyResult = try await identifier.identify(
+                info: info,
+                discType: discType,
+                labelText: label,
+                contribute: contribute,
+                mode: mode
+            )
+        } catch is CancellationError {
+            identifyErrorMessage = "Identifying the disc was cancelled."
+        } catch {
+            identifyErrorMessage = error.localizedDescription
+        }
+        isIdentifying = false
+        isCancellingIdentify = false
+        identifyTask = nil
+    }
+
+    /// Cancels an in-progress identification. Like `cancelScan()`/`cancelRip()`,
+    /// this ONLY cancels — every piece of cleanup happens in
+    /// `performIdentify`'s own tail, so a cancelled run's ending can never
+    /// land on top of a newer one and wipe its state.
+    func cancelIdentify() {
+        guard identifyTask != nil, isIdentifying else { return }
+        isCancellingIdentify = true
+        identifyTask?.cancel()
+    }
+
+    /// A TMDB service from a stored credential, or `nil` when there isn't
+    /// one. Nil is an ordinary state, not an error: the disc is still
+    /// identified from its own structure and still worth contributing.
+    private static func tmdbService(from key: String?) -> TMDBLookupService? {
+        guard let trimmed = key?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return TMDBLookupService(apiKey: trimmed)
+    }
+
     // MARK: - Deinit
 
     /// Non-isolated (as `deinit` always is, even for a `@MainActor` class)
@@ -532,5 +764,6 @@ final class MakeMKVRipViewModel {
     deinit {
         scanTask?.cancel()
         ripTask?.cancel()
+        identifyTask?.cancel()
     }
 }
