@@ -63,16 +63,23 @@ public struct VideoDiscIdentificationResult: Sendable {
     /// payload: in `.anonymous` mode the publisher strips `labelText` first.
     public var submission: MeedyaDBDiscSubmissionInputs?
 
+    /// Why looking candidates up failed, when a provider was configured and
+    /// tried. `nil` when none was configured, or when it succeeded —
+    /// including a success that found nothing.
+    public var lookupFailure: String?
+
     public var contribution: MeedyaDBContribution
 
     public init(
         signals: DiscSignals,
         ranked: [ScoredDiscMatch] = [],
+        lookupFailure: String? = nil,
         submission: MeedyaDBDiscSubmissionInputs? = nil,
         contribution: MeedyaDBContribution
     ) {
         self.signals = signals
         self.ranked = ranked
+        self.lookupFailure = lookupFailure
         self.submission = submission
         self.contribution = contribution
     }
@@ -92,6 +99,9 @@ public struct VideoDiscIdentificationResult: Sendable {
             if signals.titleDurationsSeconds.isEmpty {
                 return "This disc has no readable titles, so there is nothing to identify."
             }
+            if let failure = lookupFailure {
+                return "Couldn't check with the film database: \(failure)"
+            }
             return "Nothing to compare this disc against yet, so it hasn't been named."
         }
         let title = best.candidate.title
@@ -109,14 +119,24 @@ public struct VideoDiscIdentificationResult: Sendable {
 public struct VideoDiscIdentifier: Sendable {
 
     private let contributor: MeedyaDBContributor
+    private let candidateProvider: (@Sendable (DiscSignals) async throws -> [MetadataResult])?
 
     /// The default contributor quietly skips the upload (its config is empty
-    /// and disabled), so `VideoDiscIdentifier()` is a usable production
-    /// object that identifies without sending anything.
+    /// and disabled), and the default candidate provider is absent, so
+    /// `VideoDiscIdentifier()` is a usable production object that identifies
+    /// structurally without sending or fetching anything.
+    ///
+    /// - Parameter candidateProvider: where possible identities come from when
+    ///   the caller supplies none — `TMDBDiscCandidates.provider(service:)`
+    ///   in production. Absent by default because every video provider needs
+    ///   an API key, and a disc is still worth contributing on its structure
+    ///   alone when there is none.
     public init(
-        publisher: MeedyaDBPublisher = MeedyaDBPublisher(config: MeedyaDBPublisherConfig())
+        publisher: MeedyaDBPublisher = MeedyaDBPublisher(config: MeedyaDBPublisherConfig()),
+        candidateProvider: (@Sendable (DiscSignals) async throws -> [MetadataResult])? = nil
     ) {
         self.contributor = MeedyaDBContributor(publisher: publisher)
+        self.candidateProvider = candidateProvider
     }
 
     // MARK: Signals only (offline, no network at all)
@@ -158,6 +178,24 @@ public struct VideoDiscIdentifier: Sendable {
     ) async throws -> VideoDiscIdentificationResult {
 
         let signals = Self.signals(for: info, discType: discType, seedTitle: seedTitle)
+
+        // Candidates the caller supplied always win: they know more than a
+        // volume-label search ever will. The provider is the fallback, and a
+        // failure in it must NOT abandon the run — the disc's structure is
+        // still worth contributing, exactly as a MusicBrainz outage does not
+        // stop the music path. Cancellation still propagates.
+        var candidates = candidates
+        var lookupFailure: String?
+        if candidates.isEmpty, let provider = candidateProvider {
+            do {
+                candidates = try await provider(signals)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lookupFailure = error.localizedDescription
+            }
+        }
+
         let ranked = DiscIdentifier.rank(signals: signals, candidates: candidates)
 
         let submission = MeedyaDBSubmissionBuilder.videoDisc(
@@ -176,6 +214,7 @@ public struct VideoDiscIdentifier: Sendable {
         return VideoDiscIdentificationResult(
             signals: signals,
             ranked: ranked,
+            lookupFailure: lookupFailure,
             submission: submission,
             contribution: contribution
         )
