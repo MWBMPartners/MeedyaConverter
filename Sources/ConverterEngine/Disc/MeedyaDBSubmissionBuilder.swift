@@ -147,6 +147,19 @@ public enum MeedyaDBSubmissionBuilder {
         // foreign tag would differ from our computed whole-disc ID on an ordinary
         // single-session CD — attaching a "whole disc" identifier to a disc that has
         // no data session at all, i.e. wrong data in a shared database.
+        //
+        // ⚠️ DO NOT "unify" this with `MusicDiscIdentity.isEnhancedCD`, which answers
+        // the same-looking question structurally (from `LeadOutSource`). They are
+        // deliberately different, because they are asked for different reasons:
+        //
+        //   * `isEnhancedCD` answers "does this disc have a data session?" — a fact
+        //     about the disc, shown to the user. A stored ID tag must not be able to
+        //     make an ordinary CD look Enhanced, so it reads the structure.
+        //   * here we are asking "is there a DIFFERENT whole-disc ID worth recording?"
+        //     If the two computed IDs are identical, the identifier would duplicate
+        //     the music one and is worth nothing to MeedyaDB — so comparing the IDs
+        //     is exactly right, and is stricter than the structural check on the edge
+        //     where a multi-session disc's session-1 lead-out equals the disc's own.
         let computedMusicID = MusicBrainzDiscID.compute(for: toc)
         if let wholeDiscID = MusicBrainzDiscID.computeWholeDisc(for: toc), wholeDiscID != computedMusicID {
             identifiers.append(MeedyaDBIdentifier(
