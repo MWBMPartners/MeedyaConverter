@@ -1,7 +1,7 @@
 # MeedyaConverter — Durable Memory (OpenAI / Codex)
 
 > Durable, slow-changing facts. Live status lives in `.claude/HANDOFF.md`.
-> Last updated: 2026-09-17.
+> Last updated: 2026-09-21.
 
 ## Identity
 
@@ -85,15 +85,32 @@
   short-circuits before the network. `identify` throws only `CancellationError`.
   Contributing is opt-in per run (`--submit`); the API key is env-only (`MEEDYADB_API_KEY`)
   because argv is world-readable via `ps`.
-- **Nothing in the app constructs `MeedyaDBPublisherConfig` yet** — no settings tab, no
-  UserDefaults keys. `APIKeyProvider.meedyaDB` already exists in `APIKeyManager.swift`;
-  the key belongs in the **Keychain**, not `@AppStorage` (plain-text UserDefaults).
-- **Video-disc identification still has the same gap** — `MeedyaDBSubmissionBuilder.videoDisc`
-  has no production caller.
-- **`RawCDReadPlanner.buildMacOSUnmountArguments` is deliberately unwired** and is a real
-  blocker for reading a disc from the GUI on macOS: the medium must be unmounted before
-  cdrdao can claim the device, and the `--device` → `diskutil` node mapping needs hardware
-  to verify. Expect "device busy" on an auto-mounted disc.
+- **VIDEO identification is wired too (202ef0a), and the app has an Identify Disc
+  screen (8df1936) + a MeedyaDB settings tab (6f4ee66).** `MeedyaDBContributor`
+  (`MeedyaDBAccess.swift`) is now the ONE home of the contribute failure posture,
+  shared by music and video — two copies of those judgement calls would drift.
+- **Video identification is a RANKED GUESS, never an exact hit** (music is exact, from
+  the TOC). The summary deliberately says "Best guess: X (98% confident)". Candidates
+  are passed IN by the caller because every video provider is keyed and unwired (#205),
+  so `candidates: []` is normal — the disc is still contributed on its structural
+  fingerprint. **#205 is now the binding constraint on video identification.**
+- **Unmounting a disc is NEVER automatic** (owner decision, 2026-09-21): `DiscBusyDetector`
+  decides whether to offer the remedy, and the user presses the button.
+  `buildMacOSUnmountArguments` is no longer unwired — its "needs hardware to map the
+  device back" note does not apply in this direction, because the app already holds the
+  device path and `diskNode(forRawDeviceNode:)` just undoes the known transform.
+- **`isEnhancedCD` is decided STRUCTURALLY** (from `leadOutSource`), not by comparing two
+  ID strings — a stored/stale tag would make an ordinary CD look Enhanced.
+- **A `static` stored property on a `@MainActor` type is MainActor-isolated**, so it
+  cannot serve as a default argument evaluated at a nonisolated call site. Inline the
+  closure instead (`DiscIdentifyViewModel` does).
+- **`MetadataResult` and `ScoredDiscMatch` are NOT `Equatable`** — anything carrying them
+  cannot be either.
+- ~~Nothing in the app constructs `MeedyaDBPublisherConfig`~~ — **DONE** (c89590a + 6f4ee66):
+  `MeedyaDBConfigStore` / `MeedyaDBGate` + a settings tab. The key lives in the
+  **Keychain** via `APIKeyProvider.meedyaDB`, never in `@AppStorage` (a plain-text plist);
+  a test sweeps the whole defaults suite to prove it never lands there. The stored
+  submission mode fails SAFE — anything but an exact `full` reads as `anonymous`.
 - **`Task { [weak self] in await self?.f() }` infers `Task<()?, Never>`** and will not
   match `Task<Void, Never>`. Always `guard let self else { return }` first. CI caught
   this; the review did not.

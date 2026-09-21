@@ -440,6 +440,73 @@ is deliberately unwired — the medium must be unmounted before cdrdao can claim
 and mapping a cdrdao `--device` string to a `diskutil` node needs real hardware to verify.
 Expect "device busy" on an auto-mounted disc until that is resolved.
 
+## 📍 2026-09-21 (overnight) — the owner's whole queue, cleared
+
+Branch `wip/alpha-consolidation`. Owner answered four questions before sleeping and
+asked for the rest of the queue to be worked autonomously. All four answers applied.
+
+### OWNER DECISIONS — 2026-09-21
+
+1. **Busy drive:** explain it and offer an **Unmount button**; never unmount silently.
+2. **Video discs:** wire them the same way as music, **including the GUI**.
+3. **Queue:** do **all** of it (MakeMKV docs, the fulldisc fix, VIDEO_TS/BDMV source,
+   MeedyaDB settings screen).
+4. **No PR yet** — keep accumulating on the branch (matches the no-stacking rule).
+
+### What landed (all CI-green unless noted)
+
+| Commit | What | Run |
+| --- | --- | --- |
+| `eee5289` | fulldisc-discid fix (was a filed follow-up; owner asked for it directly) | 337 |
+| `6f4ee66` | MeedyaDB settings tab (UI) | 337 |
+| `1a3be8f` | Pre-decrypted VIDEO_TS/BDMV rip source (#503) | 337 ✅ |
+| `202ef0a` | **Video disc identification wired end to end** | 338 ✅ |
+| `8dc5287` | Busy-drive detection + `diskutil` unmount | 339 ✅ |
+| `8df1936` | **In-app Identify Disc screen** | 340 |
+| `1aaf596` | Disc-tools docs + in-app help + MakeMKV licence position (#503 slice 5) | 341 |
+
+### The things worth knowing later
+
+- **`MeedyaDBContributor` is now the ONE place the contribute failure posture lives**
+  (`MeedyaDBAccess.swift`). Music and video both go through it. Those judgement calls —
+  off is not failed, a real rejection is, cancellation stays cancellation, an
+  unmatchable submission is skipped rather than sent as noise — would drift if copied.
+  `MusicDiscIdentifier` kept its public init and now delegates; its two shared reason
+  strings are forwarded so the two can never disagree.
+- **Video identification is a RANKED GUESS, not an exact hit.** Music gets an exact
+  MusicBrainz match from the TOC; video is scored on running time / title / year and
+  the summary says "Best guess: X (98% confident)" on purpose. Do not "tidy" that into
+  a flat statement of fact.
+- **Video candidates are passed IN by the caller.** Every video provider is keyed and
+  none is wired up (#205), so `candidates: []` is the normal case today — and the disc
+  is still contributed on its structural fingerprint alone. That is not a failure.
+- **`buildMacOSUnmountArguments` is no longer unwired.** Its old note said the blocker
+  was mapping cdrdao's `--device` back to a `diskutil` node, unverifiable without
+  hardware. That mapping is NOT needed in this direction: the app is handed a device
+  path and `DriveListingParser.diskNode(forRawDeviceNode:)` just undoes the
+  well-defined `/dev/diskN` → `/dev/rdiskN` transform. A path not in that form is
+  passed through untouched so `diskutil` rejects it, rather than being mangled into a
+  different device and unmounting the wrong disk. Round-trip test pins the pair.
+- **Unmounting is NEVER automatic** (owner decision). `DiscBusyDetector` decides which
+  remedy to offer; getting it wrong costs in both directions, so it is conservative and
+  both directions are tested.
+- **`isEnhancedCD` is now structural**, from `leadOutSource`, not a comparison of two ID
+  strings — a stored/stale disc-ID tag would otherwise make an ordinary CD look Enhanced.
+- **`VideoDiscIdentificationResult` is deliberately NOT `Equatable`** — it carries
+  `ScoredDiscMatch`, whose `MetadataResult` is `Codable, Sendable` but not `Equatable`.
+- **A static stored property on a `@MainActor` type is MainActor-isolated**, so it can't
+  be a default argument evaluated at a nonisolated call site. `DiscIdentifyViewModel`
+  inlines its TOC-reader default closure for exactly that reason.
+
+### NEXT
+
+1. **#205 — the keyed metadata providers.** This is now the binding constraint on video
+   identification: the chain runs, but nothing supplies candidates.
+2. A real Enhanced CD to verify the derived lead-out (#504), and a real drive to verify
+   the unmount path. Both need a person with hardware.
+3. MeedyaDB hosting + credentials before anything can actually be submitted.
+4. `AutoTagger` still has no callers (#205).
+
 ## 📍 PRIOR STATE — 2026-09-15
 
 Where the project actually stands right now, in plain terms:
