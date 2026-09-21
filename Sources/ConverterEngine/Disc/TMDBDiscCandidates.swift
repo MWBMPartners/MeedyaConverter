@@ -46,10 +46,10 @@ public enum TMDBDiscCandidates {
     static let discNoiseTokens: Set<String> = [
         "disc", "disc1", "disc2", "disc3", "disc4", "disk",
         "d1", "d2", "d3", "d4",
-        "dvd", "dvd5", "dvd9", "bluray", "bdrom", "uhd",
+        "dvd", "dvd5", "dvd9", "bluray", "bd", "bdrom", "uhd",
         "ntsc", "pal", "region", "r1", "r2", "r4",
         "ws", "fs", "widescreen", "fullscreen",
-        "remastered",
+        "se", "ce", "extended", "remastered",
     ]
 
     /// Two-word noise phrases, matched only as an adjacent pair at the end.
