@@ -38,6 +38,22 @@ struct MakeMKVRipView: View {
     @AppStorage(MakeMKVConsentStore.Keys.binaryPath)
     private var makemkvBinaryPath: String = ""
 
+    // Re-check the MeedyaDB verdict whenever its settings change, so turning
+    // contributing on in Settings takes effect without leaving this screen.
+    //
+    // ⚠️ `.onAppear` ALONE IS NOT ENOUGH. Settings is a separate window on
+    // macOS: this screen never disappears while someone changes a setting
+    // there, so `.onAppear` does not fire again and the notice above the
+    // Identify button goes stale. It would then say contributing is off
+    // while the run — which correctly re-reads the setting — contributes,
+    // or promise a contribution that was just switched off. Either way the
+    // screen and the run disagree, which is the exact failure this whole
+    // feature is built to avoid. `DiscIdentifyView` already does this.
+    @AppStorage(MeedyaDBConfigStore.Keys.enabled)
+    private var meedyaDBEnabled: Bool = false
+    @AppStorage(MeedyaDBConfigStore.Keys.baseURL)
+    private var meedyaDBBaseURL: String = ""
+
     // MARK: - Environment
 
     /// D4 — deep-linking straight to the MakeMKV settings tab needs
@@ -72,6 +88,8 @@ struct MakeMKVRipView: View {
         .onChange(of: makemkvEnabled) { viewModel.refreshGate() }
         .onChange(of: makemkvAcknowledgement) { viewModel.refreshGate() }
         .onChange(of: makemkvBinaryPath) { viewModel.refreshGate() }
+        .onChange(of: meedyaDBEnabled) { viewModel.refreshMeedyaDBReadiness() }
+        .onChange(of: meedyaDBBaseURL) { viewModel.refreshMeedyaDBReadiness() }
         .onDisappear {
             viewModel.cancelRip()
             viewModel.cancelScan()

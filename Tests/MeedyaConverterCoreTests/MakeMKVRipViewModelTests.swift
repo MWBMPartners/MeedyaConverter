@@ -1136,4 +1136,59 @@ final class MakeMKVRipViewModelTests: XCTestCase {
 
         XCTAssertEqual(runner.invocationCount, 1, "identification must not touch the tool")
     }
+
+    /// ⚠️ THE INTERLEAVE, not the sequence.
+    ///
+    /// `test_scan_clearsThePreviousDiscsIdentification` above only proves the
+    /// SEQUENTIAL case — identify, wait for it, then scan. That is the easy
+    /// half, and on its own it asserts the promise rather than the delivery.
+    /// The dangerous case is a scan starting while an identification is still
+    /// in flight: `scan()` clears the result, then the old run's tail writes
+    /// the OLD disc's answer straight back, and the previous film's name ends
+    /// up displayed under a different disc.
+    ///
+    /// Scanning and identifying therefore exclude each other, which closes it
+    /// completely: an in-flight run always reaches its own tail before a new
+    /// scan can begin, so everything it writes is written before `scan()`
+    /// clears — and `scan()` clears it.
+    func test_scan_cannotStartWhileIdentifying_soAStaleRunCannotLandOnTheNewDisc() async {
+        let runner = MockMakeMKVRunner(scripts: [
+            .init(lines: identifiableInfoLines),
+            .init(lines: identifiableInfoLines),
+        ])
+        let vm = makeIdentifyViewModel(
+            runner: runner,
+            candidateProvider: { _ in
+                // Parked: this run cannot finish on its own.
+                try await Task.sleep(nanoseconds: 60 * NSEC_PER_SEC)
+                return []
+            }
+        )
+        await scanned(vm)
+
+        guard let identifyTask = vm.identify() else { return XCTFail("expected an identify task") }
+        XCTAssertTrue(vm.isIdentifying)
+
+        // The whole point: the Scan button must be shut while this runs.
+        XCTAssertFalse(vm.canScan, "scanning during an identification is what lets a stale run land")
+        XCTAssertEqual(
+            vm.scanBlockedReason,
+            "This disc is being identified. Wait for that to finish, or cancel it, before scanning again."
+        )
+        XCTAssertNil(vm.scan(), "a scan must not even start while identifying")
+        XCTAssertEqual(runner.invocationCount, 1, "and it must not reach the tool either")
+
+        // Cancel, let the run reach its own tail, then scan for real.
+        vm.cancelIdentify()
+        await identifyTask.value
+        XCTAssertEqual(vm.identifyErrorMessage, "Identifying the disc was cancelled.")
+
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task once identifying ended") }
+        await scanTask.value
+
+        // Nothing the cancelled run wrote may survive into the new disc.
+        XCTAssertNil(vm.identifyErrorMessage, "the cancelled run's message must not hang over the new disc")
+        XCTAssertNil(vm.identifyResult)
+        XCTAssertEqual(runner.invocationCount, 2)
+    }
 }

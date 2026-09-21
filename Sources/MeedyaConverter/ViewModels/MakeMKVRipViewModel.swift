@@ -219,7 +219,7 @@ final class MakeMKVRipViewModel {
     }
 
     var canScan: Bool {
-        !isScanning && !isRipping && resolvedSource != nil
+        !isScanning && !isRipping && !isIdentifying && resolvedSource != nil
     }
 
     /// Why the Scan button is disabled, in plain English, or `nil` when it
@@ -229,6 +229,9 @@ final class MakeMKVRipViewModel {
     var scanBlockedReason: String? {
         if isScanning { return nil }
         if isRipping { return "A rip is in progress. Wait for it to finish before scanning." }
+        if isIdentifying {
+            return "This disc is being identified. Wait for that to finish, or cancel it, before scanning again."
+        }
         guard resolvedSource == nil else { return nil }
         switch sourceKind {
         case .opticalDrive:
@@ -252,7 +255,23 @@ final class MakeMKVRipViewModel {
     @discardableResult
     func scan() -> Task<Void, Never>? {
         // Guard first, then clear — same reason as in `rip()`.
-        guard !isScanning, !isRipping else { return nil }
+        //
+        // ⚠️ `!isIdentifying` IS LOAD-BEARING, NOT TIDINESS. Without it the
+        // Scan button stays live during an identification that can take a
+        // dozen TMDB requests, and this is what happens: `scan()` clears
+        // `identifyResult`, then the OLD run's tail — which captured the old
+        // `info` and disc type when it started — writes its result straight
+        // back. The previous film's name and contribution outcome then sit
+        // under a completely different disc. The cancelled-message path has
+        // the same shape.
+        //
+        // Excluding the two closes it completely, and for a second-order
+        // reason worth spelling out: an in-flight identification now always
+        // reaches its own tail BEFORE a new scan can begin, so everything it
+        // writes is written before `scan()` clears — and `scan()` clears it.
+        // The same insight fixed `cancelScan()` earlier: the guard, not the
+        // clearing, is what makes the race impossible.
+        guard !isScanning, !isRipping, !isIdentifying else { return nil }
 
         scanErrorMessage = nil
         // Also drop the previous rip's banner: leaving "Rip complete…" on
