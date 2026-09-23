@@ -5,9 +5,144 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-17 · VERSION 0.1.0
+**Last updated:** 2026-09-23 (evening) · VERSION 0.1.0
 
-## 📍 CURRENT STATE — 2026-09-17 (read this first)
+## 📍 CURRENT STATE — 2026-09-23 (read this first)
+
+This is the resume point for a **fresh session with no chat history**. The owner
+may restart to update Claude Code before the Codex review at about 00:09. Everything
+needed to carry on is in this block, `.claude/standing_tasks.md`, and the sections
+below it.
+
+### Where things stand
+
+- **Branch:** `wip/alpha-consolidation`. **No code has changed since 21 Sept 08:26 UTC**
+  (`1d56d37`, CI run `35577889183` green). The only commit after that is this
+  session's notes-and-rules commit (see "What this session did").
+- **No pull request is open.** One PR to `alpha` will be opened later, **only when the
+  owner says** (W9). ⚠️ Pushing to `alpha` publishes a public pre-release automatically.
+- The latest feature work (17–21 Sept) is disc identification, MakeMKV ripping, MeedyaDB
+  contribution and TMDB film lookup. It is described in the dated sections below; the
+  most recent is "2026-09-21 — VIDEO IDENTIFICATION IS NOW REACHABLE".
+
+### Starting a fresh session — do these first
+
+1. `git fetch origin && git status -sb`, then fast-forward if behind
+   (`git merge --ff-only origin/wip/alpha-consolidation`). **Cloud sessions push to this
+   branch too.** On 23 Sept this Mac's copy was 59 commits behind without anyone noticing.
+2. Read this block, then `.claude/standing_tasks.md`: W2 (handoff), W3 (models),
+   W12 (fallback), W13 (review loop), W15 (progress tables).
+3. Check Codex is back (below). If it is, the catch-up review is the first job.
+
+### ⏰ FIRST JOB: the owed Codex catch-up review
+
+**Why it is owed.** All **59 commits from 17–21 Sept** (`74d0f59` … `1d56d37`: 67 files,
+about 16,700 lines added) were built in **cloud Claude sessions**, where Codex was not
+installed. They were checked **only by independent Claude reviewer agents**, which is the
+fallback, not the standard (W12/W13). Those reviews did find and fix real defects,
+recorded in the sections below. Codex has not seen any of this work.
+
+**Why it has not happened yet.** Codex **is** installed on this Mac
+(`/opt/homebrew/bin/codex`, v0.154.0). It is **out of usage credit** until
+**24 Sept 2026 at 00:09** (local time), according to Codex's own message in a session
+earlier on 23 Sept.
+
+**How to run it (starting point; not yet run):**
+
+```bash
+git branch codex-review-base 02a5964   # the commit just before 74d0f59
+codex review --base codex-review-base "<focus notes below>"
+```
+
+`--base` asks for a branch name, which is why the temporary branch is used. Passing the
+commit ID directly has not been tested. Delete the temporary branch afterwards (it is
+local only). The run of work is big, so it may be better to review it in parts, one
+area per run (list below). **Review it as a whole body of work** as well, because
+differences in approach show up across a run of work more than inside one commit.
+
+**Areas, and what to point the reviewer at:**
+
+| Area | Issues | Focus |
+| --- | --- | --- |
+| Disc identification engine (music + film) | #502, #504 | Scoring maths; music Disc ID calculation; Enhanced CD handling |
+| MeedyaDB contribution | #502, #507 | Privacy: label text only sent in `full` mode; publishing off unless set up; contributor failure handling |
+| MakeMKV backend + rip screen | #503 | Consent gate can't be bypassed; the copy-protection refusal still holds everywhere else; cancel and race handling in `MakeMKVRipViewModel` |
+| Busy drive + unmount | #502 | Never unmounts on its own; device path conversion can't point at the wrong disk |
+| TMDB film lookup + tag mapping | #205 | API key never leaks into errors or logs (including partial keys); label cleaning; cover art vs real video |
+| Identify Disc screen + film identify on rip screen | #502 | "Promise vs delivery": does what the screen says happen actually happen? |
+| Docs: `docs/Disc-Tools.md`, in-app help, `docs/api/meedya-convert-api.yaml` | — | Do they claim anything the code doesn't do? |
+
+**The repeated defect to look for** (found five times so far): two correct pieces with
+nothing connecting them, and tests that check the *promise* rather than the *delivery*.
+Test: `grep -rn 'TypeName' Sources/ Tests/`. If every use outside its own file is under
+`Tests/`, the feature doesn't reach users.
+
+**The loop (W13):** read every finding and check it against the code. Fix the real ones
+(Sonnet builds; Opus if complex), push, watch CI to green, and re-review until a round
+finds nothing real. Write down any finding judged wrong, with the reason. Record the
+number of rounds here and in the commit messages. If Codex is still out of credit, say
+so plainly and use a fresh Claude reviewer only as a stopgap. That does **not** clear
+this debt.
+
+**Not verified:** whether work *before* 17 Sept ever had a Codex review. Older notes say
+Codex was missing in those cloud sessions too. The scope above is only what is *known*
+to be owed.
+
+### After that: the queue (the owner hasn't scheduled these; recommended order)
+
+| # | Task | Issue | Status | Notes |
+|---|------|-------|--------|-------|
+| 1 | Codex catch-up review of 17–21 Sept work | #502 #503 #504 #205 | Blocked: Codex out of credit until 00:09 | first job |
+| 2 | Half-set-up MeedyaDB wrongly says "wasn't requested" | #507 | Queued | small; fix goes in `MeedyaDBContributor`, not in either screen |
+| 3 | `AutoTagger` is never called, so looked-up tags are never written into files | #508 | Queued | part of #205 |
+| 4 | Settings export/import (allow-list only, no secrets) | #506 | Queued | #505 depends on it |
+| 5 | Saved submission queue for when MeedyaDB is down | #505 | Queued | only temporary failures go in the queue; privacy rules are in the section below |
+| 6 | Full documentation sweep (W6) | — | Queued | before the PR |
+| 7 | Hardware checks: real Enhanced CD, real drive unmount, real MakeMKV disc | #504 #503 | Blocked: needs a person with hardware | |
+| 8 | MeedyaDB hosting + API key | — | Blocked: owner | nothing can actually be submitted until then |
+
+### Questions for the owner (asked 23 Sept; carry on with other work meanwhile)
+
+1. **Old plugin files at the repo root.** `PROJECT.md` and `.dev-team/autopilot.json`
+   are the dev-team plugin's "autopilot" brief from July, and it says that mission
+   finished on 1 July. The new rules say a plugin must not keep a second plan
+   alongside the handoff. *Recommended:* keep both files, and add a line at the top of
+   `PROJECT.md` saying it is historical and pointing to this handoff. Nothing will be
+   moved or deleted without a yes.
+2. **What comes after the Codex review?** *Recommended:* the order in the table above
+   (#507 → #508 → #506 → #505), with each one proceeding on its own.
+
+### What this session (23 Sept) did — notes and rules only, no code
+
+- Fast-forwarded this Mac's copy by 59 commits (nothing local was overwritten; the copy
+  was clean).
+- **Standing rules updated** (`.claude/standing_tasks.md`), following the owner's
+  directive of 23 Sept. Nothing was removed:
+  - **W3:** analysis and planning now use **Opus**, one agent at a time. It used to be
+    Fable with an Opus fallback. The owner's reason: the newest Opus is cheaper and at
+    least as good. **Every older "retry Fable next run" note in this file is superseded.**
+    `.claude/agents/deep-architect.md` was switched from Fable to Opus to match.
+  - **W2:** when to update the handoff, and what it must carry. There is only one
+    handoff.
+  - **W4:** use the plugin for suggestions (raised, not built) and for review by a
+    different system. It must not create a second handoff.
+  - **W5:** now lists the `.OpenAI/` update, the cross-system review and the progress
+    table; exit codes must be read directly.
+  - **W6:** the documentation sweep runs before every PR.
+  - **W12/W13:** when to hand over, when to go back, and how to stop the review loop.
+    A fallback review must be named in the commit message.
+  - **W15 (new):** progress tables.
+  - §16 (plain English), W8 (autonomy, questions up front) and W9 (no PR stacking)
+    were already in place and still match the directive.
+- `.OpenAI/CONTEXT.md`, `MEMORY.md` and `README.md` were mirrored to match.
+- The rules for all projects on this Mac (`~/.claude/CLAUDE.md`, linked as
+  `~/.codex/AGENTS.md`) **already** covered plain English, the fallback rule and the
+  Opus change. They were checked and not edited.
+- **Review status of this commit:** notes and rules only. Codex was out of credit, so
+  **it has not been reviewed by another system**. It is included in the catch-up
+  review above.
+
+## 📍 2026-09-17 state (superseded by the 2026-09-23 block above — kept as history)
 
 This session was **governance + one research idea, not code.** Nothing in the
 Swift app, CLI, API, releases or CI changed — the 2026-09-15 block below is still

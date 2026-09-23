@@ -2,7 +2,7 @@
 
 > How we work on this repo. Mirror of the `.claude/` operating rules, written for
 > Codex/OpenAI continuity. Canonical detail lives in `.claude/standing_tasks.md`.
-> Last updated: 2026-09-17.
+> Last updated: 2026-09-23.
 
 ## The one-line summary
 
@@ -13,26 +13,36 @@ created later (no stacked PRs).
 
 ## Standing operating rules (digest)
 
-1. **Model / tool routing.** Analysis and planning → **Fable** agents, run **one
-   at a time** (never in parallel); if Fable is unavailable, fall back to
-   **Opus** for that run and retry Fable next time. Implementation → **Sonnet**
-   (Haiku for trivial edits; **Opus** only when genuinely complex). Philosophy:
+1. **Model / tool routing.** Analysis and planning (including deep analysis and
+   deep planning) → **Opus** agents, run **one at a time** (never in parallel).
+   *Changed 2026-09-23:* this used to be Fable with an Opus fallback; the owner
+   moved it because the newest Opus is cheaper than Fable and at least as good,
+   so older "retry Fable next run" notes are superseded. Implementation →
+   **Sonnet or Haiku**, whichever fits (**Opus** when genuinely complex, and for
+   verification). The rule is about the tier, not the name. Philosophy:
    **GIRFT — Get It Right First Time**, spending usage efficiently.
    **Ultrathink first, and use workflows to plan AND do the work** (2026-09-20):
    think harder about scope, risks and ordering *before* starting, and orchestrate
    the work through workflows/agents rather than one single pass.
 2. **Cross-LLM review loop.** Build with one service, review with a different one
-   (Claude Code ⇄ Codex). Reviewer finds issues → fix → re-review, until clean.
-   If Codex is not reachable in the current environment, review with an
-   independent Claude reviewer and note that a full Codex cross-review is still
-   owed.
+   (Claude Code ⇄ Codex). Reviewer finds issues → fix → re-review, until a round
+   finds no real problems. Check every finding against the code; a finding that
+   is wrong is written down with the reason, never "fixed" to quiet the reviewer.
+   Record the number of rounds. If Codex is not reachable (cloud session, or out
+   of usage credit), review with an independent Claude reviewer, **say so in the
+   report and commit message**, and treat the work as owing a full Codex review
+   over the whole stretch once Codex is back.
 3. **Cross-LLM fallback.** If the primary service runs out of credits or is
-   unavailable, hand off to another suitable one (state stays safe because of the
-   handoff doc + committed work), and switch back to the primary frequently.
+   unavailable, hand off to another suitable one — only if the context survives
+   the move (handoff doc + committed work). Try the primary first on every new
+   run, switch back at the next natural break, run a full review of the fallback
+   period once it is back, and record every fallback.
 4. **After each task:** commit **and push** to `wip/alpha-consolidation`, then
    watch CI to green; update the relevant GitHub issue(s) individually; update
    `.claude/` memory/context and this `.OpenAI/` mirror; update
-   `.claude/HANDOFF.md`.
+   `.claude/HANDOFF.md` (the **only** handoff — kept current as the work happens,
+   not tidied up at the end); cross-system review until clean; show the progress
+   table.
 5. **Thorough documentation.** Keep all `.md` docs, in-app help
    (`Sources/MeedyaConverter/Resources/Help/`), and the OpenAPI/Swagger specs
    (`docs/api/*.yaml`, browsable via `docs/api/swagger-ui/`) current.
@@ -44,7 +54,13 @@ created later (no stacked PRs).
    Swift commit; `swift test` and SwiftLint **cannot** run locally (no Xcode) —
    **CI is the test gate**; `actionlint` works locally. Never claim tests pass
    from a local compile.
-9. **Sibling repos** (`MeedyaDL`, `MeedyaSuite-core`) are **read-only** from a
+9. **Progress tables.** Frequent status updates as a table of queued tasks (task,
+   issue, status, note), at least after each finished unit and whenever the queue
+   changes. Status words: Queued · In progress · In review · Blocked · Done · Dropped.
+10. **Plugins.** Use the dev-team plugin where it fits — including for suggesting
+   further fixes/enhancements (raised as issues, not built unless asked) and for
+   routing review to a different AI system. It must not create a second handoff.
+11. **Sibling repos** (`MeedyaDL`, `MeedyaSuite-core`) are **read-only** from a
    MeedyaConverter session — other sessions edit them concurrently.
 
 ## Conventions

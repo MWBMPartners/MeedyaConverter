@@ -25,4 +25,4 @@ This folder is a **faithful summary + pointer set**, not a competing source of
 truth. After each task, update **both** `.claude/` and `.OpenAI/` so they tell the
 same story (standing rule W14).
 
-Last updated: 2026-09-17.
+Last updated: 2026-09-23.

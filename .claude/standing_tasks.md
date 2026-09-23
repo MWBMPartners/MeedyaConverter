@@ -4,7 +4,11 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-17 (added §16 plain-English communication, W12 cross-LLM fallback,
+> Last updated: 2026-09-23 (owner directive of 2026-09-23: planning moved from Fable to
+> **Opus** in W3/W12; W2 handoff timing tightened; W4 suggestions + cross-system checking;
+> W5 now lists the `.OpenAI/` mirror and the progress table; W13 loop-stopping rule; new
+> W15 progress tables. Nothing was removed.)
+> Previous: 2026-09-17 (added §16 plain-English communication, W12 cross-LLM fallback,
 > W13 review loop, W14 `.OpenAI/` mirror; reconciled §9 push policy with W5)
 
 ## Mandatory Post-Action Tasks
@@ -204,17 +208,36 @@ erode when incremental ticking is impractical.
 
 - Update `.claude/HANDOFF.md` **as you go**, not only at the end, so any session
   can resume exactly where the last left off after any interruption.
+- Concretely (reaffirmed 2026-09-23): update it **after each piece of work**, before
+  starting the next; **the moment something is learned** that would change how
+  somebody continues (a wrong assumption, a trap, a decision, an approach tried and
+  rejected); and **before starting anything long-running**, so an interruption in
+  the middle is survivable.
+- It must carry what a replacement needs: what is being attempted and why, what is
+  established, which files matter, **what was tried and rejected**, what is verified
+  versus assumed, and what to do next.
+- **There is exactly one handoff: `.claude/HANDOFF.md`.** Do not create a second one
+  anywhere else "for convenience" (see W4 on plugins that write their own).
+- Why it matters so much: the cross-LLM fallback (W12) is only safe because this
+  file exists and is current. When the moment comes, the system that knew what was
+  going on is the one that has stopped answering.
 
-### W3. Analysis & planning → Fable (sequential); implementation → Sonnet
+### W3. Analysis & planning → Opus (sequential); implementation → Sonnet / Haiku
 
-- Perform **ALL analysis and planning — including deep planning** — using
-  **sequential (never parallel) Fable agents** (Fable 5). Run analysis/planning
-  agents strictly one at a time; do NOT fan them out in parallel. If Fable is
-  unavailable, fall back to Opus for that run and **retry Fable** on the next
-  analysis/planning run.
-- Carry out **implementation** with **Sonnet**. (Haiku is acceptable for trivial
-  mechanical edits; use **Opus only when the implementation is genuinely
-  complex**.)
+- Perform **ALL analysis and planning — including deep analysis and deep planning** —
+  using **sequential (never parallel) Opus agents**. Run analysis/planning agents
+  strictly one at a time, so each step sees what the previous one established; do
+  NOT fan them out in parallel.
+- **Changed 2026-09-23 (owner directive):** this used to say *Fable*, falling back
+  to Opus. The owner's reason for the change: the newest Opus (Opus 5.5 at the time
+  of writing) is **cheaper than the latest Fable and at least as good** at this
+  work, so there is nothing left to fall back from. Older handoff entries that say
+  "retry Fable next run" are **superseded** — do not act on them. The rule is about
+  the *tier* ("the strongest reasoning available, one agent at a time"), not the
+  name; if a better-value model arrives, the tier moves with it.
+- Carry out **implementation** with **Sonnet or Haiku, whichever fits** (Haiku for
+  mechanical edits). Use **Opus when the implementation is genuinely complex**, and
+  for verification — verification is never done by a weaker model than the build.
 - Philosophy: **GIRFT — Get It Right First Time.** Spend tokens/credits
   efficiently while still producing top-quality, correct code.
 - Reaffirmed and broadened per user directive 2026-09-01: previously scoped to
@@ -226,7 +249,7 @@ erode when incremental ticking is impractical.
   could go wrong, and the right order of work — *then* start. Use **workflows /
   orchestrated agents** to help both **plan** and **carry out** the work, rather
   than doing everything in a single pass. This sits on top of (does not replace)
-  the sequential-Fable rule above: planning agents still run one at a time, and
+  the sequential-planning rule above: planning agents still run one at a time, and
   implementation still goes to Sonnet/Haiku (Opus only when genuinely complex).
 
 ### W4. Use available plugins
@@ -237,6 +260,19 @@ erode when incremental ticking is impractical.
   shipping. Use its skills / commands / agents wherever they add leverage.
 - Also use any other configured plugins/skills where they help.
 - Explicit plugin reference added per user directive 2026-09-01.
+- **Suggestions (reaffirmed 2026-09-23):** use the plugin to propose further fixes,
+  tweaks, enhancements and new features too. Anything outside the task in hand is
+  **raised** (a GitHub issue, or a line in the report) — not built — unless the owner
+  says so.
+- **Cross-system checking:** use the plugin to route review to a *different* AI
+  system from the one that built the work (plan/build in Claude Code → review in
+  Codex, and vice versa). See W13.
+- **A plugin must not create a second handoff or a competing plan.** Read the
+  plugin's settings in the repo first (cost setting, branch policy, switches). The
+  dev-team plugin can write its own `HANDOFF.md` / `PROJECT.md` at the repo root —
+  `.claude/HANDOFF.md` stays the only handoff. (The root `PROJECT.md` and
+  `.dev-team/autopilot.json` are the plugin's July 2026 autopilot brief — mission
+  marked terminal on 2026-07-01; they are historical, not live status.)
 
 ### W5. Steps after EACH task
 
@@ -246,10 +282,25 @@ erode when incremental ticking is impractical.
 2. **Update the relevant GitHub Issue(s) individually** for that task (progress
    comment, tick acceptance-criteria boxes, close only when truly satisfied).
 3. **Update Claude memory & context** in `.claude/`.
-4. **Update the Handoff document** so work is resumable at any point.
+4. **Update the OpenAI / Codex memory & context** in `.OpenAI/` (W14) so both
+   tell the same story.
+5. **Update the Handoff document** so work is resumable at any point.
+6. **Have it reviewed by a different AI system** (W13) — code *and* the note
+   changes — and repeat until a round comes back clean. A handoff-only progress
+   note may be committed first; the next review round covers it.
+7. **Show the progress table** (W15).
+
+- Verify it yourself before committing: run the checks (W10) and **read their exit
+  codes directly** — never pipe a check into `grep`/`tail` and rely on `&&`, because
+  the pipe hides the real exit code. Read the diff once with security in mind.
+- Commit titles start with their type (`feat:`, `fix:`, `docs:` …) and use the
+  GitHub username **`Salem874`**, never a real name.
 
 ### W6. Thorough documentation update
 
+- **When:** a standing task — after each real body of work, and always **before its
+  pull request is opened** (reaffirmed 2026-09-23). It covers the `.OpenAI/` mirror
+  too (W14).
 - Keep ALL `.md` docs current (README, CHANGELOG, PROJECT_STATUS, Project_Plan,
   DEV_NOTES, FEATURES, PROJECT, `docs/**`, help markdown).
 - Update **in-app help / guides** (`Sources/MeedyaConverter/Resources/Help/`).
@@ -331,7 +382,7 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
 ## Communication & Cross-LLM Standing Tasks (added 2026-09-17)
 
 > New deltas from the 2026-09-17 user directive. The rest of this file already
-> codified the Fable→Sonnet split (W3), dev-team plugin (W4), per-task
+> codified the Fable→Sonnet split (W3 — planner since changed to Opus, 2026-09-23), dev-team plugin (W4), per-task
 > commit/push + issue/handoff updates (W5), thorough docs + Swagger UI (W6),
 > autonomy + upfront clarifications (W8), and no-PR-stacking (W9). These sections
 > add what was genuinely new.
@@ -362,10 +413,23 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
   the primary is available again, run a **full review** with it.
 - Keep the **handoff document up to the minute** (W2) so any service can resume
   cleanly — this is what makes fallback safe.
-- Concrete current mapping: analysis/planning → Fable, fall back to Opus, retry
-  Fable next run (W3); review → Codex, fall back to an independent Claude
-  reviewer when Codex is not reachable (W13). Do this flexibly — the rule is
-  "use whatever suitable tool is available", not a fixed roster.
+- Concrete current mapping (updated 2026-09-23): analysis/planning → Opus,
+  one agent at a time (W3 — Fable is no longer the planner); build → Sonnet/Haiku;
+  review → Codex, falling back to an independent Claude reviewer when Codex is not
+  reachable (W13). Do this flexibly — the rule is "use whatever suitable tool is
+  available", not a fixed roster.
+- **When to hand over:** the service or agent refuses the work (out of credit, spend
+  cap, rate limit, quota, outage) and one retry has already failed for a reason that
+  will not change by itself. *Not* merely because something is slow.
+- **Only hand over if the work survives the move** — enough context can go with it
+  (what is being attempted, what is established, which files matter, what was tried
+  and rejected, how the result will be checked). If it cannot, say plainly that the
+  work is blocked and why.
+- **Always try the preferred service first on each new run**, even if it failed last
+  time — limits reset and outages end.
+- **Record every fallback** where the work is recorded (commit message, handoff,
+  progress report): which parts had the usual checking, what the catch-up review
+  must cover, and whether repeated fallbacks suggest a limit needs raising.
 
 ### W13. Cross-LLM review loop (Codex ⇄ Claude), fix-until-clean
 
@@ -374,11 +438,26 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
   build with Claude Code, review with Codex, and vice versa) for extra quality.
 - The reviewer **finds issues → they get fixed → re-review**, repeating **until
   no issues remain**. Aim: GIRFT (Get It Right First Time).
+- **The reviewer must not be the builder**, and must not be an agent that remembers
+  building the work.
+- **Read every finding, and check it against the code** rather than taking the
+  reviewer's word. Fix the real ones. A finding you are sure is wrong does **not**
+  keep the loop going and must **never** be "fixed" just to quiet the reviewer —
+  write down why it is wrong (commit message or handoff) and move on.
+- **Stop when a round finds no real problems.** Record how many rounds it took
+  where the work is recorded.
 - **Fallback (per W12):** when Codex (or any configured external reviewer) is not
   reachable in the current environment — e.g. no `codex` CLI on PATH in a cloud
-  session — run the review with an **independent Claude reviewer agent** and label
-  it clearly as the Claude-side fallback. Flag that a full **Codex cross-review**
-  is still owed and run it once Codex is reachable again.
+  session, or Codex out of usage credit — run the review with an **independent
+  Claude reviewer agent** (a different model or a fresh agent with no memory of the
+  build) and label it clearly as the Claude-side fallback, **in the report and the
+  commit message** — never let silence imply an independent review happened. Treat
+  the change as not fully reviewed: a full **Codex cross-review** is still owed and
+  runs once Codex is reachable again, over the **whole run of work** done in the
+  meantime (reviewed as one body, not commit by commit).
+- Codex **is installed on the owner's Mac** (`/opt/homebrew/bin/codex`, confirmed
+  2026-09-23). The "not reachable" cases so far were cloud sessions (no Codex) and
+  Codex usage limits.
 
 ### W14. OpenAI / Codex memory & context mirror (`.OpenAI/`)
 
@@ -389,6 +468,21 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
   `.OpenAI/` should tell the same story.
 - `.OpenAI/` holds `MEMORY.md` (durable facts), `CONTEXT.md` (how-we-work +
   pointers to the `.claude/` sources), and `README.md` (what the folder is).
+
+### W15. Progress tables (added 2026-09-23)
+
+- Give **frequent** status updates as a table of the queued tasks — one row per
+  task, with its issue number, its status and a short note. Show it at least
+  **after each finished unit** and **whenever the queue changes**.
+- Status words: **Queued · In progress · In review · Blocked (say on what) ·
+  Done (say the commit) · Dropped (say why)**.
+- Where tasks were reordered or bundled (W7), the table says so, so nothing looks
+  dropped.
+
+| # | Task | Issue | Status | Notes |
+|---|------|-------|--------|-------|
+| 1 | Plain-English name | #nnn | Done — pushed `abc1234` | review: 2 rounds, last clean |
+| 2 | … | #nnn | Blocked — waiting on decision 1 | continuing with 3 meanwhile |
 
 ### §9 ↔ W5 reconciliation (push policy)
 

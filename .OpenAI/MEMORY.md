@@ -1,7 +1,7 @@
 # MeedyaConverter — Durable Memory (OpenAI / Codex)
 
 > Durable, slow-changing facts. Live status lives in `.claude/HANDOFF.md`.
-> Last updated: 2026-09-21.
+> Last updated: 2026-09-23.
 
 ## Identity
 
@@ -273,6 +273,13 @@ subprocesses to keep the proprietary app code licence-clean.
 - `swift build` of the whole package fails only on `#Preview` macros (a
   CommandLineTools limitation) — not a code bug; do not "fix" the previews.
 - CI runs on every push to `wip/**` (#496).
+- **Cloud sessions push to the working branch too.** On 2026-09-23 the owner's local
+  checkout was 59 commits behind `origin/wip/alpha-consolidation` (all the 17–21 Sept
+  disc work was done in cloud sessions). **`git fetch` and fast-forward before
+  reading or writing anything.**
+- **Codex is installed on the owner's Mac** (`/opt/homebrew/bin/codex`); cloud
+  sessions do not have it. Codex has a usage limit — when hit, it says when it will
+  accept work again (on 2026-09-23 that was 24 Sept 00:09).
 - **CI runs `swift test --parallel`** → never share a mutable global across test
   methods (UserDefaults suite name, temp path, top-level type name): a sibling
   test's setUp/teardown can wipe your state mid-run. Use a **unique UUID
