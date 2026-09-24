@@ -263,6 +263,39 @@ public struct StoredAPIKey: Codable, Sendable {
 /// Keychain migration.
 public final class APIKeyManager: @unchecked Sendable {
 
+    // MARK: - Notification Names
+
+    /// Posted after `storeKey(_:)` or `removeKey(provider:label:)` finish
+    /// writing, so any screen showing "is a key saved?" can refresh
+    /// without polling. Deliberately NOT posted by `markUsed(provider:)` —
+    /// bumping a last-used timestamp is bookkeeping, not something any UI
+    /// needs to redraw for, and posting on every lookup-adjacent write
+    /// would make the notification noisy enough that nobody could tell a
+    /// real change from housekeeping.
+    ///
+    /// Posted via `NotificationCenter.default` with `object: self`, and —
+    /// this is the part that matters — only AFTER this instance's `lock`
+    /// has been released. `NSLock` is not re-entrant: the whole point of
+    /// this notification is that a settings screen can react by calling
+    /// straight back into the SAME manager (e.g. re-reading `key(for:)`
+    /// to refresh a "key saved" label), and if we posted while still
+    /// holding `lock`, that call would deadlock against itself. See the
+    /// bottom of `storeKey(_:)`/`removeKey(provider:label:)` for where the
+    /// unlock happens relative to the post.
+    ///
+    /// WHAT THIS DOES NOT SOLVE (finding 10 covers the notification gap;
+    /// this is the boundary of the fix): it only reaches observers inside
+    /// THIS PROCESS. Two separate processes — the app and, in the future,
+    /// a command-line tool — sharing the same `api_keys.json` are not
+    /// coordinated by this notification any more than they are by the
+    /// in-process `lock` documented on `reloadLocked()`. Today that gap is
+    /// theoretical: no CLI target constructs an `APIKeyManager` yet. It is
+    /// written down here as a known limit for whenever one does, not as a
+    /// guarantee that cross-process observation already works.
+    public static let didChangeNotification = Notification.Name(
+        "com.mwbm.meedyaconverter.apiKeyManagerDidChange"
+    )
+
     // MARK: - Persistence model
 
     /// Storage-format version. Increment when the on-disk shape changes
@@ -357,7 +390,15 @@ public final class APIKeyManager: @unchecked Sendable {
         self.keychainService = keychainService
         self.keys = []
 
-        loadKeys()
+        // No explicit `lock.lock()` here even though `reloadLocked()`
+        // documents itself as requiring the lock held: at this point in
+        // `init`, `self` has not yet been handed to any caller, so there
+        // is no other thread that could possibly be racing this first
+        // read. Every reload after this one — from `storeKey`,
+        // `removeKey`, `markUsed`, or any of the lookup methods — does
+        // take the lock first. See `reloadLocked()` for the shared logic
+        // and why a reload (not just a one-time load) is needed at all.
+        reloadLocked()
     }
 
     // MARK: - CRUD
@@ -367,10 +408,32 @@ public final class APIKeyManager: @unchecked Sendable {
     /// Secrets are written to the Keychain immediately; metadata is
     /// flushed to disk.
     ///
+    /// **Why this reloads first (Codex catch-up review, finding 2):**
+    /// several long-lived `APIKeyManager` instances exist at once —
+    /// `MetadataSettingsTab`, `MeedyaDBSettingsTab` and `CloudStorageView`
+    /// each keep their own in a `@State` var for the life of the screen,
+    /// on top of the fresh ones the disc pipeline view models,
+    /// `TMDBLookupSheet` and the uploaders create per call. `saveKeys()`
+    /// rewrites the WHOLE index file from THIS instance's `keys` array.
+    /// Without a reload immediately before that rewrite, whichever
+    /// instance calls `storeKey`/`removeKey` LAST would silently discard
+    /// every record any other instance had saved in the meantime — a
+    /// classic lost-update race, not a crash, so it went unnoticed until
+    /// the audit: the secret really is in the Keychain, but nothing on
+    /// disk points back to it, so the app behaves as if the key does not
+    /// exist. `reloadLocked()` re-reads the file (and re-hydrates from
+    /// the Keychain) while `lock` is STILL held, so nothing else in this
+    /// process can write in the gap between "find out what's on disk"
+    /// and "decide what to write" below.
+    ///
     /// - Parameter key: The API key to store.
     public func storeKey(_ key: StoredAPIKey) {
         lock.lock()
-        defer { lock.unlock() }
+
+        // Read-modify-write against the file as it stands RIGHT NOW —
+        // see the doc comment above and `reloadLocked()` for why this
+        // must happen before the upsert, under the same lock hold.
+        reloadLocked()
 
         // Upsert in the in-memory array using the existing (provider,
         // label) identity so callers see the latest version.
@@ -406,18 +469,33 @@ public final class APIKeyManager: @unchecked Sendable {
         }
 
         saveKeys()
+
+        // Unlock BEFORE posting — see `didChangeNotification`'s doc
+        // comment for why posting while still holding `lock` would risk
+        // a deadlock against an observer that reads this same manager.
+        lock.unlock()
+
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
 
     /// Remove an API key.
     ///
     /// Deletes both the metadata record and the matching Keychain item.
     ///
+    /// Reloads from disk first, under the same lock hold, for the same
+    /// lost-update reason documented on `storeKey(_:)` — otherwise
+    /// removing a key in one long-lived `APIKeyManager` instance could
+    /// resurrect a key some OTHER instance had already removed (or never
+    /// see one another instance just added), because the rewrite at the
+    /// bottom is of the WHOLE file, from this instance's in-memory array.
+    ///
     /// - Parameters:
     ///   - provider: The provider to remove the key for.
     ///   - label: Optional label to identify which key (if multiple per provider).
     public func removeKey(provider: APIKeyProvider, label: String? = nil) {
         lock.lock()
-        defer { lock.unlock() }
+
+        reloadLocked()
 
         // Capture the labels we are about to remove so we can delete the
         // corresponding Keychain items afterwards.
@@ -432,9 +510,22 @@ public final class APIKeyManager: @unchecked Sendable {
             try? KeychainStore.delete(service: keychainService, account: account)
         }
         saveKeys()
+
+        // Unlock BEFORE posting — see `didChangeNotification`'s doc
+        // comment; posting while still holding `lock` risks a deadlock
+        // against an observer that reads this same manager.
+        lock.unlock()
+
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
 
     /// Get the active API key for a provider.
+    ///
+    /// Reloads from disk first (see `reloadLocked()`) so a long-lived
+    /// instance — e.g. `MetadataSettingsTab`'s `@State` manager, which
+    /// stays alive for as long as the Settings window is open — tells the
+    /// truth even when some OTHER `APIKeyManager` instance saved or
+    /// removed a key after this one was created.
     ///
     /// - Parameter provider: The provider.
     /// - Returns: The active key, or nil.
@@ -442,10 +533,13 @@ public final class APIKeyManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        reloadLocked()
         return keys.first { $0.provider == provider && $0.isActive }
     }
 
     /// Get all keys for a provider.
+    ///
+    /// Reloads from disk first — see `key(for:)` above.
     ///
     /// - Parameter provider: The provider.
     /// - Returns: All keys for the provider.
@@ -453,10 +547,13 @@ public final class APIKeyManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        reloadLocked()
         return keys.filter { $0.provider == provider }
     }
 
     /// Get all keys in a category.
+    ///
+    /// Reloads from disk first — see `key(for:)` above.
     ///
     /// - Parameter category: The category.
     /// - Returns: All keys in the category.
@@ -464,15 +561,25 @@ public final class APIKeyManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        reloadLocked()
         return keys.filter { $0.provider.category == category }
     }
 
     /// Mark a key's last used date.
     ///
+    /// Reloads from disk first for the same lost-update reason as
+    /// `storeKey(_:)`/`removeKey(provider:label:)` — a full-file rewrite
+    /// of a stale in-memory copy would silently undo another instance's
+    /// concurrent change. Unlike those two, this does NOT post
+    /// `didChangeNotification`: a last-used timestamp is bookkeeping that
+    /// no UI redraws for, not a change to whether a key is saved.
+    ///
     /// - Parameter provider: The provider whose key was used.
     public func markUsed(provider: APIKeyProvider) {
         lock.lock()
         defer { lock.unlock() }
+
+        reloadLocked()
 
         if let index = keys.firstIndex(where: { $0.provider == provider && $0.isActive }) {
             keys[index].lastUsedDate = Date()
@@ -490,11 +597,14 @@ public final class APIKeyManager: @unchecked Sendable {
 
     /// Get all providers that have configured keys.
     ///
+    /// Reloads from disk first — see `key(for:)` above.
+    ///
     /// - Returns: Set of providers with active keys.
     public func configuredProviders() -> Set<APIKeyProvider> {
         lock.lock()
         defer { lock.unlock() }
 
+        reloadLocked()
         return Set(keys.filter { $0.isActive }.map { $0.provider })
     }
 
@@ -515,10 +625,66 @@ public final class APIKeyManager: @unchecked Sendable {
     }
 
     /// Reads the metadata envelope from disk and hydrates each record's
-    /// secrets from the Keychain. Falls back to legacy migration if the
-    /// file contains an old-shape `[StoredAPIKey]` array.
-    private func loadKeys() {
+    /// secrets from the Keychain, REPLACING whatever `keys` currently
+    /// holds. Falls back to legacy migration if the file contains an
+    /// old-shape `[StoredAPIKey]` array.
+    ///
+    /// **Why every read AND every write reloads (Codex catch-up review,
+    /// finding 2):** several long-lived `APIKeyManager` instances exist
+    /// side by side — `MetadataSettingsTab`, `MeedyaDBSettingsTab` and
+    /// `CloudStorageView` each hold their own for as long as their screen
+    /// is open, and disc-pipeline view models / `TMDBLookupSheet` /
+    /// the cloud uploaders each create a fresh one per call. Each
+    /// instance's `keys` array is only as current as its last reload.
+    /// `saveKeys()` then rewrites the WHOLE file from that array. Put
+    /// those two facts together and you get a lost-update race: instance
+    /// A stores a TMDB key, instance B (created earlier, still holding
+    /// its now-stale copy) then stores an unrelated MeedyaDB key and
+    /// overwrites A's record out of existence — not because B did
+    /// anything wrong on its own, but because it never found out A's
+    /// write had happened. The secret itself survives in the Keychain
+    /// (nothing deletes it), but nothing on disk points back to it any
+    /// more, so every FRESH `APIKeyManager()` — which is what the disc
+    /// view models, `TMDBLookupSheet` and the uploaders create — reports
+    /// the key as missing.
+    ///
+    /// The fix is not to cache less; it is to always act on the CURRENT
+    /// file. `storeKey`, `removeKey` and `markUsed` all call this at the
+    /// very start of their read-modify-write sequence, and the lookup
+    /// methods (`key(for:)`, `keys(for:)`, `keys(in:)`,
+    /// `configuredProviders()`) call it before answering, so a long-lived
+    /// instance tells the truth even between its own writes. `init` calls
+    /// it too — see its call site for why no separate one-time "load"
+    /// path is needed.
+    ///
+    /// MUST be called with `lock` already held. It does not take the lock
+    /// itself, precisely so `init` and the methods above can share it
+    /// without a second, nested `lock.lock()` — `NSLock` is not
+    /// re-entrant, so that would deadlock the very first time any of them
+    /// ran.
+    ///
+    /// - TRAP 1 — a MISSING file means "no keys, start empty": `keys` is
+    ///   cleared. This is a deliberate change from this method's previous
+    ///   form (`loadKeys()`, before this fix), which returned early WITHOUT
+    ///   touching `keys` when the file didn't exist. That was harmless
+    ///   for a one-time load at `init` (there was nothing to clear —
+    ///   `keys` was freshly set to `[]` two lines above), but it would be
+    ///   wrong for a RELOAD: if the file has since been deleted (or this
+    ///   is a fresh install another instance hasn't written to yet), an
+    ///   instance still holding old in-memory records must drop them,
+    ///   not keep insisting they exist.
+    /// - TRAP 2 — a file that EXISTS but can't be READ or DECODED is
+    ///   treated as "unknown", not "empty": `keys` is left as it was.
+    ///   Clearing it here would make a transient disk error (or a file
+    ///   another process is mid-write on) look identical to the user
+    ///   having removed every key, which is worse than doing nothing.
+    ///   This matches this method's behaviour before this fix for this case
+    ///   — only the missing-file case (TRAP 1) changed.
+    private func reloadLocked() {
         guard FileManager.default.fileExists(atPath: storageURL.path) else {
+            // TRAP 1: a missing file is authoritative — it means no keys,
+            // not "keep trusting whatever this instance last saw".
+            keys = []
             return
         }
 
@@ -526,6 +692,8 @@ public final class APIKeyManager: @unchecked Sendable {
         do {
             data = try Data(contentsOf: storageURL)
         } catch {
+            // TRAP 2: unreadable — keep the in-memory copy rather than
+            // wiping it. No worse than the behaviour before this fix.
             print("Warning: Could not load API keys: \(error.localizedDescription)")
             return
         }
@@ -552,9 +720,12 @@ public final class APIKeyManager: @unchecked Sendable {
                   + "storage to the Keychain (issue #380).")
             keys = legacy
             // Write each one's secrets into the Keychain. We use the same
-            // path as `storeKey` (sans the locking, since we are already
-            // inside the initialiser and no other threads have a handle
-            // on this manager yet).
+            // shape as `storeKey`'s Keychain write, but without taking
+            // `lock` ourselves — this method is documented as requiring
+            // the lock ALREADY held by its caller (`init`, or one of
+            // `storeKey`/`removeKey`/`markUsed`/the lookup methods), so
+            // locking again here would be a nested acquisition against a
+            // non-re-entrant `NSLock` and would deadlock.
             for key in legacy {
                 let account = Self.keychainAccount(
                     provider: key.provider,
@@ -585,8 +756,16 @@ public final class APIKeyManager: @unchecked Sendable {
             return
         }
 
+        // TRAP 2 (continued): neither shape decoded. As with the
+        // unreadable-file case above, this is treated as "unknown", not
+        // "empty" — `keys` is left exactly as it was (which, at `init`,
+        // is still the freshly-set `[]` two lines up in the initialiser,
+        // so this reads as "starting empty" there; on a later reload, it
+        // means keeping whatever this instance already had rather than
+        // wiping it because the file briefly looked wrong).
         print("Warning: API key store at \(storageURL.path) could not be "
-              + "decoded in either v1 or v2 format; starting empty.")
+              + "decoded in either v1 or v2 format; keeping the keys "
+              + "already in memory.")
     }
 
     /// Combines a metadata record with its Keychain-resident secrets into

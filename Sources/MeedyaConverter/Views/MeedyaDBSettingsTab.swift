@@ -26,6 +26,7 @@
 // ============================================================================
 
 import SwiftUI
+import Combine
 import ConverterEngine
 
 // MARK: - MeedyaDBSettingsTab
@@ -73,6 +74,20 @@ struct MeedyaDBSettingsTab: View {
         .onAppear { refresh() }
         .onChange(of: enabled) { refresh() }
         .onChange(of: baseURL) { refresh() }
+        // `keyManager` is a long-lived `@State` instance, so it has no way
+        // to notice on its own when ANOTHER `APIKeyManager` instance (e.g.
+        // `CloudStorageView`'s, in the main window, or `MetadataSettingsTab`'s)
+        // changes the MeedyaDB record. `didChangeNotification` is how a
+        // manager announces its own writes; without this, "A key is
+        // saved…" and the readiness verdict below it could go on showing
+        // stale information until this tab happened to redraw for some
+        // unrelated reason.
+        .onReceive(
+            NotificationCenter.default.publisher(for: APIKeyManager.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            refresh()
+        }
     }
 
     // MARK: Sections
@@ -217,8 +232,12 @@ struct MeedyaDBSettingsTab: View {
         pendingKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Re-reads the Keychain and recomputes the verdict. The key is held in a
-    /// local for the length of this call only — never in view state.
+    /// Re-reads the on-disk key index and the Keychain — through
+    /// `keyManager.key(for:)`, which itself now re-reads `api_keys.json`
+    /// from disk before answering (Codex catch-up review finding 2)
+    /// rather than trusting whatever `keyManager` last loaded — and
+    /// recomputes the verdict. The key is held in a local for the length
+    /// of this call only — never in view state.
     private func refresh() {
         let stored = keyManager.key(for: .meedyaDB)?.apiKey
         hasStoredKey = !(stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

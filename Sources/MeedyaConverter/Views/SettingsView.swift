@@ -6,6 +6,7 @@
 // ============================================================================
 
 import SwiftUI
+import Combine
 import ConverterEngine
 
 // MARK: - AppearanceMode
@@ -359,6 +360,19 @@ struct MetadataSettingsTab: View {
         .formStyle(.grouped)
         .navigationTitle("Metadata")
         .onAppear { refreshKeys() }
+        // `keyManager` is a long-lived `@State` instance, so it cannot
+        // tell us on its own when ANOTHER `APIKeyManager` instance (e.g.
+        // `CloudStorageView`'s, in the main window) changes the TMDB
+        // record. `didChangeNotification` is how it announces its own
+        // writes; without this, "A key is saved…" could go on showing
+        // stale information until this tab happened to redraw for some
+        // unrelated reason.
+        .onReceive(
+            NotificationCenter.default.publisher(for: APIKeyManager.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            refreshKeys()
+        }
     }
 
     // MARK: - Helpers
@@ -477,8 +491,17 @@ struct MetadataSettingsTab: View {
         }
     }
 
-    /// Re-reads the Keychain. The key is held in a local for the length of
-    /// this call only — never in view state.
+    /// Re-reads the on-disk key index and the Keychain, through
+    /// `keyManager.key(for:)` — that call itself now re-reads
+    /// `api_keys.json` from disk before answering (Codex catch-up review
+    /// finding 2), rather than trusting whatever `keyManager` last loaded.
+    /// That matters here specifically because `keyManager` is a `@State`
+    /// var that lives for as long as this Settings screen is open: without
+    /// the manager's own reload, this tab could go on reporting "no key"
+    /// (or a stale one) after `CloudStorageView` or `MeedyaDBSettingsTab`
+    /// saved something to the same file in the meantime. The key itself is
+    /// held in a local for the length of this call only — never in view
+    /// state.
     private func refreshKeys() {
         let stored = keyManager.key(for: .tmdb)?.apiKey
         hasTMDBKey = !(stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
