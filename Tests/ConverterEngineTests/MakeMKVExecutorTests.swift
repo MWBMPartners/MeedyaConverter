@@ -9,8 +9,10 @@
 // seam — NO real subprocess in CI. Covers arg building + path threading, info
 // parsing, streamed rip events + ordering, exit-code/launch/cancellation error
 // mapping, the consent factory, and the pure line assembler. Public API only;
-// no @testable import. (The production MakeMKVProcessRunner's real-Process path is
-// verified on the manual hardware matrix, like ExternalToolRunner.)
+// no @testable import. The mock sits ABOVE the production MakeMKVProcessRunner, so
+// these tests cannot see faults in its own pipe and process handling (Codex round 1
+// found two there, F4 and F5). MakeMKVProcessRunnerTests covers the runner itself
+// against /bin/sh; a real makemkvcon is exercised only on the manual hardware matrix.
 // ============================================================================
 
 import Foundation
