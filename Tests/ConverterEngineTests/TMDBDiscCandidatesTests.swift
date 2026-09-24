@@ -123,6 +123,95 @@ final class TMDBDiscCandidatesTests: XCTestCase {
         XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "2012")), "2012")
     }
 
+    // MARK: - Codex r1 F8: numbers that are part of the title must survive
+
+    func test_searchTitle_keepsANumberThatIsPartOfTheTitle() {
+        // Every one of these was destroyed by the REJECTED earlier rule
+        // ("strip every trailing all-digit word, repeatedly, until one word
+        // is left"): that rule could not tell a disc's own numbering from a
+        // number that IS the film's title, because it never looked at what
+        // came before the number.
+        let currentYear = 2026
+        let cases: [String: String] = [
+            "APOLLO_13": "APOLLO 13",
+            "FRIDAY_THE_13TH_PART_8": "FRIDAY THE 13TH PART 8",
+            "KILL_BILL_VOL_1": "KILL BILL VOL 1",
+            "DISTRICT_9": "DISTRICT 9",
+            "SUMMER_OF_84": "SUMMER OF 84",
+        ]
+        for (label, expected) in cases {
+            XCTAssertEqual(
+                TMDBDiscCandidates.searchTitle(from: signals(label: label), currentYear: currentYear),
+                expected,
+                "\(label) should keep its number"
+            )
+        }
+    }
+
+    func test_searchTitle_stripsAYearButKeepsANumberThatIsPartOfTheTitle() {
+        let currentYear = 2026
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchTitle(from: signals(label: "THE_MATRIX_1999"), currentYear: currentYear),
+            "THE MATRIX"
+        )
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchYear(from: signals(label: "THE_MATRIX_1999"), currentYear: currentYear),
+            1999
+        )
+
+        // The "3" is the film's own number (Back to the Future Part 3); the
+        // "1990" is the disc's release year. Both must be told apart
+        // correctly, from the SAME label, in one pass.
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchTitle(from: signals(label: "BACK_TO_THE_FUTURE_3_1990"), currentYear: currentYear),
+            "BACK TO THE FUTURE 3"
+        )
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchYear(from: signals(label: "BACK_TO_THE_FUTURE_3_1990"), currentYear: currentYear),
+            1990
+        )
+    }
+
+    func test_searchTitle_treatsANumberBeyondThePlausibleYearRangeAsPartOfTheTitle() {
+        // "2049" is not a plausible release year when today is 2026 -- it
+        // must stay part of the searched title text rather than vanish as a
+        // bogus filter that then matches nothing.
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchTitle(from: signals(label: "BLADE_RUNNER_2049"), currentYear: 2026),
+            "BLADE RUNNER 2049"
+        )
+        XCTAssertNil(TMDBDiscCandidates.searchYear(from: signals(label: "BLADE_RUNNER_2049"), currentYear: 2026))
+    }
+
+    func test_searchTitle_stripsASingleFusedDiscNumberToken() {
+        // Replaces the old fixed "d1".."d4" / "disc1".."disc4" lists, which
+        // matched only four numbers each and let a fifth survive untouched.
+        let currentYear = 2026
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "GLADIATOR_D2"), currentYear: currentYear), "GLADIATOR")
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "GLADIATOR_DISC2"), currentYear: currentYear), "GLADIATOR")
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "GLADIATOR_CD1"), currentYear: currentYear), "GLADIATOR")
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchTitle(from: signals(label: "LOTR_D5"), currentYear: currentYear),
+            "LOTR",
+            "the old fixed list only went up to d4, so D5 used to survive as if it were part of the title"
+        )
+    }
+
+    func test_searchTitle_stripsADiscWordFollowedBySeparateNumber() {
+        let currentYear = 2026
+        XCTAssertEqual(TMDBDiscCandidates.searchTitle(from: signals(label: "BIG_MOVIE_DISC_1"), currentYear: currentYear), "BIG MOVIE")
+    }
+
+    func test_searchTitle_neverStripsTheLastTokenEvenAcrossADiscNumberPair() {
+        // "1917_DISC_1" strips "DISC" and "1" together as one disc-numbering
+        // pair, which would otherwise leave "1917" -- and "1917" the FILM
+        // TITLE must still survive, because it is the last remaining token.
+        XCTAssertEqual(
+            TMDBDiscCandidates.searchTitle(from: signals(label: "1917_DISC_1"), currentYear: 2026),
+            "1917"
+        )
+    }
+
     // MARK: - Year extraction
 
     func test_searchYear_findsAPlausibleYear() {
@@ -219,23 +308,89 @@ final class TMDBDiscCandidatesTests: XCTestCase {
         XCTAssertFalse(searchURL.contains("year="), "inventing a year would hide the right film")
     }
 
-    func test_provider_retriesWithoutTheYearWhenItFindsNothing() async throws {
-        // "BLADE_RUNNER_2049" reads as the film "Blade Runner" released in
-        // 2049, which matches nothing. A year filter can only ever HIDE
-        // results, so an empty year-filtered search is worth repeating
-        // without it and letting running time decide which film it is.
+    /// The value of one query-string parameter on a request's URL, decoded
+    /// (not a raw substring match) so a test cannot pass by accident on a
+    /// coincidental overlap between two different parameter values.
+    private func queryValue(_ request: URLRequest?, name: String) -> String? {
+        guard let url = request?.url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    // MARK: - The provider's fallback chain (Codex r1 F8)
+
+    func test_provider_putsTheYearBackIntoTheTitleWhenTheFilteredSearchFindsNothing() async throws {
+        // Step (2) of the fallback: a year-filtered search that finds
+        // nothing is retried with the year folded back into the title text
+        // instead of being dropped outright -- TMDB's own fuzzy matching
+        // sometimes finds a film that a strict `year=` filter misses (a
+        // regional release date, a re-release, a disc pressed a year late).
         let empty = Data(#"{"results":[]}"#.utf8)
         let client = CandidateStubHTTPClient(payloads: [empty, searchJSON, detailsJSON])
         let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
-        let provider = TMDBDiscCandidates.provider(service: service)
+        let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
 
-        let candidates = try await provider(signals(label: "BLADE_RUNNER_2049"))
+        let candidates = try await provider(signals(label: "THE_MATRIX_1999"))
 
-        XCTAssertEqual(candidates.count, 1, "the retry should have found the film")
-        XCTAssertTrue(client.calls.count >= 2, "a first search, then a retry without the year")
-        let first = try XCTUnwrap(client.calls.first?.url?.absoluteString)
-        let second = try XCTUnwrap(client.calls.dropFirst().first?.url?.absoluteString)
-        XCTAssertTrue(first.contains("year=2049"))
-        XCTAssertFalse(second.contains("year="), "the retry must drop the year, not repeat it")
+        XCTAssertEqual(candidates.count, 1, "the second attempt should have found the film")
+        XCTAssertEqual(client.calls.count, 3, "a filtered search, a year-folded-in retry, then one detail fetch")
+        XCTAssertEqual(queryValue(client.calls[0], name: "query"), "THE MATRIX")
+        XCTAssertEqual(queryValue(client.calls[0], name: "year"), "1999")
+        XCTAssertEqual(queryValue(client.calls[1], name: "query"), "THE MATRIX 1999")
+        XCTAssertNil(queryValue(client.calls[1], name: "year"), "the second attempt must not repeat the year filter")
+    }
+
+    func test_provider_keepsAnOutOfRangeNumberInTheTitleAndSearchesOnlyOnce() async throws {
+        // "2049" is not a plausible release year in 2026 (Codex r1 F8), so it
+        // stays part of the title text and there is only ONE distinct
+        // request to make. The old code always retried once more without a
+        // year filter -- which here would just repeat the identical request.
+        let client = CandidateStubHTTPClient(payloads: [searchJSON, detailsJSON])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
+
+        _ = try await provider(signals(label: "BLADE_RUNNER_2049"))
+
+        XCTAssertEqual(client.calls.count, 2, "one search plus one detail fetch -- no duplicate retry")
+        XCTAssertEqual(queryValue(client.calls[0], name: "query"), "BLADE RUNNER 2049")
+        XCTAssertNil(queryValue(client.calls[0], name: "year"))
+    }
+
+    func test_provider_doesNotRepeatAnIdenticalRequestWhenThereIsNoYear() async throws {
+        // With no year at all, "the filtered search" (there is nothing to
+        // filter on) and "the final no-filter retry" are the SAME request
+        // text, and it must be sent only once.
+        let empty = Data(#"{"results":[]}"#.utf8)
+        let client = CandidateStubHTTPClient(payloads: [empty])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
+
+        let candidates = try await provider(signals(label: "FIGHT_CLUB"))
+
+        XCTAssertTrue(candidates.isEmpty)
+        XCTAssertEqual(client.callCount, 1, "the de-duplicated fallback chain has only one distinct request to make")
+    }
+
+    func test_provider_dropsATrailingNumberOnlyAsALastResort() async throws {
+        // Exercises all three search fallback steps in order: the
+        // year-filtered search, the year-folded-into-the-title retry, and
+        // finally dropping the trailing "3" (kept during cleaning because it
+        // is the film's own number) in case it was disc numbering after all.
+        // Each one runs ONLY because the step before it found nothing.
+        let empty = Data(#"{"results":[]}"#.utf8)
+        let client = CandidateStubHTTPClient(payloads: [empty, empty, searchJSON, detailsJSON])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
+
+        let candidates = try await provider(signals(label: "BACK_TO_THE_FUTURE_3_1990"))
+
+        XCTAssertEqual(candidates.count, 1, "the third attempt should have found the film")
+        XCTAssertEqual(client.calls.count, 4, "three search fallbacks then one detail fetch")
+        XCTAssertEqual(queryValue(client.calls[0], name: "query"), "BACK TO THE FUTURE 3")
+        XCTAssertEqual(queryValue(client.calls[0], name: "year"), "1990")
+        XCTAssertEqual(queryValue(client.calls[1], name: "query"), "BACK TO THE FUTURE 3 1990")
+        XCTAssertNil(queryValue(client.calls[1], name: "year"))
+        XCTAssertEqual(queryValue(client.calls[2], name: "query"), "BACK TO THE FUTURE")
+        XCTAssertNil(queryValue(client.calls[2], name: "year"))
     }
 }
