@@ -1,0 +1,14 @@
+You are reviewing code changes in this git repository. You are read-only: do not edit any file. Read the changes with `git log --oneline codex-review-base..HEAD` and `git diff codex-review-base..HEAD` (read individual files in full where you need context).
+
+This is a catch-up review of about 60 commits (17-24 Sept 2026) on a Swift 6.3 macOS media converter. Every one of them was built AND reviewed by Claude, and no other system has checked them. Review the whole range as one body of work. Report only real defects, meaning things that are wrong or would go wrong. Do not report style. For each finding give the file:line, what goes wrong, and a concrete scenario that triggers it.
+
+Priority areas:
+1. PRIVACY / SECRETS. (a) The TMDB API key: can the key, or any part of it, reach an error message, log line, URL shown to the user, or anything else? Look at TMDBLookupService's redaction. (b) MeedyaDB submissions: the disc label text must be sent ONLY in `full` submission mode, and nothing may be sent unless publishing is enabled and set up (MeedyaDBPublisher, MeedyaDBContributor, MeedyaDBSubmissionBuilder, MeedyaDBAccess).
+2. MAKEMKV CONSENT. makemkvcon must never run without both the enabled toggle and a terms acknowledgement (MakeMKVAccess, MakeMKVExecutor, MakeMKVRipViewModel). The existing refusal of copy-protected discs (#492) must still hold on every path that is not the opt-in MakeMKV one.
+3. "PROMISE vs DELIVERY", the defect this codebase keeps shipping: a screen or setting that says something will happen but nothing makes it happen, or a component with no caller outside the tests. Check DiscIdentifyViewModel, MakeMKVRipViewModel, MeedyaDBSettingsTab, MakeMKVSettingsTab, TMDBLookupSheet and the settings text.
+4. CONCURRENCY and races in the @MainActor view models: scan, identify, rip and cancel overlapping; stale results written after a new scan; tasks not cancelled.
+5. CORRECTNESS of the MusicBrainz Disc ID calculation (MusicBrainzDiscID.swift), Enhanced CD handling, suggestedDiscType ordering, and the disc-label cleaner in TMDB disc candidates.
+6. DEVICE SAFETY: the diskutil unmount path must never unmount a different disk than the one the user chose, and must never run on its own without the user asking.
+7. Docs (docs/Disc-Tools.md, Sources/MeedyaConverter/Resources/Help/disc-tools.md, docs/api/meedya-convert-api.yaml): anything that claims behaviour the code does not have.
+
+Finish with a numbered list of findings, most severe first, each marked BLOCKER / MAJOR / MINOR, then one line: TOTAL: n findings.

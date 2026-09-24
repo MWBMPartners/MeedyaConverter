@@ -36,6 +36,46 @@ below it.
 
 ### ⏰ FIRST JOB: the owed Codex catch-up review
 
+> **24 Sept, 23:43 — ROUND 1 FINISHED: 11 findings (1 blocker, 7 major, 3 minor).**
+> Saved word for word in `.claude/reviews/codex-2026-09-24-r1.md` (brief beside it).
+> Next: check each finding against the code (three Opus checkers, run side by side,
+> because this is fact-finding), then fix the real ones, push, and CI.
+> Round 2 is owed after the fixes. Codex's allowance is small, so aim it at the fix commits.
+>
+> *(Earlier note)* **24 Sept, 23:40 — STARTED.** One whole-branch Codex review is running from
+> `codex-review-base` (a local-only branch at `02a5964`) to `cd6b5a4`. Its output is
+> being written to `/private/tmp/claude-501/…MeedyaConverter/<session>/scratchpad/codex-review-r1.log`.
+> Look for the newest `codex-review-r1.log` under `/private/tmp/claude-501/`. If this
+> session dies, read that file first rather than re-running, because Codex has room
+> for only about one review per reset. **Codex on this Mac needs
+> `-c model="gpt-6-astra"`**, or it refuses with a "model not supported" message that
+> looks like a credit problem but isn't.
+> **Tried and rejected:** `codex review --base <branch> "<brief>"`. Codex refuses to
+> combine a base branch with a written brief. Used instead: `codex exec -s read-only`
+> with the brief plus "read `git diff codex-review-base..HEAD`". The brief is in the
+> same scratchpad folder (`codex-exec-prompt.txt`).
+>
+> **#507, planned while waiting (not built; waiting for the review because it touches
+> the same files):** add `MeedyaDBReadiness.declinedReason` in the engine. It gives the
+> `.incomplete` reason, and `nil` for `.off`/`.ready`, so "off" keeps saying "wasn't
+> requested". Add an optional `declinedBecause: String? = nil` to
+> `MeedyaDBContributor.contribute`, and pass it through `MusicDiscIdentifier.identify` /
+> `VideoDiscIdentifier.identify`. Both view models pass `meedyaDBReadiness?.declinedReason`.
+> The CLI passes nothing, so it keeps "wasn't requested". Tests must tell all three cases apart.
+>
+> **Owner, 24 Sept ~23:50:** go ahead with #508 (AutoTagger) and #506 (settings
+> export/import) meanwhile, but **"best to be cautious"**. So nothing is built or
+> committed until the Codex review has finished, not even in a separate worktree.
+> Planning only: Opus planners one at a time, #508 first, then #506. The plans are
+> written to the scratchpad and move into `.claude/plans/` when building starts.
+> Decisions taken on the recommended answers (owner can override): #508 off by
+> default; renaming and NFO writing each separately opt-in and off; a failed lookup
+> never stops an encode; a service with no key is skipped. #506 also moves
+> `mediaServerAPIKey` into the Keychain as a separate small fix.
+> **When building starts:** use a separate worktree/branch only if Codex is *still*
+> running. Otherwise build straight on `wip/alpha-consolidation` after the review
+> fixes land.
+
 **Why it is owed.** All **59 commits from 17–21 Sept** (`74d0f59` … `1d56d37`: 67 files,
 about 16,700 lines added) were built in **cloud Claude sessions**, where Codex was not
 installed. They were checked **only by independent Claude reviewer agents**, which is the
