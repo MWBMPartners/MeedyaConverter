@@ -62,6 +62,17 @@ created later (no stacked PRs).
    routing review to a different AI system. It must not create a second handoff.
 11. **Sibling repos** (`MeedyaDL`, `MeedyaSuite-core`) are **read-only** from a
    MeedyaConverter session — other sessions edit them concurrently.
+12. **Watchdog every asynchronous step (W16, 2026-09-24).** When a step starts
+    something that finishes later — CI after a push, a background agent or
+    workflow, a long command — set up a watchdog *when it starts*, wait for a
+    **final** state (success / failure / cancelled / timed out; silence and
+    "cancelled" are not success), give it a deadline, and don't start any
+    dependent queue step or mark it Done until it reports. Independent work may
+    carry on meanwhile. **Any push to the branch cancels the in-flight CI run**
+    (`cancel-in-progress: true`) — wait or batch pushes. Judge by the run's final
+    conclusion, not lagging step status. Without `gh` (cloud): a backgrounded
+    timer, then read the conclusion via the GitHub API tools; before ending a
+    turn with work still in flight, schedule a fallback check-in.
 
 ## Conventions
 

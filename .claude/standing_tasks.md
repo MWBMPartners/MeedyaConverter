@@ -4,7 +4,9 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-23 (owner directive of 2026-09-23: planning moved from Fable to
+> Last updated: 2026-09-24 (owner directive of 2026-09-24: new **W16** — a watchdog on
+> every asynchronous step, so nothing is missed and the queue never moves on blind.)
+> Previous: 2026-09-23 (owner directive of 2026-09-23: planning moved from Fable to
 > **Opus** in W3/W12; W2 handoff timing tightened; W4 suggestions + cross-system checking;
 > W5 now lists the `.OpenAI/` mirror and the progress table; W13 loop-stopping rule; new
 > W15 progress tables. Nothing was removed.)
@@ -163,6 +165,9 @@ erode when incremental ticking is impractical.
 - **Rationale (learned 2026-09-02):** CI on the working branch went red and stayed
   red across many commits because a test regression was pushed without watching the
   run. Monitoring each push surfaces a break in ONE iteration, not N commits later.
+- **See W16** for the general watchdog rule this is one case of — including how to
+  watch CI where the `gh` tool is not installed (cloud sessions), and the trap
+  that **any push to the branch cancels the run already in flight**.
 
 
 ## Code Standards (Apply to All Code)
@@ -278,7 +283,8 @@ erode when incremental ticking is impractical.
 
 1. **Commit and push** the work to the single working branch that will eventually
    target `alpha` (currently `wip/alpha-consolidation`), **then stay and watch the
-   triggered CI run to green (§15)** — a red run is fixed before moving on.
+   triggered CI run to green (§15), with a watchdog (W16)** — a red run is fixed
+   before moving on.
 2. **Update the relevant GitHub Issue(s) individually** for that task (progress
    comment, tick acceptance-criteria boxes, close only when truly satisfied).
 3. **Update Claude memory & context** in `.claude/`.
@@ -483,6 +489,79 @@ MeedyaSuite-core while this session was running, and deleted two remote branches
 |---|------|-------|--------|-------|
 | 1 | Plain-English name | #nnn | Done — pushed `abc1234` | review: 2 rounds, last clean |
 | 2 | … | #nnn | Blocked — waiting on decision 1 | continuing with 3 meanwhile |
+
+### W16. Watchdog every asynchronous step — never move on without the result (added 2026-09-24)
+
+**In plain English:** when a step starts something that finishes *later* — a CI
+run, a background agent, a workflow, a long-running command — set up a
+**watchdog** (something that waits and reports back when it has finished) at the
+moment it starts. Do not begin any queued step that depends on the outcome, and
+do not call the task done, until the watchdog has reported a **final** result.
+This is how nothing gets missed and nothing is built on a result nobody saw.
+
+§15 already says this for CI. W16 makes it the rule for **every** asynchronous
+step, and fixes the gaps that showed up on 2026-09-21.
+
+**1. What needs a watchdog.** Anything the next step depends on that does not
+finish immediately:
+- the CI run triggered by every push (and every other check that push starts — §15);
+- background agents, subagents and workflows — including review agents (W13);
+- long local commands (builds, test runs, downloads, scripts run in the background);
+- anything else started now whose result is only known later.
+
+**2. Set it up when the work starts — not afterwards.** The watchdog is part of
+starting the work, the same way a push is followed by watching CI.
+
+**3. Wait for a FINAL state, and cover every one of them.** Final means success,
+failure, cancelled, or timed out. A watchdog that only listens for success stays
+silent through a crash, and **silence is not success**. A **cancelled** run is not
+a pass either: it proves nothing about the code.
+
+**4. Give every watchdog a deadline.** If it expires without a final state, say so
+and find out why. Never assume it worked. (A CI run here takes ~3–5 minutes; a
+deadline of ~20 minutes is generous.)
+
+**5. Don't block needlessly.** While a watchdog runs, carry on with work that does
+**not** depend on its result. What must wait is anything that *does* depend on it,
+reporting the task complete, and moving the queue on. In the progress table
+(W15), an item waiting on a watchdog is **In progress** or **In review** — never
+**Done**.
+
+**6. ⚠️ Never let a push kill the run being watched.** `.github/workflows/build.yml`
+sets `cancel-in-progress: true`, grouped by branch — so **any push to the branch
+cancels the CI run already in flight**. Either wait for the run to finish before
+pushing again, or batch the commits and push once. After a cancellation, confirm
+a **completed, green** run on a commit that contains the same code before treating
+that code as verified.
+*Learned 2026-09-21:* runs 353, 355 and 358 were cancelled by follow-up
+documentation pushes — 355's tests never ran to completion, and the code was only
+proven by the next run.
+
+**7. Read the overall result, not the step-by-step progress.** On 2026-09-21 the
+per-step status from the GitHub API lagged by several minutes and made a test
+step that had already passed look as if it were still running. Judge by the
+**run's / job's final conclusion**; if the step view disagrees, trust the
+conclusion.
+
+**8. Mechanisms (use whatever the environment provides):**
+- **Local long command:** run it in the background with a loop that exits on
+  *either* outcome, so there is exactly one notification when it ends.
+- **Background agent / workflow:** its completion notification *is* the
+  watchdog. Never report, act on, or predict its result before that arrives.
+- **CI with the `gh` tool (the Mac):** `gh run watch <id> --exit-status` (§15).
+- **CI without `gh` (cloud sessions):** a background timer (e.g. a backgrounded
+  `sleep 60`) that wakes the session, then read the run's **conclusion** through
+  the GitHub API tools that are available; repeat until final or the deadline.
+  Don't poll faster than every ~30–60 seconds.
+- **⚠️ Before ending a turn with anything still in flight,** schedule a fallback
+  check-in (a scheduled self-reminder, where the environment offers one) so an
+  idle session still comes back to it. An ended turn with no check-in is exactly
+  how a result gets missed.
+
+**9. Queue discipline.** A queue item is **complete** only when every watchdog it
+started has reported a final **success**. A failure becomes the current task
+(§15): fix it, push, and watch the fix to green with its own watchdog — *then*
+move to the next item.
 
 ### §9 ↔ W5 reconciliation (push policy)
 

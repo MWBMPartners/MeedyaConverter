@@ -114,6 +114,12 @@
   `@AppStorage` + `.onChange`, as `DiscIdentifyView` already did. #507 filed for a
   MINOR: `.incomplete` MeedyaDB readiness is collapsed into a Bool, so a
   half-configured setup reports "wasn't requested" when it was.
+- **CI CANCELS ITSELF ON EVERY PUSH (W16).** `build.yml` has `cancel-in-progress: true`
+  grouped by branch, so a follow-up push — even docs-only — kills the run in flight.
+  On 2026-09-21 that cancelled runs 353, 355 and 358 (355's tests never finished).
+  Wait for the run or batch pushes, and only count a COMPLETED green run as proof.
+  GitHub's per-step status also lagged minutes behind reality that day — read the
+  run's final conclusion instead.
 - **QUEUED (#508): `AutoTagger` IS NEVER CALLED.** Every reference outside its own file
   is a test of a pure static helper; `buildMetadataArguments(result:config:)` has no
   caller anywhere. `FFmpegArgumentBuilder` has its OWN private metadata builder using

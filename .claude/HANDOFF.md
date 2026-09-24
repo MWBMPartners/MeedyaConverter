@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-23 (evening) · VERSION 0.1.0
+**Last updated:** 2026-09-24 · VERSION 0.1.0
 
 ## 📍 CURRENT STATE — 2026-09-23 (read this first)
 
@@ -31,7 +31,7 @@ below it.
    (`git merge --ff-only origin/wip/alpha-consolidation`). **Cloud sessions push to this
    branch too.** On 23 Sept this Mac's copy was 59 commits behind without anyone noticing.
 2. Read this block, then `.claude/standing_tasks.md`: W2 (handoff), W3 (models),
-   W12 (fallback), W13 (review loop), W15 (progress tables).
+   W12 (fallback), W13 (review loop), W15 (progress tables), **W16 (watchdogs)**.
 3. Check Codex is back (below). If it is, the catch-up review is the first job.
 
 ### ⏰ FIRST JOB: the owed Codex catch-up review
@@ -111,6 +111,55 @@ to be owed.
    moved or deleted without a yes.
 2. **What comes after the Codex review?** *Recommended:* the order in the table above
    (#507 → #508 → #506 → #505), with each one proceeding on its own.
+
+### What this session (24 Sept, cloud) did — one rule, no code
+
+- **New standing rule W16: watchdog every asynchronous step** (owner directive,
+  24 Sept). When a step starts something that finishes later — CI after a push, a
+  background agent, a workflow, a long command — a watchdog is set up when it starts,
+  waits for a final state (success, failure, cancelled or timed out), has a deadline,
+  and nothing that depends on the result moves until it reports. Written into
+  `.claude/standing_tasks.md` (linked from §15 and W5), mirrored in `.OpenAI/CONTEXT.md`
+  and `.OpenAI/MEMORY.md`.
+- It writes down two traps from 21 Sept: **any push to the branch cancels the CI run in
+  flight** (`cancel-in-progress: true` — runs 353, 355 and 358 died that way), and
+  **GitHub's per-step status lags**, so judge by the run's final conclusion.
+- ⚠️ **Mac follow-up owed.** The owner asked for this at device level too. The cloud
+  container's `~/.claude/CLAUDE.md` was updated, but that copy is thrown away with the
+  container. **The next session on the Mac should add the same rule to
+  `~/.claude/CLAUDE.md` (linked as `~/.codex/AGENTS.md`)** — the wording is the
+  "Watchdog every asynchronous step (tool-agnostic)" section, reproduced below.
+- **Review status:** rules only. Codex is not installed in cloud sessions, so this has
+  **not been reviewed by another system**; it joins the owed catch-up review above.
+- This session first built the rule against a stale copy of the branch and found, before
+  pushing, that the 23 Sept session had already taken the number W15. The draft was set
+  aside and rebuilt on top of that work as W16; nothing of the 23 Sept commit was
+  overwritten.
+
+<details><summary>Device-level wording for the Mac's <code>~/.claude/CLAUDE.md</code></summary>
+
+```markdown
+## Watchdog every asynchronous step (tool-agnostic)
+
+- When a step starts something that finishes **later** — a CI run after a push,
+  a background agent or workflow, a long-running command — set up a **watchdog**
+  (something that waits and reports back when it has finished) **at the moment
+  it starts**.
+- Wait for a **final** state: success, failure, cancelled or timed out. Silence
+  is not success, and a cancelled run proves nothing.
+- Give every watchdog a **deadline**; if it expires, say so and find out why.
+- **Do not start any queued step that depends on the result, and do not report
+  the task done, until the watchdog has reported.** Independent work may carry on
+  meanwhile.
+- Don't let your own next action kill the thing being watched (e.g. a push that
+  cancels the CI run in flight) — wait, or batch.
+- Before ending a turn with anything still in flight, schedule a fallback
+  check-in where the environment allows one, so the result is never missed.
+- Repo-specific detail for MeedyaConverter: `.claude/standing_tasks.md` → W16.
+- Added 2026-09-24.
+```
+
+</details>
 
 ### What this session (23 Sept) did — notes and rules only, no code
 
