@@ -157,6 +157,25 @@ below it.
 >   right after #506; consents never travel; profiles are their own group; a small
 >   `APIKeyManager.hasStoredKey`.
 >
+> **Fix progress (25 Sept ~01:30):**
+> - **F8 (`eb20c02`) and F9 (`2c69763`) are on the branch and pushed.** Built by
+>   Sonnet in a worktree and checked by Opus (the orchestrator; I traced the rule
+>   cases by hand). CI is being watched. Side effect of F8: a film search can now
+>   make up to 4 searches plus 5 running-time lookups (it was 2 + 5). The F8/F9
+>   builder removed `dvd5`/`dvd9` from the noise list, because the fused-marker rule
+>   catches them first (behaviour unchanged). Not yet reviewed by a second system,
+>   so both are included in Codex round 2.
+> - **⚠️ An environment claim to verify:** the F8/F9 builder reported that the
+>   filtered whole-package `swift build` now fails BEFORE compiling. SwiftPM probes
+>   `/usr/bin/actool` (Xcode-only) for the app target's `Assets.xcassets`
+>   (`Package.swift` ≈398). If that's true, the "filtered whole build" gate in W10
+>   and memory can't run on this Mac right now, and `swift build --target
+>   ConverterEngine` is the only local gate; app-layer code (views, view models) is
+>   compile-checked by CI only. Possibly it's only a fresh-worktree effect. Check it
+>   in the main copy.
+> - **Still running:** F2+F10 (Sonnet, main copy; slow because of heavy machine
+>   load, a load average over 200); F4+F5 (Opus, worktree `agent-a921046e6720175b1`).
+>
 > **Build order (so no two builders edit the same file):** F2+F10 (key store, main
 > copy) ∥ F4+F5 (Opus, worktree) ∥ F8 then F9 (Sonnet, one worktree, two commits) →
 > then in the main copy: F1+#507+F10 screen wiring → F3 → F6 → F7+F11 wording
