@@ -42,6 +42,113 @@ below it.
 > because this is fact-finding), then fix the real ones, push, and CI.
 > Round 2 is owed after the fixes. Codex's allowance is small, so aim it at the fix commits.
 >
+> **Verdicts so far (Opus checker, read-only, 25 Sept ~00:05):**
+> - **F1 REAL.** Revoking or narrowing a setting mid-run doesn't stop the upload. Rated
+>   major rather than blocker: the window is seconds, and for video at most 7 TMDB
+>   requests. Fix: an optional `recheck` closure on `MeedyaDBContributor.contribute`,
+>   called right before `publisher.submit`. It returns nil (withdraw) when the current
+>   config ≠ the captured one, otherwise the current mode. The contributor takes the
+>   NARROWER of captured and current mode, so a setting change can never widen what is
+>   sent. The screens show `runWillContribute` during a run, not the live settings.
+>   **Bundle with #507** (same signature).
+> - **F2 REAL, and wider than Codex said.** `APIKeyManager` reads its index file
+>   (`~/Library/Application Support/MeedyaConverter/Keys/api_keys.json`) only in `init`,
+>   and then rewrites the whole file from its old copy on every change. Three
+>   long-lived writers: SettingsView (TMDB), MeedyaDBSettingsTab, and
+>   **CloudStorageView** (which Codex missed; it's in the main window). Fix inside
+>   `APIKeyManager`: re-read before every change and every lookup. A missing file
+>   means "no keys"; an unreadable file means "keep the current copy". False comments
+>   at `SettingsView.swift:481` and `MeedyaDBSettingsTab.swift:220` say "Re-reads the Keychain".
+> - **F10 REAL, minor.** Fix: `APIKeyManager.didChangeNotification`, posted after
+>   the lock is released. Both disc screens refresh on it. Bundle with F2. (The older
+>   note below saying the key "cannot be watched" is overstated: the app is the only
+>   thing that writes it, so it can announce its own writes.)
+> - **F3 REAL.** Rip uses the current source fields with the LAST scan's titles, and
+>   nothing records which source was scanned. Also triggered by editing the fields
+>   mid-scan or by the "Read from" picker. Fix: `scannedSource`, set on scan success;
+>   rip refuses (and `canRip`/`ripBlockedReason` say why) unless the current source
+>   equals it; rip from `scannedSource`. Block rather than clear, so an undone typo
+>   keeps the selection. **Known limit:** swapping the physical disc in the same drive
+>   can't be detected this way.
+> - **F4 REAL, proven by running the code.** A cancel that arrives before
+>   `proc.run()` is lost: `terminate()` sees not-running and records nothing, so the
+>   process launches and runs to the end. For rip, the screen says "cancelled" while
+>   MakeMKV keeps writing files. Fix: a lock-held `cancelRequested` flag, plus
+>   check-then-launch under the lock.
+> - **F5 REAL, and worse than stated, proven.** The termination handler detaches the
+>   stdout reader without draining the pipe. In a MakeMKV-shaped burst test, 241 of
+>   400 runs lost about 693 of 1,161 lines, so a "successful" scan can drop most of
+>   the titles. Fix: finish only when BOTH the process has exited AND the reader has
+>   hit end-of-file (a latch), with a bounded wait after exit. The project fixed this
+>   once before in `ProcessFFmpegBackend.runOneShot` (`93484b4`). **`ExternalToolRunner`
+>   has both F4 and F5.** Raise that as a separate issue; don't fix it quietly.
+> - **F9 REAL.** MakeMKV's robot mode escapes quotes with backslashes (usage.txt:
+>   "quotes are backlash-escaped"), and the doubled-quote test pins an invented
+>   format. Every real drive run shows `Optical drive \BD-RE …\`. Fix: backslash
+>   escaping, keeping `""` as a tolerance. Follow-up: a line ending in a backslash
+>   continues onto the next line (MSG 3334 is currently dropped).
+>
+> - **F6 REAL, and worse than stated.** The lookup always sends `/discid/-?toc=`,
+>   which MusicBrainz documents as a FUZZY search, so the computed Disc ID is never
+>   used. Checked live on the docs' Nevermind example: the exact lookup gives 5
+>   releases, the fuzzy one gives 25, and only 5 of those 25 carry this disc's ID. So
+>   even KNOWN discs submit 20 wrong releases. MeedyaDB's `handleDiscIngest` (MeedyaDB
+>   `wip/bootstrap` `9f8e0a9`) ignores candidate confidence and flattens candidate
+>   identifiers onto the disc, so lowering the confidence would not help. Fix:
+>   `/discid/<real id>?toc=…&cdstubs=no` (one request; MusicBrainz falls back to fuzzy
+>   by itself). The match kind comes from the response shape, failing safe to fuzzy
+>   (exact ONLY if the top-level `id` equals the requested ID AND `offsets` is present).
+>   Only exact says "Identified as"; fuzzy says "Closest match … best guess". Add
+>   `matchKind` to the CLI JSON. **Owner decision D1 (default applied):** on a fuzzy
+>   match, send the Disc ID + TOC with NO candidates.
+> - **F7 REAL (delivery gap + false claims).** Neither reader passes `--session`, so
+>   cdrdao reads session 1 only, and the parser never fills `sessions`. On a real
+>   CD-Extra, `isEnhancedCD` is false and no `fulldisc-discid` is ever sent. The
+>   music-only ID is probably still RIGHT by accident: session 1's lead-out = data
+>   start − 11,400, which is exactly libdiscid's own rule. Unverified on hardware. The
+>   #504 hardware test as planned would pass without exercising the derived path, so
+>   don't trust it as it stands. Now: correct the CLI "only one session" text, the
+>   docs, the help, the API spec and the comments. Later: a macOS full-TOC reader
+>   (`DKIOCCDREADTOC`, like libdiscid) → follow-up issue.
+> - **F8 REAL.** The cleaner strips every trailing number (APOLLO_13 → APOLLO,
+>   DISTRICT_9, TOY_STORY_3 …); `LOTR_D5` / `GLADIATOR_CD1` keep their disc suffix.
+>   New rule: strip only disc markers (`^(disc|disk|dvd|cd|bd|d)\d{1,2}$`, or a disc
+>   word + a 1-2 digit number) and a year 1900..currentYear+1 (current year passed
+>   in); keep every other number. Plus a stepwise search fallback. The test table is
+>   in the checker's report (this session's scratch notes).
+> - **F11 REAL, understated.** Only running time and title are scored (0.50/0.35).
+>   The year is never set in the video flow, so a film maxes out at 85% and the docs'
+>   "92% confident" example can't happen. Chapters and languages are carried but never
+>   scored, and it's films only. Correct `MakeMKVRipView.swift:276`, Disc-Tools, the
+>   help, comments in `VideoDiscIdentification`/`DiscIdentification`, `SettingsView`
+>   (which under-claims), and `docs/FAQ.md` privacy (identify sends disc-name text to TMDB).
+> - **Extras found (raise, don't fix quietly):** MeedyaDB ingest flattening +
+>   `resolveByIdentifier` `LIMIT 1` without a type filter (MeedyaDB issue);
+>   `ExternalToolRunner` has F4+F5; `README.md:121` is stale about TMDB/disc-ID; the
+>   CLI `disc identify --format json` has no JSON Schema; disc noise in the seed title
+>   drags down title scores.
+>
+> **Specs for every fix not yet built:** `.claude/reviews/codex-2026-09-24-r1-fix-specs.md`.
+>
+> **#508 plan DONE (Opus, 25 Sept ~00:25):** `.claude/plans/autotag-encode-plan.md`,
+> 10 commits. The lookup goes inside `EncodingEngine.encode`, merged into
+> `outputMetadata`; no `EncodingJobConfig` change. Key traps: `meetsThreshold` alone
+> would never pass (every TMDB result is 0.5), and `buildArtworkArguments` would break
+> an encode. Renaming → a follow-up issue. Six small defaults were taken (listed at the
+> end of the plan). **#506 planner started** (Opus, read-only; watchdog on its real
+> transcript file).
+>
+> **Build order (so no two builders edit the same file):** F2+F10 (key store, main
+> copy) ∥ F4+F5 (Opus, worktree) ∥ F8 then F9 (Sonnet, one worktree, two commits) →
+> then in the main copy: F1+#507+F10 screen wiring → F3 → F6 → F7+F11 wording
+> (together with the documentation sweep).
+>
+> ⚠️ **Trap found: `~/.claude/bin/watchdog.sh quiet` on an agent's `tasks/<id>.output`
+> fires falsely after 15 minutes.** That path is a symlink, and the script's
+> `stat -f %m` reads the link's own timestamp, not the transcript's. Point it at
+> `$(readlink <path>)` instead. The real fix, `stat -L`, belongs in the shared
+> script and in WebMS-Intra's copy. Raised with the owner, not edited from here.
+>
 > *(Earlier note)* **24 Sept, 23:40 — STARTED.** One whole-branch Codex review is running from
 > `codex-review-base` (a local-only branch at `02a5964`) to `cd6b5a4`. Its output is
 > being written to `/private/tmp/claude-501/…MeedyaConverter/<session>/scratchpad/codex-review-r1.log`.
