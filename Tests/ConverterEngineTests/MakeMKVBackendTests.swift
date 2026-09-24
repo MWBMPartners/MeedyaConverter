@@ -94,7 +94,12 @@ final class MakeMKVBackendTests: XCTestCase {
 
     // MARK: - Robot-field splitting
 
-    func test_parseRobotFields_quotedCommasAndEscapedQuotes() {
+    func test_parseRobotFields_toleratesDoubledQuoteEscaping() {
+        // NOT MakeMKV's documented format (that's backslash-escaping, tested
+        // below) -- this is a TOLERANCE. It stays safe because a real
+        // closing quote in MakeMKV's format is always immediately followed
+        // by a comma or end of line, so a second quote right after one can
+        // only ever mean "one literal quote", never "an empty field".
         XCTAssertEqual(
             MakeMKVBackend.parseRobotFields(#""a""b",5,"c,d""#),
             [#"a"b"#, "5", "c,d"]
@@ -105,6 +110,32 @@ final class MakeMKVBackendTests: XCTestCase {
         XCTAssertEqual(MakeMKVBackend.parseRobotFields(""), [""])
         XCTAssertEqual(MakeMKVBackend.parseRobotFields("1,,3"), ["1", "", "3"])
         XCTAssertEqual(MakeMKVBackend.parseRobotFields(#"1,"",3"#), ["1", "", "3"])
+    }
+
+    // MARK: - Robot-field splitting (backslash escaping — Codex r1 F9, #503)
+
+    func test_parseRobotFields_backslashEscapedQuoteAroundALiteralComma() {
+        // The reviewer's own example: a quote escaped with a backslash,
+        // wrapping text that itself contains a literal comma. This MUST
+        // parse to exactly THREE fields -- the old doubled-quote-only parser
+        // instead saw the backslash as ordinary text, closed the quoted
+        // field one character early at the FIRST embedded quote, and then
+        // read the comma as a field separator: four broken fields instead of
+        // three ("2", "0", "A \\B", "C\\").
+        XCTAssertEqual(
+            MakeMKVBackend.parseRobotFields(#"2,0,"A \"B,C\"""#),
+            ["2", "0", "A \"B,C\""]
+        )
+    }
+
+    func test_parseRobotFields_doubledBackslashIsOneLiteralBackslash() {
+        XCTAssertEqual(MakeMKVBackend.parseRobotFields(#""a\\b""#), ["a\\b"])
+    }
+
+    func test_parseRobotFields_lonelyTrailingBackslashIsKeptLiteral() {
+        // Malformed/truncated input (a stream cut off mid-line) must not
+        // crash by force-unwrapping a character that was never there.
+        XCTAssertEqual(MakeMKVBackend.parseRobotFields(#""abc\"#), ["abc\\"])
     }
 
     // MARK: - Info parsing (round-trip on a realistic transcript)
@@ -244,6 +275,22 @@ final class MakeMKVBackendTests: XCTestCase {
 
     func test_parseMessageLine_ignoresNonMessage() {
         XCTAssertNil(MakeMKVBackend.parseMessageLine("PRGV:1,2,3"))
+    }
+
+    func test_parseMessageLine_realWorldBackslashEscapedQuotes() {
+        // A real (drive model shortened) MakeMKV 1.18.3 line. Primary source
+        // https://www.makemkv.com/developers/usage.txt: "All strings are
+        // quoted, all control characters and quotes are backslash-escaped."
+        // Before this fix, the text and format fields both lost their
+        // embedded quotes and the drive-name parameter, and the message
+        // stopped one field early.
+        let line = #"MSG:2010,0,1,"Optical drive \"BD-RE PIONEER\" opened in OS access mode.","Optical drive \"%1\" opened in OS access mode.","BD-RE PIONEER""#
+        let message = MakeMKVBackend.parseMessageLine(line)
+        XCTAssertEqual(message?.code, 2010)
+        XCTAssertEqual(message?.flags, 0)
+        XCTAssertEqual(message?.text, "Optical drive \"BD-RE PIONEER\" opened in OS access mode.")
+        XCTAssertEqual(message?.rawFormat, "Optical drive \"%1\" opened in OS access mode.")
+        XCTAssertEqual(message?.parameters, ["BD-RE PIONEER"])
     }
 
     // MARK: - Duration helper

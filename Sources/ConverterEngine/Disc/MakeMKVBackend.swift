@@ -399,8 +399,45 @@ public enum MakeMKVBackend {
     // MARK: Robot-field splitting
 
     /// Split one robot-mode record body into its fields, honouring
-    /// double-quoted strings (which may contain commas) and doubled `""`
-    /// escapes. Bare numeric fields are returned verbatim.
+    /// double-quoted strings (which may contain commas) and MakeMKV's
+    /// backslash escaping. Bare numeric fields are returned verbatim.
+    ///
+    /// ⚠️ CODEX REVIEW ROUND 1, FINDING 9 (#503) — the primary source
+    /// (https://www.makemkv.com/developers/usage.txt) says: "All strings are
+    /// quoted, all control characters and quotes are backslash-escaped."
+    /// Real 1.18.3 output looks like:
+    ///   MSG:2010,0,1,"Optical drive \"BD-RE PIONEER\" opened in OS access
+    ///   mode.","Optical drive \"%1\" opened in OS access mode.","BD-RE
+    ///   PIONEER"
+    /// This used to understand only a DOUBLED quote (`""`) as an escape, so
+    /// it read the backslash before each embedded quote as a literal
+    /// character and then closed the string one quote early — corrupting
+    /// both the human-readable text AND the drive-name parameter that
+    /// followed it. `2,0,"A \"B,C\""` parsed to `["2","0","A \\B","C\\"]`
+    /// instead of the intended single field `A "B,C"`.
+    ///
+    /// So: INSIDE quotes, a backslash means "take the next character
+    /// literally" — `\"` is a literal quote, `\\` is a literal backslash,
+    /// `\,` is a literal comma (a bare comma inside quotes would otherwise
+    /// look like a field separator). A lone trailing backslash with nothing
+    /// after it (truncated/malformed input) is kept as a literal backslash
+    /// rather than crashing or silently vanishing.
+    ///
+    /// The doubled-quote (`""`) handling is KEPT, but only as a TOLERANCE —
+    /// it is NOT part of MakeMKV's documented format. It is safe to keep
+    /// because in MakeMKV's own format a closing quote is always
+    /// immediately followed by a comma or end of line, so seeing a SECOND
+    /// quote immediately after one is otherwise never valid — reading it as
+    /// one literal quote character can never misinterpret real output.
+    ///
+    /// KNOWN LIMIT, NOT FIXED HERE: MakeMKV can also use a trailing
+    /// backslash at the end of a whole PHYSICAL LINE to continue a message
+    /// onto the next line. This parser (and `parseInfo`/`parseMessageLine`,
+    /// which split on line breaks before calling this) do not join
+    /// continued lines back together first, so a message that MakeMKV
+    /// splits this way — its message 3334 warning is one such case — is
+    /// still parsed as if the first physical line were the whole thing,
+    /// silently dropping the continuation. That is a separate follow-up.
     public static func parseRobotFields(_ body: String) -> [String] {
         var fields: [String] = []
         var current = ""
@@ -410,16 +447,32 @@ public enum MakeMKVBackend {
 
         while let character = pending {
             if inQuotes {
-                if character == "\"" {
+                switch character {
+                case "\\":
+                    // THE REAL FORMAT: take the next character literally,
+                    // whatever it is (quote, backslash, comma, ...).
+                    if let escaped = iterator.next() {
+                        current.append(escaped)
+                        pending = iterator.next()
+                    } else {
+                        // A lone trailing backslash with nothing after it —
+                        // not valid MakeMKV output, but keep the character
+                        // rather than dropping it or crashing on a
+                        // force-unwrapped `iterator.next()`.
+                        current.append("\\")
+                        pending = nil
+                    }
+                case "\"":
+                    // TOLERANCE, not the documented format — see above.
                     let next = iterator.next()
                     if next == "\"" {
-                        current.append("\"") // escaped quote
+                        current.append("\"") // doubled-quote escape
                         pending = iterator.next()
                     } else {
                         inQuotes = false
                         pending = next
                     }
-                } else {
+                default:
                     current.append(character)
                     pending = iterator.next()
                 }
