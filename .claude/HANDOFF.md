@@ -135,8 +135,27 @@ below it.
 > `outputMetadata`; no `EncodingJobConfig` change. Key traps: `meetsThreshold` alone
 > would never pass (every TMDB result is 0.5), and `buildArtworkArguments` would break
 > an encode. Renaming → a follow-up issue. Six small defaults were taken (listed at the
-> end of the plan). **#506 planner started** (Opus, read-only; watchdog on its real
-> transcript file).
+> end of the plan).
+>
+> **#506 plan DONE (Opus, 25 Sept ~01:00):** `.claude/plans/settings-export-import-plan.md`,
+> 9 commits.
+> - **Design:** an engine `SettingsKeyRegistry` records a decision for all **104** keys
+>   (the issue said about 74) and 13 file stores, plus a tripwire test that scans
+>   Sources for undecided keys.
+> - **Findings that change the design:** `webhookURL` is itself a secret;
+>   `postEncodeActionChain` can hold SHELL COMMANDS, so it must never be importable; the
+>   CLI must target the app's settings domain explicitly; list-type settings must merge
+>   by `id` (merging only the keys present would delete local SFTP servers).
+> - **Pre-existing bugs (raise as issues):**
+>   - built-in profiles get a new random ID every launch, so conditional rules stop
+>     matching after a relaunch;
+>   - SECURITY.md F-004(c) is false;
+>   - legacy SFTP passwords are only migrated when that screen is opened.
+> - **8 owner questions, all on the recommended defaults:** hooks left out of v1; CLI
+>   import only previews without `--apply`; "This Mac" off on export too; the file
+>   names which services were set up (names only); webhook→Keychain as a follow-up
+>   right after #506; consents never travel; profiles are their own group; a small
+>   `APIKeyManager.hasStoredKey`.
 >
 > **Build order (so no two builders edit the same file):** F2+F10 (key store, main
 > copy) ∥ F4+F5 (Opus, worktree) ∥ F8 then F9 (Sonnet, one worktree, two commits) →
