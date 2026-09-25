@@ -61,6 +61,30 @@ As recommended:
 contributor and sender. An Opus planner works out the revision first (read-only),
 then the changes land as NEW commits on top, before commit 6.
 
+### ▶ Since the owner's decisions (25 Sept 17:05 onward)
+
+- **#505 revision:** an Opus planner (read-only) is designing the changes for Q1, Q2,
+  Q9 and the off rule. The plan will be saved as
+  `.claude/plans/submission-queue-revision-plan.md`. Commit 5 (`e1384e0`, the
+  sender; 190 tests ran in the harness; 7 planted faults were caught) is built but
+  NOT yet reviewed by the orchestrator: review it together with the revision.
+- **#508: first second-system review DONE (Fable fallback, 17:30): 9 MINOR, 0
+  MAJOR.** Record: `.claude/reviews/fallback-2026-09-25-508-fable.md`. The
+  orchestrator confirmed all 9 against the code. Headlines:
+  - a Pause during the lookup was ignored while the UI said Paused;
+  - a false sentence in the Architecture doc;
+  - the caption omits that the artist is sent;
+  - hyphenated file names were searched by the wrong fragment;
+  - a junk ripper `title` tag was never retried with the file name;
+  - a digits-only `album_artist` was discarded;
+  - two stale test headers;
+  - test plists left in `~/Library/Preferences`;
+  - a wiring test reads the real Keychain.
+
+  **An Opus builder is fixing all 9 in the MAIN tree** (not pushed until
+  reviewed). The fixes then need a Fable re-review (the loop runs until a round is
+  clean).
+
 ### ▶ Newest position — 25 Sept 14:55 (read before anything else in this block)
 
 | # | Task | Issue | Status | Notes |
