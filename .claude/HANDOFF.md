@@ -50,7 +50,16 @@ below it.
     to about 3 MB), so the view model must cache and refresh on the notification,
     never read in a SwiftUI body. **Dates are whole seconds**, so later tests
     should use whole-second dates.
-  - 3/10 (Sonnet) building from 14:45: the JSON Schema for the list file.
+  - 3/10 (Sonnet): the JSON Schema for the list file
+    (`docs/schemas/submission-queue-v1.schema.json`, generated, with a drift test).
+    95 tests ran in the harness; 2 planted faults were caught. The shared test-only
+    `SettingsSchemaMiniValidator` gained `maxItems`. Orchestrator review: no changes.
+  - **15:25: the branch was REBASED onto `9749de3`** (local only, never pushed), to
+    pick up `fe1a758`. The new hashes are `337fb75` 1/10, `04be39f` review fix,
+    `a2538cb` 2/10 and `a16af63` 3/10. Older hashes in this file (e9dded9, 403addc,
+    427153d, 2296d40) are the same commits before the rebase.
+  - 4/10 (Opus) building from 15:27: the `.queued` result, saving on a temporary
+    failure, and every switch including the CLI's.
 - **Codex round 2, CHUNK 1 DONE (14:44–14:49, 78k tokens in total).** Record:
   `.claude/reviews/codex-2026-09-25-r2-chunk1.md`.
   - 1a (F1 recheck): F1, F10 and fallback #2 judged COMPLETE. 1 MINOR, REAL: the
