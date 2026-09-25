@@ -49,6 +49,29 @@ below it.
 > reviewer. Nothing is blocked on this review (no PR is being opened), and every fix
 > was already reviewed by Opus, the orchestrator, which didn't build them. Recorded
 > here, as the fallback rule requires.
+> - **04:40: Codex round 2 STARTED but ran out mid-review.** It read about 165k
+>   tokens, then "usage limit … try again at 9:41 AM", so no findings (log in the
+>   scratchpad `codex-review-r2.log`).
+>   **FALLBACK now running:** the same brief, reviewed by **Fable** (a different
+>   model from the Sonnet/Opus that built and checked the fixes), as a fresh
+>   read-only agent. Label its findings "fallback review (Fable)", NOT Codex.
+>   **Codex round 2 is still owed**: a wake-up is set for 09:45. Consider a leaner
+>   brief (e.g. one area per run), since the allowance per reset is small.
+>   **Pattern to tell the owner:** Codex has hit its usage limit 3 times in 2 days
+>   (23 Sept, 25 Sept 02:42, 25 Sept 04:43). Per the rules, that usually means a
+>   limit needs raising.
+> - **~05:30: FALLBACK round 2 (Fable) DONE: 5 findings (1 MAJOR, 4 MINOR).** Saved
+>   in `.claude/reviews/fallback-2026-09-25-r2-fable.md`.
+>   - Verdicts: 9 of 11 round-1 fixes COMPLETE. F8 INCOMPLETE: the fallback search
+>     order drops the number BEFORE trying the plain title, so HALLOWEEN_5_1990 →
+>     "HALLOWEEN". F6 INCOMPLETE at the CLI JSON `identified`.
+>   - The MINOR ones: the frozen notice over-promises after a mid-run switch-OFF; F7
+>     text claims a saved `.toc` can carry a session; one F4 test is vacuous on a
+>     slow machine.
+>   - All confirmed against the code by the orchestrator. A Sonnet builder is fixing
+>     them in the main copy: 5 local commits, not pushed until reviewed.
+>   - **Then: Codex round 2 at 09:45 should cover `cd6b5a4..<after these fixes>`.**
+>     Move `codex-r2-end` forward before running it.
 > - **The review range is now PINNED** with local branches: `codex-r2-base` (at
 >   `cd6b5a4`) and `codex-r2-end` (at `d3553cc`). The brief uses `base..end`, so
 >   later commits are excluded. A background wake-up fires at 04:40 to run it.
@@ -72,6 +95,34 @@ below it.
 >   Built by Opus, and the race was reviewed by the orchestrator. **Its 35 tests
 >   were RUN locally in a harness** (all pass, and 8 in parallel pass). A
 >   planted-fault check failed 11 tests, as it should.
+> - `0c51c88` 5/10: the music runner. An artist is required; the length must be
+>   within max(5 s, 3%); results are re-sorted by that confidence (MusicBrainz's
+>   `ranked()` order isn't the tolerance rule); the same ambiguity rule as films.
+>   48 tests RAN locally; a planted fault was caught.
+> - `801dd0c`: orchestrator review fix. A track number ("01 - Song Title") was
+>   accepted as the artist, both via the shared `FilenameParser.parseMusic` and
+>   the new fallback. Now a digits-only artist from the FILE NAME is ignored (a TAG
+>   is trusted: "311" is a band), and the fallback splits only on a spaced dash.
+>   51 tests ran and passed; a planted fault failed exactly the 2 new tests. The
+>   shared parser is raised as **#514**.
+> - `61910ca` 6/10: engine wiring. `EncodingEngine(autoTagSettings:)` is appended
+>   last (all 20 construction sites unchanged). The lookup runs after the
+>   probe/validation and before any FFmpeg pass (including Dolby Vision). A
+>   per-job lock-held stop registry (counted, because ScriptingBridge can run the
+>   same job id twice). `autoTagEvents` keeps the newest 64; the `.lookup` event
+>   carries the WHOLE report. Built by Opus and reviewed by the orchestrator.
+>   **114 tests RAN locally** (5 classes, including ParallelEncodingConcurrency),
+>   and 8 in parallel pass. Planted faults showed each merge layer is covered.
+>   - **Behaviour change:** a Stop during the PROBE is now honoured on every engine
+>     (before, it was ignored). **Until commit 8 adds `catch is CancellationError`
+>     to `AppViewModel.runJob`, such a job shows "Failed", so commits 6-8 must land
+>     together** (all before any PR).
+>   - Suspected existing crash raised as **#515**: `FFmpegProcessController`
+>     reads `terminationStatus` possibly before exit.
+>   - **Test hygiene:** `removePersistentDomain` leaves an empty 42-byte plist in
+>     `~/Library/Preferences` per UUID test suite when tests run locally. 432 were
+>     created by this session's harness runs and ALL have been deleted. A
+>     follow-up could delete the plist file in tearDown.
 > - **⚠️ The commit 6 plan needs a fixture change:** the planned delivery test's
 >   fake ffprobe title "My own title" scores 0.65 (< 0.7), so nothing would apply.
 >   Use a title tag such as "Inception", or no title tag.
