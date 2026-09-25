@@ -241,7 +241,24 @@ below it.
 >     commit 8 creates.
 > - **CI GREEN on `6cd4bf5`** (#508 + the probe fix; run 36121593527). The #508
 >   issue has a completion comment with AC evidence; it stays open until merge.
-> - #506 8/9 (the Import & Export Settings screen): in progress.
+> - **#506 8/9 `d9c8a28`:** Settings › Import & Export.
+>   - `SettingsTransferViewModel`, a tab and a preview sheet.
+>   - Reload hooks for `keyboard_shortcuts` and `savedPipelines`, which now apply
+>     IMMEDIATELY.
+>   - Errors appear in an alert. The app tests are type-checked only (CI runs
+>     them).
+> - Orchestrator review fixes (worktree):
+>   - `f41813b`: the CLI crashed (`fatalError`) on a refused domain such as
+>     NSGlobalDomain (its comment falsely said only an empty name is refused), and
+>     the tripwire didn't allow SettingsCommand.swift's suite. That would have
+>     turned CI red. Both fixed; 31 tests ran locally.
+>   - `becbb1d`: Replace could be confirmed by DOUBLE-CLICKING the footer button.
+>     Now only the red button inside the warning confirms.
+> - **Builder hygiene:** the 8/9 builder used `git stash` (the stash list is shared;
+>   it was empty afterwards, so nothing was lost). **Rule: builders never use git
+>   stash; they use a temporary commit.**
+> - #506 9/9 (docs): in progress. **Then:** cherry-pick #506 (`522367d`…9/9)
+>   onto the branch, push, and watch CI BY COMMIT.
 > - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
 >   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
 >   Reason: round 2 now runs in small chunks with pasted diffs spread across the
