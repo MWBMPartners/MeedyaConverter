@@ -38,8 +38,22 @@ struct MediaServerSettingsView: View {
     /// Whether to use TLS (https) for the connection.
     @AppStorage("mediaServerUseTLS") private var useTLS = false
 
-    /// The API key or authentication token.
-    @AppStorage("mediaServerAPIKey") private var apiKey = ""
+    /// The API key manager backing the Keychain-held media server key.
+    /// Not `@Observable`, so it never drives a redraw on its own — every
+    /// change goes through `refreshKey()`. Mirrors
+    /// `MetadataSettingsTab.keyManager` (#506 commit 1).
+    @State private var keyManager = APIKeyManager()
+
+    /// What the user is currently typing. Cleared the moment it is saved
+    /// or discarded, so a pending key never lingers in memory longer than
+    /// it must (mirrors `MetadataSettingsTab.pendingTMDBKey`).
+    @State private var pendingAPIKey: String = ""
+
+    /// Whether a key exists right now, via `MediaServerCredentialStore
+    /// .currentKey` (Keychain first, the legacy settings-file value only
+    /// while it still exists) — NOT the key itself, which is never held
+    /// in view state for longer than a single action needs it.
+    @State private var hasKey = false
 
     /// The selected library ID (Plex section or Jellyfin/Emby folder).
     @AppStorage("mediaServerLibraryId") private var libraryId = ""
@@ -72,29 +86,62 @@ struct MediaServerSettingsView: View {
         MediaServerType(rawValue: serverTypeRaw) ?? .plex
     }
 
-    /// Build a `MediaServerConfig` from the current settings, or `nil` if invalid.
-    private var currentConfig: MediaServerConfig? {
-        Self.loadMediaServerConfig()
+    /// Trimmed form of `pendingAPIKey`, used to decide whether Save/Replace
+    /// should be enabled and what actually gets stored.
+    private var trimmedPendingKey: String {
+        pendingAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Plain-English notice shown when the once-per-launch startup
+    /// migration (`AppStartupMigrations`, run from `AppViewModel.init`)
+    /// could not move a legacy plaintext key into the Keychain. Its
+    /// presence is inferred from the legacy `UserDefaults` value still
+    /// being there: a successful migration removes it immediately, so if
+    /// it still exists by the time this screen renders, this launch's
+    /// migration attempt did not succeed. Wording matches the #506 plan
+    /// (§4) verbatim, so a future audit can grep for it.
+    private var legacyMigrationWarning: String? {
+        guard let legacyValue = UserDefaults.standard.string(forKey: MediaServerCredentialStore.legacyDefaultsKey),
+              !legacyValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return "Your media server key is still in the app's settings file because the "
+            + "Keychain didn't accept it. It will be moved automatically when the "
+            + "Keychain allows."
     }
 
     /// Load the persisted media server configuration independent of this
     /// view being on screen — the same `UserDefaults` keys this view's
-    /// `@AppStorage` properties bind to. Mirrors
+    /// `@AppStorage` properties bind to, plus the Keychain-held API key
+    /// (#506 commit 1 — the key itself no longer lives in `UserDefaults`
+    /// at all; see `MediaServerCredentialStore`). Mirrors
     /// `EmailSettingsView.loadSMTPConfig()`.
     ///
     /// Used by `AppViewModel`'s post-encode auto-scan wiring (Issue #295 /
     /// #203) to trigger a library scan without needing a
-    /// `MediaServerSettingsView` instance. Returns `nil` when the host or
-    /// API key is missing (mirrors `currentConfig` above), so callers can
-    /// silently skip.
+    /// `MediaServerSettingsView` instance, and by this view's own actions
+    /// (Test Connection, Fetch, Trigger Scan) — called ONLY from inside
+    /// those actions, never from a computed property read on every
+    /// redraw, because after this key moved to the Keychain that would
+    /// mean a Keychain read on every SwiftUI redraw of this screen (#506
+    /// plan §4). The buttons that call these actions are instead enabled
+    /// from `hasKey && !serverHost.isEmpty`, which needs no Keychain
+    /// access.
     ///
-    /// - Returns: A configured `MediaServerConfig`, or `nil` if `serverHost`
-    ///   or `apiKey` is empty.
-    static func loadMediaServerConfig() -> MediaServerConfig? {
-        let defaults = UserDefaults.standard
-
+    /// - Parameters:
+    ///   - defaults: Where the non-secret settings, and the legacy
+    ///     fallback value, live. Production callers use `.standard`;
+    ///     tests can pass an isolated suite.
+    ///   - keyManager: Where the Keychain-held key is read from.
+    ///     Production callers use a real `APIKeyManager()`; tests can
+    ///     pass a fake conforming to `MediaServerKeyStoring`.
+    /// - Returns: A configured `MediaServerConfig`, or `nil` if
+    ///   `serverHost` or the key is missing.
+    static func loadMediaServerConfig(
+        defaults: UserDefaults = .standard,
+        keyManager: MediaServerKeyStoring = APIKeyManager()
+    ) -> MediaServerConfig? {
         let host = defaults.string(forKey: "mediaServerHost") ?? ""
-        let apiKey = defaults.string(forKey: "mediaServerAPIKey") ?? ""
+        let apiKey = MediaServerCredentialStore.currentKey(defaults: defaults, store: keyManager) ?? ""
         guard !host.isEmpty, !apiKey.isEmpty else { return nil }
 
         let typeRaw = defaults.string(forKey: "mediaServerType") ?? MediaServerType.plex.rawValue
@@ -153,9 +200,50 @@ struct MediaServerSettingsView: View {
                         .accessibilityLabel("Connect using HTTPS")
                 }
 
-                SecureField("API Key", text: $apiKey, prompt: Text(apiKeyPlaceholder))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Media server API key or token")
+                // The key itself is never `@AppStorage` — that is a
+                // plain-text plist in the user's Library (SECURITY.md
+                // F-013). It goes to the Keychain via
+                // `MediaServerCredentialStore`, same rule as TMDB's tab
+                // (`MetadataSettingsTab.providerKeysSection`).
+                if hasKey {
+                    Label("A key is saved in your Keychain", systemImage: "key.fill")
+                        .foregroundStyle(.green)
+                        .accessibilityLabel("A media server key is saved in your Keychain")
+                    Text("For your safety the saved key is never shown again. You can "
+                         + "replace it by entering a new one, or remove it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let migrationWarning = legacyMigrationWarning {
+                    Text(migrationWarning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel(migrationWarning)
+                }
+
+                // SecureField, never TextField: a key must not be readable
+                // over the user's shoulder or captured in a screen
+                // recording.
+                SecureField(
+                    hasKey ? "Replace the saved key" : "API Key",
+                    text: $pendingAPIKey,
+                    prompt: Text(apiKeyPlaceholder)
+                )
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(hasKey ? "Replace the saved media server API key or token"
+                                            : "Media server API key or token")
+
+                HStack {
+                    Button(hasKey ? "Replace Key" : "Save Key") { saveKey() }
+                        .disabled(trimmedPendingKey.isEmpty)
+                        .accessibilityLabel(hasKey ? "Replace the saved media server key"
+                                                    : "Save the media server key")
+                    if hasKey {
+                        Button("Remove Key", role: .destructive) { removeKey() }
+                            .accessibilityLabel("Remove the saved media server key")
+                    }
+                }
 
                 // Test Connection button.
                 HStack {
@@ -164,7 +252,7 @@ struct MediaServerSettingsView: View {
                     } label: {
                         Label("Test Connection", systemImage: "antenna.radiowaves.left.and.right")
                     }
-                    .disabled(currentConfig == nil || isTesting)
+                    .disabled(!hasKey || serverHost.isEmpty || isTesting)
                     .accessibilityLabel("Test connectivity to the media server")
 
                     if isTesting {
@@ -198,7 +286,7 @@ struct MediaServerSettingsView: View {
                     } label: {
                         Label("Fetch", systemImage: "arrow.clockwise")
                     }
-                    .disabled(currentConfig == nil || isFetchingLibraries)
+                    .disabled(!hasKey || serverHost.isEmpty || isFetchingLibraries)
                     .accessibilityLabel("Fetch available libraries from the server")
 
                     if isFetchingLibraries {
@@ -213,7 +301,7 @@ struct MediaServerSettingsView: View {
                 Toggle("Auto-scan after successful encode", isOn: $autoScan)
                     .accessibilityLabel("Automatically trigger a library scan after each successful encode")
 
-                if autoScan && currentConfig == nil {
+                if autoScan && (!hasKey || serverHost.isEmpty) {
                     Text("Configure a valid host and API key to enable auto-scan.")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -228,7 +316,7 @@ struct MediaServerSettingsView: View {
                     } label: {
                         Label("Trigger Library Scan Now", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(currentConfig == nil || isScanning)
+                    .disabled(!hasKey || serverHost.isEmpty || isScanning)
                     .accessibilityLabel("Manually trigger a library scan on the media server")
 
                     if isScanning {
@@ -249,13 +337,62 @@ struct MediaServerSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Media Server")
+        .onAppear { refreshKey() }
+        // `keyManager` is a long-lived `@State` instance for as long as
+        // this screen is open, so it cannot tell us on its own when
+        // ANOTHER `APIKeyManager` instance — or the startup migration in
+        // `AppViewModel.init`, which constructs its own — changes the
+        // media server record. Mirrors `MetadataSettingsTab`'s identical
+        // `.onReceive` for TMDB.
+        .onReceive(
+            NotificationCenter.default.publisher(for: APIKeyManager.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            refreshKey()
+        }
+    }
+
+    // MARK: - Key management (#506 commit 1)
+
+    /// Re-reads whether a key is saved, via `MediaServerCredentialStore
+    /// .currentKey` — Keychain first, the legacy settings-file value only
+    /// while it still exists. Mirrors `MetadataSettingsTab.refreshKeys()`:
+    /// without this, `keyManager` being a long-lived `@State` instance
+    /// means the screen could go on showing stale information after some
+    /// OTHER `APIKeyManager` instance (or the startup migration) wrote
+    /// here.
+    private func refreshKey() {
+        let stored = MediaServerCredentialStore.currentKey(defaults: .standard, store: keyManager)
+        hasKey = !(stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Save (or replace) the media server key. Always via
+    /// `MediaServerCredentialStore.saveKey`, which writes to the Keychain
+    /// only.
+    private func saveKey() {
+        let key = trimmedPendingKey
+        guard !key.isEmpty else { return }
+        MediaServerCredentialStore.saveKey(key, store: keyManager)
+        pendingAPIKey = ""
+        refreshKey()
+    }
+
+    /// Remove the saved media server key.
+    private func removeKey() {
+        MediaServerCredentialStore.removeKey(store: keyManager)
+        pendingAPIKey = ""
+        refreshKey()
     }
 
     // MARK: - Actions
 
     /// Test connectivity to the configured media server.
     private func testConnection() {
-        guard let config = currentConfig else { return }
+        // Built here, inside the action, rather than read from a computed
+        // property on every redraw — see `loadMediaServerConfig`'s doc
+        // comment for why that would now mean a Keychain read on every
+        // redraw of this screen.
+        guard let config = Self.loadMediaServerConfig(keyManager: keyManager) else { return }
         isTesting = true
         feedbackMessage = nil
 
@@ -284,7 +421,7 @@ struct MediaServerSettingsView: View {
 
     /// Fetch the list of available libraries from the media server.
     private func fetchLibraries() {
-        guard let config = currentConfig else { return }
+        guard let config = Self.loadMediaServerConfig(keyManager: keyManager) else { return }
         isFetchingLibraries = true
         feedbackMessage = nil
 
@@ -309,7 +446,7 @@ struct MediaServerSettingsView: View {
 
     /// Manually trigger a library scan on the configured media server.
     private func triggerScan() {
-        guard let config = currentConfig else { return }
+        guard let config = Self.loadMediaServerConfig(keyManager: keyManager) else { return }
         isScanning = true
         feedbackMessage = nil
 

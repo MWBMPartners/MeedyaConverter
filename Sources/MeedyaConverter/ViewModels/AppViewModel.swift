@@ -702,6 +702,30 @@ final class AppViewModel {
         // actions were inert. Wired here.
         setupNotificationActionObservers()
 
+        // Startup migration (#506 commit 1): moves the media server API
+        // key out of the plain-text settings file and into the Keychain,
+        // if a legacy value is still there (SECURITY.md F-013). Kept on
+        // its own line, deliberately separate from the #508 auto-tagging
+        // block below — the two are unrelated, and bundling an unrelated
+        // migration into that block would just make future diffs on
+        // either one harder to read. Safe to call on every launch: once
+        // migrated, `AppStartupMigrations.run` is a fast no-op (see its
+        // doc comment). On failure the key stays usable via
+        // `MediaServerCredentialStore.currentKey`'s legacy fallback, and
+        // migration retries on the next launch — nothing here blocks
+        // startup or throws.
+        for outcome in AppStartupMigrations.run(defaults: .standard, keyManager: APIKeyManager()) {
+            if case .mediaServerKey(.failedKeptLegacyValue(_)) = outcome {
+                appendLog(
+                    .warning,
+                    "Your media server key is still in the app's settings file because the "
+                    + "Keychain didn't accept it. It will be moved automatically when the "
+                    + "Keychain allows.",
+                    category: .settings
+                )
+            }
+        }
+
         // Drain `engine.autoTagEvents` for the lifetime of this view model
         // and turn each one into an Activity Log line (#508 commit 8). This
         // is the ONLY reader of that stream — `AsyncStream` delivers each

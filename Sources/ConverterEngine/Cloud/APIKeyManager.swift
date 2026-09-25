@@ -40,6 +40,16 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
     case acoustID = "acoustid"
     case meedyaDB = "meedya_db"
 
+    // Media servers
+    /// Plex, Jellyfin or Emby — whichever one `MediaServerSettingsView`
+    /// has selected. There is only one media-server connection at a time
+    /// today, so this single case covers all three; the server TYPE is a
+    /// separate setting (`MediaServerType`, not this enum). Added for
+    /// #506 commit 1 to move `MediaServerSettingsView`'s API key/token out
+    /// of the plain-text settings file (SECURITY.md F-013) and into the
+    /// Keychain, via `MediaServerCredentialStore`.
+    case mediaServer = "media_server"
+
     // Internal MWBM services
     /// MWBM `intAppsAPI` — remote feature flags + update channels
     /// (roadmap #4/#5). Field mapping onto `StoredAPIKey` is documented
@@ -74,6 +84,7 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
         case .openSubtitles: return "OpenSubtitles"
         case .acoustID: return "AcoustID"
         case .meedyaDB: return "MeedyaDB"
+        case .mediaServer: return "Media server (Plex, Jellyfin, Emby)"
         case .intAppsAPI: return "MWBM intAppsAPI"
         }
     }
@@ -87,6 +98,8 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
         case .tmdb, .tvdb, .omdb, .discogs, .fanArtTV,
              .openSubtitles, .acoustID, .meedyaDB:
             return .metadata
+        case .mediaServer:
+            return .mediaServers
         case .intAppsAPI:
             return .internalServices
         }
@@ -125,6 +138,10 @@ public enum APIKeyProvider: String, Codable, Sendable, CaseIterable {
 public enum APIKeyCategory: String, Codable, Sendable, CaseIterable {
     case cloudStorage = "cloud_storage"
     case metadata = "metadata"
+    /// Plex, Jellyfin and Emby credentials (#506 commit 1). Its own
+    /// category rather than folding into `metadata` — a media server
+    /// isn't a metadata *provider*, it's the thing being told to rescan.
+    case mediaServers = "media_servers"
     /// Internal MWBM Partners services (e.g. intAppsAPI) — not a
     /// user-facing cloud/metadata provider, so kept as its own category
     /// rather than overloading `cloudStorage`/`metadata`.
@@ -135,6 +152,7 @@ public enum APIKeyCategory: String, Codable, Sendable, CaseIterable {
         switch self {
         case .cloudStorage: return "Cloud Storage & Delivery"
         case .metadata: return "Metadata Providers"
+        case .mediaServers: return "Media Servers"
         case .internalServices: return "Internal Services"
         }
     }
