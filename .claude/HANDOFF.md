@@ -204,6 +204,16 @@ below it.
 >   session's scratchpad `f4f5-repro/`) and caught a real error that way. Brief
 >   every builder to do the same, or to at least grep new tests for captured `var`s
 >   mutated inside `@Sendable` closures.
+> - **F1+#507+F10 screens: CI passed on `6057d8e`** (after two test-only reds:
+>   `d602cf0` captured-var; `6057d8e` the missing `refreshMeedyaDBReadiness()` in
+>   the runWillContribute tests).
+> - **F3: CI passed on `84ba42c`.** `483877a` was red because an OLD test asserted
+>   you could rip after a failed scan. The real screen can't reach that state, so it
+>   was replaced (`84ba42c`). The builder also blocks Identify when the source has
+>   changed since the scan, deliberately: a contribution can't be recalled.
+> - **All of #503's Codex r1 findings (F3, F4, F5, F9) and #502's F1, F2, F10 are
+>   done.** Remaining: **F6** (being built), **F7 + F11** wording (with the docs
+>   sweep), then **Codex round 2** over everything since `cd6b5a4`.
 > - **✅ A REAL local test-file type-check now exists** (found by the F3 builder,
 >   25 Sept), with no licence acceptance, sudo or xcode-select. It proved itself by
 >   rejecting planted errors, including the exact `@Sendable` captured-`var` bug
