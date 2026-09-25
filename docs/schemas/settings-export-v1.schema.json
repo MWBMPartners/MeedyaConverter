@@ -1,0 +1,947 @@
+{
+  "$comment" : "This schema describes exactly what THIS version of MeedyaConverter writes. Reading a file back is deliberately more forgiving than this schema: SettingsImporter reports and ignores an unknown group, an unknown setting, or a setting sitting in the wrong group, rather than refusing the whole file, so a future version can add a group (#505) or a setting without breaking an older one's export. Three checks matter more than the rest, because they are a second, independent line of defence against a secret ever reaching a settings file: an SFTP server's password must be the empty string, at authMethod.password._0; a cloud destination's access token (or, for S3, its access key ID) must be the empty string; and its refresh token and S3 secret key must be absent entirely. Everywhere else this schema is deliberately loose — array length limits, the \"no user name, password or query string in an address\" rule, and the full shape of encoding profiles, conditional rules and saved pipelines are all checked by MeedyaConverter's own code, not by this file, because the test-only checker this schema is validated against (SettingsSchemaMiniValidator) supports only a small, fixed list of JSON Schema keywords. See SettingsExportSchema.swift's header for the full list of what is loose and why.",
+  "$defs" : {
+    "cloudStorageDestination" : {
+      "additionalProperties" : false,
+      "description" : "A cloud storage destination (CloudStorageConfig). Leak safeguards: the access token (for S3, the access key ID) is always the empty string, and the refresh token and S3 secret key are never present, whatever this Mac has saved for it.",
+      "properties" : {
+        "accessToken" : {
+          "const" : "",
+          "type" : "string"
+        },
+        "bucket" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "endpoint" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "label" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "provider" : {
+          "enum" : [
+            "dropbox",
+            "onedrive",
+            "googleDrive",
+            "s3"
+          ],
+          "type" : "string"
+        },
+        "region" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "remotePath" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "provider",
+        "accessToken",
+        "remotePath",
+        "label"
+      ],
+      "type" : "object"
+    },
+    "conditionalRule" : {
+      "additionalProperties" : true,
+      "description" : "validated on import by decoding into ConditionalRule (Sources/ConverterEngine/Encoding/ConditionalRule.swift). Only its identity fields (id, name) are checked by this schema: the importer's own decode, which drops anything the type doesn't declare, is the real check on the rest of its shape.",
+      "properties" : {
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "name" : {
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "name"
+      ],
+      "type" : "object"
+    },
+    "customTheme" : {
+      "additionalProperties" : false,
+      "description" : "The chosen colour theme (ThemeManager's CustomTheme).",
+      "properties" : {
+        "accentHex" : {
+          "pattern" : "^#[0-9A-Fa-f]{6}$",
+          "type" : "string"
+        },
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "name" : {
+          "maxLength" : 256,
+          "type" : "string"
+        },
+        "sidebarTintHex" : {
+          "pattern" : "^#[0-9A-Fa-f]{6}$",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "name",
+        "accentHex"
+      ],
+      "type" : "object"
+    },
+    "encodingPipeline" : {
+      "additionalProperties" : true,
+      "description" : "validated on import by decoding into EncodingPipeline (Sources/ConverterEngine/Encoding/EncodingPipeline.swift). Only its identity fields (id, name) are checked by this schema: the importer's own decode, which drops anything the type doesn't declare, is the real check on the rest of its shape. Its steps carry an open-ended per-step configuration dictionary.",
+      "properties" : {
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "name" : {
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "name"
+      ],
+      "type" : "object"
+    },
+    "encodingProfile" : {
+      "additionalProperties" : true,
+      "description" : "validated on import by decoding into EncodingProfile (Sources/ConverterEngine/Encoding/EncodingProfile.swift). Only its identity fields (id, name) are checked by this schema: the importer's own decode, which drops anything the type doesn't declare, is the real check on the rest of its shape. It has about 45 fields in total.",
+      "properties" : {
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "name" : {
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "name"
+      ],
+      "type" : "object"
+    },
+    "renderFarmAgent" : {
+      "additionalProperties" : false,
+      "description" : "A render-farm agent you added, or MeedyaConverter discovered on the network. No secret fields (RenderFarmAgentInfo).",
+      "properties" : {
+        "architecture" : {
+          "maxLength" : 256,
+          "type" : "string"
+        },
+        "discovered" : {
+          "type" : "boolean"
+        },
+        "displayName" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "hardwareEncoders" : {
+          "items" : {
+            "maxLength" : 64,
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "host" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "port" : {
+          "maximum" : 65535,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "sshUsername" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "displayName",
+        "host",
+        "port",
+        "discovered",
+        "hardwareEncoders"
+      ],
+      "type" : "object"
+    },
+    "sftpServer" : {
+      "additionalProperties" : false,
+      "description" : "An SFTP server (SFTPServerConfig). The password is always written as an empty string, whatever this Mac has saved for it — see \"authMethod\" below.",
+      "properties" : {
+        "authMethod" : {
+          "additionalProperties" : false,
+          "description" : "Exactly one of these three, the way Swift's Codable writes AuthMethod. Never a plaintext password — see \"password\" below.",
+          "properties" : {
+            "agent" : {
+              "additionalProperties" : false,
+              "description" : "Use the running SSH agent. Carries no value.",
+              "properties" : {
+
+              },
+              "type" : "object"
+            },
+            "keyFile" : {
+              "additionalProperties" : false,
+              "description" : "A key file's path on the Mac that made the file. Not a secret.",
+              "properties" : {
+                "_0" : {
+                  "maxLength" : 4096,
+                  "type" : "string"
+                }
+              },
+              "required" : [
+                "_0"
+              ],
+              "type" : "object"
+            },
+            "password" : {
+              "additionalProperties" : false,
+              "description" : "Leak safeguard: always the empty string, whatever password this Mac has saved for this server (SFTPServerConfig.exportForm()).",
+              "properties" : {
+                "_0" : {
+                  "const" : "",
+                  "type" : "string"
+                }
+              },
+              "required" : [
+                "_0"
+              ],
+              "type" : "object"
+            }
+          },
+          "type" : "object"
+        },
+        "host" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "label" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "port" : {
+          "maximum" : 65535,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "remotePath" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        },
+        "username" : {
+          "maxLength" : 4096,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "id",
+        "host",
+        "port",
+        "username",
+        "authMethod",
+        "remotePath",
+        "label"
+      ],
+      "type" : "object"
+    },
+    "shortcutBinding" : {
+      "additionalProperties" : false,
+      "description" : "One keyboard shortcut (KeyboardShortcutManager's ShortcutBinding).",
+      "properties" : {
+        "action" : {
+          "maxLength" : 256,
+          "type" : "string"
+        },
+        "id" : {
+          "format" : "uuid",
+          "type" : "string"
+        },
+        "key" : {
+          "maxLength" : 32,
+          "type" : "string"
+        },
+        "label" : {
+          "maxLength" : 256,
+          "type" : "string"
+        },
+        "modifiers" : {
+          "items" : {
+            "maxLength" : 32,
+            "type" : "string"
+          },
+          "type" : "array"
+        }
+      },
+      "required" : [
+        "id",
+        "action",
+        "label",
+        "key",
+        "modifiers"
+      ],
+      "type" : "object"
+    }
+  },
+  "$id" : "urn:mwbm:meedyaconverter:settings-export:v1",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "description" : "A settings file written by MeedyaConverter's Import & Export screen, or by “meedya-convert settings export”. Read back by MeedyaConverter's importer, on the same Mac or another one.",
+  "properties" : {
+    "appVersion" : {
+      "description" : "The version of MeedyaConverter that wrote the file.",
+      "maxLength" : 64,
+      "type" : "string"
+    },
+    "categories" : {
+      "additionalProperties" : false,
+      "description" : "Only the groups the person ticked are present. This lists every group THIS version can write; SettingsImporter accepts a group it doesn't recognise too (reported, ignored), which this schema deliberately does not allow for.",
+      "properties" : {
+        "connections" : {
+          "additionalProperties" : false,
+          "description" : "Server addresses, ports, user names and options for email, media servers, webhooks, MeedyaDB, the render farm, SFTP, cloud storage and team profiles. Passwords, keys, tokens and webhook addresses are never included: you enter those again on the other Mac.",
+          "properties" : {
+            "settings" : {
+              "additionalProperties" : false,
+              "properties" : {
+                "cloudStorageProfiles" : {
+                  "description" : "Cloud storage destinations (tokens and keys removed)",
+                  "items" : {
+                    "$ref" : "#/$defs/cloudStorageDestination"
+                  },
+                  "type" : "array"
+                },
+                "emailFromAddress" : {
+                  "description" : "Email: from address",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "emailOnComplete" : {
+                  "description" : "Email when an encode completes",
+                  "type" : "boolean"
+                },
+                "emailOnFailure" : {
+                  "description" : "Email when an encode fails",
+                  "type" : "boolean"
+                },
+                "emailOnQueueFinished" : {
+                  "description" : "Email when the queue finishes",
+                  "type" : "boolean"
+                },
+                "emailSMTPHost" : {
+                  "description" : "Email: SMTP server",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "emailSMTPPort" : {
+                  "description" : "Email: SMTP port",
+                  "maximum" : 65535,
+                  "minimum" : 1,
+                  "type" : "integer"
+                },
+                "emailSMTPUseTLS" : {
+                  "description" : "Email: use TLS",
+                  "type" : "boolean"
+                },
+                "emailSMTPUsername" : {
+                  "description" : "Email: SMTP user name",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "emailToAddresses" : {
+                  "description" : "Email: recipients",
+                  "items" : {
+                    "maxLength" : 320,
+                    "type" : "string"
+                  },
+                  "type" : "array"
+                },
+                "mediaServerAutoScan" : {
+                  "description" : "Media server: scan the library after a successful encode",
+                  "type" : "boolean"
+                },
+                "mediaServerHost" : {
+                  "description" : "Media server: host",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "mediaServerLibraryId" : {
+                  "description" : "Media server: library",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "mediaServerPort" : {
+                  "description" : "Media server: port",
+                  "maximum" : 65535,
+                  "minimum" : 1,
+                  "type" : "integer"
+                },
+                "mediaServerType" : {
+                  "description" : "Media server: type (Plex, Jellyfin or Emby)",
+                  "enum" : [
+                    "plex",
+                    "jellyfin",
+                    "emby"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "mediaServerUseTLS" : {
+                  "description" : "Media server: use TLS",
+                  "type" : "boolean"
+                },
+                "meedyadb.baseURL" : {
+                  "description" : "MeedyaDB: server address",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "meedyadb.enabled" : {
+                  "description" : "MeedyaDB: contribute identified discs",
+                  "type" : "boolean"
+                },
+                "meedyadb.submissionMode" : {
+                  "description" : "MeedyaDB: what to send (just the identity, or the label too)",
+                  "enum" : [
+                    "anonymous",
+                    "full"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "renderFarm.agentsJSON" : {
+                  "description" : "Render farm: agents you added (name, host, port, SSH user name)",
+                  "items" : {
+                    "$ref" : "#/$defs/renderFarmAgent"
+                  },
+                  "type" : "array"
+                },
+                "renderFarm.chunkSizeMiB" : {
+                  "description" : "Render farm: upload chunk size (MiB)",
+                  "maximum" : 1024,
+                  "minimum" : 1,
+                  "type" : "integer"
+                },
+                "renderFarm.discoveryIntervalSeconds" : {
+                  "description" : "Render farm: discovery refresh interval (seconds)",
+                  "maximum" : 300,
+                  "minimum" : 5,
+                  "type" : "number"
+                },
+                "sftpProfiles" : {
+                  "description" : "SFTP servers (passwords removed)",
+                  "items" : {
+                    "$ref" : "#/$defs/sftpServer"
+                  },
+                  "type" : "array"
+                },
+                "teamProfiles.gitBranch" : {
+                  "description" : "Team profiles: git branch",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "teamProfiles.gitRemote" : {
+                  "description" : "Team profiles: git remote address",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "webhookOnComplete" : {
+                  "description" : "Webhook when an encode completes",
+                  "type" : "boolean"
+                },
+                "webhookOnFailure" : {
+                  "description" : "Webhook when an encode fails",
+                  "type" : "boolean"
+                },
+                "webhookOnQueueFinished" : {
+                  "description" : "Webhook when the queue finishes",
+                  "type" : "boolean"
+                },
+                "webhookPreset" : {
+                  "description" : "Webhooks: preset (Generic, Discord or Slack)",
+                  "enum" : [
+                    "Generic",
+                    "Discord",
+                    "Slack"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                }
+              },
+              "type" : "object"
+            }
+          },
+          "required" : [
+            "settings"
+          ],
+          "type" : "object"
+        },
+        "encoding" : {
+          "additionalProperties" : false,
+          "description" : "Default profile, what happens to files before and after converting, the filename template, conditional rules, saved pipelines, vector conversion options, Audio CD options and automatic tagging.",
+          "properties" : {
+            "settings" : {
+              "additionalProperties" : false,
+              "properties" : {
+                "accurateRip.enabled" : {
+                  "description" : "Submit verified rips to AccurateRip",
+                  "type" : "boolean"
+                },
+                "accurateRip.softwareId" : {
+                  "description" : "AccurateRip software identifier",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "autotag.enabled" : {
+                  "description" : "Tag files automatically while converting",
+                  "type" : "boolean"
+                },
+                "autotag.writeNFO" : {
+                  "description" : "Also save a Kodi .nfo file next to each identified film",
+                  "type" : "boolean"
+                },
+                "conditionalRules" : {
+                  "description" : "Conditional rules",
+                  "items" : {
+                    "$ref" : "#/$defs/conditionalRule"
+                  },
+                  "type" : "array"
+                },
+                "defaultProfileName" : {
+                  "description" : "Default encoding profile (by name)",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "deleteSourceAfterEncode" : {
+                  "description" : "Delete the source file after a successful encode",
+                  "type" : "boolean"
+                },
+                "filenameTemplate" : {
+                  "description" : "Output filename template",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "metadataBackend" : {
+                  "description" : "Metadata lookup backend",
+                  "enum" : [
+                    "automatic",
+                    "suiteCore",
+                    "inlineOnly"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "overwriteExisting" : {
+                  "description" : "Overwrite existing output files",
+                  "type" : "boolean"
+                },
+                "parallelMaxConcurrentJobs" : {
+                  "description" : "Maximum encoding jobs at once",
+                  "maximum" : 64,
+                  "minimum" : 1,
+                  "type" : "integer"
+                },
+                "proresVector.alphaHandling" : {
+                  "description" : "ProRes to Vector: alpha handling",
+                  "enum" : [
+                    "preserve_per_frame",
+                    "alpha_matte_only",
+                    "flatten"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.animation" : {
+                  "description" : "ProRes to Vector: animation method",
+                  "enum" : [
+                    "smil",
+                    "css_keyframes",
+                    "hybrid",
+                    "static_frame_sequence"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.frameRate" : {
+                  "description" : "ProRes to Vector: frame rate",
+                  "enum" : [
+                    "23.976",
+                    "24",
+                    "25",
+                    "29.97",
+                    "30",
+                    "50",
+                    "59.94",
+                    "60"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.frameStride" : {
+                  "description" : "ProRes to Vector: process every Nth frame",
+                  "maximum" : 10,
+                  "minimum" : 1,
+                  "type" : "integer"
+                },
+                "proresVector.sourceVariant" : {
+                  "description" : "ProRes to Vector: ProRes variant",
+                  "enum" : [
+                    "prores_4444",
+                    "prores_4444_xq",
+                    "prores_4444_hdr"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.tracing.alpha" : {
+                  "description" : "ProRes to Vector: tracing transparency handling",
+                  "enum" : [
+                    "clip_path_with_opacity",
+                    "flatten",
+                    "discard"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.tracing.colorCount" : {
+                  "description" : "ProRes to Vector: number of colours",
+                  "maximum" : 256,
+                  "minimum" : 2,
+                  "type" : "integer"
+                },
+                "proresVector.tracing.curveSimplification" : {
+                  "description" : "ProRes to Vector: curve simplification",
+                  "maximum" : 10,
+                  "minimum" : 0,
+                  "type" : "number"
+                },
+                "proresVector.tracing.preset" : {
+                  "description" : "ProRes to Vector: tracing editability preset",
+                  "enum" : [
+                    "logo_icon",
+                    "illustration",
+                    "photorealistic",
+                    "technical_diagram",
+                    "hand_drawn_sketch",
+                    "custom"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "proresVector.tracing.tracingMode" : {
+                  "description" : "ProRes to Vector: tracing mode",
+                  "enum" : [
+                    "outline",
+                    "color_quantization",
+                    "monochrome",
+                    "photorealistic"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "savedPipelines" : {
+                  "description" : "Saved encoding pipelines",
+                  "items" : {
+                    "$ref" : "#/$defs/encodingPipeline"
+                  },
+                  "type" : "array"
+                },
+                "useHardwareAcceleration" : {
+                  "description" : "Prefer hardware acceleration",
+                  "type" : "boolean"
+                },
+                "vectorConversion.alpha" : {
+                  "description" : "Vector Conversion: transparency handling",
+                  "enum" : [
+                    "clip_path_with_opacity",
+                    "flatten",
+                    "discard"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "vectorConversion.animation" : {
+                  "description" : "Vector Conversion: animation method",
+                  "enum" : [
+                    "smil",
+                    "css_keyframes",
+                    "hybrid",
+                    "static_frame_sequence"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "vectorConversion.colorCount" : {
+                  "description" : "Vector Conversion: number of colours",
+                  "maximum" : 256,
+                  "minimum" : 2,
+                  "type" : "integer"
+                },
+                "vectorConversion.curveSimplification" : {
+                  "description" : "Vector Conversion: curve simplification",
+                  "maximum" : 10,
+                  "minimum" : 0,
+                  "type" : "number"
+                },
+                "vectorConversion.preset" : {
+                  "description" : "Vector Conversion: editability preset",
+                  "enum" : [
+                    "logo_icon",
+                    "illustration",
+                    "photorealistic",
+                    "technical_diagram",
+                    "hand_drawn_sketch",
+                    "custom"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "vectorConversion.tracingMode" : {
+                  "description" : "Vector Conversion: tracing mode",
+                  "enum" : [
+                    "outline",
+                    "color_quantization",
+                    "monochrome",
+                    "photorealistic"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                }
+              },
+              "type" : "object"
+            }
+          },
+          "required" : [
+            "settings"
+          ],
+          "type" : "object"
+        },
+        "encodingProfiles" : {
+          "additionalProperties" : false,
+          "description" : "The encoding profiles you made. The built-in profiles are never included, because every copy of MeedyaConverter already has them.",
+          "properties" : {
+            "profiles" : {
+              "description" : "Your encoding profiles, merged by id. Built-in profiles are never included: every copy of MeedyaConverter already has them.",
+              "items" : {
+                "$ref" : "#/$defs/encodingProfile"
+              },
+              "type" : "array"
+            }
+          },
+          "required" : [
+            "profiles"
+          ],
+          "type" : "object"
+        },
+        "general" : {
+          "additionalProperties" : false,
+          "description" : "Theme, notifications, keyboard shortcuts, the update channel, and how the app behaves.",
+          "properties" : {
+            "settings" : {
+              "additionalProperties" : false,
+              "properties" : {
+                "appearanceMode" : {
+                  "description" : "Appearance: System, Light or Dark",
+                  "enum" : [
+                    "System",
+                    "Light",
+                    "Dark"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "autoScrollLog" : {
+                  "description" : "Auto-scroll the activity log",
+                  "type" : "boolean"
+                },
+                "confirmBeforeEncoding" : {
+                  "description" : "Confirm before starting encoding",
+                  "type" : "boolean"
+                },
+                "customAccentColor" : {
+                  "description" : "Theme accent colour",
+                  "pattern" : "^#[0-9A-Fa-f]{6}$",
+                  "type" : "string"
+                },
+                "customSidebarTint" : {
+                  "description" : "Theme sidebar tint",
+                  "pattern" : "^#[0-9A-Fa-f]{6}$",
+                  "type" : "string"
+                },
+                "customThemeData" : {
+                  "$ref" : "#/$defs/customTheme",
+                  "description" : "The chosen colour theme"
+                },
+                "keyboard_shortcuts" : {
+                  "description" : "Keyboard shortcuts",
+                  "items" : {
+                    "$ref" : "#/$defs/shortcutBinding"
+                  },
+                  "type" : "array"
+                },
+                "notifyOnCompletion" : {
+                  "description" : "Notify when a job completes",
+                  "type" : "boolean"
+                },
+                "notifyOnFailure" : {
+                  "description" : "Notify when a job fails",
+                  "type" : "boolean"
+                },
+                "notifyOnQueueFinished" : {
+                  "description" : "Notify when the queue finishes",
+                  "type" : "boolean"
+                },
+                "playSoundOnCompletion" : {
+                  "description" : "Play a sound on completion",
+                  "type" : "boolean"
+                },
+                "showMenuBarStatus" : {
+                  "description" : "Show status in the menu bar",
+                  "type" : "boolean"
+                },
+                "updateChannel" : {
+                  "description" : "Update channel: stable, beta or alpha",
+                  "enum" : [
+                    "stable",
+                    "beta",
+                    "alpha"
+                  ],
+                  "maxLength" : 4096,
+                  "type" : "string"
+                }
+              },
+              "type" : "object"
+            }
+          },
+          "required" : [
+            "settings"
+          ],
+          "type" : "object"
+        },
+        "thisMac" : {
+          "additionalProperties" : false,
+          "description" : "Where FFmpeg and other tools are installed on this Mac, and your CD drive's model and read offset.",
+          "properties" : {
+            "settings" : {
+              "additionalProperties" : false,
+              "properties" : {
+                "accurateRip.driveModel" : {
+                  "description" : "CD drive model",
+                  "maxLength" : 4096,
+                  "type" : "string"
+                },
+                "accurateRip.driveOffset" : {
+                  "description" : "CD drive read offset (samples)",
+                  "maximum" : 500,
+                  "minimum" : -500,
+                  "type" : "integer"
+                },
+                "customFFmpegPath" : {
+                  "description" : "FFmpeg location",
+                  "maxLength" : 4096,
+                  "pattern" : "^$|^[/~]",
+                  "type" : "string"
+                },
+                "customFFprobePath" : {
+                  "description" : "FFprobe location",
+                  "maxLength" : 4096,
+                  "pattern" : "^$|^[/~]",
+                  "type" : "string"
+                },
+                "customPotracePath" : {
+                  "description" : "potrace location",
+                  "maxLength" : 4096,
+                  "pattern" : "^$|^[/~]",
+                  "type" : "string"
+                },
+                "customVTracerPath" : {
+                  "description" : "VTracer location",
+                  "maxLength" : 4096,
+                  "pattern" : "^$|^[/~]",
+                  "type" : "string"
+                },
+                "makemkv.binaryPath" : {
+                  "description" : "makemkvcon location",
+                  "maxLength" : 4096,
+                  "pattern" : "^$|^[/~]",
+                  "type" : "string"
+                }
+              },
+              "type" : "object"
+            }
+          },
+          "required" : [
+            "settings"
+          ],
+          "type" : "object"
+        }
+      },
+      "type" : "object"
+    },
+    "exportedAt" : {
+      "description" : "When the file was written.",
+      "format" : "date-time",
+      "type" : "string"
+    },
+    "format" : {
+      "const" : "meedyaconverter.settings",
+      "description" : "Always “meedyaconverter.settings”. Says the file is a MeedyaConverter settings file, not something else that happens to be JSON.",
+      "type" : "string"
+    },
+    "notIncluded" : {
+      "description" : "Names, from this fixed list, of passwords, keys and consents that were set up on the Mac that made this file but are never copied here. Lets the importing Mac say, for example, “TMDB still needs a key”. Never holds a value — only ever one of these names.",
+      "items" : {
+        "enum" : [
+          "tmdbKey",
+          "meedyaDBKey",
+          "mediaServerKey",
+          "smtpPassword",
+          "webhookAddress",
+          "webhookHeaders",
+          "hooks",
+          "makeMKVConsent",
+          "renderFarmInsecureTransport"
+        ],
+        "type" : "string"
+      },
+      "type" : "array"
+    },
+    "version" : {
+      "const" : 1,
+      "description" : "The settings file format version. This schema describes exactly what version 1 writes; it does not describe any other version.",
+      "type" : "integer"
+    }
+  },
+  "required" : [
+    "format",
+    "version",
+    "exportedAt",
+    "appVersion",
+    "categories",
+    "notIncluded"
+  ],
+  "title" : "MeedyaConverter settings export",
+  "type" : "object"
+}

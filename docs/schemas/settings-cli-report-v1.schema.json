@@ -1,0 +1,256 @@
+{
+  "$comment" : "PROVISIONAL SPEC, not yet produced by any code. #506 commit 7 (the \"meedya-convert settings\" command) has not been written yet; this file defines the shape it must produce, worked out from the plan (.claude/plans/settings-export-import-plan.md, section 6) and from the engine's SettingsExport, SettingsImportPreview and SettingsImportResult types. If commit 7 finds this shape does not fit once it is actually being built, THIS FILE is what changes, together with SettingsCLIReportSchema.generate() and SettingsSchemaTests — never a silent mismatch between what the CLI prints and what this schema describes.",
+  "$defs" : {
+    "categoryReport" : {
+      "additionalProperties" : false,
+      "description" : "One settings group's counts.",
+      "properties" : {
+        "added" : {
+          "description" : "Import only: how many items this group adds.",
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "category" : {
+          "description" : "The group's internal name, exactly as SettingsCategory and the settings file itself use it.",
+          "enum" : [
+            "general",
+            "encoding",
+            "encodingProfiles",
+            "connections",
+            "thisMac"
+          ],
+          "type" : "string"
+        },
+        "count" : {
+          "description" : "How many settings, or profiles, the file has for this group.",
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "displayName" : {
+          "description" : "The group's plain-English name (SettingsCategory.displayName).",
+          "type" : "string"
+        },
+        "removed" : {
+          "description" : "Import, replace mode only: how many of this Mac's items this group removes.",
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "selected" : {
+          "description" : "Whether this group was ticked (chosen with --categories, or the default).",
+          "type" : "boolean"
+        },
+        "summary" : {
+          "description" : "One plain-English sentence summarising this group, the same wording the text report and the app's preview use.",
+          "type" : "string"
+        },
+        "updated" : {
+          "description" : "Import only: how many items this group changes.",
+          "minimum" : 0,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+        "category",
+        "displayName",
+        "selected",
+        "count"
+      ],
+      "type" : "object"
+    },
+    "ignoredItem" : {
+      "additionalProperties" : false,
+      "description" : "Something in the imported file that was not imported. Never fatal: the rest of the file still imports (SettingsIgnoredItem).",
+      "properties" : {
+        "belongsIn" : {
+          "description" : "Only present when reason is \"wrongGroup\": the group the setting actually belongs in.",
+          "enum" : [
+            "general",
+            "encoding",
+            "encodingProfiles",
+            "connections",
+            "thisMac"
+          ],
+          "type" : "string"
+        },
+        "explanation" : {
+          "description" : "One plain sentence saying what was ignored and why (SettingsIgnoredItem.explanation).",
+          "type" : "string"
+        },
+        "group" : {
+          "description" : "The group name as written in the file, when the ignored item was inside one. Absent for a problem with the file's top level.",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "The setting, group or field name, exactly as written in the file.",
+          "type" : "string"
+        },
+        "reason" : {
+          "description" : "Which of SettingsIgnoredItem.Reason applies.",
+          "enum" : [
+            "unknownGroup",
+            "unknownSetting",
+            "neverImported",
+            "wrongGroup",
+            "unknownLeftOutName",
+            "unknownField"
+          ],
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "name",
+        "reason",
+        "explanation"
+      ],
+      "type" : "object"
+    },
+    "stillNeededItem" : {
+      "additionalProperties" : false,
+      "description" : "A password, key, key file or consent that still needs entering on this Mac (SettingsCredentialNeed).",
+      "properties" : {
+        "explanation" : {
+          "description" : "Why it was not copied, when worth saying.",
+          "type" : "string"
+        },
+        "location" : {
+          "description" : "Where to set it up (SettingsCredentialNeed.location).",
+          "type" : "string"
+        },
+        "status" : {
+          "description" : "Whether it is definitely missing, or this Mac could not check.",
+          "enum" : [
+            "missing",
+            "couldNotCheck"
+          ],
+          "type" : "string"
+        },
+        "statusReason" : {
+          "description" : "Only present when status is \"couldNotCheck\": why it could not be checked. Never implies the item is actually missing.",
+          "type" : "string"
+        },
+        "title" : {
+          "description" : "What it is (“TMDB key”, “SFTP server ‘NAS’ password”).",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "title",
+        "location",
+        "status"
+      ],
+      "type" : "object"
+    }
+  },
+  "$id" : "urn:mwbm:meedyaconverter:settings-cli-report:v1",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "description" : "The “--format json” output of “meedya-convert settings export” and “meedya-convert settings import” (issue #506).",
+  "properties" : {
+    "appVersion" : {
+      "description" : "The version of MeedyaConverter running the command.",
+      "maxLength" : 64,
+      "type" : "string"
+    },
+    "applied" : {
+      "description" : "Import only: true once --apply has written the change; false for a preview (the default — see the plan's owner decision 2).",
+      "type" : "boolean"
+    },
+    "categories" : {
+      "description" : "One entry per settings group the command touched, in the usual order (General, Encoding, Your encoding profiles, Connections, This Mac only).",
+      "items" : {
+        "$ref" : "#/$defs/categoryReport"
+      },
+      "type" : "array"
+    },
+    "command" : {
+      "description" : "Which subcommand produced this report.",
+      "enum" : [
+        "export",
+        "import"
+      ],
+      "type" : "string"
+    },
+    "crossChecks" : {
+      "description" : "Import only: statements about things that will not work exactly as the other Mac had them (for example, a default profile this Mac does not have).",
+      "items" : {
+        "type" : "string"
+      },
+      "type" : "array"
+    },
+    "file" : {
+      "description" : "The settings file path that was read (import) or written (export).",
+      "type" : "string"
+    },
+    "generatedAt" : {
+      "description" : "When this report was produced.",
+      "format" : "date-time",
+      "type" : "string"
+    },
+    "ignored" : {
+      "description" : "Import only: things in the file that were not imported, and why.",
+      "items" : {
+        "$ref" : "#/$defs/ignoredItem"
+      },
+      "type" : "array"
+    },
+    "leftOut" : {
+      "description" : "Export only: the names of things set up on this Mac that the file never carries.",
+      "items" : {
+        "enum" : [
+          "tmdbKey",
+          "meedyaDBKey",
+          "mediaServerKey",
+          "smtpPassword",
+          "webhookAddress",
+          "webhookHeaders",
+          "hooks",
+          "makeMKVConsent",
+          "renderFarmInsecureTransport"
+        ],
+        "type" : "string"
+      },
+      "type" : "array"
+    },
+    "mode" : {
+      "description" : "Import only: how the file was, or would be, combined with this Mac's settings.",
+      "enum" : [
+        "merge",
+        "replace"
+      ],
+      "type" : "string"
+    },
+    "replaceConfirmation" : {
+      "description" : "Import, replace mode only: one sentence naming what Replace removes.",
+      "type" : "string"
+    },
+    "stillNeeded" : {
+      "description" : "Import only, after applying: passwords, keys and consents that still need entering on this Mac.",
+      "items" : {
+        "$ref" : "#/$defs/stillNeededItem"
+      },
+      "type" : "array"
+    },
+    "takesEffectNextLaunch" : {
+      "description" : "Import only, after applying: plain-English labels of settings that only take effect the next time MeedyaConverter opens.",
+      "items" : {
+        "type" : "string"
+      },
+      "type" : "array"
+    },
+    "warnings" : {
+      "description" : "Cautions for risky settings selected for import (for example, a switched-on “delete source after encode”).",
+      "items" : {
+        "type" : "string"
+      },
+      "type" : "array"
+    }
+  },
+  "required" : [
+    "command",
+    "appVersion",
+    "generatedAt",
+    "categories"
+  ],
+  "title" : "meedya-convert settings — JSON report",
+  "type" : "object"
+}
