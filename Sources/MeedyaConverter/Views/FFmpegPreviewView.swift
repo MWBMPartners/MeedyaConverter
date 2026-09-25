@@ -27,6 +27,20 @@ struct FFmpegPreviewView: View {
 
     @State private var copied = false
 
+    /// Mirrors `AutoTagSettingsSection`'s own `@AppStorage` — same constant,
+    /// same implicit `UserDefaults.standard` — so this preview never reads a
+    /// different copy of the switch than the one Settings writes and a real
+    /// encode reads (#508 commit 9).
+    ///
+    /// This preview builds its command from `EncodingJobConfig.buildArguments()`
+    /// alone (below), which knows nothing about auto-tagging — the tags a
+    /// lookup finds are only merged into `outputMetadata` once the job
+    /// actually runs, inside `EncodingEngine.encode(job:onProgress:)`. So
+    /// when the switch is on, this preview is deliberately incomplete unless
+    /// it says so.
+    @AppStorage(AutoTagSettingsStore.Keys.enabled)
+    private var autoTagEnabled: Bool = false
+
     // MARK: - Body
 
     var body: some View {
@@ -64,9 +78,23 @@ struct FFmpegPreviewView: View {
             // Footer with copy button
             HStack {
                 if let command = buildCommandString() {
-                    Text("\(command.arguments.count) arguments")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(command.arguments.count) arguments")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        // #508 commit 9 — this preview cannot show tags a
+                        // lookup hasn't run yet, so say so rather than let
+                        // the command above look like the whole story.
+                        if autoTagEnabled {
+                            Text("Automatic tagging is on: tags found when the job runs are added to this command.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel(
+                                    "Automatic tagging is on. Tags found when the job runs are added to this command."
+                                )
+                        }
+                    }
                 }
 
                 Spacer()

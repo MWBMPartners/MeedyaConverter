@@ -321,6 +321,12 @@ struct MetadataSettingsTab: View {
     var body: some View {
         Form {
             providerKeysSection
+            // #508 commit 9 — the Settings switch that finally lets someone
+            // turn auto-tagging on. `hasTMDBKey` is this tab's own state,
+            // already kept fresh above (onAppear, after Save/Remove, and on
+            // `APIKeyManager.didChangeNotification`), so the status line
+            // inside never goes stale independently of the key field above it.
+            AutoTagSettingsSection(hasTMDBKey: hasTMDBKey)
             Section("Provider backend") {
                 Picker("Strategy", selection: backend) {
                     ForEach(SuiteCoreMetadataBackend.allCases, id: \.self) { option in
