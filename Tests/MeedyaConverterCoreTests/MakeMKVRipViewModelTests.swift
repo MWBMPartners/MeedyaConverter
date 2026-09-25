@@ -1365,6 +1365,12 @@ final class MakeMKVRipViewModelTests: XCTestCase {
 
         XCTAssertFalse(vm.runWillContribute, "this run started with contributing off")
         box.readiness = .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
+        // The screen re-reads settings only when told to — the view calls
+        // `refreshMeedyaDBReadiness()` from its `.onChange`/`.onReceive`
+        // handlers. The test must do the same, or `willContribute` still
+        // shows the value read at run start (CI red on d602cf0: this
+        // precondition failed because the refresh was missing).
+        vm.refreshMeedyaDBReadiness()
         XCTAssertTrue(vm.willContribute, "precondition: the LIVE setting really did change")
         XCTAssertFalse(vm.runWillContribute, "a run already in progress must not retroactively promise more")
 

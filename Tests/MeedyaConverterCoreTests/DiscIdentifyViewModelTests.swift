@@ -739,6 +739,12 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         XCTAssertFalse(vm.runWillContribute, "this run started with contributing off")
         // The live setting flips ON while the run is still going...
         box.readiness = readyReadiness()
+        // The screen re-reads settings only when told to — the view calls
+        // `refreshMeedyaDBReadiness()` from its `.onChange`/`.onReceive`
+        // handlers. The test must do the same, or `willContribute` still
+        // shows the value read at run start (CI red on d602cf0: this
+        // precondition failed because the refresh was missing).
+        vm.refreshMeedyaDBReadiness()
         XCTAssertTrue(vm.willContribute, "precondition: the LIVE setting really did change")
         // ...but the frozen promise for the run already in progress must not
         // follow it, because that run's own `recheck` can only narrow or

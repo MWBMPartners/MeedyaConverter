@@ -196,6 +196,14 @@ below it.
 >   - The memory is updated; W10 and the `.OpenAI` mirror are corrected in the
 >     next notes commit.
 > - **In progress:** F1 + #507 + the F10 screen wiring (Sonnet, main copy).
+> - **F1+#507+F10 screens (`9d47730`): CI RED, then fixed in `d602cf0`.** A new
+>   contributor test mutated a plain captured `var` inside the `@Sendable`
+>   `recheck` closure, which Swift 6 refuses. `swiftc -parse` accepted it.
+>   **Lesson:** `-parse` is not enough for test files. The F4/F5 builder
+>   TYPE-CHECKED its test files against a stand-in XCTest module (sources in this
+>   session's scratchpad `f4f5-repro/`) and caught a real error that way. Brief
+>   every builder to do the same, or to at least grep new tests for captured `var`s
+>   mutated inside `@Sendable` closures.
 > - **Follow-up issues raised (25 Sept):**
 >   - #509: `ExternalToolRunner`/`DiscImagingController` have the F4/F5 faults.
 >   - #510: built-in profiles get a new random ID every launch, which breaks
