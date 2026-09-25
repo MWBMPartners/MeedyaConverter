@@ -80,9 +80,17 @@ meedya-convert disc toc --device /dev/rdisk2 -o my-disc.toc
 
 An **Enhanced CD** (sometimes CD-Extra) has music *and* a data session with
 computer files on it. MusicBrainz measures only the music, so that is what
-MeedyaConverter asks about — but it records both identifiers, so the disc can
-be both *matched* against other copies and *told apart* from a pressing with
-different bonus content.
+MeedyaConverter asks about — and it is designed to also record a whole-disc
+identifier, so the disc can be both *matched* against other copies and *told
+apart* from a pressing with different bonus content.
+
+**Reading from a drive currently only reads the first session** — the music —
+so the whole-disc identifier does not appear yet for a disc read this way; the
+row above is simply not shown. This does not affect the Disc ID itself: it is
+still measured correctly, because it only ever needed that first session
+anyway. A saved table of contents that already records a second session (for
+example, produced by a fuller tool) is read correctly and does show the
+whole-disc identifier.
 
 If MusicBrainz has never seen the disc, that is a perfectly good answer and
 not an error. The identifiers are still worked out, and are still worth
@@ -159,19 +167,27 @@ identified automatically — what happens to them next is up to you.
 
 ### Identifying a film disc
 
-Once a disc has been scanned, the same screen can work out **what film or
-programme it is**. You do not have to rip anything to use this.
+Once a disc has been scanned, the same screen can work out **which film it
+is**. You do not have to rip anything to use this. It searches for films only
+— television is not searched yet, whatever the disc actually contains.
 
-It works from what the scan already found — the running time of the main
-feature, how many chapters it has, which audio and subtitle languages are on
-it — and compares that against [TMDB](https://www.themoviedb.org), if you have
-added a TMDB key in Settings → Metadata.
+It searches [TMDB](https://www.themoviedb.org) — if you have added a TMDB key
+in Settings → Metadata — using the disc's own name (and any year written into
+that name), then scores each result it gets back by how closely its running
+time matches the main feature. That running-time comparison is the main
+signal: it is what actually tells two similarly-named films apart. The scan
+also reads the chapter count and the audio and subtitle languages, but
+nothing compares them against TMDB's answer yet, so at the moment they play
+no part in the guess.
 
 **This is a best guess, and the app says so.** A music disc gives an exact
-answer when MusicBrainz recognises it, and its own best guess when it does
-not; a film disc's answer is always a guess. The result reads like *"Best
-guess: Big Movie (92% confident)"*, and the percentage is there to be taken
-seriously — a low one means check before you trust it.
+answer when MusicBrainz recognises that exact disc, and its own best guess
+when it does not; a film disc's answer is always a guess. The result reads
+like *"Best guess: Big Movie (85% confident)"* — and a film disc can
+currently reach at most 85% confident, because the only two things being
+compared are the running time and the name; a percentage at or below that
+ceiling is normal, not a sign that something went wrong, and a low one is
+still worth checking before you trust it.
 
 **Choose the disc type before identifying.** The app pre-fills this from what
 MakeMKV reports, but MakeMKV's wording varies, so the menu is always yours to

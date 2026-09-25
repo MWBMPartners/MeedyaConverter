@@ -89,14 +89,22 @@ public struct MusicDiscIdentity: Sendable, Equatable {
     public var musicDiscID: String?
 
     /// The same calculation over the **whole physical disc**, including any
-    /// data session. Identical to `musicDiscID` on an ordinary audio CD;
-    /// different on an Enhanced/CD-Extra disc, where it is the finer key.
+    /// data session. Identical to `musicDiscID` on an ordinary audio CD, and
+    /// DESIGNED to differ on an Enhanced/CD-Extra disc, where it would be the
+    /// finer key — but see `leadOutSource`: when the TOC came from a real
+    /// drive read, it never actually does yet, because that reader only reads
+    /// the first (music) session.
     public var wholeDiscID: String?
 
     /// How the music session's lead-out was established — reported by the
-    /// drive, derived from where the data track starts, or simply the whole
-    /// disc because there is only one session. Worth surfacing: the derived
-    /// case is the one that has never been checked against real hardware.
+    /// drive, derived from where the data track starts, or simply the disc's
+    /// own lead-out because only one session was read. That third case,
+    /// `.singleSession`, is what every disc read from a real drive gets today
+    /// — see `MusicBrainzDiscID`'s file header — including a genuine Enhanced
+    /// CD, since the reader never asks for session 2. Worth surfacing: the
+    /// derived case is the one that has never been checked against real
+    /// hardware, and the single-session case does not by itself mean the disc
+    /// has no data session, only that this run could not see one.
     public var leadOutSource: MusicBrainzDiscID.LeadOutSource?
 
     /// The `+`-joined TOC string used for the MusicBrainz lookup and stored
@@ -128,6 +136,12 @@ public struct MusicDiscIdentity: Sendable, Equatable {
     /// be wrong whenever the TOC carries a stored music ID: a stale or
     /// foreign tag would differ from our computed whole-disc ID and make an
     /// ordinary CD look Enhanced.
+    ///
+    /// For a TOC read from a real drive this is `false` today even on a
+    /// genuine Enhanced CD, because the drive reader only reads the first
+    /// (music) session, so `leadOutSource` can only ever come back
+    /// `.singleSession`. `false` here means "no data session was seen", not
+    /// "there is no data session".
     public var isEnhancedCD: Bool {
         // Unwrap before the switch: bare `case .singleSession:` against an
         // Optional does not compile — it would need `case .singleSession?:`.

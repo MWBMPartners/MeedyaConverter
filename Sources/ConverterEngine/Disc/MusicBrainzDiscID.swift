@@ -34,8 +34,10 @@
 //     matched against the wider world and told apart from its siblings.
 //
 // On an ordinary single-session audio CD — the overwhelming majority — the two are
-// identical, so nothing changes for most discs. They differ only on an Enhanced /
-// CD-Extra disc (music in session 1, a data track in session 2).
+// identical, so nothing changes for most discs. They are DESIGNED to differ only on
+// an Enhanced / CD-Extra disc (music in session 1, a data track in session 2) — but
+// see the note below: today they never actually do, because nothing yet reads that
+// second session in from a drive.
 //
 // How the end of the music session is found, best first:
 //   1. the disc reported its sessions → use session 1's own lead-out (exact);
@@ -46,6 +48,22 @@
 // Only step 2 is an estimate, and it is the one thing still wanting confirmation
 // against a real Enhanced CD on the hardware matrix (#504). Step 2 is also refused
 // if it would place the lead-out before the last music track.
+//
+// IN PRACTICE, WHEN READING FROM A DRIVE, IT IS ALWAYS STEP 3 TODAY: the drive
+// reader passes no `--session` to cdrdao, so only the first (music) session is
+// ever read. A `DiscTableOfContents` built from a real disc therefore never
+// reports more than one session and never carries a data track from a later
+// session, so steps 1 and 2 above cannot fire — the whole-disc ID a real
+// Enhanced/CD-Extra disc would need has nowhere to come from yet. This happens to
+// be harmless for the music ID specifically: session 1's own lead-out (step 3's
+// `toc.leadOutSector`, since that is all the TOC we have) is the same value
+// step 1 would have used had the session table been read, so the MUSIC Disc ID
+// this computes is still what MusicBrainz measures. It is not hardware-verified;
+// it follows from how cdrdao and libdiscid both define a session's lead-out.
+// A saved `.toc` file built by a fuller reader (or by hand) that DOES carry a
+// real second session will still be read correctly by steps 1/2 above — this
+// limitation is about what the drive reader currently supplies, not about this
+// type's own logic.
 //
 // `MusicBrainzDiscLookupService.musicBrainzTOCString` uses the SAME music-session
 // lead-out and must always move in step with this, or the ID and the lookup would
@@ -89,15 +107,26 @@ public enum MusicBrainzDiscID {
     /// How the end of the music session was established.
     public enum LeadOutSource: Sendable, Equatable {
         /// An ordinary single-session audio CD — the disc's lead-out *is* the music
-        /// lead-out, so this is exact.
+        /// lead-out, so this is exact. Also what a genuine Enhanced/CD-Extra disc
+        /// gets today when read from a drive — see the file header — so this case
+        /// no longer means "definitely a single-session disc", only "this run saw
+        /// one session".
         case singleSession
         /// The disc reported its session layout and we used session 1's own
-        /// lead-out. Exact, and needs no assumptions.
+        /// lead-out. Exact WHEN IT FIRES — no assumptions are involved in the
+        /// arithmetic. But needing no assumptions is not the same as being
+        /// hardware-confirmed: the drive reader never supplies session data today
+        /// (see the file header), so this path is currently just as untested
+        /// against a real Enhanced CD as `derivedFromDataTrack` below — it simply
+        /// never runs at all, rather than running and estimating.
         case reportedSession
         /// A multi-session disc that did not report sessions: inferred from where
         /// the data track starts, minus `sessionGapSectors`. **This is the only
-        /// estimated path** — see #504; it wants confirming against a real
-        /// Enhanced CD on the hardware matrix.
+        /// path that ESTIMATES rather than measures** — see #504; it wants
+        /// confirming against a real Enhanced CD on the hardware matrix. (Today it
+        /// additionally never fires from a drive read at all, for the same reason
+        /// `reportedSession` doesn't — see the file header — so there is currently
+        /// nothing to confirm it against outside a hand-built `.toc`.)
         case derivedFromDataTrack
     }
 
@@ -155,7 +184,14 @@ public enum MusicBrainzDiscID {
     /// music-only ID yet differ here. Recorded alongside the music-only ID so a disc
     /// can be both matched *and* told apart.
     ///
-    /// On an ordinary single-session audio CD this equals `compute(for:)`.
+    /// On an ordinary single-session audio CD this equals `compute(for:)`. Today it
+    /// ALSO equals `compute(for:)` on a real Enhanced/CD-Extra disc read from a
+    /// drive, because the drive reader only reads the first (music) session — see
+    /// the file header. `toc.leadOutSector` is then session 1's lead-out, the same
+    /// value `compute(for:)` uses, so the two IDs cannot yet actually differ for a
+    /// disc read this way. A `.toc` that genuinely carries the whole disc (a second
+    /// session, or a data track past the music) will still produce a distinct value
+    /// here, exactly as designed.
     public static func computeWholeDisc(for toc: DiscTableOfContents) -> String? {
         compute(for: toc, leadOutSector: toc.leadOutSector)
     }

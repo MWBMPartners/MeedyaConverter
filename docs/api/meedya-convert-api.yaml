@@ -1255,8 +1255,12 @@ paths:
         [--submission anonymous|full] [--label <text>] [--format text|json]`.
 
         Works out the disc's own identifiers from its table of contents — the
-        MusicBrainz-compatible ID for the music portion, and, on an Enhanced
-        CD, a second ID covering the whole physical disc — then asks
+        MusicBrainz-compatible ID for the music portion, and a second ID
+        covering the whole physical disc, which is designed to differ from
+        the first on an Enhanced CD. Reading a disc from a drive currently
+        only reads its first (music) session, so that second ID does not
+        appear yet for a disc identified this way — the music ID is unaffected,
+        since it never needed the second session anyway. Then asks
         MusicBrainz which release it is. The request always names the disc's
         own computed Disc ID, so a disc MusicBrainz recognises comes back as
         an EXACT match (`matchKind: exact` in `--format json`; the text output

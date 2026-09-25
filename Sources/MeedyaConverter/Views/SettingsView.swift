@@ -473,8 +473,10 @@ struct MetadataSettingsTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("Used to look up tags for video files in the Metadata editor. "
-                 + "Saved to your Keychain, never to the app's settings file.")
+            Text("Used to look up tags for video files in the Metadata editor, "
+                 + "and to suggest which film a disc is on the MakeMKV Rip "
+                 + "screen. Saved to your Keychain, never to the app's "
+                 + "settings file.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

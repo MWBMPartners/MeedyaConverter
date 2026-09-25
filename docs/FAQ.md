@@ -220,8 +220,12 @@ Only for:
   says so instead. The remaining keyed providers (TheTVDB, Discogs, FanArt.tv,
   OMDb, OpenSubtitles) are still not wired, so they make no requests.
 - **Disc identification and MeedyaDB contributions**, described in
-  [Disc Tools](Disc-Tools.md) — identification asks MusicBrainz about a music
-  disc's track layout, and contributing is off until you switch it on.
+  [Disc Tools](Disc-Tools.md). A music disc's identification asks MusicBrainz
+  about its track layout. A film disc's identification — Identify on the
+  MakeMKV Rip screen — sends text taken from the disc's name (plus any year
+  written into that name) to `api.themoviedb.org`, using the same TMDB key,
+  and makes no request at all without one. Contributing what was learned to
+  MeedyaDB is a separate step, off until you switch it on.
 
 MeedyaConverter never sends your media *files*, encoding settings, or usage
 patterns to any server. A lookup sends only the search text you enter, on

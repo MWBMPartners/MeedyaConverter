@@ -24,14 +24,22 @@
 //     back as its own best-guess FUZZY match rather than an error (see
 //     `MusicBrainzDiscMatchKind`). A video disc has no equivalent to even
 //     ask for an exact hit: identification here is ALWAYS a
-//     RANKED GUESS scored against the disc's own content (running time,
-//     chapter count, languages) by `DiscIdentifier.rank`, and the result
-//     carries confidence scores precisely because it can be wrong.
+//     RANKED GUESS by `DiscIdentifier.rank`, and the result carries
+//     confidence scores precisely because it can be wrong. Of the disc's own
+//     content, only running time (weight 0.50) and the seed title's text
+//     (weight 0.35) are actually scored today — see `DiscIdentifier`.
+//     Chapter count and audio/subtitle languages are carried on `DiscSignals`
+//     but nothing compares them yet, and the release year is never set on
+//     this path (`MakeMKVIdentification.discSignals` does not supply one), so
+//     a film identified this way can currently reach at most 0.85 confidence.
 //   * MusicBrainz needs no API key, so the music path can look a disc up by
-//     itself. The video providers (TMDB, TheTVDB, IMDb…) are all keyed and
-//     not yet wired up, so candidates are passed IN by the caller. With none,
-//     this still does something useful: it contributes the disc's structure,
-//     so MeedyaDB learns the disc exists even when nobody can name it.
+//     itself. Of the video providers, TMDB IS wired up (`TMDBDiscCandidates`),
+//     for FILMS only — it has no equivalent search for a TV series, and
+//     `TMDBLookupService.searchTVShows` has no caller. The others (TheTVDB,
+//     IMDb…) are still not wired, so candidates are passed IN by the caller.
+//     With none, this still does something useful: it contributes the disc's
+//     structure, so MeedyaDB learns the disc exists even when nobody can name
+//     it.
 //
 // The contribute half is the shared `MeedyaDBContributor`, so the failure
 // posture is identical to the music path and decided in one place. The only

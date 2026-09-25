@@ -662,7 +662,7 @@ struct DiscIdentifyCommand: AsyncParsableCommand {
     private static func describe(_ source: MusicBrainzDiscID.LeadOutSource) -> String {
         switch source {
         case .singleSession:
-            return "the end of the disc (there is only one session)"
+            return "the end of the session that was read (the first; any later session was not read)"
         case .reportedSession:
             return "the session table the drive reported"
         case .derivedFromDataTrack:

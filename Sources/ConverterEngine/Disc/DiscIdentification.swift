@@ -5,11 +5,14 @@
 // of this file, via any medium, is strictly prohibited.
 // ============================================================================
 //
-// Content-based disc identification — work out what a disc most likely IS from
-// its own content (running time, chapter layout, subtitle/audio languages, disc
-// label) instead of trusting a fuzzy title/year guess. This is the core idea we
-// are borrowing from the MIT-licensed MakeMKV Claude skill
-// `threadgill-dev/dvd-autorip-skill` (issue #502).
+// Content-based disc identification — work out what a video disc most likely IS
+// from its own content instead of trusting a fuzzy title/year guess. `DiscSignals`
+// (below) carries the disc's running time, chapter count, and subtitle/audio
+// languages, but `DiscIdentifier.rank`'s scoring today only actually compares
+// running time and title/label text against a candidate; chapter count and the
+// languages are read and carried for a future comparison rule, not used by one
+// yet. This is the core idea we are borrowing from the MIT-licensed MakeMKV
+// Claude skill `threadgill-dev/dvd-autorip-skill` (issue #502).
 //
 // SCOPE (deliberately narrow, and safe):
 //   * This file is PURE, deterministic logic: given a `DiscSignals` fingerprint
@@ -52,7 +55,11 @@ public struct DiscSignals: Sendable, Equatable {
     public var label: String?
 
     /// A hint at what sort of thing this is (movie / TV / music). When `nil`,
-    /// the query builder infers one from the disc type.
+    /// `buildQuery(from:)` infers one from the disc type — but nothing in the
+    /// app or CLI calls `buildQuery(from:)` today (the real TMDB lookup,
+    /// `TMDBDiscCandidates.provider`, always searches for a film — see that
+    /// file's header), so a TV hint set here currently has no effect on what
+    /// gets searched.
     public var mediaTypeHint: MediaLookupType?
 
     /// The running time of the main feature, in seconds, when known.
@@ -62,13 +69,19 @@ public struct DiscSignals: Sendable, Equatable {
     /// structure hint (for example, many similar-length titles suggest a TV set).
     public var titleDurationsSeconds: [TimeInterval]
 
-    /// The number of chapters in the main feature, when known.
+    /// The number of chapters in the main feature, when known. Carried
+    /// through for a future comparison rule; `DiscIdentifier.rank` does not
+    /// compare it against a candidate yet.
     public var chapterCount: Int?
 
     /// Subtitle languages present on the main feature (ISO codes as given).
+    /// Carried through for a future comparison rule; `DiscIdentifier.rank`
+    /// does not compare these against a candidate yet.
     public var subtitleLanguages: [String]
 
     /// Audio languages present on the main feature (ISO codes as given).
+    /// Carried through for a future comparison rule; `DiscIdentifier.rank`
+    /// does not compare these against a candidate yet.
     public var audioLanguages: [String]
 
     /// A best-guess title to seed a lookup query (from the label or a filename).

@@ -289,7 +289,7 @@ struct MakeMKVRipView: View {
     private var identifySection: some View {
         Section("Identify This Disc") {
             if viewModel.discInfo == nil {
-                Text("Scan the disc first. Identifying uses what the scan finds \u{2014} running time, chapters and languages \u{2014} to work out which film or programme this is.")
+                Text("Scan the disc first. Identifying searches TMDB for films using the disc's name, then compares each result's running time with the main feature. TV series aren't searched yet.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
