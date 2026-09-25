@@ -79,7 +79,8 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
                     id: "mbid-release-1", title: "Greatest Hits",
                     artist: "The Band", date: "1994-05-02"
                 )
-            ]
+            ],
+            matchKind: .exact
         )
         XCTAssertEqual(inputs.candidates.count, 1)
         let candidate = inputs.candidates[0]
@@ -97,12 +98,42 @@ final class MeedyaDBSubmissionBuilderTests: XCTestCase {
             matches: [
                 MusicBrainzDiscMatch(id: "mbid-1", title: "Album", date: "1994"),
                 MusicBrainzDiscMatch(id: "mbid-2", title: "Album (UK pressing)", date: "1994"),
-            ]
+            ],
+            matchKind: .exact
         )
         XCTAssertEqual(inputs.candidates.count, 2)
         XCTAssertEqual(inputs.candidates[0].confidence, 0.5)
         XCTAssertEqual(inputs.candidates[1].confidence, 0.5)
         XCTAssertEqual(inputs.candidates[1].identifiers.first?.idValue, "mbid-2")
+    }
+
+    // MARK: - F6 / D1: a fuzzy match never becomes a candidate
+
+    func test_audioCD_fuzzyMatchSendsNoCandidates() {
+        // Same matches as the single-match exact test above, but flagged as a
+        // fuzzy guess. The disc's own Disc ID and TOC fingerprint are still
+        // sent (measured, not guessed) — only the candidate is withheld.
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(
+            toc: audioTOC(),
+            matches: [
+                MusicBrainzDiscMatch(id: "mbid-release-1", title: "Greatest Hits", artist: "The Band")
+            ],
+            matchKind: .fuzzy
+        )
+        XCTAssertTrue(inputs.candidates.isEmpty,
+                      "MeedyaDB has no notion of confidence, so a guess must never be sent as a candidate")
+        XCTAssertEqual(inputs.disc.musicBrainzDiscId, expectedDiscID, "the disc's own measured id is still sent")
+        XCTAssertTrue(inputs.hasUsableIdentity, "the Disc ID identifier alone is still a usable identity")
+    }
+
+    func test_audioCD_noMatchKindGivenIsTreatedAsFuzzy() {
+        // Fail safe: a caller that doesn't say how sure the lookup was must
+        // never have its matches trusted as exact by default.
+        let inputs = MeedyaDBSubmissionBuilder.audioCD(
+            toc: audioTOC(),
+            matches: [MusicBrainzDiscMatch(id: "mbid-release-1", title: "Greatest Hits")]
+        )
+        XCTAssertTrue(inputs.candidates.isEmpty)
     }
 
     func test_audioCD_prefersADiscIDAlreadyOnTheTOC() {

@@ -708,6 +708,13 @@ private struct DiscIdentifyReport: Encodable {
 
     var identity: Identity
     var matches: [Match]
+    /// One of `exact`, `fuzzy`, `none` (F6). `exact` only when MusicBrainz's
+    /// own listing named this precise disc — `matches` can then be trusted as
+    /// confirmed pressings of it. `fuzzy` means MusicBrainz did not recognise
+    /// this disc and `matches` are its closest guesses by similar track
+    /// lengths instead — competing theories, not confirmed pressings. `none`
+    /// means it had nothing to say at all, not even a guess.
+    var matchKind: String
     var lookupFailure: String?
     var identified: Bool
     var summary: String
@@ -740,6 +747,14 @@ private struct DiscIdentifyReport: Encodable {
                 trackCount: match.trackCount
             )
         }
+        // "none" is a CLI-level tri-state derived from the engine's bi-state
+        // `MusicBrainzDiscMatchKind` plus emptiness: an empty `matches` means
+        // no answer at all, exact or fuzzy, regardless of what `matchKind`
+        // happened to be on the underlying lookup result (see its doc comment
+        // — that value is moot once there is nothing for it to describe).
+        matchKind = result.matches.isEmpty
+            ? "none"
+            : (result.matchKind == .exact ? "exact" : "fuzzy")
         lookupFailure = result.lookupFailure
         identified = result.isIdentified
         summary = result.summary

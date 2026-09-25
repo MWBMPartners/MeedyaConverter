@@ -166,11 +166,24 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
     /// step failed.
     public var identity: MusicDiscIdentity
 
-    /// Releases MusicBrainz says match this exact TOC. Because a CD's track
-    /// layout is a near-fingerprint this is an exact hit, not a ranked guess
-    /// — several entries mean several pressings of the same record, not
-    /// competing theories about what the disc is.
+    /// Releases MusicBrainz returned for this disc's TOC. Because a CD's
+    /// track layout is a near-fingerprint, when `matchKind` is `.exact` this
+    /// is a confirmed hit, not a ranked guess — several entries mean several
+    /// pressings of the same record, not competing theories about what the
+    /// disc is. When `matchKind` is `.fuzzy`, MusicBrainz did NOT recognise
+    /// this disc and these are its closest guesses by similar track lengths
+    /// instead — competing theories, most of which are not actually this disc
+    /// (Codex round-1 review, finding F6: this used to always be treated as
+    /// the exact case, so a guess was shown, and submitted to MeedyaDB, as
+    /// fact).
     public var matches: [MusicBrainzDiscMatch]
+
+    /// How sure the lookup that produced `matches` was — see
+    /// `MusicBrainzDiscMatchKind`. `nil` when there is nothing to judge: no
+    /// lookup was attempted (a data-only disc), or it failed outright
+    /// (`lookupFailure` is set instead). `matches.isEmpty` means "no match",
+    /// regardless of this value.
+    public var matchKind: MusicBrainzDiscMatchKind?
 
     /// Why the MusicBrainz lookup failed, when it did. `nil` on success —
     /// including a successful lookup that simply found nothing.
@@ -191,18 +204,25 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
     public init(
         identity: MusicDiscIdentity,
         matches: [MusicBrainzDiscMatch] = [],
+        matchKind: MusicBrainzDiscMatchKind? = nil,
         lookupFailure: String? = nil,
         submission: MeedyaDBDiscSubmissionInputs? = nil,
         contribution: MeedyaDBContribution
     ) {
         self.identity = identity
         self.matches = matches
+        self.matchKind = matchKind
         self.lookupFailure = lookupFailure
         self.submission = submission
         self.contribution = contribution
     }
 
-    /// True when MusicBrainz recognised the disc.
+    /// True when MusicBrainz returned SOMETHING for this disc — exact or
+    /// fuzzy. NOT the same question as "is this a confirmed match": that is
+    /// `matchKind == .exact`. Kept broad deliberately, because "MusicBrainz
+    /// had nothing at all to say" (this being `false`) is a genuinely
+    /// different case from "it offered a guess" from a caller's point of view
+    /// (e.g. whether there is anything to show at all).
     public var isIdentified: Bool { !matches.isEmpty }
 
     /// A one-line plain-English summary, suitable for a CLI line or a status
@@ -215,6 +235,17 @@ public struct MusicDiscIdentificationResult: Sendable, Equatable {
         }
         if let first = matches.first {
             let who = first.artist.map { "\($0) — " } ?? ""
+            // Only an EXACT match may say "Identified as" (F6). A fuzzy one —
+            // MusicBrainz's own best guess from similar track lengths, not a
+            // confirmed hit on this disc's TOC — must never be worded as a
+            // settled fact: MeedyaDB's own ingest has no notion of confidence
+            // (MeedyaDB issue #1, separate repo), so this wording is the ONLY
+            // place that distinction survives for anyone reading a result.
+            guard matchKind == .exact else {
+                // The constants live on `MusicDiscIdentifier` (below), not on
+                // this struct, so they need the explicit type name here.
+                return "\(MusicDiscIdentifier.fuzzyMatchPrefix)\(who)\(first.title). \(MusicDiscIdentifier.fuzzyMatchExplanation)"
+            }
             if matches.count == 1 {
                 return "Identified as \(who)\(first.title)."
             }
@@ -320,8 +351,12 @@ public struct MusicDiscIdentifier: Sendable {
         // A disc with no audio tracks has nothing for MusicBrainz to answer
         // and nothing worth sending. Short-circuit BEFORE the network so a
         // data-only disc never costs a request (the lookup would reject it
-        // with `.emptyQuery` anyway).
-        guard identity.isUsable else {
+        // with `.emptyQuery` anyway). Unwrapping `musicDiscID` in the SAME
+        // guard (rather than force-unwrapping it below) means the compiler,
+        // not a runtime assumption, proves the lookup always has an id to ask
+        // MusicBrainz about — `identity.isUsable` already requires it, but
+        // this is what makes that guarantee checkable rather than assumed.
+        guard identity.isUsable, let discID = identity.musicDiscID else {
             return MusicDiscIdentificationResult(
                 identity: identity,
                 contribution: .notAttempted(
@@ -333,9 +368,16 @@ public struct MusicDiscIdentifier: Sendable {
         }
 
         var matches: [MusicBrainzDiscMatch] = []
+        var matchKind: MusicBrainzDiscMatchKind?
         var lookupFailure: String?
         do {
-            matches = try await lookupService.lookup(disc: toc)
+            // `discID` is `identity.musicDiscID` — the SAME preferred (stored,
+            // else computed) value shown to the user and, below, submitted to
+            // MeedyaDB. Looking up anything else would mean asking
+            // MusicBrainz about one disc while showing/submitting another.
+            let lookupResult = try await lookupService.lookup(disc: toc, discID: discID)
+            matches = lookupResult.matches
+            matchKind = lookupResult.matchKind
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -348,6 +390,7 @@ public struct MusicDiscIdentifier: Sendable {
         let submission = MeedyaDBSubmissionBuilder.audioCD(
             toc: toc,
             matches: matches,
+            matchKind: matchKind,
             labelText: labelText
         )
 
@@ -362,6 +405,7 @@ public struct MusicDiscIdentifier: Sendable {
         return MusicDiscIdentificationResult(
             identity: identity,
             matches: matches,
+            matchKind: matchKind,
             lookupFailure: lookupFailure,
             submission: submission,
             contribution: contribution
@@ -404,4 +448,12 @@ public struct MusicDiscIdentifier: Sendable {
     /// the two can never say different things.
     public static let notRequestedReason = MeedyaDBContributor.notRequestedReason
     public static let noIdentityReason = MeedyaDBContributor.noIdentityReason
+
+    // F6: the wording for a FUZZY match — MusicBrainz's own best guess, not a
+    // confirmed hit on this disc's exact TOC. Split into a prefix/explanation
+    // pair (rather than one long literal) so `summary` can still slot the
+    // artist/title in between, the same way the "Identified as" wording does.
+    public static let fuzzyMatchPrefix = "Closest match: "
+    public static let fuzzyMatchExplanation =
+        "MusicBrainz doesn't know this exact disc, so this is a best guess from similar track lengths."
 }

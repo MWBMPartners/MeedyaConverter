@@ -15,11 +15,15 @@
 // into the other, so nothing was ever actually submitted. This builder does that,
 // for BOTH kinds of disc:
 //
-//   • **Music (Audio CD)** — the strongest case. A CD's table of contents yields a
-//     MusicBrainz **Disc ID**, a near-unique fingerprint, so the lookup is an exact
-//     hit rather than a best guess. The disc goes up carrying its Disc ID and TOC
-//     fingerprint; each matching release becomes a candidate carrying its
-//     MusicBrainz release id.
+//   • **Music (Audio CD)** — the strongest case, WHEN MusicBrainz confirms it. A
+//     CD's table of contents yields a MusicBrainz **Disc ID**, a near-unique
+//     fingerprint, and when the lookup names that exact disc, each matching
+//     release becomes a candidate carrying its MusicBrainz release id. When it
+//     does NOT — MusicBrainz falls back to a fuzzy, track-length-only guess
+//     across its whole database — the disc still goes up carrying its own Disc
+//     ID and TOC fingerprint (both measured from the disc itself, not guessed),
+//     but WITHOUT candidates: see `audioCD`'s doc comment for why (Codex
+//     round-1 review, finding F6; owner decision D1).
 //   • **Video (DVD / Blu-ray)** — identified by content (runtime, title, year) via
 //     MakeMKV, so the result is a ranked best guess. Each ranked candidate carries
 //     its provider id (TMDB / TheTVDB / …) and the scorer's confidence.
@@ -29,9 +33,12 @@
 // drops `labelText` in `.anonymous` mode (the default), and publishing stays off
 // unless the user has configured and enabled it.
 //
-// NOTE: this closes the *mapping* gap, not the wiring. Nothing in `Sources/` calls
-// this builder yet — the disc flows still have no production caller, which is the
-// standing "builder exists but is unwired" gap recorded in the handoff.
+// NOTE ON WIRING: this file was originally added as a "mapping" step with no
+// production caller (see the handoff history if you find an old comment still
+// claiming that) — that gap has since been closed. `MusicDiscIdentifier.identify`
+// (the music path) calls `audioCD` on every run; the video path's own identifier
+// calls `videoDisc` the same way. Both are exercised end-to-end well beyond this
+// file's own unit tests — see `MusicDiscIdentificationTests`/`VideoDiscIdentificationTests`.
 // ============================================================================
 
 import Foundation
@@ -103,14 +110,34 @@ public enum MeedyaDBSubmissionBuilder {
     /// nothing is lost. Consumers should read candidate confidence as "which of
     /// these", not "how sure are we it is this disc".
     ///
+    /// FUZZY MATCHES ARE NEVER SUBMITTED AS CANDIDATES (Codex round-1 review,
+    /// finding F6; owner decision D1). `matches` may come from a lookup that
+    /// only recognised the disc EXACTLY, or one that fell back to a fuzzy,
+    /// track-length-only guess across MusicBrainz's whole database — the
+    /// caller says which via `matchKind`. Candidates are built only for
+    /// `.exact`. This is not a nicety: MeedyaDB's own ingest (`handleDiscIngest`,
+    /// MeedyaDB issue #1, separate repo) has no notion of confidence at all — it
+    /// flattens every candidate's identifiers straight onto the disc row as if
+    /// they were confirmed facts. Submitting a fuzzy guess's candidates would
+    /// therefore make MeedyaDB record OTHER PEOPLE'S ALBUMS as this disc,
+    /// forever, with nothing downstream able to tell it was ever a guess. The
+    /// disc's own Disc ID and TOC fingerprint are unaffected by this and are
+    /// still sent either way — both are MEASURED from the disc itself, never
+    /// guessed, so there is nothing unsafe about them.
+    ///
     /// - Parameters:
     ///   - toc: the disc's table of contents.
     ///   - matches: releases returned by the MusicBrainz Disc ID lookup.
+    ///   - matchKind: how sure that lookup was. `nil` (the default, for a
+    ///     caller with no lookup result to report — e.g. a test exercising
+    ///     only the disc-identity half) is treated the SAME as `.fuzzy`: fail
+    ///     safe, never assume exactness that wasn't proven.
     ///   - labelText: the disc's printed label, if known. Only ever transmitted in
     ///     opt-in `.full` mode — the publisher drops it otherwise.
     public static func audioCD(
         toc: DiscTableOfContents,
         matches: [MusicBrainzDiscMatch] = [],
+        matchKind: MusicBrainzDiscMatchKind? = nil,
         labelText: String? = nil
     ) -> MeedyaDBDiscSubmissionInputs {
         // Prefer an ID the TOC already carries (e.g. supplied by the drive or a
@@ -169,20 +196,27 @@ public enum MeedyaDBSubmissionBuilder {
             ))
         }
 
-        // An exact TOC hit, shared between however many pressings came back.
-        let confidence: Double? = matches.isEmpty ? nil : 1.0 / Double(matches.count)
-        let candidates = matches.map { match in
-            MeedyaDBCandidate(
-                title: match.title,
-                artist: match.artist,
-                year: match.year,
-                identifiers: [MeedyaDBIdentifier(
-                    idType: musicBrainzReleaseIDType,
-                    idValue: match.id,
-                    source: musicBrainzSource
-                )],
-                confidence: confidence
-            )
+        // See this function's doc comment for WHY fuzzy matches build no
+        // candidates at all (D1 / F6) — only an exact hit does. An exact TOC
+        // hit's confidence is shared between however many pressings came back.
+        let candidates: [MeedyaDBCandidate]
+        if matchKind == .exact, !matches.isEmpty {
+            let confidence = 1.0 / Double(matches.count)
+            candidates = matches.map { match in
+                MeedyaDBCandidate(
+                    title: match.title,
+                    artist: match.artist,
+                    year: match.year,
+                    identifiers: [MeedyaDBIdentifier(
+                        idType: musicBrainzReleaseIDType,
+                        idValue: match.id,
+                        source: musicBrainzSource
+                    )],
+                    confidence: confidence
+                )
+            }
+        } else {
+            candidates = []
         }
 
         return MeedyaDBDiscSubmissionInputs(disc: disc, identifiers: identifiers, candidates: candidates)

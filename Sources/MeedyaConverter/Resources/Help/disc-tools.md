@@ -34,8 +34,10 @@ film disc has to be scanned first before there is anything to go on.
 A music CD's track layout is very nearly a fingerprint: the exact lengths of
 the tracks, measured to a 75th of a second, almost never repeat across
 different albums. MeedyaConverter turns that layout into an identifier and
-asks MusicBrainz which release it belongs to. The answer is usually exact
-rather than a guess.
+asks MusicBrainz which release it belongs to. When MusicBrainz recognises the
+disc you get an exact answer ("Identified as ..."); when it does not, it still
+offers its closest guess from similar track lengths, and the screen says so
+plainly ("Closest match: ...") rather than presenting a guess as settled.
 
 You can read either a disc in a drive, or a table-of-contents file saved from
 an earlier read. The saved-file option needs no disc and no drive at all,
@@ -122,9 +124,11 @@ the chapter count, the audio and subtitle languages — and compares that with
 [TMDB](https://www.themoviedb.org) if you have added a TMDB key in
 Settings → Metadata.
 
-**It is a best guess, and it says so.** A music CD gives an exact answer; a
-film disc does not. You will see something like *"Best guess: Big Movie
-(92% confident)"* — and a low percentage is worth checking before trusting.
+**It is a best guess, and it says so.** A music disc gives an exact answer
+when MusicBrainz recognises it, and its own best guess when it does not; a
+film disc's answer is always a guess. You will see something like *"Best
+guess: Big Movie (92% confident)"* — and a low percentage is worth checking
+before trusting.
 
 **Check the disc type first.** It is pre-filled from what MakeMKV reports, but
 that wording varies, so the menu is yours to change. If MakeMKV gave no clear

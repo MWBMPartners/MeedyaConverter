@@ -201,7 +201,11 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         // through the SAME two seams `startRun` captures at the beginning and
         // the `recheck` closure reads again immediately before the network
         // call.
-        settingsBox: MeedyaDBSettingsBox? = nil
+        settingsBox: MeedyaDBSettingsBox? = nil,
+        // F6: lets a test give the MusicBrainz lookup a canned EXACT or FUZZY
+        // response instead of the always-404 `OfflineStubHTTPClient`, so the
+        // fuzzy wording can be exercised all the way onto the screen's result.
+        lookupClient: (any MetadataHTTPClient)? = nil
     ) -> DiscIdentifyViewModel {
         let readiness: MeedyaDBReadiness = meedyaDBReady
             ? .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
@@ -214,7 +218,7 @@ final class DiscIdentifyViewModelTests: XCTestCase {
             // actually reaches the wire rather than only promising to.
             identifierFactory: { config in
                 let lookup = MusicBrainzDiscLookupService(
-                    httpClient: OfflineStubHTTPClient(),
+                    httpClient: lookupClient ?? OfflineStubHTTPClient(),
                     throttle: MusicBrainzRequestThrottle(minimumInterval: .zero)
                 )
                 guard let config else {
@@ -263,6 +267,30 @@ final class DiscIdentifyViewModelTests: XCTestCase {
                 headerFields: nil
             )!
             return (Data(), response)
+        }
+    }
+
+    /// F6: a canned FUZZY MusicBrainz response — no top-level `id`/`offsets`,
+    /// so `MusicBrainzDiscLookupService.parseDiscLookup` reports `.fuzzy`
+    /// regardless of which disc ID the run actually asked about. Used to
+    /// prove the fuzzy wording ("Closest match: ...") reaches the screen's
+    /// own result, not just the engine's — see `resultSection` in
+    /// `DiscIdentifyView`, which prints `result.summary` verbatim.
+    private final class FuzzyMatchStubHTTPClient: MetadataHTTPClient, @unchecked Sendable {
+        func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let body = Data("""
+            {"release-count":1,"release-offset":0,"releases":[
+              {"id":"rel-guess-1","title":"Similar Album",
+               "artist-credit":[{"name":"Some Artist","joinphrase":""}]}
+            ]}
+            """.utf8)
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://example.invalid")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (body, response)
         }
     }
 
@@ -410,6 +438,25 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         XCTAssertNil(vm.errorMessage)
         XCTAssertNil(vm.statusMessage, "the status line must clear when the work finishes")
         XCTAssertFalse(vm.isWorking)
+    }
+
+    // MARK: - F6: a fuzzy match shows the fuzzy wording, never "Identified"
+
+    func test_fuzzyMatch_showsClosestMatchWordingNotIdentified() async throws {
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())]),
+            lookupClient: FuzzyMatchStubHTTPClient()
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        let result = try XCTUnwrap(vm.result)
+        XCTAssertEqual(result.matchKind, .fuzzy)
+        XCTAssertFalse(result.summary.hasPrefix("Identified as"),
+                       "MusicBrainz's best guess must never be shown as a confirmed identification")
+        XCTAssertTrue(result.summary.hasPrefix("Closest match:"), "got: \(result.summary)")
     }
 
     // MARK: - Contributing is announced up front, and honoured

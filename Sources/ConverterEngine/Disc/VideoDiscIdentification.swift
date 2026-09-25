@@ -19,8 +19,11 @@
 //
 // HOW THIS DIFFERS FROM THE MUSIC PATH, and why the code looks less certain:
 //
-//   * A music CD's track layout is a near-fingerprint, so MusicBrainz gives
-//     an EXACT hit. A video disc has no such thing. Identification here is a
+//   * A music CD's track layout is a near-fingerprint, so MusicBrainz normally
+//     gives an EXACT hit — though a disc it has never catalogued still comes
+//     back as its own best-guess FUZZY match rather than an error (see
+//     `MusicBrainzDiscMatchKind`). A video disc has no equivalent to even
+//     ask for an exact hit: identification here is ALWAYS a
 //     RANKED GUESS scored against the disc's own content (running time,
 //     chapter count, languages) by `DiscIdentifier.rank`, and the result
 //     carries confidence scores precisely because it can be wrong.
@@ -53,7 +56,9 @@ public struct VideoDiscIdentificationResult: Sendable {
     /// Candidate identities, best first, each with the score that put it
     /// there. Empty when the caller supplied no candidates to rank.
     ///
-    /// Unlike the music path's exact TOC hit, these are GUESSES: several
+    /// Unlike the music path's exact TOC hit (when MusicBrainz recognises the
+    /// disc — an unrecognised one gets its own fuzzy best guess instead, so
+    /// even THAT path isn't unconditionally exact), these are GUESSES: several
     /// entries are competing theories about what the disc is, not different
     /// pressings of the same thing.
     public var ranked: [ScoredDiscMatch]

@@ -40,8 +40,11 @@ because a film disc has to be scanned before there is anything to go on.
 A music CD's track layout is very nearly a fingerprint: the exact lengths of
 the tracks, measured to a 75th of a second, almost never repeat across
 different albums. MeedyaConverter turns that layout into an identifier and
-asks [MusicBrainz](https://musicbrainz.org) which release it belongs to. The
-answer is usually exact rather than a guess.
+asks [MusicBrainz](https://musicbrainz.org) which release it belongs to. When
+MusicBrainz recognises the disc, the answer is exact, and the screen says
+**"Identified as ..."**. When it does not, MusicBrainz still offers its
+closest guess from similar track lengths, and the screen says so plainly —
+**"Closest match: ..."** — rather than presenting a guess as a settled answer.
 
 ### Reading from a drive
 
@@ -164,10 +167,11 @@ feature, how many chapters it has, which audio and subtitle languages are on
 it — and compares that against [TMDB](https://www.themoviedb.org), if you have
 added a TMDB key in Settings → Metadata.
 
-**This is a best guess, and the app says so.** A music CD gives an exact
-answer; a film disc does not. The result reads like *"Best guess: Big Movie
-(92% confident)"*, and the percentage is there to be taken seriously — a
-low one means check before you trust it.
+**This is a best guess, and the app says so.** A music disc gives an exact
+answer when MusicBrainz recognises it, and its own best guess when it does
+not; a film disc's answer is always a guess. The result reads like *"Best
+guess: Big Movie (92% confident)"*, and the percentage is there to be taken
+seriously — a low one means check before you trust it.
 
 **Choose the disc type before identifying.** The app pre-fills this from what
 MakeMKV reports, but MakeMKV's wording varies, so the menu is always yours to

@@ -24,8 +24,40 @@
 // +150 added — matching `AudioCDReader.calculateCDDBDiscId` / `buildCDDBQuery`.
 //
 // Live MusicBrainz traffic is not exercised in CI (no network); the seam covers
-// everything below it, and the wire model follows the documented
-// `/ws/2/discid/-?toc=...` response shape (a top-level `releases` list).
+// everything below it.
+//
+// EXACT vs FUZZY (Codex round-1 review, finding F6) — this is the part that used
+// to be wrong, so it is worth spelling out plainly.
+//
+// The request always names the disc's OWN computed Disc ID:
+// `/discid/<discID>?toc=<toc>&cdstubs=no&inc=...&fmt=json`. This used to be sent
+// as `/discid/-?toc=...`, which MusicBrainz's docs say explicitly makes it IGNORE
+// the Disc ID and run a fuzzy TOC-only search — so the disc's own, near-unique
+// identity was computed and then never actually used. `cdstubs=no` matters too: a
+// "CD stub" (a bare, unofficial listing with no proper release) would otherwise
+// satisfy the exact lookup and short-circuit the fuzzy fallback this file relies
+// on, and this file has no model for a stub's shape at all.
+//
+// MusicBrainz replies with one of two different SHAPES for the same endpoint, and
+// telling them apart is the whole fix:
+//   * EXACT — the disc it holds under that id: a top-level object with
+//     `id, offset-count, offsets, sectors, releases`. Every release in `releases`
+//     really is this disc (or another pressing sharing the same TOC).
+//   * FUZZY — MusicBrainz didn't recognise the id (or none was given, or a CD
+//     stub was skipped past), so it fell back to matching the TOC's track
+//     lengths against ITS WHOLE DATABASE: a top-level object with
+//     `release-count, release-offset, releases` and no top-level `id`/`offsets`
+//     at all. These releases are competing GUESSES, most of which do not
+//     actually carry this disc's Disc ID — confirmed live against MusicBrainz's
+//     own Nevermind example on 2026-09-24: the fuzzy search for that disc came
+//     back with 25 releases, of which only 5 actually match.
+// `parseDiscLookup` tells them apart the FAIL-SAFE way: `.exact` only when the
+// top-level `id` equals the id THIS APP asked for and `offsets` is present.
+// Anything else — the fuzzy shape, a shape this app doesn't recognise, or (this
+// really can happen: MusicBrainz falls back to fuzzy on an unknown id without
+// changing the URL) an "exact-looking" body whose `id` doesn't match what was
+// asked for — is `.fuzzy`. Getting this the other way around is exactly the bug
+// being fixed: a guess reported, and previously submitted to MeedyaDB, as fact.
 // ============================================================================
 
 import Foundation
@@ -33,6 +65,9 @@ import Foundation
 // MARK: - MusicBrainzDiscMatch
 
 /// One candidate album release returned by a MusicBrainz disc/TOC lookup.
+/// Whether this is a confirmed hit or only a best guess is NOT carried on the
+/// match itself — see `MusicBrainzDiscLookupResult.matchKind`, which applies
+/// to the whole list of matches at once.
 public struct MusicBrainzDiscMatch: Sendable, Equatable, Identifiable {
     /// Release MBID.
     public let id: String
@@ -89,6 +124,41 @@ public struct MusicBrainzDiscMatch: Sendable, Equatable, Identifiable {
     }
 }
 
+// MARK: - MusicBrainzDiscMatchKind
+
+/// How sure a MusicBrainz disc/TOC lookup was — see this file's header for the
+/// two response shapes this distinguishes.
+///
+/// FAIL SAFE BY CONSTRUCTION: `MusicBrainzDiscLookupService.parseDiscLookup`
+/// only ever returns `.exact` for the one shape MusicBrainz's docs define as
+/// unambiguous. Every other shape — including ones this app has never seen —
+/// comes back `.fuzzy`. A wrong `.fuzzy` costs some wording; a wrong `.exact`
+/// turns a guess into a fact MeedyaDB stores forever (see `MeedyaDBSubmissionBuilder`).
+public enum MusicBrainzDiscMatchKind: Sendable, Equatable {
+    /// MusicBrainz's own disc listing named this exact TOC/Disc ID.
+    case exact
+    /// Everything else: MusicBrainz did not recognise this disc and is
+    /// offering its closest guess from similar track lengths, or the response
+    /// had a shape this app does not recognise as the exact one.
+    case fuzzy
+}
+
+// MARK: - MusicBrainzDiscLookupResult
+
+/// One completed disc/TOC lookup: the releases MusicBrainz returned, and
+/// whether that was because it recognised this exact disc or is only guessing.
+public struct MusicBrainzDiscLookupResult: Sendable, Equatable {
+    public let matchKind: MusicBrainzDiscMatchKind
+    /// In server order. Empty means MusicBrainz has no answer at all — not
+    /// even a guess — regardless of `matchKind`.
+    public let matches: [MusicBrainzDiscMatch]
+
+    public init(matchKind: MusicBrainzDiscMatchKind, matches: [MusicBrainzDiscMatch]) {
+        self.matchKind = matchKind
+        self.matches = matches
+    }
+}
+
 // MARK: - MusicBrainzDiscLookupService
 
 /// Executes a keyless MusicBrainz disc/TOC lookup and maps the result to
@@ -133,12 +203,18 @@ public struct MusicBrainzDiscLookupService: Sendable {
 
     // MARK: Request (pure)
 
-    /// Build the disc/TOC lookup request: the public `discid` fuzzy-TOC endpoint
-    /// with `inc=artist-credits` so releases carry their artist. The `+`-joined
-    /// TOC is passed through literally (it is numeric — no escaping needed),
-    /// exactly as `AudioCDReader.buildMusicBrainzLookupURL` documents.
-    public static func buildLookupRequest(tocString: String) -> URLRequest? {
-        let urlString = "\(MetadataSource.musicBrainz.baseURL)/discid/-?toc=\(tocString)&inc=artist-credits&fmt=json"
+    /// Build the disc/TOC lookup request against the disc's OWN computed Disc
+    /// ID — never `-` (see this file's header on why `-` was wrong: it tells
+    /// MusicBrainz to ignore the id and go straight to a fuzzy search).
+    /// `cdstubs=no` so a bare CD-stub listing can't short-circuit MusicBrainz's
+    /// own fallback to a fuzzy search (this app has no model for a stub's
+    /// shape). `inc=artist-credits` so releases carry their artist. The
+    /// `+`-joined TOC is passed through literally (it is numeric — no escaping
+    /// needed), exactly as `AudioCDReader.buildMusicBrainzLookupURL` documents.
+    /// `nil` when `discID` is empty — a request with nothing to ask about.
+    public static func buildLookupRequest(discID: String, tocString: String) -> URLRequest? {
+        guard !discID.isEmpty else { return nil }
+        let urlString = "\(MetadataSource.musicBrainz.baseURL)/discid/\(discID)?toc=\(tocString)&cdstubs=no&inc=artist-credits&fmt=json"
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -150,23 +226,28 @@ public struct MusicBrainzDiscLookupService: Sendable {
 
     // MARK: Lookup
 
-    /// Look up an Audio CD by its table of contents. Throws `.emptyQuery` when the
-    /// disc has no audio tracks.
-    public func lookup(disc toc: DiscTableOfContents) async throws -> [MusicBrainzDiscMatch] {
+    /// Look up an Audio CD by its table of contents and its own computed
+    /// (music-only) Disc ID. Throws `.emptyQuery` when the disc has no audio
+    /// tracks, in which case there is nothing to build a TOC string from
+    /// either — `discID` is supplied by the caller so this file never has to
+    /// re-decide the "stored vs. computed" preference `MusicDiscIdentifier`
+    /// and `MeedyaDBSubmissionBuilder` already make (they MUST all agree, or
+    /// the app would look one disc up while showing/submitting another).
+    public func lookup(disc toc: DiscTableOfContents, discID: String) async throws -> MusicBrainzDiscLookupResult {
         guard let tocString = Self.musicBrainzTOCString(for: toc) else {
             throw MusicBrainzLookupError.emptyQuery
         }
-        return try await lookup(tocString: tocString)
+        return try await lookup(discID: discID, tocString: tocString)
     }
 
-    /// Look up by an already-built MusicBrainz TOC string. Waits for the throttle,
-    /// sends via the seam, maps status → error, parses 2xx. A 404 (no disc match)
-    /// is a normal empty result, not an error. Cancellation rethrows
-    /// `CancellationError`.
-    public func lookup(tocString: String) async throws -> [MusicBrainzDiscMatch] {
-        guard let request = Self.buildLookupRequest(tocString: tocString) else {
+    /// Look up by an already-built Disc ID and MusicBrainz TOC string. Waits
+    /// for the throttle, sends via the seam, maps status → error, parses 2xx.
+    /// A 404 (no disc match at all, exact or fuzzy) is a normal empty result,
+    /// not an error. Cancellation rethrows `CancellationError`.
+    public func lookup(discID: String, tocString: String) async throws -> MusicBrainzDiscLookupResult {
+        guard let request = Self.buildLookupRequest(discID: discID, tocString: tocString) else {
             throw MusicBrainzLookupError.invalidURL(
-                "\(MetadataSource.musicBrainz.baseURL)/discid/-?toc=\(tocString)"
+                "\(MetadataSource.musicBrainz.baseURL)/discid/\(discID)?toc=\(tocString)"
             )
         }
         try await throttle.waitForTurn()
@@ -183,9 +264,12 @@ public struct MusicBrainzDiscLookupService: Sendable {
         let (data, response) = result
         switch response.statusCode {
         case 200...299:
-            return try Self.parseDiscLookup(data)
+            return try Self.parseDiscLookup(data, requestedDiscID: discID)
         case 404:
-            return [] // No disc/TOC match — an ordinary "nothing found", not an error.
+            // No disc/TOC match at all — an ordinary "nothing found", not an
+            // error. `matchKind` is moot with an empty list (nothing for it to
+            // describe), so `.fuzzy` here is just the fail-safe default.
+            return MusicBrainzDiscLookupResult(matchKind: .fuzzy, matches: [])
         case 503:
             throw MusicBrainzLookupError.rateLimited(serverMessage: Self.serverErrorMessage(from: data))
         case 400:
@@ -197,17 +281,24 @@ public struct MusicBrainzDiscLookupService: Sendable {
 
     // MARK: Parse (pure)
 
-    /// Decode a `/ws/2/discid/-?toc=...&fmt=json` body into candidate releases,
-    /// in server order. Releases with no usable title are dropped; every string
-    /// is scrubbed with `MetadataSanitizer` (F-006: untrusted input).
-    public static func parseDiscLookup(_ data: Data) throws -> [MusicBrainzDiscMatch] {
+    /// Decode a `/ws/2/discid/<id>?toc=...&fmt=json` body into candidate
+    /// releases plus the match kind, in server order. Releases with no usable
+    /// title are dropped; every string is scrubbed with `MetadataSanitizer`
+    /// (F-006: untrusted input).
+    ///
+    /// `requestedDiscID` is the id THIS APP asked for — needed because the
+    /// only sound way to call a response "exact" is to check it actually
+    /// answers the question asked, not merely that it "looks like" the exact
+    /// shape. See this file's header for the two shapes and why every other
+    /// case is `.fuzzy` (fail safe: Codex round-1 review, finding F6).
+    public static func parseDiscLookup(_ data: Data, requestedDiscID: String) throws -> MusicBrainzDiscLookupResult {
         let envelope: DiscLookupEnvelope
         do {
             envelope = try JSONDecoder().decode(DiscLookupEnvelope.self, from: data)
         } catch {
             throw MusicBrainzLookupError.malformedResponse(error.localizedDescription)
         }
-        return (envelope.releases ?? []).compactMap { wire -> MusicBrainzDiscMatch? in
+        let matches = (envelope.releases ?? []).compactMap { wire -> MusicBrainzDiscMatch? in
             let title = sanitize(wire.title ?? "")
             guard !title.isEmpty else { return nil }
             let joinedArtist = wire.artistCredit.map { credits in
@@ -225,6 +316,14 @@ public struct MusicBrainzDiscLookupService: Sendable {
                 mediumCount: wire.media?.count
             )
         }
+        // `.exact` ONLY when BOTH hold: the top-level `id` names exactly the
+        // disc this app asked about, AND `offsets` — which only the exact
+        // shape carries — is present. Everything else (the fuzzy shape; an
+        // unrecognised shape; an "exact-looking" body that happens to name a
+        // DIFFERENT id, which is possible because MusicBrainz can fall back to
+        // fuzzy without changing the URL) is `.fuzzy`.
+        let isExact = envelope.id == requestedDiscID && envelope.offsets != nil
+        return MusicBrainzDiscLookupResult(matchKind: isExact ? .exact : .fuzzy, matches: matches)
     }
 
     // MARK: Private helpers (mirror MusicBrainzLookupService)
@@ -251,6 +350,15 @@ public struct MusicBrainzDiscLookupService: Sendable {
 // MARK: - Wire format (private, kebab-case CodingKeys)
 
 private struct DiscLookupEnvelope: Decodable {
+    /// Present ONLY on the exact shape: MusicBrainz's own id for the disc it
+    /// matched. Absent on the fuzzy/search shape (`release-count`,
+    /// `release-offset`, `releases`) — that absence is half of what
+    /// `parseDiscLookup` uses to tell the two apart.
+    let id: String?
+    /// Present ONLY on the exact shape: the disc's own per-track sector
+    /// offsets. Only its PRESENCE is checked, never its content — see
+    /// `parseDiscLookup`.
+    let offsets: [Int]?
     let releases: [WireDiscRelease]?
 }
 

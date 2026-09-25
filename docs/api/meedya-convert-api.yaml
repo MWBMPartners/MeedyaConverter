@@ -1257,7 +1257,17 @@ paths:
         Works out the disc's own identifiers from its table of contents — the
         MusicBrainz-compatible ID for the music portion, and, on an Enhanced
         CD, a second ID covering the whole physical disc — then asks
-        MusicBrainz which release it is.
+        MusicBrainz which release it is. The request always names the disc's
+        own computed Disc ID, so a disc MusicBrainz recognises comes back as
+        an EXACT match (`matchKind: exact` in `--format json`; the text output
+        says "Identified as ..."). When it does not, MusicBrainz falls back to
+        its own fuzzy, track-length-only guess across its whole database
+        (`matchKind: fuzzy`; the text output says "Closest match: ..." and
+        calls it a best guess) — that guess's releases are NOT contributed to
+        MeedyaDB even with `--submit`, only the disc's own measured Disc ID
+        and TOC fingerprint are, because MeedyaDB has no notion of confidence
+        and would otherwise store a guess as settled fact. `matchKind: none`
+        means MusicBrainz had nothing to say at all, not even a guess.
 
         Reads either a disc in a drive (`--device`, via cdrdao, Direct
         distribution only) or a `.toc` file saved earlier (`--toc`), which

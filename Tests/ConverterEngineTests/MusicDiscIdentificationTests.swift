@@ -39,6 +39,7 @@ private final class IdentifyStubHTTPClient: MetadataHTTPClient, @unchecked Senda
 
     var callCount: Int { lock.withLock { requests.count } }
     var lastBody: Data? { lock.withLock { requests.last?.httpBody } }
+    var lastRequest: URLRequest? { lock.withLock { requests.last } }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         lock.withLock { requests.append(request) }
@@ -108,14 +109,43 @@ final class MusicDiscIdentificationTests: XCTestCase {
         )
     }
 
-    private let releasesJSON = Data("""
-    {"releases":[
-      {"id":"rel-1","title":"Greatest Hits","date":"1994-08-15","country":"GB",
+    /// EXACT shape (F6): top-level `id` names THIS disc's own computed Disc ID
+    /// (`plainAudioCD()`'s), plus `offset-count`/`offsets`/`sectors` — the
+    /// shape MusicBrainz's docs define as unambiguous, trimmed from the live
+    /// Nevermind example (2026-09-24). Built from the real computed id rather
+    /// than a hardcoded literal, so it always agrees with whatever
+    /// `MusicBrainzDiscID.compute` actually produces for `plainAudioCD()` —
+    /// that computation is independently pinned in `MusicBrainzDiscIDTests`.
+    /// Used everywhere a test means "MusicBrainz confirmed this exact disc".
+    private var releasesJSON: Data {
+        let discID = MusicBrainzDiscID.compute(for: plainAudioCD())!
+        return Data("""
+        {"id":"\(discID)","offset-count":3,"offsets":[150,18150,39150],"sectors":55650,"releases":[
+          {"id":"rel-1","title":"Greatest Hits","date":"1994-08-15","country":"GB",
+           "artist-credit":[{"name":"Queen","joinphrase":""}],
+           "media":[{"track-count":3}]}
+        ]}
+        """.utf8)
+    }
+
+    /// FUZZY shape (F6): top-level `release-count`/`release-offset`, no
+    /// top-level `id` or `offsets` at all — MusicBrainz's own "didn't
+    /// recognise the id, matched by TOC instead" response. The release's own
+    /// id is deliberately NOT this disc's Disc ID, mirroring the live finding
+    /// that most of a fuzzy search's results are not actually the disc asked
+    /// about.
+    private let fuzzyReleaseJSON = Data("""
+    {"release-count":1,"release-offset":0,"releases":[
+      {"id":"rel-guess-1","title":"Similar Album","date":"1994-08-15","country":"GB",
        "artist-credit":[{"name":"Queen","joinphrase":""}],
        "media":[{"track-count":3}]}
     ]}
     """.utf8)
 
+    /// The bare `{"releases":[...]}` shape this whole file used to assume was
+    /// the only one MusicBrainz ever sent (pre-F6). Kept as its own fixture,
+    /// under its own name, so nobody mistakes it for either real shape: it now
+    /// deliberately exercises the "unrecognised shape → fuzzy" fail-safe.
     private let emptyReleasesJSON = Data(#"{"releases":[]}"#.utf8)
 
     private let ingestJSON = Data("""
@@ -313,6 +343,7 @@ final class MusicDiscIdentificationTests: XCTestCase {
         let result = try await identifier.identify(toc: plainAudioCD())
 
         XCTAssertTrue(result.isIdentified)
+        XCTAssertEqual(result.matchKind, .exact, "the happy path is a confirmed MusicBrainz hit")
         XCTAssertEqual(result.matches.count, 1)
         XCTAssertEqual(result.matches.first?.title, "Greatest Hits")
         XCTAssertEqual(result.matches.first?.artist, "Queen")
@@ -324,6 +355,11 @@ final class MusicDiscIdentificationTests: XCTestCase {
         )
         XCTAssertTrue(result.contribution.didSubmit)
         XCTAssertNil(result.contribution.reason)
+
+        // F6 / D1: an exact match's candidates ARE sent.
+        let sent = try sentPayload(dbClient)
+        let candidates = try XCTUnwrap(sent["candidates"] as? [[String: Any]])
+        XCTAssertEqual(candidates.count, 1, "an exact match's release must reach MeedyaDB as a candidate")
     }
 
     func test_identify_submissionCarriesTheComputedDiscID() async throws {
@@ -340,6 +376,73 @@ final class MusicDiscIdentificationTests: XCTestCase {
         XCTAssertEqual(submission.disc.tocFingerprint, result.identity.tocFingerprint)
         XCTAssertEqual(submission.disc.trackCount, 3)
         XCTAssertTrue(submission.hasUsableIdentity)
+    }
+
+    // MARK: - F6: a FUZZY match is a guess, never a fact
+    //
+    // MusicBrainz not recognising this exact disc must never look, on screen
+    // or on the wire, like it did. `MeedyaDBSubmissionBuilder`'s D1 rule (no
+    // candidates on a fuzzy match) is exercised end to end here, through the
+    // real `identify` → publisher → stub HTTP client path — not just at the
+    // builder's own unit-test level — because F6 was exactly "two correct
+    // pieces with nothing connecting them checked".
+
+    func test_identify_fuzzyMatch_requestsTheRealDiscIdAndCdstubsNo() async throws {
+        let mbClient = IdentifyStubHTTPClient(.success(fuzzyReleaseJSON, 200))
+        let identifier = MusicDiscIdentifier(
+            lookupService: MusicBrainzDiscLookupService(
+                httpClient: mbClient,
+                throttle: MusicBrainzRequestThrottle(minimumInterval: .zero)
+            )
+        )
+
+        _ = try await identifier.identify(toc: plainAudioCD(), contribute: false)
+
+        let request = try XCTUnwrap(mbClient.lastRequest)
+        let url = try XCTUnwrap(request.url?.absoluteString)
+        let expectedDiscID = try XCTUnwrap(MusicBrainzDiscID.compute(for: plainAudioCD()))
+        XCTAssertTrue(url.contains("/discid/\(expectedDiscID)?"), "got: \(url)")
+        XCTAssertTrue(url.contains("cdstubs=no"))
+        XCTAssertFalse(url.contains("/discid/-"), "the exact F6 bug: '-' makes MusicBrainz ignore the id")
+    }
+
+    func test_summary_fuzzyMatch_saysClosestMatchNotIdentified() async throws {
+        let identifier = MusicDiscIdentifier(lookupService: lookup(.success(fuzzyReleaseJSON, 200)))
+        let result = try await identifier.identify(toc: plainAudioCD(), contribute: false)
+
+        XCTAssertEqual(result.matchKind, .fuzzy)
+        XCTAssertFalse(result.summary.hasPrefix("Identified as"),
+                       "a fuzzy guess must never be worded as a confirmed identification")
+        XCTAssertEqual(
+            result.summary,
+            "Closest match: Queen — Similar Album. MusicBrainz doesn't know this exact disc, "
+            + "so this is a best guess from similar track lengths."
+        )
+    }
+
+    func test_identify_fuzzyMatch_sendsDiscIDAndTOCButZeroCandidates() async throws {
+        let dbClient = IdentifyStubHTTPClient(.success(ingestJSON, 200))
+        let identifier = MusicDiscIdentifier(
+            lookupService: lookup(.success(fuzzyReleaseJSON, 200)),
+            publisher: publisher(dbClient)
+        )
+
+        let result = try await identifier.identify(toc: plainAudioCD(), labelText: "My Label", mode: .full)
+
+        XCTAssertEqual(result.matchKind, .fuzzy)
+        XCTAssertTrue(result.contribution.didSubmit,
+                      "the disc's own MEASURED identity is still worth sending even on a guess")
+        XCTAssertEqual(dbClient.callCount, 1)
+
+        let sent = try sentPayload(dbClient)
+        let candidates = try XCTUnwrap(sent["candidates"] as? [[String: Any]])
+        XCTAssertTrue(candidates.isEmpty,
+                      "D1 / F6: a fuzzy guess's releases must never be submitted as candidates — "
+                      + "MeedyaDB has no notion of confidence and would store them as fact")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertEqual(disc["musicBrainzDiscId"] as? String, result.identity.musicDiscID,
+                       "the disc's own computed Disc ID is measured, not guessed, so it is still sent")
+        XCTAssertNotNil(disc["tocFingerprint"], "the TOC fingerprint is measured too, so it is still sent")
     }
 
     // MARK: - MusicBrainz failing must NOT abandon the run
