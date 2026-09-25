@@ -716,6 +716,13 @@ private struct DiscIdentifyReport: Encodable {
     /// means it had nothing to say at all, not even a guess.
     var matchKind: String
     var lookupFailure: String?
+    /// True ONLY for an exact MusicBrainz match (`matchKind == "exact"`) —
+    /// never for a fuzzy guess (fallback review round 2, finding 4). Before
+    /// this fix it mirrored the engine's broad `isIdentified` ("MusicBrainz
+    /// said SOMETHING, exact or fuzzy"), so a script keyed on this single
+    /// field would file a guess as settled fact. Read `matchKind` for the
+    /// full three-way answer (`exact`/`fuzzy`/`none`); this field is the
+    /// one-bit shortcut for "safe to treat as fact".
     var identified: Bool
     var summary: String
     var contribution: Contribution
@@ -756,7 +763,13 @@ private struct DiscIdentifyReport: Encodable {
             ? "none"
             : (result.matchKind == .exact ? "exact" : "fuzzy")
         lookupFailure = result.lookupFailure
-        identified = result.isIdentified
+        // Deliberately NOT `result.isIdentified` (fallback review round 2,
+        // finding 4): that engine flag is true for a fuzzy guess too, and a
+        // script keyed on the CLI's `identified` field must never file a
+        // guess as fact. Built from the `matchKind` string just computed
+        // above, so the two fields can never disagree about what counts as
+        // "exact".
+        identified = matchKind == "exact"
         summary = result.summary
         switch result.contribution {
         case .succeeded(let ingest):

@@ -1276,6 +1276,13 @@ paths:
         and would otherwise store a guess as settled fact. `matchKind: none`
         means MusicBrainz had nothing to say at all, not even a guess.
 
+        `--format json`'s `identified` field is `true` ONLY when `matchKind`
+        is `exact` — never for a `fuzzy` guess or `none` (fallback review
+        round 2, finding 4). It is the one-bit shortcut for "safe to treat as
+        fact"; read `matchKind` itself for the full three-way answer. A
+        script that used to key on `identified` alone was, before this fix,
+        filing a fuzzy guess as settled fact.
+
         Reads either a disc in a drive (`--device`, via cdrdao, Direct
         distribution only) or a `.toc` file saved earlier (`--toc`), which
         needs no drive and no special permissions. Exactly one of the two.
