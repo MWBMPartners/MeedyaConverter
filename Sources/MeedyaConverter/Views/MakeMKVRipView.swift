@@ -370,14 +370,14 @@ struct MakeMKVRipView: View {
     /// view model derives the actual behaviour from the same value, so this
     /// can never promise something the run doesn't do.
     ///
-    /// While an identification is in progress this reads `runWillContribute`
-    /// — what THAT run promised, frozen at its start — rather than the live
-    /// `willContribute`. See `MakeMKVRipViewModel.runWillContribute`'s doc
-    /// comment: a run's own re-check can only narrow or withdraw what it
-    /// sends, never widen it, so this notice must not promise more than that
-    /// for a run already under way.
+    /// Delegates to `MakeMKVRipViewModel.showsContributionPromise`, which
+    /// combines what THAT run promised, frozen at its start
+    /// (`runWillContribute`), with the LIVE setting (`willContribute`) while
+    /// an identify run is in progress (fallback review round 2, finding 2) —
+    /// see its doc comment. Kept as a computed property here only so the
+    /// view's body stays readable.
     private var showsWillContribute: Bool {
-        viewModel.isIdentifying ? viewModel.runWillContribute : viewModel.willContribute
+        viewModel.showsContributionPromise
     }
 
     @ViewBuilder

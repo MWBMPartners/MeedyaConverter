@@ -16,15 +16,21 @@
 //     reading it, so the screen explains what happened and offers a button
 //     (owner decision, 2026-09-21).
 //   * The screen always says whether a contribution will be sent, BEFORE the
-//     run starts, and the promise it makes is the one the run keeps: the
-//     engine re-reads MeedyaDB's settings again immediately before anything
-//     is sent, so switching contributing off (or narrowing full to
-//     anonymous) while a run is in progress still takes effect for that run.
-//     With MeedyaDB off it says identification still works fine.
-//     LIMIT (worth saying plainly, not overselling this): once that request
-//     has been handed to the network layer, a change arriving after that
-//     instant cannot recall it — the re-check closes the window as far as it
-//     can be closed, not all the way.
+//     run starts. While a run is in progress the notice tracks BOTH what
+//     that run promised at its start AND the live setting (fallback review
+//     round 2, finding 2 — see `DiscIdentifyViewModel.showsContributionPromise`),
+//     so it can never promise MORE than the run will actually do in either
+//     direction: switching contributing OFF mid-run stops the notice
+//     claiming a contribution that is about to be withdrawn, and switching
+//     it ON mid-run cannot retroactively add one to a run that started
+//     without it. The engine itself re-reads MeedyaDB's settings again
+//     immediately before anything is sent, so this notice and the actual
+//     send always agree. With MeedyaDB off it says identification still
+//     works fine.
+//     LIMIT (worth saying plainly, not overselling this): once a request has
+//     been handed to the network layer, a change arriving after that instant
+//     cannot recall it — the re-check closes the window as far as it can be
+//     closed, not all the way.
 // ============================================================================
 
 import SwiftUI
@@ -204,13 +210,13 @@ struct DiscIdentifyView: View {
     // MARK: - Will anything be sent?
 
     /// Whether the notice below should currently claim a contribution is
-    /// coming. While a run is in progress this is what THAT RUN promised,
-    /// frozen at its start (`runWillContribute`) — never the live settings
-    /// (`willContribute`), which can change mid-run without being able to
-    /// retroactively add a contribution to a run that started without one.
-    /// See `DiscIdentifyViewModel.runWillContribute`'s doc comment.
+    /// coming. Delegates to the view model's `showsContributionPromise`,
+    /// which combines what THAT RUN promised, frozen at its start
+    /// (`runWillContribute`), with the LIVE setting (`willContribute`) —
+    /// see its doc comment. Kept as a computed property here (rather than
+    /// read inline) only so the view's body stays readable.
     private var showsWillContribute: Bool {
-        viewModel.isWorking ? viewModel.runWillContribute : viewModel.willContribute
+        viewModel.showsContributionPromise
     }
 
     @ViewBuilder

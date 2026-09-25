@@ -1574,6 +1574,118 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         )
     }
 
+    // MARK: - The on-screen notice during a run (`showsContributionPromise`)
+
+    /// Fallback review round 2, finding 2: before this fix the on-screen
+    /// notice read the FROZEN `runWillContribute` alone while an identify run
+    /// was in progress, so switching contributing OFF mid-run kept it saying
+    /// "will be contributed" right up until the run ended and then silently
+    /// sent nothing (the contributor's own `recheck` narrows what actually
+    /// goes, but the notice never followed). `showsContributionPromise` must
+    /// combine the frozen and live values so a switch-OFF is reflected
+    /// immediately.
+    func test_showsContributionPromise_switchingOffMidRun_stopsPromisingAContribution() async throws {
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .anonymous
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+
+        XCTAssertTrue(vm.runWillContribute, "precondition: this run started with contributing on")
+        XCTAssertTrue(
+            vm.showsContributionPromise,
+            "precondition: the notice should promise a contribution before the switch-off"
+        )
+
+        // The live setting flips OFF while the run is still going...
+        box.readiness = .off(reason: MeedyaDBGate.offReason)
+        // ...and the screen re-reads settings only when told to, exactly as
+        // the view's `.onChange` handlers do.
+        vm.refreshMeedyaDBReadiness()
+        XCTAssertFalse(vm.willContribute, "precondition: the LIVE setting really did change")
+
+        XCTAssertFalse(
+            vm.showsContributionPromise,
+            "a mid-run switch-OFF must stop the notice promising a contribution the recheck is about to withdraw"
+        )
+
+        gate.open()
+        await task.value
+    }
+
+    /// The mirror case, for the direction `runWillContribute` alone already
+    /// covers: a mid-run switch-ON must not make `showsContributionPromise`
+    /// promise a contribution this run has no way to make.
+    func test_showsContributionPromise_switchingOnMidRun_doesNotPromiseAContribution() async throws {
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: .off(reason: MeedyaDBGate.offReason), mode: .anonymous)
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+
+        XCTAssertFalse(vm.showsContributionPromise, "precondition: this run started with contributing off")
+
+        box.readiness = .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
+        vm.refreshMeedyaDBReadiness()
+        XCTAssertTrue(vm.willContribute, "precondition: the LIVE setting really did change")
+
+        XCTAssertFalse(
+            vm.showsContributionPromise,
+            "a mid-run switch-ON must not retroactively promise a contribution this run cannot make"
+        )
+
+        gate.open()
+        await task.value
+    }
+
+    /// The ordinary case: readiness never changes, so the notice keeps
+    /// promising exactly what the run is actually going to do, both during
+    /// and after the run.
+    func test_showsContributionPromise_readyThroughout_keepsPromisingAContribution() async throws {
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .anonymous
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+
+        XCTAssertTrue(
+            vm.showsContributionPromise,
+            "readiness never changed, so the notice should keep promising the contribution"
+        )
+
+        gate.open()
+        await task.value
+
+        XCTAssertTrue(
+            vm.showsContributionPromise,
+            "once the run ends, showsContributionPromise falls back to the live (still-ready) setting"
+        )
+    }
+
     /// Scanning a DIFFERENT disc must not leave the previous one's name on
     /// screen. Showing the wrong film is worse than showing nothing.
     func test_scan_clearsThePreviousDiscsIdentification() async {

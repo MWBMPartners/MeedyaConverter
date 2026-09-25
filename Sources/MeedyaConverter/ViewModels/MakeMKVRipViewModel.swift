@@ -745,6 +745,26 @@ final class MakeMKVRipViewModel {
     /// on `isIdentifying`.
     private(set) var runWillContribute = false
 
+    /// Whether the on-screen notice should CURRENTLY claim a contribution is
+    /// coming. Combines the frozen `runWillContribute` with the LIVE
+    /// `willContribute` while an identify run is in progress (fallback
+    /// review round 2, finding 2):
+    ///   * the FROZEN value stops a mid-run switch-ON from over-promising — a
+    ///     run that started with contributing off has no way to add one
+    ///     retroactively (see `runWillContribute`'s doc comment above);
+    ///   * the LIVE value stops a mid-run switch-OFF from over-promising —
+    ///     the contributor's own `recheck` re-reads settings again
+    ///     immediately before sending, so switching off narrows what the run
+    ///     actually does, and the notice must not keep claiming a
+    ///     contribution that recheck is about to withdraw.
+    /// Before this fix the notice used `runWillContribute` alone during a
+    /// run, so it kept saying "will be contributed" right up until the run
+    /// ended and then silently sent nothing.
+    /// Once nothing is identifying this collapses to plain `willContribute`.
+    var showsContributionPromise: Bool {
+        isIdentifying ? (runWillContribute && willContribute) : willContribute
+    }
+
     /// F3 follow-on decision: identification is blocked by the same
     /// source-changed condition as ripping, even though `identify()` itself
     /// never touches `resolvedSource` and works entirely from `discInfo`.

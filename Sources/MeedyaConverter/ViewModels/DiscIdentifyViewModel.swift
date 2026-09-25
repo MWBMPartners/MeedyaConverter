@@ -152,6 +152,26 @@ final class DiscIdentifyViewModel {
     /// picks between the two based on `isWorking`.
     private(set) var runWillContribute = false
 
+    /// Whether the on-screen notice should CURRENTLY claim a contribution is
+    /// coming. Combines the frozen `runWillContribute` with the LIVE
+    /// `willContribute` while a run is in progress (fallback review round 2,
+    /// finding 2):
+    ///   * the FROZEN value stops a mid-run switch-ON from over-promising — a
+    ///     run that started with contributing off has no way to add one
+    ///     retroactively (see `runWillContribute`'s doc comment above);
+    ///   * the LIVE value stops a mid-run switch-OFF from over-promising —
+    ///     `MeedyaDBContributor.contribute`'s `recheck` re-reads settings
+    ///     again immediately before sending, so switching off narrows what
+    ///     the run actually does, and the notice must not keep claiming a
+    ///     contribution that recheck is about to withdraw.
+    /// Before this fix the notice used `runWillContribute` alone during a
+    /// run, so it kept saying "will be contributed" right up until the run
+    /// ended and then silently sent nothing.
+    /// Once nothing is running this collapses to plain `willContribute`.
+    var showsContributionPromise: Bool {
+        isWorking ? (runWillContribute && willContribute) : willContribute
+    }
+
     // MARK: - Running
 
     private(set) var isWorking = false
