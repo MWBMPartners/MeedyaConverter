@@ -141,6 +141,17 @@ struct SettingsView: View {
                 // in-app purchase only works for App-Store distribution, and
                 // Direct licensing is deferred to its own effort. Restore/replace
                 // when a Direct licensing mechanism ships.
+                // Issue #506, commit 8. This is the screen
+                // `SettingsCommand.swift` (#506 commit 7) already promises
+                // App Store users in its own `--help` text and "still
+                // needed" wording: "use Settings › Import & Export inside
+                // that app". `SettingsTransferTab` holds all of the screen's
+                // logic in `SettingsTransferViewModel` (unit-tested); this
+                // is the one line that adds it to the tab bar.
+                Tab("Import & Export", systemImage: "square.and.arrow.up.on.square") {
+                    SettingsTransferTab(appViewModel: viewModel)
+                }
+
                 Tab("Updates", systemImage: "arrow.triangle.2.circlepath") {
                     UpdateSettingsTab()
                 }

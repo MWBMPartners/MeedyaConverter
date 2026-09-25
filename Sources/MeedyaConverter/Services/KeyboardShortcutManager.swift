@@ -236,10 +236,22 @@ final class KeyboardShortcutManager {
     /// The current set of shortcut bindings.
     ///
     /// Modifying this array automatically persists the changes to
-    /// UserDefaults.
+    /// UserDefaults — UNLESS the assignment came from `reloadFromDefaults`
+    /// (see `isReloadingFromSettingsImport` below), because that method sets
+    /// this from what `UserDefaults` already holds, and writing that same
+    /// value straight back would be redundant at best.
     var bindings: [ShortcutBinding] {
-        didSet { save() }
+        didSet {
+            guard !isReloadingFromSettingsImport else { return }
+            save()
+        }
     }
+
+    /// Guards `bindings`'s `didSet` while `reloadFromDefaults` is assigning
+    /// a value it just read FROM `UserDefaults`, so that assignment is never
+    /// mistaken for a person's edit and saved straight back. `false` the
+    /// rest of the time, including while the app is running normally.
+    private var isReloadingFromSettingsImport = false
 
     // MARK: - Initialization
 
@@ -374,6 +386,52 @@ final class KeyboardShortcutManager {
     /// Resets all bindings to their factory defaults.
     func resetToDefaults() {
         bindings = Self.defaultBindings
+    }
+
+    // MARK: - Reloading after a settings import (Issue #506 commit 8)
+
+    /// Re-reads shortcut bindings from `defaults` WITHOUT writing them back.
+    ///
+    /// `keyboard_shortcuts` is loaded once, here, in `init()`, and every
+    /// later change rewrites the whole list (`save()`, above) — so before
+    /// this method existed, importing a settings file that changed this
+    /// Mac's shortcuts only showed up after quitting and reopening the app
+    /// (`SettingsKeyRegistry`'s own comment on this key explained why, and
+    /// marked it `.nextLaunch` until this method shipped). Call this right
+    /// after `SettingsImporter.apply` succeeds and the "general" group was
+    /// applied, so the change is visible straight away instead.
+    ///
+    /// Deliberately does NOT call `save()`: the importer already wrote the
+    /// combined value to `defaults` as part of `apply`, so writing it again
+    /// here would only be redundant — and, more importantly, `save()`
+    /// always writes to `UserDefaults.standard` specifically (see its own
+    /// comment), never to whichever `defaults` this method was given, so
+    /// letting `didSet` fire here would silently write to `.standard` even
+    /// when `defaults` was a test's own throwaway suite. The
+    /// `isReloadingFromSettingsImport` guard on `bindings`'s `didSet` is
+    /// what stops that.
+    ///
+    /// Falls back to `Self.defaultBindings` when `defaults` holds nothing
+    /// usable for this key — the same fallback `init()` uses — because a
+    /// "Replace" import can remove this key entirely (when the file's
+    /// "General" group doesn't mention it), and after that this Mac should
+    /// show exactly what a fresh launch would show, not whatever was in
+    /// memory before the import.
+    ///
+    /// - Parameter defaults: Where to read from. Defaults to `.standard`,
+    ///   the app's real settings; tests pass a throwaway suite instead, so
+    ///   this never has to touch the developer's own settings file.
+    func reloadFromDefaults(_ defaults: UserDefaults = .standard) {
+        let reloaded: [ShortcutBinding]
+        if let data = defaults.data(forKey: Self.storageKey),
+           let saved = try? JSONDecoder().decode([ShortcutBinding].self, from: data) {
+            reloaded = saved
+        } else {
+            reloaded = Self.defaultBindings
+        }
+        isReloadingFromSettingsImport = true
+        bindings = reloaded
+        isReloadingFromSettingsImport = false
     }
 
     // MARK: - Persistence

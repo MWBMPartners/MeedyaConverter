@@ -204,14 +204,17 @@ public enum SettingsKeyRegistry {
             takesEffect: .nextLaunch
         ),
         // `KeyboardShortcutManager` loads the list once and writes the WHOLE
-        // list back on every change, so today an import only shows after a
-        // relaunch. The plan's later UI commit adds a reload; change this to
-        // `.immediately` in that commit, not before.
+        // list back on every change, so an import used to only show after a
+        // relaunch. #506 commit 8 adds `KeyboardShortcutManager
+        // .reloadFromDefaults(_:)`, called from the Import & Export screen
+        // right after `apply` succeeds, so the running app now notices an
+        // imported list straight away — hence `.immediately` (the default;
+        // see `allowed`'s own default). Pinned by
+        // `SettingsKeyRegistrySentinelTests.test_reloadedSettingsTakeEffectImmediately`.
         allowed(
             "keyboard_shortcuts", .general, .json(.keyboardShortcuts),
             label: "Keyboard shortcuts",
-            location: "Settings › Shortcuts",
-            takesEffect: .nextLaunch
+            location: "Settings › Shortcuts"
         ),
         allowed(
             "updateChannel", .general,
@@ -321,14 +324,18 @@ public enum SettingsKeyRegistry {
             location: "Conditional Rules, \(sidebar)"
         ),
         // Loaded once into `AppViewModel.savedPipelines` and written back
-        // whole on every save, so today an import only shows after a
-        // relaunch. The plan's later UI commit adds a reload; change this to
-        // `.immediately` in that commit, not before.
+        // whole on every save, so an import used to only show after a
+        // relaunch. #506 commit 8 adds `AppViewModel
+        // .reloadAfterSettingsImport(from:)`, called from the Import &
+        // Export screen right after `apply` succeeds, so the running app
+        // now notices an imported pipeline list straight away — hence
+        // `.immediately` (the default; see `allowed`'s own default). Pinned
+        // by `SettingsKeyRegistrySentinelTests
+        // .test_reloadedSettingsTakeEffectImmediately`.
         allowed(
             "savedPipelines", .encoding, .json(.encodingPipelines),
             label: "Saved encoding pipelines",
-            location: "Output, \(sidebar)",
-            takesEffect: .nextLaunch
+            location: "Output, \(sidebar)"
         ),
         // Visible in Settings but nothing reads it yet (#512). Exported
         // because a person can see and change it.

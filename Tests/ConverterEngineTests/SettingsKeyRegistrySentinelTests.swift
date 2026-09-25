@@ -172,6 +172,30 @@ final class SettingsKeyRegistrySentinelTests: XCTestCase {
         XCTAssertFalse(message.isEmpty)
     }
 
+    /// `keyboard_shortcuts` and `savedPipelines` used to be `.nextLaunch`,
+    /// because each is loaded once into memory (`KeyboardShortcutManager`,
+    /// `AppViewModel.savedPipelines`) and rewritten whole on every save, so
+    /// an import used to only show up after quitting and reopening the app.
+    /// #506 commit 8 ("the app") adds the two reload hooks the plan
+    /// describes — `KeyboardShortcutManager.reloadFromDefaults(_:)` and
+    /// `AppViewModel.reloadAfterSettingsImport(from:)`, both called from the
+    /// new Import & Export screen right after `apply` succeeds — so both
+    /// settings now apply immediately, and their registry entries were
+    /// flipped to match (`.immediately` is `allowed`'s own default, so
+    /// there is no explicit `takesEffect:` argument left on either entry to
+    /// misread). This test is the one place that pins the flip: without it,
+    /// someone could re-add `takesEffect: .nextLaunch` to either entry after
+    /// the reload hooks are later removed or broken, and nothing else here
+    /// would notice, because `SettingsKeyCoverageTests`'s scan only checks
+    /// that a key has SOME decision, never which one.
+    func test_reloadedSettingsTakeEffectImmediately() {
+        for key in ["keyboard_shortcuts", "savedPipelines"] {
+            guard let rules = entry(key)?.rules else { continue }
+            XCTAssertEqual(rules.takesEffect, .immediately,
+                           "\(key) has a reload hook (#506 commit 8) and should apply immediately.")
+        }
+    }
+
     // MARK: - Owner defaults
 
     func test_thisMacIsOffByDefaultAndEverythingElseIsOn() {

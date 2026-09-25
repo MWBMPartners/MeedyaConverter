@@ -1333,6 +1333,39 @@ final class AppViewModel {
         }
     }
 
+    /// Re-reads `savedPipelines` from `defaults` after a settings import.
+    ///
+    /// `savedPipelines` above is loaded exactly once, in its own default-
+    /// value expression, and every save or delete rewrites the whole list —
+    /// so before this method existed, importing a settings file with
+    /// different pipelines only showed up after quitting and reopening the
+    /// app (`SettingsKeyRegistry`'s comment on `"savedPipelines"` explained
+    /// why, and marked it `.nextLaunch` until this method shipped). Worse,
+    /// without a reload the STALE in-memory list would win back: the next
+    /// call to `savePipeline` or `deletePipeline` re-encodes `savedPipelines`
+    /// as it stood before the import and writes that over what the import
+    /// just wrote, silently undoing part of it. Call this right after
+    /// `SettingsImporter.apply` succeeds and the "encoding" group was
+    /// applied, so neither of those happens.
+    ///
+    /// Falls back to an empty list when `defaults` holds nothing usable for
+    /// this key — matching the property's own default-value expression —
+    /// because a "Replace" import can remove this key entirely (when the
+    /// file's "Encoding" group doesn't mention it), and after that this Mac
+    /// should show exactly what a fresh launch would show.
+    ///
+    /// - Parameter defaults: Where to read from. Defaults to `.standard`,
+    ///   the app's real settings; tests pass a throwaway suite instead, so
+    ///   this never has to touch the developer's own settings file.
+    func reloadAfterSettingsImport(from defaults: UserDefaults = .standard) {
+        guard let data = defaults.data(forKey: "savedPipelines"),
+              let decoded = try? JSONDecoder().decode([EncodingPipeline].self, from: data) else {
+            savedPipelines = []
+            return
+        }
+        savedPipelines = decoded
+    }
+
     /// Run a pipeline against a source file via `EncodingPipelineExecutor`
     /// (Issue #278) — the wiring that makes the editor produce actual files
     /// instead of only previewing arguments. Step outputs land alongside the
