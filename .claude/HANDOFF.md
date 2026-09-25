@@ -206,12 +206,63 @@ below it.
 >     `emailToAddresses` is TEXT holding JSON.
 >   - `keyboard_shortcuts` / `savedPipelines` are "next launch" until commit 8 adds
 >     reloads.
-> - **#506 5/9 (the export/import engine, Opus): in progress.**
+> - **#506 5/9 `d65ab8d` (Opus): the export/import ENGINE.**
+>   - Eight new files in `Sources/ConverterEngine/Settings/`.
+>   - The envelope: format/version/exportedAt/appVersion/categories/notIncluded.
+>   - Codecs blank every secret (SFTP password, cloud tokens, S3 secret). Addresses
+>     refuse user:pass@ AND query strings.
+>   - The exporter reads its own output back through the importer.
+>   - Apply is all-or-nothing: compute from a snapshot → re-check → write profiles
+>     first → then defaults.
+>   - All 10 constraints met; constraint 1 was proved three ways. 129 tests ran
+>     locally; 3 planted faults were caught.
+>   - It moved test UserDefaults suites INTO each test's temp folder (an absolute
+>     path as suiteName). That stops the ~/Library/Preferences litter; it's
+>     undocumented but works here, so CI must confirm.
+>   - It changed a commit 4 decision (mediaServerHost/emailSMTPHost are now checked
+>     as addresses).
+>   - Noted for the UI commit: warn when Replace removes the profile this Mac uses as
+>     its default.
+> - **#506 6/9 `e9ddbf9`:** `SettingsExportSchema` generated from the registry,
+>   plus a provisional CLI-report schema. The committed files are in
+>   `docs/schemas/`, with a drift test. There is a test-only
+>   `SettingsSchemaMiniValidator` (the plan's exact keyword list; it fails on any
+>   other). The three leak safeguards were proven by a planted fault. 47 tests ran
+>   locally. There's no jsonschema module locally for a cross-check.
+> - #506 7/9 (the CLI `settings export/import`): in progress.
 > - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
 >   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
 >   Reason: round 2 now runs in small chunks with pasted diffs spread across the
 >   day, and CI hadn't yet tested #508 at all. The engine and CLI build on the
 >   combined tree. #506 1-4 are still only in the worktree.
+> - **⚠️ CI RED on `2a948bf` (run 36115363116), #508's first CI run.** Two tests in
+>   `AutoTagEncodeDeliveryTests` fail ON CI ONLY (they pass locally, including 8 in
+>   parallel): the SECOND job on the same engine gets `emptyProbe`, meaning the
+>   engine's `try? await probe(url:)` failed for job 2.
+>   - Suspects: process-global state shared with other test classes in one CI
+>     worker process, or a second ffprobe pass.
+>   - **ROOT CAUSE FOUND and fixed in `6301879` (a PRODUCT bug, not a test bug):**
+>     - `FFmpegProbe.runFFprobe` waited only 500 ms for its low-priority pipe
+>       readers after ffprobe exited. On a busy machine a good probe then threw "no
+>       output", and `encode` SWALLOWS that with `try?`, so a job silently lost its
+>       duration, HDR/DV info and tags.
+>     - Made much likelier by `FFmpegProcessController` never clearing its pipe
+>       handlers at EOF: about 9,600 empty callbacks per ffmpeg run, starving the
+>       NEXT job's probe.
+>     - Fix: wait for EOF up to the watchdog's own kill deadline (a timeout, never
+>       a fragment), and nil the controller's handlers at EOF.
+>     - 3 new tests fail on the old code and pass on the new. 170/170 CI-style runs
+>       (12 processes, 16 CPU hogs).
+>     - The final link to CI's exact failure is INFERRED, since `encode` swallows
+>       the error; CI will confirm.
+>   - Follow-ups:
+>     - `encode` should log a probe failure instead of silently dropping HDR/DV;
+>     - the ffmpeg controller may lose the last stderr lines;
+>     - `AutoTagDeliverySettings.remove()`'s comment is false (the plists come back).
+>   - ⚠️ That debugger ran heavy CPU-hog loads 10:05-10:55 (it slowed the #506 6/9
+>     harness; those tests aren't timing-sensitive) and used `pkill -x yes`, which
+>     would kill ANY `yes` process on the Mac. **Builder rule from now on: no broad
+>     `pkill`/`killall`; kill only PIDs you started.**
 > - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
 >   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
 >   source, **#521** the REST API server can't actually encode and isn't reachable,
