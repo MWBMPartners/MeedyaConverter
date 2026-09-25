@@ -1,26 +1,37 @@
 // ============================================================================
-// MeedyaConverter — AutoTagRunnerTests (Issue #508, commit 4/10: films)
+// MeedyaConverter — AutoTagRunnerTests (Issue #508, commit 5/10: music)
 // Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 // Proprietary and confidential. Unauthorized copying or distribution
 // of this file, via any medium, is strictly prohibited.
 // ============================================================================
 //
-// Pins what `AutoTagRunner` delivers for FILMS: which files are looked up at
-// all, what is sent where, how a match is scored and judged, which tags come
-// back, and that a lookup can never hold up — or wrongly cancel — an encode.
-// Every request goes to a private stub HTTP client; nothing touches the
-// network. Public API only.
+// Pins what `AutoTagRunner` delivers for FILMS and MUSIC: which files are
+// looked up at all, what is sent where, how a match is scored and judged,
+// which tags come back, and that a lookup can never hold up — or wrongly
+// cancel — an encode. Every request goes to a private stub HTTP client;
+// nothing touches the network. Public API only.
 //
 // Things these tests exist to catch, because each would fail silently in
 // production:
 //   * THE 0.5 TRAP. Raw TMDB results all carry confidence 0.5, below the 0.7
 //     threshold. Without real scoring the feature would never tag anything.
 //   * COVER ART. An MP3 with an embedded picture has `hasVideo == true`; it
-//     must never be sent to TMDB as a film.
+//     must never be sent to TMDB as a film, and once it has been correctly
+//     routed to music it must still make a real MusicBrainz request, not
+//     silently do nothing.
+//   * THE ARTIST TRAP. Searching MusicBrainz by title alone is far too
+//     ambiguous ("Yesterday" has thousands of recordings) — an artist is
+//     required before any request is sent, from a tag or from an
+//     "Artist - Title" / "Artist – Title" (en dash) file name.
+//   * THE LENGTH TRAP. A recording's raw MusicBrainz score says nothing
+//     about whether it's actually the same length as the file; confidence
+//     must be forced to 0 when the length is missing or too far off, exactly
+//     as running time does for films.
 //   * THE KEY. A v3 TMDB key travels in the URL. It must appear in no
-//     failure reason, whatever the server sends back.
-//   * ZERO REQUESTS where nothing should be sent: off, no key, TV, music,
-//     no running time.
+//     failure reason, whatever the server sends back. (MusicBrainz never
+//     uses a key at all, so there is nothing to leak on that path.)
+//   * ZERO REQUESTS where nothing should be sent: off, no key, TV, a music
+//     file with no artist, no running time.
 //
 // HOW THE TIMING TESTS AVOID FLAKING UNDER `swift test --parallel`. None of
 // them races two wall-clock sleeps against each other. The stub's `.hang`
@@ -226,6 +237,70 @@ final class AutoTagRunnerTests: XCTestCase {
 
     private static let inceptionRoute = tmdbRoute(search: inceptionSearch, details: [inceptionID: inceptionDetails])
 
+    // MARK: MusicBrainz response bodies
+
+    /// One `/recording` search result row. `artistId` is optional because
+    /// most tests only care about the title/artist/length; the ambiguity and
+    /// "adds only what's missing" tests set it to also exercise
+    /// `musicbrainz_artistid`.
+    private struct StubRecording {
+        let id: String
+        let score: Int
+        let title: String
+        let artist: String
+        var artistId: String? = nil
+        var lengthMs: Int? = nil
+    }
+
+    private static func artistCreditJSON(name: String, artistId: String?) -> String {
+        guard let artistId else {
+            return #"{"name":"\#(name)","joinphrase":""}"#
+        }
+        return #"{"name":"\#(name)","joinphrase":"","artist":{"id":"\#(artistId)","name":"\#(name)"}}"#
+    }
+
+    private static func recordingSearchBody(_ rows: [StubRecording]) -> Data {
+        let items = rows.map { row -> String in
+            let length = row.lengthMs.map(String.init) ?? "null"
+            return #"{"id":"\#(row.id)","score":\#(row.score),"title":"\#(row.title)","length":\#(length),"artist-credit":[\#(artistCreditJSON(name: row.artist, artistId: row.artistId))]}"#
+        }
+        return Data(#"{"recordings":[\#(items.joined(separator: ","))]}"#.utf8)
+    }
+
+    private static let emptyMusicSearch = Data(#"{"recordings":[]}"#.utf8)
+
+    private static let bohemianRhapsodyID = "b1a9c0e9-d987-4042-ae91-78d6a3267d69"
+    private static let queenID = "0383dadf-2a4e-4d10-a46a-e9e041da8eb3"
+
+    /// A single, confident, length-matching "Bohemian Rhapsody" / "Queen"
+    /// result. `lengthMs` defaults to 354 000 ms (354 s) — the same duration
+    /// `song()`'s own default uses, so a test that doesn't care about the
+    /// length tolerance can just use both defaults together.
+    private static func bohemianRhapsodySearch(lengthMs: Int? = 354_000, score: Int = 100) -> Data {
+        recordingSearchBody([
+            StubRecording(
+                id: bohemianRhapsodyID, score: score, title: "Bohemian Rhapsody", artist: "Queen",
+                artistId: queenID, lengthMs: lengthMs
+            ),
+        ])
+    }
+
+    /// Answers MusicBrainz's `/recording` search with `search`. Every other
+    /// path (in particular TMDB's `/search/movie`) gets a 404, so a test
+    /// combining this with `tmdbRoute` in one dispatcher can tell the two
+    /// providers apart by which one actually got a request.
+    private static func musicBrainzRoute(search: Data) -> @Sendable (URLRequest) -> AutoTagRunnerStubHTTPClient.Reply {
+        return { request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/recording") {
+                return .respond(status: 200, body: search)
+            }
+            return .respond(status: 404, body: Data())
+        }
+    }
+
+    private static let bohemianRhapsodyRoute = musicBrainzRoute(search: bohemianRhapsodySearch())
+
     // MARK: Media files
 
     private static func stream(_ type: StreamType, codec: String, fps: Double? = nil) -> MediaStream {
@@ -250,13 +325,46 @@ final class AutoTagRunnerTests: XCTestCase {
     /// An MP3 with embedded cover art — named like a film, to make the trap
     /// as tempting as possible. `containerFormat` is nil because
     /// `ContainerFormat` has no mp3 case, which is also what production
-    /// holds for such a file.
+    /// holds for such a file. Its name gives no artist, so a lookup on this
+    /// one is skipped before any request — `mp3WithCoverArtAndArtist` below
+    /// is the sibling fixture that proves a real MusicBrainz request happens
+    /// once an artist IS available.
     private static let mp3WithCoverArt = MediaFile(
         fileURL: URL(fileURLWithPath: "/tmp/Inception (2010).mp3"),
         containerFormat: nil,
         streams: [stream(.audio, codec: "mp3"), stream(.video, codec: "mjpeg", fps: 90000)],
         duration: 355
     )
+
+    /// The same cover-art trap as `mp3WithCoverArt`, but named "Artist -
+    /// Title" so it actually HAS an artist to search with. Proves cover art
+    /// is routed to MUSIC and MusicBrainz end-to-end — a real search
+    /// happens — never to TMDB, complementing `mp3WithCoverArt` (which
+    /// proves the opposite edge: no artist means no request to either).
+    private static let mp3WithCoverArtAndArtist = MediaFile(
+        fileURL: URL(fileURLWithPath: "/tmp/Queen - Bohemian Rhapsody.mp3"),
+        containerFormat: nil,
+        streams: [stream(.audio, codec: "mp3"), stream(.video, codec: "mjpeg", fps: 90000)],
+        duration: 354
+    )
+
+    /// A song: one plain audio stream, no cover art. Named "Artist - Title"
+    /// (an ASCII hyphen) so the shared, existing `FilenameParser`/
+    /// `MusicBrainzTagMapping.seedQuery` path already finds the artist —
+    /// most tests below don't need the runner's OWN en-dash fallback
+    /// (`musicArtistTitleFromFileName`), which has its own dedicated tests.
+    private static func song(
+        named name: String = "Queen - Bohemian Rhapsody.flac",
+        seconds: Double? = 354,
+        tags: [String: String] = [:]
+    ) -> MediaFile {
+        MediaFile(
+            fileURL: URL(fileURLWithPath: "/tmp/\(name)"),
+            streams: [stream(.audio, codec: "flac")],
+            duration: seconds,
+            metadata: tags
+        )
+    }
 
     // MARK: Requests
 
@@ -317,33 +425,59 @@ final class AutoTagRunnerTests: XCTestCase {
         }
     }
 
-    func test_run_anMP3WithCoverArtIsNeverSentToTMDB() async throws {
+    func test_run_anMP3WithCoverArtButNoArtistIsNeverSentToTMDB_andIsSkippedZeroRequests() async throws {
+        // `mp3WithCoverArt`'s name ("Inception (2010).mp3") gives no artist,
+        // so — now that music is genuinely looked up (#508 commit 5) — this
+        // is the "no artist" skip, not a blanket "music isn't built" one.
+        // `test_run_anMP3WithCoverArtAndArtist_isLookedUpOnMusicBrainzNotTMDB`
+        // below is the sibling that proves a real request happens once an
+        // artist IS available.
         let client = AutoTagRunnerStubHTTPClient(route: Self.inceptionRoute)
 
         let report = try await Self.lookUp(Self.request(client: client), Self.mp3WithCoverArt)
 
-        XCTAssertEqual(client.requestCount, 0, "a song must never be looked up as a film")
-        XCTAssertEqual(report.outcome, .skipped(reason: AutoTagRunner.Reasons.musicNotBuiltYet))
+        XCTAssertEqual(client.requestCount, 0, "a song must never be looked up as a film, or without an artist")
+        XCTAssertEqual(report.outcome, .skipped(reason: AutoTagRunner.Reasons.noArtistForMusic))
         XCTAssertNil(report.provider)
         XCTAssertTrue(report.tagsToAdd.isEmpty)
     }
 
-    func test_run_musicIsSkippedWithTheHonestReason() async throws {
-        let client = AutoTagRunnerStubHTTPClient(route: Self.inceptionRoute)
-        let flac = MediaFile(
-            fileURL: URL(fileURLWithPath: "/tmp/Queen - Bohemian Rhapsody.flac"),
-            streams: [Self.stream(.audio, codec: "flac")],
-            duration: 355
-        )
+    func test_run_music_noArtistAnywhere_isSkipped_zeroRequests() async throws {
+        // No hyphen in the name, and no tags at all: nothing gives an
+        // artist, so this must be skipped before any request — to EITHER
+        // provider — is made.
+        let client = AutoTagRunnerStubHTTPClient(route: Self.bohemianRhapsodyRoute)
+        let untitledHum = Self.song(named: "Symphony No. 5.flac", seconds: 1800)
 
-        let report = try await Self.lookUp(Self.request(client: client), flac)
+        let report = try await Self.lookUp(Self.request(client: client), untitledHum)
 
-        XCTAssertEqual(report.outcome, .skipped(reason: AutoTagRunner.Reasons.musicNotBuiltYet))
+        XCTAssertEqual(report.outcome, .skipped(reason: AutoTagRunner.Reasons.noArtistForMusic))
         XCTAssertEqual(
-            AutoTagRunner.Reasons.musicNotBuiltYet,
-            "Music files aren't looked up yet: looking them up on MusicBrainz during a conversion hasn't been built."
+            AutoTagRunner.Reasons.noArtistForMusic,
+            "Music needs an artist to look up safely; searching by title alone is too ambiguous to apply unattended."
         )
-        XCTAssertEqual(client.requestCount, 0, "MusicBrainz is not contacted either, until commit 5")
+        XCTAssertNil(report.provider)
+        XCTAssertEqual(client.requestCount, 0)
+    }
+
+    func test_run_anMP3WithCoverArtAndArtist_isLookedUpOnMusicBrainzNotTMDB() async throws {
+        // The positive half of the cover-art trap: once cover art is
+        // correctly routed to music AND an artist is available, a real
+        // MusicBrainz search must actually happen — never TMDB.
+        let client = AutoTagRunnerStubHTTPClient(route: Self.bohemianRhapsodyRoute)
+
+        let report = try await Self.lookUp(Self.request(client: client), Self.mp3WithCoverArtAndArtist)
+
+        XCTAssertEqual(report.outcome, .applied)
+        XCTAssertEqual(report.provider, .musicBrainz)
+        XCTAssertFalse(
+            client.requests.contains { ($0.url?.path ?? "").hasSuffix("/search/movie") },
+            "cover art must never reach TMDB"
+        )
+        XCTAssertTrue(
+            client.requests.contains { ($0.url?.path ?? "").hasSuffix("/recording") },
+            "a real MusicBrainz search must have happened"
+        )
     }
 
     func test_plan_aTVEpisodeNameIsSkipped_andNothingIsSent() async throws {
@@ -838,5 +972,203 @@ final class AutoTagRunnerTests: XCTestCase {
         }
         XCTAssertEqual(client.cancelledCount, 1)
         XCTAssertLessThan(started.duration(to: .now), .seconds(10))
+    }
+
+    // MARK: - Music: choosing an artist to search with (pure, no network)
+
+    func test_plan_music_artistFromATagIsUsed() {
+        let file = Self.song(named: "Track 4.flac", tags: ["artist": "Queen", "title": "Bohemian Rhapsody"])
+        XCTAssertEqual(
+            AutoTagRunner.plan(for: file),
+            .music(MetadataSearchQuery(mediaType: .music, title: "Bohemian Rhapsody", artist: "Queen"))
+        )
+    }
+
+    func test_plan_music_artistFromAHyphenFileNameIsUsed() {
+        // The shared `FilenameParser`/`MusicBrainzTagMapping.seedQuery` path
+        // already handles the ASCII hyphen; this pins that the runner's own
+        // plan carries it through untouched.
+        let plan = AutoTagRunner.plan(for: Self.song(named: "Queen - Bohemian Rhapsody.flac"))
+        guard case .music(let query) = plan else {
+            return XCTFail("expected .music, got \(plan)")
+        }
+        XCTAssertEqual(query.artist, "Queen")
+        XCTAssertEqual(query.title, "Bohemian Rhapsody")
+    }
+
+    func test_plan_music_artistFromAnEnDashFileNameIsUsed() {
+        // The shared parser only recognises an ASCII hyphen; an en dash is
+        // the runner's OWN fallback (`musicArtistTitleFromFileName`), which
+        // exists because this exact shape is common in real music files.
+        let plan = AutoTagRunner.plan(for: Self.song(named: "Queen – Bohemian Rhapsody.flac"))
+        guard case .music(let query) = plan else {
+            return XCTFail("expected .music, got \(plan)")
+        }
+        XCTAssertEqual(query.artist, "Queen")
+        XCTAssertEqual(query.title, "Bohemian Rhapsody")
+    }
+
+    func test_plan_music_aTagTitleIsNeverOverwrittenByTheFileNameFallback() {
+        // A `title` TAG must win even when the file name also looks like
+        // "Artist – Title" — only the missing ARTIST is topped up from the
+        // name, exactly as `seedQuery` already prefers a tag's own title.
+        let file = Self.song(named: "Queen – Bohemian Rhapsody.flac", tags: ["title": "My Own Rip"])
+        guard case .music(let query) = AutoTagRunner.plan(for: file) else {
+            return XCTFail("expected .music, got \(AutoTagRunner.plan(for: file))")
+        }
+        XCTAssertEqual(query.artist, "Queen")
+        XCTAssertEqual(query.title, "My Own Rip")
+    }
+
+    func test_plan_music_withNoArtistAnywhereIsStillClassifiedAsMusic() {
+        // `plan` only CLASSIFIES a file; it does not enforce "an artist is
+        // required" (that's `run`'s `Reasons.noArtistForMusic`) — a music
+        // file with no artist anywhere must still come back `.music`, not
+        // `.skip`, the same shape `test_plan_anMP3WithCoverArtIsMusicNeverAFilm`
+        // already pins for the cover-art case.
+        let file = Self.song(named: "Symphony No. 5.flac")
+        guard case .music(let query) = AutoTagRunner.plan(for: file) else {
+            return XCTFail("expected .music, got \(AutoTagRunner.plan(for: file))")
+        }
+        XCTAssertNil(query.artist)
+    }
+
+    // MARK: - Music: what a successful match adds
+
+    func test_success_music_addsOnlyMissingTags_andNeverOverwritesTheFileOrTheJob() async throws {
+        let client = AutoTagRunnerStubHTTPClient(route: Self.bohemianRhapsodyRoute)
+        let file = Self.song(tags: ["TITLE": "Bohemian Rhapsody"])
+
+        let report = try await Self.lookUp(Self.request(client: client), file, jobTags: ["artist": "Someone Else"])
+
+        XCTAssertEqual(report.outcome, .applied)
+        XCTAssertEqual(report.provider, .musicBrainz)
+        XCTAssertEqual(
+            report.metadataToAdd,
+            ["musicbrainz_trackid": Self.bohemianRhapsodyID, "musicbrainz_artistid": Self.queenID],
+            "title is the file's own and artist is the job's own; only the identifiers were genuinely missing"
+        )
+        XCTAssertEqual(
+            Self.pairs(report.keptExisting),
+            ["TITLE": "Bohemian Rhapsody", "artist": "Someone Else"],
+            "kept with their ORIGINAL values, not MusicBrainz's"
+        )
+    }
+
+    // MARK: - Music: the length rule (owner's decision: max(5s, 3%), an artist required)
+
+    func test_run_music_lengthWithinTolerance_isApplied() async throws {
+        // The file is 200 s; the tolerance is max(5, 200 * 0.03) = 6 s. A
+        // recording 5 s off is INSIDE that, so the match must be trusted.
+        let search = Self.recordingSearchBody([
+            StubRecording(id: Self.bohemianRhapsodyID, score: 90, title: "Bohemian Rhapsody", artist: "Queen", lengthMs: 205_000),
+        ])
+        let client = AutoTagRunnerStubHTTPClient(route: Self.musicBrainzRoute(search: search))
+
+        let report = try await Self.lookUp(Self.request(client: client), Self.song(seconds: 200))
+
+        XCTAssertEqual(report.outcome, .applied)
+        XCTAssertEqual(report.metadataToAdd["title"], "Bohemian Rhapsody")
+        XCTAssertEqual(report.metadataToAdd["artist"], "Queen")
+    }
+
+    func test_run_music_lengthJustOutsideTolerance_isBelowThreshold_notApplied() async throws {
+        // Same 200 s file and the same 6 s tolerance; this recording is 7 s
+        // off — just past it — so it must score confidence 0 and be
+        // REJECTED even though its title, artist and raw MusicBrainz score
+        // all matched well.
+        let search = Self.recordingSearchBody([
+            StubRecording(id: Self.bohemianRhapsodyID, score: 90, title: "Bohemian Rhapsody", artist: "Queen", lengthMs: 207_000),
+        ])
+        let client = AutoTagRunnerStubHTTPClient(route: Self.musicBrainzRoute(search: search))
+
+        let report = try await Self.lookUp(Self.request(client: client), Self.song(seconds: 200))
+
+        guard case .belowThreshold(let best, let needed) = report.outcome else {
+            return XCTFail("expected below threshold, got \(report.outcome)")
+        }
+        XCTAssertEqual(best.confidence, 0, "a length outside tolerance must zero the confidence, whatever the raw score")
+        XCTAssertEqual(needed, 0.7, accuracy: 1e-9)
+        XCTAssertTrue(report.tagsToAdd.isEmpty)
+    }
+
+    func test_run_music_recordingWithNoLength_isBelowThreshold_notApplied() async throws {
+        let search = Self.recordingSearchBody([
+            StubRecording(id: Self.bohemianRhapsodyID, score: 100, title: "Bohemian Rhapsody", artist: "Queen", lengthMs: nil),
+        ])
+        let client = AutoTagRunnerStubHTTPClient(route: Self.musicBrainzRoute(search: search))
+
+        let report = try await Self.lookUp(Self.request(client: client), Self.song())
+
+        guard case .belowThreshold(let best, _) = report.outcome else {
+            return XCTFail("expected below threshold, got \(report.outcome)")
+        }
+        XCTAssertEqual(best.confidence, 0, "no length at all must zero the confidence, however high the raw score")
+        XCTAssertTrue(report.tagsToAdd.isEmpty)
+    }
+
+    func test_ambiguity_music_twoDifferentRecordingsNeckAndNeck_appliesNeither() async throws {
+        // Two different recordings of the same song, both a good length
+        // match, scored 90 and 87: both clear the 0.7 threshold and are
+        // only 0.03 apart — inside the 0.05 margin — so neither is trusted.
+        let search = Self.recordingSearchBody([
+            StubRecording(
+                id: "11111111-0000-0000-0000-000000000001", score: 90,
+                title: "Bohemian Rhapsody", artist: "Queen", lengthMs: 354_000
+            ),
+            StubRecording(
+                id: "11111111-0000-0000-0000-000000000002", score: 87,
+                title: "Bohemian Rhapsody", artist: "Queen", lengthMs: 354_000
+            ),
+        ])
+        let client = AutoTagRunnerStubHTTPClient(route: Self.musicBrainzRoute(search: search))
+
+        let report = try await Self.lookUp(Self.request(client: client), Self.song())
+
+        guard case .ambiguous(let first, let second) = report.outcome else {
+            return XCTFail("expected ambiguous, got \(report.outcome)")
+        }
+        XCTAssertEqual(first.externalId, "11111111-0000-0000-0000-000000000001")
+        XCTAssertEqual(second.externalId, "11111111-0000-0000-0000-000000000002")
+        XCTAssertEqual(first.confidence, 0.90, accuracy: 1e-9)
+        XCTAssertEqual(second.confidence, 0.87, accuracy: 1e-9)
+        XCTAssertTrue(report.tagsToAdd.isEmpty)
+        XCTAssertEqual(AutoTagRunner.ambiguityMargin, 0.05)
+    }
+
+    // MARK: - Music: deadline and Stop (same race the film path uses)
+
+    func test_deadline_music_givesAFailure_andReallyAbandonsTheRequest() async throws {
+        let client = AutoTagRunnerStubHTTPClient(route: { _ in .hang })
+        let started = ContinuousClock.now
+
+        let report = try await Self.lookUp(Self.request(client: client, deadline: .milliseconds(50)), Self.song())
+
+        XCTAssertEqual(report.outcome, .failed(reason: "MusicBrainz didn't answer within 0.05 seconds."))
+        XCTAssertEqual(report.provider, .musicBrainz)
+        XCTAssertEqual(
+            client.cancelledCount, 1,
+            "the in-flight request was cancelled, and `run` waited for it to end rather than leaving it running"
+        )
+        XCTAssertLessThan(started.duration(to: .now), .seconds(10))
+    }
+
+    func test_stopDuringTheLookup_music_throwsCancellation_quickly() async throws {
+        let client = AutoTagRunnerStubHTTPClient(route: { _ in .hang })
+        let started = ContinuousClock.now
+
+        do {
+            _ = try await Self.lookUp(
+                Self.request(client: client, deadline: .seconds(120)),
+                Self.song(),
+                shouldStop: { client.requestCount > 0 }
+            )
+            XCTFail("a stop must throw, not return a report")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertEqual(client.cancelledCount, 1, "the in-flight request was cancelled, not left running")
+        XCTAssertLessThan(started.duration(to: .now), .seconds(10), "stop is noticed within a poll, not at the deadline")
     }
 }

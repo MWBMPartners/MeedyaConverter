@@ -1,5 +1,5 @@
 // ============================================================================
-// MeedyaConverter — AutoTagRunner (Issue #508, commit 4/10: films)
+// MeedyaConverter — AutoTagRunner (Issue #508, commit 5/10: music)
 // Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 // Proprietary and confidential. Unauthorized copying or distribution
 // of this file, via any medium, is strictly prohibited.
@@ -7,24 +7,23 @@
 //
 // The piece that actually LOOKS A FILE UP for the auto-tag feature: it
 // decides whether a file is a film, a song or neither, searches TMDB for a
-// film, scores what comes back, and works out which tags are missing from the
-// file. Everything it needs arrives in one `AutoTagRequest` (built per job by
-// `AutoTagSettingsSource.currentRequest()`, commit 3).
+// film or MusicBrainz for a song, scores what comes back, and works out
+// which tags are missing from the file. Everything it needs arrives in one
+// `AutoTagRequest` (built per job by `AutoTagSettingsSource.currentRequest()`,
+// commit 3).
 //
 // ⚠️ WHAT THIS COMMIT DOES NOT DO YET — read before assuming anything runs:
 //   * NOTHING CALLS `AutoTagRunner.run` YET. `EncodingEngine` calling it after
 //     the source probe is #508 commit 6. Until then this file is exercised
 //     only by `AutoTagRunnerTests`.
-//   * MUSIC IS NOT LOOKED UP. A music file is recognised and planned
-//     (`AutoTagPlan.music`), but `run` returns `.skipped` with
-//     `Reasons.musicNotBuiltYet` for it. The MusicBrainz half is commit 5.
 //   * TV EPISODES ARE NOT LOOKED UP. A file whose name matches
 //     `FilenameParser`'s "S01E02" pattern is skipped (`Reasons.tvEpisode`).
-//   * NO NFO, NO RENAMING, NO ARTWORK. The NFO writer is commit 7; renaming
-//     and artwork are separate follow-up issues (see the plan).
+//   * NO ARTWORK, NO NFO, NO RENAMING. The NFO writer is commit 7; artwork
+//     embedding and renaming are separate follow-up issues (see the plan).
+//     There is no music equivalent of the film NFO planned at all.
 //   See `.claude/plans/autotag-encode-plan.md`.
 //
-// THREE TRAPS THIS FILE IS BUILT AROUND
+// FOUR TRAPS THIS FILE IS BUILT AROUND
 //
 // 1. Every TMDB result says it is 50% certain. `TMDBLookupService
 //    .parseSearchResults` never sets `confidence`, so it keeps
@@ -48,7 +47,24 @@
 //    or cancellation is thrown (as `CancellationError`); everything else —
 //    no key, no network, a rejected key, a slow server — comes back as an
 //    outcome, so the caller (the engine, from #508 commit 6) can log it and
-//    carry on encoding without the extra tags.
+//    carry on encoding without the extra tags. `runFilmLookup` and
+//    `runMusicLookup` both race through the SAME `race(deadline:pollInterval
+//    :shouldStop:operation:)` helper, so this guarantee is not duplicated
+//    code that could drift between the two media kinds.
+//
+// 4. Searching MusicBrainz by title alone is too easy to get wrong. A film's
+//    running time alone tells two same-named films apart; a song has no such
+//    luxury, because thousands of completely different recordings share a
+//    title ("Yesterday", "Hallelujah"). So an artist is REQUIRED before a
+//    music file is looked up AT ALL (`Reasons.noArtistForMusic`, checked
+//    before anything is sent) — from a tag, or from a file name shaped like
+//    "Artist - Title" or "Artist – Title" (en dash;
+//    `musicArtistTitleFromFileName`). Once a search does run, length plays
+//    the part running time plays for films: a recording with no length, or
+//    whose length is off from the file's own duration by more than
+//    `max(5 seconds, 3%)`, scores confidence 0 (`musicConfidence`) however
+//    well its title and artist matched — the owner's decision (plan,
+//    decision 1).
 //
 // WHY A FILE WITH NO RUNNING TIME IS NEVER TAGGED. Running time carries half
 // the score's weight and is the only signal that tells two films with the
@@ -56,7 +72,9 @@
 // year 0.15), which can never reach 0.7 anyway — so the runner says so up
 // front and makes no request at all, rather than spending TMDB calls on a
 // match it could never accept. The owner's decision (plan, decision 6):
-// conservative.
+// conservative. The same running-time gate in `plan(for:)` covers music too,
+// because `musicConfidence` needs the file's own duration just as much as
+// the film side needs it for `DiscIdentifier.rank`.
 // ============================================================================
 
 import Foundation
@@ -68,9 +86,12 @@ import Foundation
 public enum AutoTagPlan: Sendable, Equatable {
     /// Look the file up as a film on TMDB, searching for this.
     case film(MetadataSearchQuery)
-    /// The file is music. Planned here so the decision is testable today;
-    /// the MusicBrainz lookup itself arrives in #508 commit 5, so `run`
-    /// currently reports this as skipped.
+    /// The file is music, to be looked up on MusicBrainz searching for
+    /// this. `query.artist` may still be `nil` here — `plan(for:)` only
+    /// classifies the file, it does not enforce the "an artist is
+    /// required" rule; `run` does that (`Reasons.noArtistForMusic`) so a
+    /// music file without one is reported honestly as skipped rather than
+    /// silently reclassified as something else.
     case music(MetadataSearchQuery)
     /// Nothing will be looked up, for the plain-English `reason` given.
     case skip(reason: String)
@@ -85,10 +106,13 @@ public struct AutoTagMatchSummary: Sendable, Equatable {
     public let title: String
     /// The candidate's release year, when the provider gave one.
     public let year: Int?
-    /// The provider's own id for it (a TMDB film id, for films).
+    /// The provider's own id for it (a TMDB film id for a film; a
+    /// MusicBrainz recording MBID for a song).
     public let externalId: String
-    /// The runner's score for it, 0...1 — `DiscIdentifier.rank`'s, NOT the
-    /// 0.5 every raw TMDB result carries.
+    /// The runner's own score for it, 0...1 — for a film,
+    /// `DiscIdentifier.rank`'s score, NOT the 0.5 every raw TMDB result
+    /// carries; for a song, `musicConfidence`'s score, NOT MusicBrainz's raw
+    /// 0...100 one.
     public let confidence: Double
 
     public init(title: String, year: Int?, externalId: String, confidence: Double) {
@@ -121,21 +145,23 @@ public enum AutoTagOutcome: Sendable, Equatable {
     case matchedNothingToAdd
     /// The best candidate scored below the threshold (`needed`, 0...1).
     case belowThreshold(best: AutoTagMatchSummary, needed: Double)
-    /// Two DIFFERENT films both passed the threshold and scored within
-    /// `AutoTagRunner.ambiguityMargin` of each other, so neither is trusted.
+    /// Two DIFFERENT candidates (films, or MusicBrainz recordings) both
+    /// passed the threshold and scored within `AutoTagRunner.ambiguityMargin`
+    /// of each other, so neither is trusted.
     case ambiguous(first: AutoTagMatchSummary, second: AutoTagMatchSummary)
     /// The provider returned no candidates at all for this search.
     case noMatch(searchedFor: MetadataSearchQuery)
     /// Nothing was looked up, for a reason that is expected rather than a
-    /// fault: auto-tagging off, no key saved, a TV episode, music (not built
-    /// yet), no running time, and so on. No request is ever sent for a
+    /// fault: auto-tagging off, no key saved, a TV episode, a music file with
+    /// no artist, no running time, and so on. No request is ever sent for a
     /// skipped file, and the report's `provider` is always `nil`.
     case skipped(reason: String)
     /// The lookup was attempted and went wrong: unreachable, key rejected,
-    /// rate-limited, a server error, or no answer before the deadline.
-    /// `reason` has been passed through the TMDB key redaction, which
-    /// replaces every exact occurrence of the key, so the key cannot appear
-    /// in it as written.
+    /// rate-limited, a server error, or no answer before the deadline. For
+    /// the FILM path, `reason` has been passed through the TMDB key
+    /// redaction, which replaces every exact occurrence of the key, so the
+    /// key cannot appear in it as written. MusicBrainz never uses a key, so
+    /// there is nothing to redact on the music path.
     case failed(reason: String)
 }
 
@@ -163,9 +189,15 @@ public struct AutoTagLookupReport: Sendable {
     /// Empty unless a match was accepted.
     public let keptExisting: [MediaTag]
 
-    /// The accepted film, with `confidence` set to the runner's real score.
-    /// Set for `.applied` and `.matchedNothingToAdd` (the NFO writer in #508
-    /// commit 7 needs it even when no tag was missing); `nil` otherwise.
+    /// The accepted FILM, with `confidence` set to the runner's real score.
+    /// Set for `.applied` and `.matchedNothingToAdd` on the film path (the
+    /// NFO writer in #508 commit 7 needs it even when no tag was missing);
+    /// `nil` otherwise, and always `nil` for a music match — there is no
+    /// music NFO, and nothing yet needs the identified recording on its own
+    /// (its title/artist/etc. are already in `tagsToAdd`/`keptExisting`). If
+    /// a later commit needs the full `MusicBrainzRecordingMatch` for
+    /// something `tagsToAdd` can't carry, add its own field rather than
+    /// putting a recording into a property named for a film.
     public let identifiedFilm: MetadataResult?
 
     public init(
@@ -258,9 +290,13 @@ public enum AutoTagRunner {
         /// (Settings › Metadata).").
         public static let noTMDBKey = "No TMDB key is saved (Settings › Metadata)."
 
-        /// Music is recognised but not looked up yet (#508 commit 5).
-        public static let musicNotBuiltYet =
-            "Music files aren't looked up yet: looking them up on MusicBrainz during a conversion hasn't been built."
+        /// Neither a tag nor the file name gave an artist for a music file.
+        /// Checked before `chooseProvider` even runs, so a music file with
+        /// no artist makes ZERO requests — the same shape as every other
+        /// skip. See this file's header, trap 4, for why an artist (not
+        /// just a title) is required before MusicBrainz is ever asked.
+        public static let noArtistForMusic =
+            "Music needs an artist to look up safely; searching by title alone is too ambiguous to apply unattended."
 
         /// None of the chosen sources can identify this kind of file.
         public static let noUsableSource =
@@ -351,8 +387,13 @@ public enum AutoTagRunner {
     ///   4. Anything else → skip (`Reasons.nothingToIdentify`).
     ///
     /// The TV check applies to video only. A TV-style name on an audio file
-    /// (a podcast, say) goes down the music route; the plan's rule for music
-    /// (an artist is required, #508 commit 5) is what will decide it.
+    /// (a podcast, say) goes down the music route.
+    ///
+    /// Music's query is built by `musicQuery(seedTags:fileName:)`, which may
+    /// still come back with no `artist` — a classification decision here is
+    /// NOT the same thing as "safe to look up", so this function does not
+    /// enforce "an artist is required" itself; see `.music`'s own doc
+    /// comment and `run`'s `Reasons.noArtistForMusic`.
     ///
     /// - Parameters:
     ///   - file: The probed source file.
@@ -386,10 +427,60 @@ public enum AutoTagRunner {
             guard hasRunningTime else {
                 return .skip(reason: Reasons.noRunningTime)
             }
-            return .music(MusicBrainzTagMapping.seedQuery(tags: seedTags, filename: file.fileName))
+            return .music(musicQuery(seedTags: seedTags, fileName: file.fileName))
         }
 
         return .skip(reason: Reasons.nothingToIdentify)
+    }
+
+    /// Builds the music search query: `MusicBrainzTagMapping.seedQuery`'s own
+    /// tag- and (hyphen-only) filename-based artist, topped up — only when
+    /// that found none — by a LOCAL "Artist - Title" / "Artist – Title" (en
+    /// dash) split read straight from the file name.
+    ///
+    /// Deliberately NOT done by teaching `FilenameParser.parseMusic` itself
+    /// to recognise an en dash: that shared parser also feeds the FILM path
+    /// (`TMDBTagMapping.seedQuery`, for any file whose name carries no year),
+    /// and an en dash is common in film titles too ("Kill Bill – Volume 1").
+    /// Widening it there would risk turning a yearless film name into a
+    /// false music match. This function only ever runs once a file has
+    /// ALREADY been probed as music (`plan(for:)`'s `hasAudio` branch), so
+    /// that risk does not apply here — the film-or-music decision was made
+    /// from the actual audio/video streams, not from the name.
+    static func musicQuery(seedTags: [MediaTag], fileName: String) -> MetadataSearchQuery {
+        var query = MusicBrainzTagMapping.seedQuery(tags: seedTags, filename: fileName)
+        guard query.artist == nil, let hint = musicArtistTitleFromFileName(fileName) else {
+            return query
+        }
+        query.artist = hint.artist
+        // Only replace the title with the file-name guess if nothing more
+        // specific (a `title` tag) already set it — `seedQuery` prefers a
+        // tag's title over the file name, and that must not be undone here.
+        if MusicBrainzTagMapping.value(forKey: "title", in: seedTags) == nil {
+            query.title = hint.title
+        }
+        return query
+    }
+
+    /// A last-resort split of a file name shaped like "Artist - Title" or
+    /// "Artist – Title" (en dash). Tries the en dash FIRST: a name
+    /// containing both ("Artist – Sub-Title") must split on the one that
+    /// actually separates artist from title, and an en dash appearing
+    /// inside a title on its own is far rarer than a hyphen is. Returns
+    /// `nil` when the name doesn't look like either shape (fewer than two
+    /// non-empty parts once split).
+    static func musicArtistTitleFromFileName(_ fileName: String) -> (artist: String, title: String)? {
+        let name = (fileName as NSString).deletingPathExtension
+        for separator in ["–", "-"] {
+            let parts = name.components(separatedBy: separator).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if parts.count >= 2, let artist = parts.first, !artist.isEmpty,
+               let title = parts.last, !title.isEmpty {
+                return (artist, title)
+            }
+        }
+        return nil
     }
 
     /// Whether `fileName` matches `FilenameParser`'s TV-episode pattern.
@@ -483,7 +574,8 @@ public enum AutoTagRunner {
     /// Look `source` up and report which tags it is missing.
     ///
     /// Makes no request at all when auto-tagging is off, when the plan is a
-    /// skip, for music (not built yet), or when no usable provider is
+    /// skip, when a music file has no artist to search with
+    /// (`Reasons.noArtistForMusic`), or when no usable provider is
     /// configured (for films: no TMDB key).
     ///
     /// **Deadline and Stop.** The lookup runs in a task group alongside two
@@ -529,17 +621,33 @@ public enum AutoTagRunner {
             return .skipped(Reasons.off)
         }
 
-        let query: MetadataSearchQuery
         switch plan(for: source, jobTags: jobTags) {
         case .skip(let reason):
             return .skipped(reason)
-        case .music:
-            // Honest, not pretend: the MusicBrainz lookup is #508 commit 5.
-            return .skipped(Reasons.musicNotBuiltYet)
-        case .film(let filmQuery):
-            query = filmQuery
+        case .film(let query):
+            return try await runFilmLookup(
+                query: query, request: request, source: source, jobTags: jobTags, shouldStop: shouldStop
+            )
+        case .music(let query):
+            return try await runMusicLookup(
+                query: query, request: request, source: source, jobTags: jobTags, shouldStop: shouldStop
+            )
         }
+    }
 
+    /// The film half of `run`: choose TMDB or skip, then race the lookup
+    /// against the deadline and Stop. Split out of `run` only so the two
+    /// media kinds' near-identical "choose a provider, then race" shape
+    /// reads as two short functions rather than one long `switch`; nothing
+    /// about the race, the deadline wording or the key redaction changed
+    /// from #508 commit 4.
+    static func runFilmLookup(
+        query: MetadataSearchQuery,
+        request: AutoTagRequest,
+        source: MediaFile,
+        jobTags: [String: String],
+        shouldStop: @escaping @Sendable () -> Bool
+    ) async throws -> AutoTagLookupReport {
         let order = AutoTagger.determineLookupOrder(query: query, config: request.config)
         switch chooseProvider(from: order, runnable: [.tmdb], hasTMDBService: request.tmdbService != nil) {
         case .skip(let reason):
@@ -580,6 +688,69 @@ public enum AutoTagRunner {
                 Reasons.didNotAnswer(provider: "TMDB", within: request.deadline),
                 service: service
             )
+        case .stopRequested:
+            throw CancellationError()
+        }
+    }
+
+    /// The music half of `run`, added in #508 commit 5. The same shape as
+    /// `runFilmLookup` — choose a provider, then race the search against the
+    /// deadline and Stop — with one extra gate in front: an artist is
+    /// required (this file's header, trap 4), checked BEFORE
+    /// `chooseProvider` even runs, so a music file with no artist makes ZERO
+    /// requests, exactly like every other skip.
+    ///
+    /// MusicBrainz never needs a key, so — unlike the film half — this can
+    /// only skip for "not connected yet" or "no usable source", never for
+    /// anything resembling `Reasons.noTMDBKey`.
+    static func runMusicLookup(
+        query: MetadataSearchQuery,
+        request: AutoTagRequest,
+        source: MediaFile,
+        jobTags: [String: String],
+        shouldStop: @escaping @Sendable () -> Bool
+    ) async throws -> AutoTagLookupReport {
+        guard let artist = query.artist?.trimmingCharacters(in: .whitespacesAndNewlines), !artist.isEmpty else {
+            return .skipped(Reasons.noArtistForMusic)
+        }
+
+        let order = AutoTagger.determineLookupOrder(query: query, config: request.config)
+        // `hasTMDBService` only matters to `chooseProvider`'s `.tmdb` branch,
+        // and `order` cannot contain `.tmdb` here — `determineLookupOrder`
+        // filters sources by the query's media type, and this query's is
+        // `.music`. `false` documents that the value is unused, not a guess.
+        switch chooseProvider(from: order, runnable: [.musicBrainz], hasTMDBService: false) {
+        case .skip(let reason):
+            return .skipped(reason)
+        case .lookUp:
+            break
+        }
+
+        let service = request.musicBrainzService
+        let config = request.config
+        let winner = try await race(
+            deadline: request.deadline,
+            pollInterval: stopPollInterval,
+            shouldStop: shouldStop
+        ) {
+            try await lookUpMusic(
+                query: query,
+                service: service,
+                file: source,
+                jobTags: jobTags,
+                config: config
+            )
+        }
+
+        // Stop wins a tie with anything, including a lookup that finished in
+        // the same instant: the user asked for the job to stop.
+        try throwIfStopped(shouldStop)
+
+        switch winner {
+        case .finished(let report):
+            return report
+        case .deadlinePassed:
+            return failedMusic(Reasons.didNotAnswer(provider: "MusicBrainz", within: request.deadline))
         case .stopRequested:
             throw CancellationError()
         }
@@ -799,13 +970,193 @@ public enum AutoTagRunner {
         )
     }
 
+    // MARK: The music lookup
+
+    /// Search, rank, score and judge — the music counterpart of
+    /// `lookUpFilm`, added in #508 commit 5. Throws ONLY `CancellationError`,
+    /// and only when THIS task was cancelled; every other problem becomes a
+    /// `.failed` (or `.skipped`) report, exactly like the film path.
+    static func lookUpMusic(
+        query: MetadataSearchQuery,
+        service: MusicBrainzLookupService,
+        file: MediaFile,
+        jobTags: [String: String],
+        config: AutoTagConfig
+    ) async throws -> AutoTagLookupReport {
+        do {
+            let matches = try await service.searchRecordings(title: query.title, artist: query.artist)
+            guard !matches.isEmpty else {
+                return AutoTagLookupReport(outcome: .noMatch(searchedFor: query), provider: .musicBrainz)
+            }
+            let scored = scoreMusic(candidates: matches, fileDurationSeconds: file.duration)
+            return judgeMusic(scored: scored, query: query, file: file, jobTags: jobTags, config: config)
+        } catch is CancellationError {
+            // Same reasoning as `lookUpFilm`: pass on only a cancellation of
+            // THIS task (Stop, the deadline, or the job being cancelled). A
+            // `CancellationError` from the HTTP layer when nobody cancelled
+            // us is a failed lookup, not a stopped job.
+            if Task.isCancelled { throw CancellationError() }
+            return failedMusic("The MusicBrainz request was cancelled before it finished.")
+        } catch let error as MusicBrainzLookupError {
+            switch error {
+            case .emptyQuery:
+                // `runMusicLookup` already refuses a blank artist, and
+                // `plan(for:)`/`musicQuery` always give SOME title text from
+                // a tag or the file name, so this is not an expected path —
+                // a second line of defence, the same reasoning `lookUpFilm`
+                // gives for its own `.emptyQuery` branch.
+                return .skipped(Reasons.noSearchTitle)
+            default:
+                return failedMusic(error.errorDescription ?? "The MusicBrainz lookup failed.")
+            }
+        } catch {
+            // Not expected — the service throws only `MusicBrainzLookupError`
+            // — but a lookup must never be able to fail an encode.
+            return failedMusic("The MusicBrainz lookup failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Rank every candidate with `MusicBrainzTagMapping.ranked`, then compute
+    /// each one's CONFIDENCE per the owner's music acceptance rule (plan,
+    /// decision 1; this file's header, trap 4): `score / 100`, but 0 when the
+    /// recording has no usable length, or its length is off from the file's
+    /// own duration by more than `max(5 seconds, 3% of the file's duration)`.
+    ///
+    /// `ranked`'s own sort key is MusicBrainz's raw 0...100 score, broken
+    /// only by RAW duration closeness — not the tolerance rule above. That
+    /// is unlike the film side, where `DiscIdentifier.rank`'s score IS the
+    /// confidence `judge` uses, so `score(candidates:query:fileDuration:)`'s
+    /// output is already sorted by confidence. Here a high-scoring recording
+    /// whose length is a little too far off (zeroed by the rule above) could
+    /// otherwise sit ahead of a lower-scoring one that IS within tolerance,
+    /// so this function re-sorts by the computed confidence, best first,
+    /// before `judgeMusic` ever looks at "the best candidate" or "the top
+    /// two" — the same meaning those phrases have on the film side.
+    static func scoreMusic(
+        candidates: [MusicBrainzRecordingMatch],
+        fileDurationSeconds: TimeInterval?
+    ) -> [(match: MusicBrainzRecordingMatch, result: MetadataResult)] {
+        let byMusicBrainzOrder = MusicBrainzTagMapping.ranked(candidates, fileDurationSeconds: fileDurationSeconds)
+        let withConfidence = byMusicBrainzOrder.map { match -> (match: MusicBrainzRecordingMatch, result: MetadataResult) in
+            var result = match.metadataResult
+            result.confidence = musicConfidence(for: match, fileDurationSeconds: fileDurationSeconds)
+            return (match, result)
+        }
+        // Stable by construction (`Array.sorted(by:)` is a documented stable
+        // sort since Swift 5), but the offset tie-break is written out
+        // explicitly anyway — the same style `MusicBrainzTagMapping.ranked`
+        // itself uses — so this does not silently depend on that guarantee.
+        let indexed = Array(withConfidence.enumerated())
+        return indexed.sorted { lhs, rhs in
+            if lhs.element.result.confidence != rhs.element.result.confidence {
+                return lhs.element.result.confidence > rhs.element.result.confidence
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    /// The owner's music acceptance rule (plan, decision 1) for ONE
+    /// candidate: its MusicBrainz score (0...100) as a 0...1 confidence,
+    /// UNLESS its length can't be trusted — absent, zero, or more than
+    /// `max(5 seconds, 3%)` away from the file's own duration — in which case
+    /// the confidence is 0, however high the raw score.
+    ///
+    /// 0, not "drop the candidate": a run of all-mismatched candidates still
+    /// has a real "best" to report through `.belowThreshold`, which reads far
+    /// better in the Activity Log than the misleading `.noMatch` when
+    /// MusicBrainz did find something with that title and artist.
+    static func musicConfidence(for match: MusicBrainzRecordingMatch, fileDurationSeconds: TimeInterval?) -> Double {
+        guard let fileDurationSeconds, fileDurationSeconds > 0, fileDurationSeconds.isFinite else {
+            // `plan(for:)` already refuses a file with no usable running
+            // time before a music lookup is ever attempted; this keeps the
+            // function correct on its own terms regardless.
+            return 0
+        }
+        guard let recordingLength = match.lengthSeconds, recordingLength > 0 else {
+            return 0
+        }
+        let tolerance = max(5.0, fileDurationSeconds * 0.03)
+        guard abs(recordingLength - fileDurationSeconds) <= tolerance else {
+            return 0
+        }
+        return Double(match.score) / 100
+    }
+
+    /// Decide what to do with scored candidates (best first). Pure — the
+    /// music counterpart of `judge`, including the SAME ambiguity rule: two
+    /// DIFFERENT recordings (by MusicBrainz id, never the same recording
+    /// listed twice) both meeting the threshold and within `ambiguityMargin`
+    /// of each other are trusted to neither.
+    static func judgeMusic(
+        scored: [(match: MusicBrainzRecordingMatch, result: MetadataResult)],
+        query: MetadataSearchQuery,
+        file: MediaFile,
+        jobTags: [String: String],
+        config: AutoTagConfig
+    ) -> AutoTagLookupReport {
+        guard let best = scored.first else {
+            // `lookUpMusic` returns `.noMatch` before scoring an empty list,
+            // so this is not reached today. Same defensive answer as
+            // `judge`'s: nothing to judge IS no match.
+            return AutoTagLookupReport(outcome: .noMatch(searchedFor: query), provider: .musicBrainz)
+        }
+
+        guard AutoTagger.meetsThreshold(result: best.result, config: config) else {
+            return AutoTagLookupReport(
+                outcome: .belowThreshold(best: AutoTagMatchSummary(best.result), needed: config.minimumConfidence),
+                provider: .musicBrainz
+            )
+        }
+
+        // The runner-up is the best-scoring DIFFERENT recording: the same
+        // MusicBrainz id twice is one recording listed twice, not a tie.
+        if let runnerUp = scored.dropFirst().first(where: { $0.match.id != best.match.id }),
+           AutoTagger.meetsThreshold(result: runnerUp.result, config: config),
+           // A hair of tolerance so "exactly 0.05 apart" counts as within the
+           // margin whatever the floating-point rounding of the two scores —
+           // the same reasoning `judge`'s own check gives.
+           best.result.confidence - runnerUp.result.confidence <= ambiguityMargin + 1e-9 {
+            return AutoTagLookupReport(
+                outcome: .ambiguous(first: AutoTagMatchSummary(best.result), second: AutoTagMatchSummary(runnerUp.result)),
+                provider: .musicBrainz
+            )
+        }
+
+        let release = best.match.bestRelease(preferringAlbumTitled: query.album)
+        let additions = AutoTagMerge.additions(
+            existing: tagList(file.metadata),
+            jobTags: tagList(jobTags),
+            applying: { MusicBrainzTagMapping.applying(best.match, release: release, to: $0, includeIdentifiers: true) }
+        )
+        return AutoTagLookupReport(
+            outcome: additions.added.isEmpty ? .matchedNothingToAdd : .applied,
+            provider: .musicBrainz,
+            tagsToAdd: additions.added,
+            keptExisting: additions.keptExisting
+            // `identifiedFilm` stays nil: see that property's own doc
+            // comment for why a recording does not belong in it.
+        )
+    }
+
     // MARK: Helpers
 
-    /// A `.failed` report whose reason has been through the key redaction.
-    /// The ONLY way this file builds a `.failed` outcome, so no failure text
-    /// can skip the redaction.
+    /// A `.failed` TMDB report whose reason has been through the key
+    /// redaction. The ONLY way this file builds a `.failed` outcome for the
+    /// FILM path, so no film failure text can skip the redaction. See
+    /// `failedMusic` for the MusicBrainz equivalent, which has no key to
+    /// redact.
     static func failed(_ reason: String, service: TMDBLookupService) -> AutoTagLookupReport {
         AutoTagLookupReport(outcome: .failed(reason: service.redactingKey(in: reason)), provider: .tmdb)
+    }
+
+    /// A `.failed` MusicBrainz report. No key is ever sent to MusicBrainz —
+    /// unlike `failed(_:service:)` for TMDB — so there is nothing to redact;
+    /// the reason is used exactly as given. Kept as its own tiny function,
+    /// rather than folding every caller into `failed(_:service:)`, so this
+    /// remains the ONLY way this file builds a `.failed` outcome for the
+    /// MUSIC path.
+    static func failedMusic(_ reason: String) -> AutoTagLookupReport {
+        AutoTagLookupReport(outcome: .failed(reason: reason), provider: .musicBrainz)
     }
 
     /// Throws `CancellationError` if the caller has asked to stop, or the
