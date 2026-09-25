@@ -29,6 +29,18 @@ below it.
 
 - **Branch:** `wip/alpha-consolidation` at `b0de681` (CI run 36133242439 green).
   Nothing is waiting to be pushed.
+- **#505 build progress (worktree `.claude/worktrees/505-queue`, branch
+  `build/505-queue`, cut from `1dfd2b5`; NOT pushed, NOT on the working branch yet):**
+  - `e9dded9` 1/10 (Sonnet): a fixed request body (`wireBody`, sorted keys), `send`
+    with an `Idempotency-Key`, `destination`, `retryDisposition` (not used yet).
+    105 engine tests ran locally in the harness; two planted faults were caught.
+  - `403addc`: orchestrator review. No code faults; six comments over-claimed and
+    were corrected. They described the not-yet-built sender in the present tense;
+    said a retry makes "a second row" (MeedyaDB's `entities.php` updates the same
+    row by fingerprint); and gave the wrong reason for identical bytes. **I also
+    nearly added a false claim myself** (that the CLI's `--submit` passes an off
+    config; it refuses instead). Checking each claim against the code caught it.
+  - 2/10 (Opus) building from 14:05: models, store, dedup, registry line.
 - **#505 build rules for this session.** Build in a WORKTREE, and cherry-pick onto the
   branch only while NO Codex chunk is running. A chunk takes a few minutes, and Codex
   reads whole files from the main working tree for context. Plan section 10 says
