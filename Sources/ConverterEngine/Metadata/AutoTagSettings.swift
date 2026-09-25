@@ -15,12 +15,16 @@
 //
 // ⚠️ WHAT IS AND ISN'T WIRED UP. `EncodingEngine` calls
 // `AutoTagSettingsSource.currentRequest()` once at the start of every job —
-// but only an engine that was GIVEN a source when it was built (#508
-// commit 6). The app does not give its engine one until #508 commit 8, and
-// the Settings toggle that writes `autotag.enabled` is commit 9. Until
-// then, no real encode in the app reads these settings; they are exercised
-// by `AutoTagSettingsTests` and, through a real `encode`, by
-// `AutoTagEncodeDeliveryTests`. See `.claude/plans/autotag-encode-plan.md`.
+// but only for an engine that was GIVEN a source when it was built (#508
+// commit 6). The app's engine IS given one, in `AppViewModel.init` (#508
+// commit 8), and the Settings switch that writes `autotag.enabled` shipped
+// in commit 9 (`AutoTagSettingsSection`). So a real encode from the app's
+// queue, watch folders, the scheduler or AppleScript DOES read these
+// settings today, once someone turns the switch on. The one path that
+// still does NOT: an `EncodingEngine` built anywhere else — the
+// `meedya-convert` CLI and any encoding pipeline — is never given a
+// settings source, so it never auto-tags, whatever `UserDefaults` says.
+// See `.claude/plans/autotag-encode-plan.md`.
 //
 // Auto-tagging is OFF by default. An absent `autotag.enabled` key reads as
 // `false` from `UserDefaults.bool(forKey:)`, which is exactly the default
@@ -306,8 +310,9 @@ public final class AutoTagSettingsSource: @unchecked Sendable {
     /// as a failure.
     ///
     /// Called by `EncodingEngine.encode(job:onProgress:)` once per job, for an
-    /// engine built with a settings source (#508 commit 6) — see this file's
-    /// header for why no app encode reaches it before #508 commit 8.
+    /// engine built with a settings source (#508 commit 6) — the app's own
+    /// engine since #508 commit 8, and no other `EncodingEngine` anywhere in
+    /// this codebase (see this file's header).
     public func currentRequest() -> AutoTagRequest? {
         let defaults = self.defaults()
         let config = AutoTagSettingsStore.config(in: defaults)

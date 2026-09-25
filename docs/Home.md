@@ -105,6 +105,8 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 - Manual metadata tag editing, written through ffmpeg
 - Per-stream metadata overrides (title, language, disposition)
 - Kodi/Plex/Jellyfin naming templates and NFO sidecar path generation
+- **Automatic tagging while converting** (opt-in, off by default): films via
+  TMDB, music via MusicBrainz, missing tags only (#508)
 
 > **Partially available.** Online metadata *lookup* works for **MusicBrainz**
 > (keyless, for music) and **TMDB** (for films, using a key you add in Settings ›
@@ -113,14 +115,25 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 > to the tag table. TMDB accepts either credential it issues: the short API key
 > or the long read access token.
 >
+> **Since #508, the same two lookups also run automatically**, without a click:
+> Settings › Metadata's "Tag files automatically while converting" switch (off
+> by default) looks each file up during a real encode from the queue (including
+> watch folders and scheduled jobs) or AppleScript, and adds only the tags the
+> file is missing — never renaming it, never replacing a tag it already has. A
+> lookup is capped at about 30 seconds and never fails the encode. The
+> `meedya-convert` CLI and encoding pipelines don't tag, because their
+> `EncodingEngine` is never given a settings source.
+>
 > The remaining **keyed** providers — TheTVDB, Discogs, FanArt.tv, OMDb,
 > OpenSubtitles — still only build request URLs and have no key field, because a
 > key box for a provider nothing calls would be a control that does nothing. They
 > will appear as each one starts working. TMDB covers films only for now: TMDB
 > reports a single running time for a film but a list of episode lengths for a
-> series, which needs its own handling. Audio fingerprinting
-> (`AudioFingerprinter`) and `AutoTagger` remain present-but-uncalled follow-ups.
-> Tracked in #205 / #467 / #493.
+> series, which needs its own handling — so TV episodes are not looked up at all
+> yet, on either path. Audio fingerprinting (`AudioFingerprinter`) has no
+> caller anywhere and remains a follow-up; `AutoTagger` itself now has a real
+> one — see above. Renaming the output file and embedding artwork are also
+> follow-ups, not part of #508. Tracked in #205 / #467 / #493 / #508.
 
 ---
 

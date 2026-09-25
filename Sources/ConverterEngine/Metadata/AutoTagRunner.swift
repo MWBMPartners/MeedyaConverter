@@ -16,10 +16,16 @@
 //   * `EncodingEngine.encode(job:onProgress:)` calls `AutoTagRunner.run` after
 //     the source probe and before any FFmpeg pass (#508 commit 6) — but ONLY
 //     for an engine that was given an `AutoTagSettingsSource` when it was
-//     built, and only while the setting is on. The app does not give its
-//     engine one until #508 commit 8, so until then no real encode in the
-//     app reaches this file; `AutoTagEncodeDeliveryTests` drives it through
-//     a real `encode` with fake FFmpeg/ffprobe programs.
+//     built, and only while the setting is on. The APP's engine is given
+//     one, in `AppViewModel.init` (#508 commit 8), and the Settings switch
+//     that turns the setting on shipped in commit 9 — so a real encode from
+//     the app's queue, watch folders, scheduled jobs or AppleScript DOES
+//     reach this file today, whenever "Tag files automatically while
+//     converting" is on. `AutoTagEncodeDeliveryTests` also drives it
+//     directly through a real `encode` with fake FFmpeg/ffprobe programs. An
+//     `EncodingEngine` built anywhere else — the `meedya-convert` CLI, or any
+//     encoding pipeline — is never given a settings source, so it never
+//     reaches this file at all.
 //   * TV EPISODES ARE NOT LOOKED UP. A file whose name matches
 //     `FilenameParser`'s "S01E02" pattern is skipped (`Reasons.tvEpisode`).
 //   * NO ARTWORK, NO RENAMING. Both are separate follow-up issues (see the

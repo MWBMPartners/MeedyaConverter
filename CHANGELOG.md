@@ -23,6 +23,21 @@
 
 ### Added
 
+- **Automatic tagging while converting** (Settings › Metadata › "Tag files
+  automatically while converting", **off by default**): every file converted
+  from the queue (including watch folders and scheduled jobs) or AppleScript
+  is now looked up on its way through the encoder — films on TMDB, music on
+  MusicBrainz — and any tag it is missing (title, year, genre, artist, album,
+  and so on) is added. A tag the file or the job already has is never
+  replaced, the output is never renamed, and an existing Kodi `.nfo` sidecar
+  (also opt-in, and written only for an identified film) is never
+  overwritten. A lookup is capped at about 30 seconds and can never fail the
+  encode — a slow, unreachable, not-confident-enough or ambiguous result just
+  means the file converts without the extra tags, and the Activity Log says
+  what happened. Applies only to the app's own encoder: encoding pipelines
+  and the `meedya-convert` command-line tool don't tag files. Renaming the
+  output, embedding artwork, TV episodes, a CLI flag, and the REST API path
+  are deliberately not part of this and are tracked as follow-ups (#508).
 - **Vector Conversion** and **ProRes → Vector** now run for real in Direct
   builds: bundled `potrace` (GPL-2.0-or-later, Direct-only, licence text +
   written source offer staged in `Contents/Resources/Licenses`) and `vtracer`

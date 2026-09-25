@@ -2,10 +2,15 @@
 
 # Plan: #508, auto-tagging during an encode
 
-**Status: PLANNED, not built.** An Opus deep-plan run (read-only) on 2026-09-24/25,
-against `cd6b5a4`. Line numbers are as of that commit, so re-check them by text before
-editing, because the Codex round-1 fixes land first. Decisions taken on the
-recommended defaults are listed at the end; the owner can override any of them.
+**Status: IMPLEMENTED**, on the `worktree-agent-aecc2da233ac2a105` branch —
+commits `0d7359d`…`a8e49a1` (1/10 through 9/10) plus this documentation commit
+(10/10). Originally an Opus deep-plan run (read-only) on 2026-09-24/25,
+against `cd6b5a4`; line numbers below are as of that commit and were not
+re-checked after the build, so re-read the real files rather than trusting
+them. See "Where the build differed from this plan" below for the handful of
+places the shipped code does not match what was planned here. Decisions taken
+on the recommended defaults are listed at the end; the owner can override any
+of them.
 
 ## The short version
 
@@ -283,6 +288,67 @@ recommended defaults are listed at the end; the owner can override any of them.
     Home, `Help/faq.md`; follow-up issues; tick the #508 criteria. **The privacy
     wording must land in the same push as commit 9**, because `docs/FAQ.md:214-221`
     otherwise becomes false.
+
+## Where the build differed from this plan
+
+Read the actual code before trusting any line number or claim above — it was
+written before the build and was not corrected afterwards. The differences
+found while writing the docs (commit 10):
+
+- **The commit-6 fixture trap** (`AutoTagEncodeDeliveryTests.swift`'s own
+  header calls this out). The film search is seeded from the file's `title`
+  TAG in preference to its file name. An early fixture used a `title` tag
+  that did not match the real film ("My own title"), which scores 0 for the
+  title component — capping the best possible score at 0.5 (running time) +
+  0 (title) + 0.15 (year) = 0.65, under the 0.7 threshold, so nothing would
+  ever have been tagged. The fixtures now use a title tag that genuinely
+  matches ("Inception"), and prove "the file's own tags are never replaced"
+  with a *different* tag TMDB would also write (`genre`) instead. Worth
+  remembering for any future test: a mismatched seed title silently caps the
+  score below threshold, and looks like a runner bug if you don't check it.
+- **Music re-sorts by the tolerance confidence, not MusicBrainz's own order.**
+  `AutoTagRunner.scoreMusic` ranks candidates with
+  `MusicBrainzTagMapping.ranked` first (MusicBrainz's own 0-100 score, broken
+  only by raw duration closeness), then re-sorts by the OWNER'S tolerance
+  rule (`musicConfidence`: 0 unless the length is within `max(5s, 3%)`) —
+  otherwise a high-scoring recording just outside the tolerance could out-
+  rank a lower-scoring one that IS within it, and "the best candidate" would
+  mean two different things on the two code paths.
+- **The en-dash and track-number file-name handling.** Splitting a music
+  file name into artist/title accepts both " - " and " – " (en dash,
+  "Kill Bill – Volume 1" is a film title that must NOT be mistaken for
+  this), and a digits-only first segment from the FILE NAME (not a real
+  `artist` tag) is treated as a track number, never an artist — otherwise
+  "01 - Song Title.mp3" would satisfy the "an artist is required" safety
+  gate with the artist "01". See `AutoTagRunner.musicArtistTitleFromFileName`
+  and `musicQuery`'s own doc comments.
+- **`AutoTagJobEvent.lookup` carries the whole `AutoTagLookupReport`**, not
+  just its `outcome` — the planned success wording ("Tagged from TMDB: …
+  Added: … Kept the file's own: …") needs the provider and both tag lists,
+  which the outcome alone doesn't hold.
+- **`onLookingUp`** was added to `AutoTagRunner.run` (not in the original
+  plan) so the engine can publish "looking this file up on TMDB" only when a
+  request is actually about to be sent, without copying the runner's own
+  skip decisions into the engine and risking the two drifting apart.
+- **The stop check now runs on every engine**, not only one built with an
+  `AutoTagSettingsSource` — `inFlightJobIDs`/`stopRequestedJobIDs` register
+  every job regardless, so a Stop pressed during the source probe is
+  honoured even with auto-tagging off or unavailable. Before this, a job in
+  that window ran to completion whatever the user asked.
+- **`EncodingEngine` got a `deinit`** that finishes `autoTagEventContinuation`
+  — not mentioned in the plan — so a reader's `for await` loop over
+  `autoTagEvents` ends when the engine is released instead of waiting
+  forever.
+- **The API-server path is NOT reachable or tagged today**, contrary to what
+  a literal reading of this plan's "one rule covers every path" section
+  might suggest. `APIServerViewModel`'s default `EncodingEngine()` is a
+  fresh, standalone engine with no settings source, `/encode` only queues a
+  job (real encoding needs `AppViewModel.startQueue()`, which the API server
+  has no reference to), and nothing in the app ever constructs
+  `APIServerViewModel` with the app's own live engine. So a job submitted
+  through the REST API is never auto-tagged, and is not actually encoded at
+  all unless a human has separately started the app's own queue. See the
+  follow-up list for the issue this deserves.
 
 ## Where the issue text doesn't match the code
 

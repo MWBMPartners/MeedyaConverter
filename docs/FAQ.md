@@ -219,6 +219,21 @@ Only for:
   Metadata. With no key stored, the film lookup makes no requests at all and
   says so instead. The remaining keyed providers (TheTVDB, Discogs, FanArt.tv,
   OMDb, OpenSubtitles) are still not wired, so they make no requests.
+- **Automatic tagging while converting** (Settings › Metadata › "Tag files
+  automatically while converting"), **off by default**. When you switch it
+  on, every file converted from the queue, a watch folder, a scheduled job,
+  or AppleScript is looked up on its way through the encoder — no click
+  needed. A video's title (and year, if known) goes to `api.themoviedb.org`
+  using the same TMDB key as above; a music file's title and artist go to
+  `musicbrainz.org`. With no TMDB key saved, films are skipped (the Activity Log says so) and
+  nothing is sent for them — the switch still works for music. Encoding
+  pipelines and the `meedya-convert` command-line tool never do this,
+  whatever the switch says, because they build their own encoder without a
+  settings source. A lookup is capped at about 30 seconds and can never make
+  the encode fail or wait longer than that — if it is slow, unreachable, or
+  not confident enough about the match, the file is converted exactly as it
+  would have been with the switch off, and the Activity Log says what
+  happened.
 - **Disc identification and MeedyaDB contributions**, described in
   [Disc Tools](Disc-Tools.md). A music disc's identification asks MusicBrainz
   about its track layout. A film disc's identification — Identify on the
@@ -228,8 +243,17 @@ Only for:
   MeedyaDB is a separate step, off until you switch it on.
 
 MeedyaConverter never sends your media *files*, encoding settings, or usage
-patterns to any server. A lookup sends only the search text you enter, on
-demand.
+patterns to any server. A lookup — whether you triggered it by clicking "Look
+Up…" or it ran automatically because auto-tagging is switched on — sends only
+a title, year and/or artist, never the file itself.
+
+### Will auto-tagging overwrite my tags?
+
+No. "Tag files automatically while converting" only ever **adds** a tag the
+file doesn't already have. A tag the file (or the job) already carries is
+never replaced, the file's name is never changed, and an existing `.nfo`
+sidecar is never overwritten — if one is already there, it is left exactly as
+it is.
 
 ### Does MeedyaConverter include DRM?
 

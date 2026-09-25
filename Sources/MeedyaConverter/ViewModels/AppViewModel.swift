@@ -737,11 +737,13 @@ final class AppViewModel {
         // directly, here, is what lets this task even exist this early in
         // `init()`'s tail.
         //
-        // Settings toggle to switch this on is #508 commit 9 — until then
-        // `AutoTagSettingsStore.isEnabled` reads `false` for a fresh
-        // install, `currentRequest()` returns `nil` for every job, and this
-        // loop simply never receives an event, matching every other engine
-        // built with no settings source at all.
+        // The Settings switch to turn this on shipped in #508 commit 9
+        // (`AutoTagSettingsSection`, Settings › Metadata). It is OFF by
+        // default: `AutoTagSettingsStore.isEnabled` reads `false` for a fresh
+        // install, so `currentRequest()` returns `nil` for every job and this
+        // loop simply receives no event — until someone turns the switch on,
+        // from which point every real encode from this engine (the queue,
+        // watch folders, the scheduler and AppleScript) is looked up.
         autoTagEventTask = Task { [weak self, engine] in
             for await event in engine.autoTagEvents {
                 guard let self else { return }

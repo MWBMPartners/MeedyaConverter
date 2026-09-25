@@ -163,20 +163,29 @@ public enum NamingTemplate: String, Codable, Sendable, CaseIterable {
 /// **What this type actually does today.** It is a bag of stateless helper
 /// functions — filename parsing/sanitising, output-filename and NFO-path
 /// generation, lookup-order and confidence-threshold checks. None of them run
-/// on their own. `AutoTagRunner` (#508 commits 4-5) calls
-/// `determineLookupOrder` and `meetsThreshold`; the others (output-filename,
-/// NFO-path, artwork and filename-sanitising) have no caller outside this
-/// file and its own tests (`ConverterEngineTests+ToolingAndMetadata.swift`)
-/// yet.
+/// on their own; each needs a caller. Three of them now have a real one:
+/// `AutoTagRunner` (#508 commits 4-5) calls `determineLookupOrder` and
+/// `meetsThreshold` for every lookup, and `AutoTagNFOWriter` (#508 commit 7)
+/// calls `generateNFOPath` for every identified film whose job asked for a
+/// `.nfo`. The rest — `generateOutputFilename`, `buildArtworkArguments` and
+/// this file's own `sanitiseFilename` — still have no caller outside this
+/// file and its own tests (`ConverterEngineTests+ToolingAndMetadata.swift`):
+/// renaming and artwork are follow-up issues, not part of #508 (see the
+/// plan's "Renaming" and "Other follow-ups" sections).
 ///
-/// **What is wired, and what is not yet.** Issue #508 is adding the lookup
-/// to real encodes step by step — see `.claude/plans/autotag-encode-plan.md`.
+/// **What is wired, and what is not.** Issue #508 added the lookup to real
+/// encodes step by step — see `.claude/plans/autotag-encode-plan.md`.
 /// `AutoTagSettingsStore` / `AutoTagSettingsSource` (commit 3) hold the
 /// setting and the fixed parts of the configuration, and from commit 6
 /// `EncodingEngine.encode` reads them at the start of every job and runs
-/// `AutoTagRunner` — but only for an engine given a settings source. The app
-/// does not give its engine one until commit 8, so until then changing
-/// `AutoTagConfig`'s fields has no visible effect on any encode the app runs.
+/// `AutoTagRunner` — for an engine given a settings source. The app's engine
+/// has had one since commit 8, and commit 9 added the Settings switch that
+/// turns the setting on — so changing `AutoTagConfig`'s fields (via
+/// `AutoTagSettingsStore.config(in:)`) DOES have a visible effect on a real
+/// encode the app runs today, once auto-tagging is switched on. The
+/// `meedya-convert` CLI and any encoding pipeline build their own
+/// `EncodingEngine` with no settings source, so nothing in this file runs
+/// for them.
 ///
 /// Previously this type also had `buildMetadataArguments(result:config:)`,
 /// which was removed in this commit: it had no caller anywhere in `Sources/`

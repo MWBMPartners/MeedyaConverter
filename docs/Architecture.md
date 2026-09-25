@@ -70,12 +70,12 @@ MeedyaConverter follows a three-layer architecture: a shared engine library, a c
 │                                                          │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐ │
 │  │ Licensing    │  │ Metadata     │  │ Quality         │ │
-│  │              │  │ (builders)   │  │                 │ │
+│  │              │  │              │  │                 │ │
 │  │ FeatureGate  │  │ Lookup       │  │ QualityMetrics  │ │
 │  │ ProductCat.  │  │ Providers    │  │                 │ │
-│  │ StoreManager │  │ AutoTagger*  │  │                 │ │
-│  │ RevenueCat   │  │              │  │                 │ │
-│  │ LicenseKey   │  │              │  │                 │ │
+│  │ StoreManager │  │ TMDB/MB svc  │  │                 │ │
+│  │ RevenueCat   │  │ AutoTagRunner│  │                 │ │
+│  │ LicenseKey   │  │ AutoTagger   │  │                 │ │
 │  │ Entitlement  │  │              │  │                 │ │
 │  └─────────────┘  └──────────────┘  └─────────────────┘ │
 │                                                          │
@@ -122,7 +122,7 @@ The shared core library. Contains no UI code. Targets both the CLI and GUI.
 | **Disc** | `DiscBurner` (real, and the only wired member of this group — see `docs/decisions/0001-gpl-disc-tools.md` for why raw-device imaging is Direct-distribution-only). **Dormant:** `AudioCDReader`, `DVDReader`, `BlurayReader`, `DiscImager`, `DiscAuthor`, `AccurateRipVerifier`, `AudioDiscFidelity` — see "Dormant modules" below. `DiscModels` holds shared types used by the dormant readers/authors. |
 | **Cloud** | `S3Uploader` (+ `AWSV4Signer`), `CloudStorageUploader`/`CloudUploadExecutor` (real upload execution for Dropbox, Google Drive, OneDrive, and S3/S3-compatible endpoints — chunked/resumable where the provider's API supports it), `SFTPUploader`. `CloudProviders.CloudProvider` is a separate, wider enum (11 cases, including Azure Blob, iCloud Drive, Cloudflare Stream, Mux, Backblaze B2) used for display metadata only — no UI references it, and `CloudUploadExecutor` only switches on the narrower `CloudStorageProvider` (Dropbox/OneDrive/Google Drive/S3). Do not read "12+ providers" claims as 12+ working upload paths. `MediaServerNotifier`, `APIKeyManager`, `CloudUploadProtocol` |
 | **Licensing** | `EntitlementGating` (feature tier enforcement), `ProductCatalog` (purchasable items), `FreeGateProvider`, `RevenueCatProvider`, `LicenseKeyValidator` |
-| **Metadata** | `MetadataLookup` and `MetadataProviders` — **URL builders only**. Neither file performs HTTP, and nothing in `Sources/ConverterEngine/Metadata/` decodes a provider response; there is no `URLSession` in that directory. `AutoTagger` is dormant (zero references outside its own file). Metadata *writing* is real and lives elsewhere: `MetadataTagEditorView` invokes ffmpeg directly (#467). |
+| **Metadata** | `MetadataLookup` and `MetadataProviders` are URL builders only — neither performs HTTP itself. `TMDBLookupService` and `MusicBrainzLookupService` (also in this directory) DO perform real HTTP, through the testable `MetadataHTTPClient` seam: the Metadata Tag Editor's "Look Up…" button already used them for a user-triggered lookup (#493/#502/#503), and since #508 `AutoTagRunner` uses the same two services for an automatic, opt-in lookup during a real encode (see "Auto-tagging during an encode" below) — for the app's own `EncodingEngine` only; the CLI, the API server's standalone engine, and encoding pipelines never auto-tag. `AutoTagger` itself is no longer dormant: its `determineLookupOrder`/`meetsThreshold`/`generateNFOPath` helpers back that feature; its rename/artwork helpers remain unused. Metadata *writing* is real and lives elsewhere: `MetadataTagEditorView` invokes ffmpeg directly (#467). |
 | **Backend** | `Backend/EncodingBackend.swift` — an unused protocol scaffold retained deliberately (name-collision risk); the live abstraction is `FFmpeg/FFmpegBackend.swift` + `FFmpegBackendFactory`. Tracked by #477. |
 | **Server** | `APIServer` — real, and the only thing in this row that is: it is what `meedya-convert serve` starts (see the CLI table below), and all five HTTP routes call the real engine. `RenderFarmAgent`, `RenderFarmClient`, `RenderFarmConfigurationLoader` (Issue #346) are scaffolding for remote-agent submission with no working network transport — see "Dormant modules" below. |
 | **Native** | Native platform integrations (Intents, App Intents) |
@@ -147,7 +147,6 @@ under issue #477.
 | `HLGToDolbyVision` | zero references outside its own file |
 | `ColorSpaceConverter` | zero references outside its own file; the live tone-map path is `FFmpegArgumentBuilder.ToneMapAlgorithm` |
 | `CodecMetadataPreserver` | zero references outside its own file |
-| `AutoTagger` | zero references outside its own file — the metadata-lookup pipeline has no consumer |
 | `MatrixEncodingPreserver` | zero references outside its own file — not even from `FFmpegArgumentBuilder`'s downmix path. `audio-format-compatibility.md` previously described this as shipped ("Enabled by default (app-wide)"); corrected |
 | `Stereo3DConverter` / `Video3DConverter` | zero references outside their own file (#477) |
 | `SpatialAudioConverter` | zero references outside its own file — no Atmos/Ambisonics conversion UI exists anywhere in the app |
@@ -250,9 +249,97 @@ The argument builder is the critical translation layer. It processes an `Encodin
 4. **HDR policy** — Preserves HDR10/PQ/HLG signalling, or inserts a `tonemap` filter chain, based on the builder's own `toneMap` / `convertPQToHLG` / `preserveHDRMetadata` flags.
 5. **Audio encoding** — Per-stream codec, bitrate, sample rate, channel layout, normalization.
 6. **Subtitle handling** — Copy, convert, or burn-in based on format and container compatibility.
-7. **Metadata** — Title, tags, chapter markers, cover art.
+7. **Metadata** — Title, tags, chapter markers, cover art. When auto-tagging
+   (below) found tags the file was missing, they are already sitting in
+   `outputMetadata` by this point, so this stage needs no auto-tag-specific
+   code of its own.
 8. **Container settings** — Muxer options, faststart, fragment settings.
 9. **Two-pass setup** — Generates separate pass-1 and pass-2 argument arrays if enabled.
+
+---
+
+## Auto-tagging during an encode (#508)
+
+An opt-in switch (Settings › Metadata › "Tag files automatically while
+converting", **off by default**) that looks a file up while it is being
+converted, and adds whichever of its tags the file is missing — never
+renaming it, never touching a tag it already has. The whole thing runs
+inside `EncodingEngine.encode(job:onProgress:)`, between the source probe and
+the first FFmpeg pass:
+
+```text
+Source probe (FFmpegProbe)
+    │
+    ▼
+AutoTagRunner.plan(for:)          <- film, music, or skip — from the probe alone,
+    │                                no network yet (TV names, no running
+    │                                time, no artist for music, etc. skip here)
+    ▼
+AutoTagRunner.run(...)
+    │  chooses TMDB (film) or MusicBrainz (music), or skips
+    │  ("not connected yet" for TVDB/Discogs/fingerprinting, "no TMDB key"
+    │  for a film with none saved)
+    │
+    │  races the actual lookup against:
+    │    - a 30s deadline (AutoTagSettingsSource.deadline)
+    │    - a 0.25s poll of "has Stop been pressed for this job?"
+    │  — the first of the three to finish wins; the other two are cancelled
+    │
+    ▼
+scored candidates (DiscIdentifier.rank for film,
+MusicBrainzTagMapping.ranked + a duration-tolerance rule for music)
+    │
+    ▼
+AutoTagRunner.judge(...) / judgeMusic(...)
+    │  meetsThreshold (0.7 confidence) and an ambiguity check (two different
+    │  candidates within 0.05 of each other are trusted to neither)
+    │
+    ▼
+AutoTagMerge.additions(existing:jobTags:applying:)
+    │  keeps ONLY the tags that were genuinely missing — a value the job or
+    │  the source file already carries (matched case-insensitively, through
+    │  aliases such as date/year) is never replaced
+    │
+    ▼
+enrichedJob.outputMetadata  (merged in; the job's own tags still win)
+    │
+    ▼
+FFmpegArgumentBuilder's existing `-metadata key=value` arguments
+    │  (no change needed here — see step 7 above)
+    ▼
+FFmpeg pass(es) run, exactly as they would have without auto-tagging
+    │
+    ▼
+AutoTagNFOWriter.write(...)        <- LAST step, only for an identified film
+    │                                  whose config asked for a .nfo, and only
+    │                                  once the output file genuinely exists;
+    │                                  an existing .nfo is left untouched
+    ▼
+AutoTagJobEvent → EncodingEngine.autoTagEvents → AutoTagWording → Activity Log
+```
+
+**Never fails the encode.** A lookup that is off, skipped, not confident
+enough, ambiguous, unreachable, or too slow is not an error: the file is
+converted exactly as it would have been without auto-tagging, and what
+happened is one line in the Activity Log. Only the user pressing Stop while
+a lookup is in flight throws — the same `CancellationError` a Stop pressed
+during FFmpeg itself would throw.
+
+**Only one engine carries a settings source.** `EncodingEngine.autoTagSettings`
+defaults to `nil`, and only `AppViewModel.init` passes one (reading the same
+`UserDefaults` the Settings switch writes). The `meedya-convert` CLI, the
+`APIServer`'s standalone engine (`APIServerView`/`APIServerViewModel`'s
+default `EncodingEngine()`), and any encoding pipeline all build their own
+`EncodingEngine` with no settings source at all, so none of them ever
+auto-tags — whatever the switch says, and whatever `AutoTagConfig`'s fields
+are set to. This is also why the REST API's `POST /encode` cannot reach
+auto-tagging today even in principle: it only queues a job on whichever
+engine the server was given, and the app's UI has no path yet that hands
+`APIServer` the app's own (auto-tag-capable) engine instead of a fresh one.
+
+See `.claude/plans/autotag-encode-plan.md` for the full design record,
+including the confidence-scoring rules, the reasons TV episodes and artwork
+are deferred, and the follow-up issues.
 
 ---
 

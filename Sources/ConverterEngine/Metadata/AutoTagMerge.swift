@@ -24,8 +24,11 @@
 //
 // Called by `AutoTagRunner` when it accepts a match, which `EncodingEngine`
 // runs during an encode from #508 commit 6 — for an engine given an
-// `AutoTagSettingsSource`, which the app's engine is not until #508 commit 8
-// (`.claude/plans/autotag-encode-plan.md`).
+// `AutoTagSettingsSource`. The app's engine has had one since #508 commit 8,
+// so this runs on a real app encode whenever auto-tagging is switched on
+// (the Settings toggle from commit 9). The `meedya-convert` CLI and any
+// encoding pipeline build an `EncodingEngine` with no settings source, so
+// this file never runs for them (`.claude/plans/autotag-encode-plan.md`).
 // ============================================================================
 
 import Foundation

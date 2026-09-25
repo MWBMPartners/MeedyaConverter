@@ -155,13 +155,15 @@ public final class EncodingEngine: @unchecked Sendable {
     /// Where this engine reads the auto-tag setting from at the start of
     /// every job, or `nil` for an engine that never auto-tags.
     ///
-    /// `nil` is the default, and every engine the code builds today leaves
-    /// it `nil` — including the app's, until #508 commit 8 passes one in
-    /// `AppViewModel.init`. So as of this commit auto-tagging is reachable
-    /// only by code (tests) that builds its own engine with a source. An
-    /// engine with a source and the setting OFF behaves exactly like an
-    /// engine with no source: only the on/off switches are read (the TMDB
-    /// key is not even fetched), nothing is sent, nothing is published on
+    /// `nil` is the default. `AppViewModel.init` passes one for the app's own
+    /// engine (#508 commit 8), so a real app encode reads this; the
+    /// `meedya-convert` CLI, `APIServer`'s standalone engine, and any
+    /// encoding pipeline all build their own `EncodingEngine` with no
+    /// argument for this parameter, so it stays `nil` for them and they never
+    /// auto-tag. An engine with a source and the setting OFF (the shipped
+    /// default — see `AutoTagSettingsStore`'s header) behaves exactly like an
+    /// engine with no source: only the on/off switch is read (the TMDB key is
+    /// not even fetched), nothing is sent, nothing is published on
     /// `autoTagEvents`, and the FFmpeg arguments are identical.
     public let autoTagSettings: AutoTagSettingsSource?
 
@@ -169,11 +171,11 @@ public final class EncodingEngine: @unchecked Sendable {
     /// `AutoTagJobEvent`.
     ///
     /// - Buffers at most the NEWEST 64 events, dropping older ones, so an
-    ///   engine nobody listens to (the command-line tool, most tests, and
-    ///   the app until #508 commit 8) never piles events up in memory.
+    ///   engine nobody listens to (the command-line tool, the API server's
+    ///   standalone engine, most tests) never piles events up in memory.
     /// - An `AsyncStream` has ONE reader: two loops reading it at once would
-    ///   each see only some of the events. The app is meant to run exactly
-    ///   one reader (#508 commit 8).
+    ///   each see only some of the events. The app's `autoTagEventTask`
+    ///   (`AppViewModel.init`, #508 commit 8) is that one reader.
     /// - Finished when the engine is released (`deinit`), so a reader's
     ///   `for await` loop ends instead of waiting forever.
     public let autoTagEvents: AsyncStream<AutoTagJobEvent>
@@ -314,9 +316,11 @@ public final class EncodingEngine: @unchecked Sendable {
     /// A lookup that is skipped, finds nothing, is not confident, fails or
     /// runs out of time NEVER fails the encode: the file is converted
     /// exactly as it would have been without auto-tagging. What happened is
-    /// published on `autoTagEvents`. Not done here yet: the app passing a
-    /// settings source and logging the events (#508 commit 8) — until then no
-    /// app encode auto-tags, even though this engine can.
+    /// published on `autoTagEvents`. The app passes a settings source and
+    /// logs those events as Activity Log lines (#508 commit 8), so a real app
+    /// encode auto-tags whenever the Settings switch (commit 9) is on; the
+    /// `meedya-convert` CLI and any encoding pipeline never do, because their
+    /// `EncodingEngine` is built with no settings source at all.
     ///
     /// **The NFO sidecar (step 11).** `AutoTagNFOWriter.write` does the
     /// actual writing (see its own doc comment for the three rules: never
