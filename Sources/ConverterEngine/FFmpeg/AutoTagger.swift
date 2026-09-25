@@ -65,7 +65,7 @@ public enum AutoTagSource: String, Codable, Sendable, CaseIterable {
 // MARK: - AutoTagConfig
 
 /// Configuration for automatic metadata tagging on encode.
-public struct AutoTagConfig: Codable, Sendable {
+public struct AutoTagConfig: Codable, Sendable, Equatable {
     /// Whether auto-tagging is enabled.
     public var enabled: Bool
 
@@ -76,15 +76,28 @@ public struct AutoTagConfig: Codable, Sendable {
     public var minimumConfidence: Double
 
     /// Whether to embed artwork (poster/cover) into the output file.
+    ///
+    /// Not acted on yet. Nothing in this codebase reads this flag and embeds
+    /// artwork during an encode — see `buildArtworkArguments` below for why
+    /// that would currently break one. It defaults to `false` so the field
+    /// cannot silently promise something no code delivers.
     public var embedArtwork: Bool
 
     /// Whether to write Kodi-compatible NFO alongside the output.
     public var writeNFO: Bool
 
     /// Whether to rename the output file using metadata.
+    ///
+    /// Not acted on yet. Nothing calls `generateOutputFilename` from a real
+    /// encode path today; see issue #508's plan for why renaming is a
+    /// separate, later piece of work (it touches ~10 post-encode readers of
+    /// the output path).
     public var renameOutput: Bool
 
     /// Naming template for renamed output (Plex-style by default).
+    ///
+    /// Not acted on yet — this only has an effect once `renameOutput` above
+    /// does.
     public var namingTemplate: NamingTemplate
 
     /// Maximum number of search results to consider.
@@ -97,7 +110,7 @@ public struct AutoTagConfig: Codable, Sendable {
         enabled: Bool = false,
         sources: [AutoTagSource] = [.filename, .existingMetadata, .tmdb],
         minimumConfidence: Double = 0.7,
-        embedArtwork: Bool = true,
+        embedArtwork: Bool = false,
         writeNFO: Bool = false,
         renameOutput: Bool = false,
         namingTemplate: NamingTemplate = .plex,
@@ -145,34 +158,44 @@ public enum NamingTemplate: String, Codable, Sendable, CaseIterable {
 
 // MARK: - AutoTagger
 
-/// Builds FFmpeg metadata arguments and file operations for automatic tagging.
+/// A set of small, pure helpers used by the auto-tag feature (issue #508).
 ///
-/// AutoTagger coordinates the metadata lookup pipeline:
-/// 1. Parse filename for hints (title, year, season, episode)
-/// 2. Query configured sources in priority order
-/// 3. Select the best match above confidence threshold
-/// 4. Generate FFmpeg metadata arguments for embedding
-/// 5. Optionally generate NFO sidecar and rename output
+/// **What this type actually does today.** It is a bag of stateless helper
+/// functions — filename parsing/sanitising, output-filename and NFO-path
+/// generation, lookup-order and confidence-threshold checks. None of them run
+/// automatically. Nothing in this codebase calls them from a real encode: the
+/// only callers outside this file are its own tests
+/// (`ConverterEngineTests+ToolingAndMetadata.swift`).
 ///
-/// Phase 14.11
+/// **What is missing, and where it is being built.** The piece that actually
+/// runs a lookup during an encode and merges the result into the job's
+/// metadata is being added incrementally under issue #508 — see
+/// `.claude/plans/autotag-encode-plan.md`. `AutoTagSettingsStore` and
+/// `AutoTagSettingsSource` (added in that plan's third commit) hold the
+/// setting and the fixed parts of the configuration; `EncodingEngine` reads
+/// them and calls into a runner (a later commit) that uses the helpers below.
+/// Until that wiring lands, changing `AutoTagConfig`'s fields has no visible
+/// effect on any encode.
+///
+/// Previously this type also had `buildMetadataArguments(result:config:)`,
+/// which was removed in this commit: it had no caller anywhere in `Sources/`
+/// or `Tests/`, ignored the `config` it was given, and built a different set
+/// of metadata keys than the ones the real merge path (`AutoTagMerge`, added
+/// alongside the runner) uses. Keeping a dead, misleading function around was
+/// worse than deleting it.
 public struct AutoTagger: Sendable {
 
     // MARK: - FFmpeg Metadata Building
 
-    /// Build FFmpeg arguments to embed metadata from a lookup result.
+    /// Build FFmpeg arguments to embed cover art from a local file.
     ///
-    /// - Parameters:
-    ///   - result: Metadata lookup result.
-    ///   - config: Auto-tag configuration.
-    /// - Returns: FFmpeg argument array.
-    public static func buildMetadataArguments(
-        result: MetadataResult,
-        config: AutoTagConfig = AutoTagConfig()
-    ) -> [String] {
-        return MediaServerTagging.buildFFmpegMetadataArguments(result: result)
-    }
-
-    /// Build FFmpeg arguments to embed cover art from a URL.
+    /// - Warning: This is a **remux-only** argument fragment. It adds a
+    ///   second `-map` for the artwork and forces `-c copy`, so appending it
+    ///   to the arguments for a real transcode (any encode that is not
+    ///   `-c copy` already) would silently turn that transcode into a copy —
+    ///   the video/audio codec settings the job asked for would be dropped.
+    ///   Nothing in this codebase calls this yet; a caller must not use it
+    ///   inside an encode pipeline without accounting for that.
     ///
     /// - Parameters:
     ///   - artworkPath: Local path to the artwork file.

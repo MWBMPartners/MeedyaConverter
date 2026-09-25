@@ -155,12 +155,17 @@ extension ConverterEngineTests {
     }
 
     /// Verifies auto-tag config defaults.
+    ///
+    /// `embedArtwork` defaults to `false` (#508, commit 1/10): nothing embeds
+    /// artwork during an encode today, so the default must not claim
+    /// otherwise. See `AutoTagConfig.embedArtwork`'s doc comment.
     func test_autoTagConfig_defaults() {
         let config = AutoTagConfig()
         XCTAssertFalse(config.enabled)
         XCTAssertEqual(config.minimumConfidence, 0.7)
-        XCTAssertTrue(config.embedArtwork)
+        XCTAssertFalse(config.embedArtwork)
         XCTAssertFalse(config.writeNFO)
+        XCTAssertFalse(config.renameOutput)
         XCTAssertEqual(config.namingTemplate, .plex)
     }
 
