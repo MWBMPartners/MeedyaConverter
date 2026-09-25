@@ -86,6 +86,17 @@
 #     `ValidateCommand.validateNamedProfile` resolves built-ins first, then
 #     `EncodingProfileStore().profile(named:)`, same as `--profile-file`'s
 #     siblings; corrected to match.
+#
+# Updated: 2026-09-25 (#506 commit 9/9, documentation) — `info.description`
+# still said "seven subcommands: encode, probe, profiles, batch, manifest,
+# validate, and serve", stale since two more top-level subcommands were
+# registered in `MeedyaConvert.swift` without this count being revisited:
+# `disc` (added earlier, already documented below as `/disc-drives`,
+# `/disc-toc`, `/disc-identify`, `/disc-image`) and `settings` (#506 commit 7,
+# documented below as `/settings-export`/`/settings-import`). Corrected to
+# nine, with a note on why `disc` and `settings` — both parent commands with
+# their own sub-subcommands — appear as several separate paths rather than
+# one each.
 # ============================================================================
 
 openapi: 3.1.0
@@ -96,9 +107,16 @@ info:
     Command-line interface for MeedyaConverter media conversion toolkit.
 
     `meedya-convert` is a headless CLI tool built with Swift Argument Parser.
-    It provides seven subcommands: encode, probe, profiles, batch, manifest,
-    validate, and serve. Designed for CI/CD pipelines, batch processing,
-    shell scripting, and remote encoding over SSH.
+    It provides nine subcommands: encode, probe, profiles, batch, manifest,
+    validate, serve, disc, and settings. Designed for CI/CD pipelines, batch
+    processing, shell scripting, and remote encoding over SSH.
+
+    `disc` and `settings` are each a PARENT command with their own
+    sub-subcommands (`disc drives`/`toc`/`identify`/`image`; `settings
+    export`/`import`) — OpenAPI has no way to nest a path under another path,
+    so each of those sub-subcommands is documented below as its own
+    top-level path (`/disc-drives`, `/settings-export`, and so on) rather
+    than as one `/disc` or `/settings` entry.
 
     **Root command:**
     ```

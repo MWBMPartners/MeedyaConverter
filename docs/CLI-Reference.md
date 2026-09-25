@@ -23,6 +23,7 @@ meedya-convert <subcommand> [options]
 | `manifest` | Generate HLS/DASH/CMAF adaptive streaming manifests |
 | `validate` | Validate encoding profiles, manifests, and platform compatibility |
 | `serve` | Run the REST API server for headless/remote encoding control |
+| `settings` | Export or import MeedyaConverter's own settings between installations |
 
 ---
 
@@ -514,7 +515,163 @@ curl -H "Authorization: Bearer <api-key>" http://localhost:8484/status
 
 ---
 
+## `settings`
+
+Export or import MeedyaConverter's own settings — preferences, connection
+details and your own encoding profiles — between installations. All the real
+work (what is allowed to travel, redaction, validation, merge/replace, "what
+still needs entering") lives in `ConverterEngine`; this is thin argument
+plumbing over it, following the same conventions the app's Settings ›
+Import & Export screen uses, so the two never disagree about what a given
+file does.
+
+A password, API key, token, webhook address or hook is **never** written to
+an exported file. This isn't a filter applied after the fact — only settings
+individually marked safe to export are ever considered, so a setting nobody
+has reviewed yet is left out by default, which is the safe direction for a
+mistake. See the [Settings: Import & Export](../Sources/MeedyaConverter/Resources/Help/settings-transfer.md)
+Help topic for the full list of what never travels and why.
+
+**The settings domain.** Both subcommands always read and write the
+**Direct build's own settings** (`AppInfo.Application.directBundleId`,
+`Ltd.MWBMpartners.MeedyaConverter`) — never `.standard`, which inside a
+command-line tool means that tool's own, empty settings, not the app's. The
+Mac App Store build's settings live inside its own sandbox, invisible to
+this command-line tool entirely; export or import from **Settings › Import
+& Export inside that app** instead.
+
+**The Keychain is never read for a secret.** Both subcommands ask only
+"does something exist here?" (an attributes-only lookup, never
+`kSecReturnData`), so they can report what still needs entering on the
+target Mac without ever seeing a real password or key.
+
+### settings export Usage
+
+```text
+meedya-convert settings export <file> [--categories general,encoding,encodingProfiles,connections[,thisMac]] [--include this-mac] [--format text|json]
+```
+
+### settings export Options
+
+| Option | Type | Description | Default |
+| ------ | ---- | ----------- | ------- |
+| `<file>` | positional String | Where to write the settings file (required) | -- |
+| `--categories <list>` | String | Comma-separated groups to export: general, encoding, encodingProfiles, connections, thisMac | Every group except thisMac |
+| `--include this-mac` | String enum | Also include the group that's off by default: this-mac | -- |
+| `--format <type>` | String | Output format: text, json | text |
+
+Naming `thisMac` (via `--categories` or `--include this-mac`) prints its
+warning to stderr before writing: it describes where FFmpeg and other tools
+are installed on this Mac, and this Mac's CD drive model and read offset —
+only useful on a Mac with the same tools in the same places and the same
+drive.
+
+### settings export Exit Codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | The file was written |
+| 2 | Bad arguments: an unrecognised `--categories` name, none given, or macOS refused the settings domain name |
+| 5 | The file could not be written (permissions, disk full, invalid path), or the exporter's own self-check refused its own output (should not happen; reported rather than silently written) |
+
+### settings export Examples
+
+```bash
+# Export every group except This Mac only (the default)
+meedya-convert settings export my-settings.json
+
+# Export just the encoding and connection groups
+meedya-convert settings export my-settings.json --categories encoding,connections
+
+# Include This Mac only settings too — only if the other Mac genuinely matches
+meedya-convert settings export my-settings.json --include this-mac
+
+# JSON output for scripting; see the schema reference below
+meedya-convert settings export my-settings.json --format json
+```
+
+### settings import Usage
+
+```text
+meedya-convert settings import <file> [--apply] [--mode merge|replace] [--categories …] [--include this-mac] [--format text|json]
+```
+
+### settings import Options
+
+| Option | Type | Description | Default |
+| ------ | ---- | ----------- | ------- |
+| `<file>` | positional String | The settings file to read (required) | -- |
+| `--apply` | Flag | Write the change. Without this, only a preview is shown and nothing is written | false |
+| `--mode <mode>` | String enum | `merge`: only add or update what the file has. `replace`: within the chosen groups, also remove what the file doesn't have | merge |
+| `--categories <list>` | String | Comma-separated groups to import: general, encoding, encodingProfiles, connections, thisMac | Every group the file has except thisMac |
+| `--include this-mac` | String enum | Also include the group that's off by default: this-mac | -- |
+| `--format <type>` | String | Output format: text, json | text |
+
+### settings import Notes
+
+- **Without `--apply`, this only shows what would change and writes
+  nothing.** Add `--apply` once you're happy with the preview. There is no
+  separate confirmation flag for `--mode replace`: `--apply` itself is the
+  one deliberate step, and any removal counts it would cause are printed as
+  part of the same report, before the "Imported …" lines.
+- `--mode replace` makes the **ticked** groups match the file exactly:
+  settings in those groups that the file doesn't mention go back to their
+  default, and profiles, SFTP servers, cloud destinations and other list
+  items in those groups that the file doesn't have are **removed**. A
+  password or key already saved on this Mac is never touched by either
+  mode, and a "never" setting (a password, a hook, a consent) can never be
+  planted by the file, whatever it contains.
+- One bad value anywhere in the file refuses the **whole** file — nothing is
+  ever half-imported.
+- Refuses `--apply` while MeedyaConverter is open: the app keeps some
+  settings in memory and would overwrite the import the next time it saves
+  one of them.
+
+### settings import Exit Codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | Previewed, or applied, successfully |
+| 1 | MeedyaConverter is open (`--apply` only), or an unexpected apply-time failure (a full disk saving profiles; an internal safety check that should never fire) |
+| 2 | Bad arguments: an unrecognised `--categories` name, none given, or macOS refused the settings domain name |
+| 3 | The file couldn't be obtained at all: missing, unreadable, or over the 10 MB size limit. Nothing about its contents was examined |
+| 6 | The file's contents were refused: not JSON, not a settings file, a newer format than this version reads, or a bad value — always the whole file, never a half-import |
+
+### settings import Examples
+
+```bash
+# Preview an import — writes nothing
+meedya-convert settings import my-settings.json
+
+# Apply it, merging into your current settings (the default mode)
+meedya-convert settings import my-settings.json --apply
+
+# Apply it, replacing the encoding and connections groups to match the file exactly
+meedya-convert settings import my-settings.json --apply --mode replace --categories encoding,connections
+
+# JSON output for scripting
+meedya-convert settings import my-settings.json --format json
+```
+
+### settings JSON output schema
+
+`--format json` on both subcommands prints a `SettingsCLIReport` object.
+Its full, generated JSON Schema is committed at
+[`docs/schemas/settings-cli-report-v1.schema.json`](schemas/settings-cli-report-v1.schema.json).
+The settings file itself (what `export` writes and `import` reads) has its
+own schema at [`docs/schemas/settings-export-v1.schema.json`](schemas/settings-export-v1.schema.json),
+generated directly from the engine's own table of per-setting decisions, so
+it can never describe a setting the code doesn't actually make the same
+decision about.
+
+---
+
 ## Exit Codes
+
+The table below is the general-purpose convention most subcommands follow.
+`settings export`/`settings import` use their own, narrower mapping — see
+the "settings export Exit Codes" and "settings import Exit Codes" tables
+above, which are authoritative for that subcommand.
 
 | Code | Meaning |
 | ---- | ------- |

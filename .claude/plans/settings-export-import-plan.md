@@ -1,6 +1,79 @@
 <!-- Copyright © 2026 MWBM Partners Ltd. All rights reserved. -->
 
-> **Status: PLANNED, not built.** Opus deep-plan (read-only), 2026-09-25, against `89570c5` plus the in-flight key-store edits. Re-check line numbers by text before editing; the Codex round-1 fixes land first.
+> **Status: IMPLEMENTED**, on branch `worktree-agent-aecc2da233ac2a105` (all
+> nine commits, `522367d`..`becbb1d`, plus two Codex-round review fixes
+> `f41813b`/`becbb1d`). Not yet reviewed by a second system. This plan is kept
+> for its design record (the full key-by-key inventory, the owner decisions,
+> and the risks in §9); the CODE is the source of truth for exact behaviour —
+> see "Where the build differed from this plan" immediately below for every
+> point where the two disagree.
+
+## Where the build differed from this plan
+
+Re-checked against the code on the working branch, 2026-09-25 (commit 9/9,
+documentation). Everything below is the build's actual, verified behaviour;
+where this plan's body still describes the original design, read the note
+here as the correction.
+
+- **106 settings, not 104.** The plan's §1 inventory counted 104 keys before
+  #508 landed. #508 added `autotag.enabled` and `autotag.writeNFO` (both
+  allowed, in Encoding), bringing the registry to 106: 71 allowed (13
+  general, 29 encoding, 29 connections) + 7 This Mac only + 28 never, plus
+  13 Application Support stores (1 allowed, 12 never). See the header
+  comment in `Sources/ConverterEngine/Settings/SettingsKeyRegistry.swift`.
+- **`hasStoredKey` is a `static` method on `APIKeyManager`**, not an instance
+  method as §4 sketches it — it never constructs an `APIKeyManager` (which
+  would read every secret out of the Keychain to populate itself), so
+  "still needs a key" cannot accidentally read a secret just by checking
+  for one.
+- **A built-in profile claiming to be built-in is refused outright**, not
+  silently coerced to a user profile as an implementation might default to.
+  `SettingsImportError.invalidValue` fires and the whole file is refused —
+  consistent with "one bad value refuses the whole file" elsewhere in this
+  plan, but worth stating explicitly since §1 doesn't spell out which of
+  "refuse" or "coerce" was chosen.
+- **Test settings "suites" are files, not plain named suites.** §7 says
+  "Every test uses its own `UserDefaults` suite named with a fresh UUID",
+  but the build goes further: each suite is named by an absolute path
+  inside that test's own temporary folder (`UserDefaults(suiteName:
+  tempDir.appendingPathComponent(UUID().uuidString).path)`), not a bare
+  UUID string. A plain suite name still leaves a real, emptied `.plist`
+  behind in `~/Library/Preferences` after `tearDown`, because macOS
+  rewrites the file the moment the suite is touched — commit 5 found 1,532
+  of these left over from one test run before switching to path-named
+  suites, which macOS creates under the temp folder and which vanish with
+  it.
+- **The CLI flag is `--mode merge|replace`**, not `--replace` as an earlier
+  sketch of §6 might suggest — merge is a real, named alternative to
+  replace, not replace's absence.
+- **`SettingsCLIReport` lives in `ConverterEngine`**, not in the
+  `meedya-convert` target. `SwiftPM` will not let `Tests/MeedyaConvertTests`
+  import another test target's sources, and the schema checker
+  (`SettingsSchemaMiniValidator`) lives in `Tests/ConverterEngineTests`; so
+  the report type moved to the engine, where both the CLI and the schema
+  test can call the exact same function to build it.
+- **Two settings gained a real reload hook** (commit 8): saved encoding
+  pipelines and keyboard shortcuts are re-read from `UserDefaults`
+  immediately after an import, instead of only taking effect at the next
+  launch as §5 originally described for every setting loaded once at
+  startup. Their registry entries were flipped from `.nextLaunch` to
+  `.immediately`, pinned by a test so the flip can't quietly regress.
+  Everything else loaded once at launch is still `.nextLaunch`.
+- **The Replace-confirmation flow was hardened after review** (`becbb1d`,
+  review of commit 8): the footer's "Import" button no longer relabels
+  itself "Replace Anyway" and apply on a second press — a real defect found
+  in review, where a fast double-click could apply a Replace (removing
+  profiles, servers and rules) before its warning could be read. The "Import"
+  button now stays disabled while a Replace confirmation is showing, and the
+  ONLY way to proceed is a separate, differently-placed "Replace Anyway"
+  button, wired to its own method that does nothing unless a confirmation is
+  actually on screen.
+- **A refused settings domain no longer crashes the CLI** (`f41813b`, review
+  of commit 7): `UserDefaults(suiteName:)` also refuses reserved names such
+  as `NSGlobalDomain` and the program's own bundle identifier, not only an
+  empty string as an earlier assumption held. `--defaults-suite
+  NSGlobalDomain` used to crash the tool via `fatalError`; it now prints a
+  plain message and exits with the documented invalid-arguments code (2).
 
 # Plan for #506: export and import settings between installations, with no secrets in the file
 

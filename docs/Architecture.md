@@ -124,6 +124,7 @@ The shared core library. Contains no UI code. Targets both the CLI and GUI.
 | **Licensing** | `EntitlementGating` (feature tier enforcement), `ProductCatalog` (purchasable items), `FreeGateProvider`, `RevenueCatProvider`, `LicenseKeyValidator` |
 | **Metadata** | `MetadataLookup` and `MetadataProviders` are URL builders only — neither performs HTTP itself. `TMDBLookupService` and `MusicBrainzLookupService` (also in this directory) DO perform real HTTP, through the testable `MetadataHTTPClient` seam: the Metadata Tag Editor's "Look Up…" button already used them for a user-triggered lookup (#493/#502/#503), and since #508 `AutoTagRunner` uses the same two services for an automatic, opt-in lookup during a real encode (see "Auto-tagging during an encode" below) — for the app's own `EncodingEngine` only; the CLI, the API server's standalone engine, and encoding pipelines never auto-tag. `AutoTagger` itself is no longer dormant: its `determineLookupOrder`/`meetsThreshold`/`generateNFOPath` helpers back that feature; its rename/artwork helpers remain unused. Metadata *writing* is real and lives elsewhere: `MetadataTagEditorView` invokes ffmpeg directly (#467). |
 | **Backend** | `Backend/EncodingBackend.swift` — an unused protocol scaffold retained deliberately (name-collision risk); the live abstraction is `FFmpeg/FFmpegBackend.swift` + `FFmpegBackendFactory`. Tracked by #477. |
+| **Settings** | Export and import of MeedyaConverter's own settings between installations (#506) — `SettingsKeyRegistry` (the allow-list of every stored setting: 106 settings + 13 Application Support stores, each marked allowed, "This Mac only", or never, with a reason), `SettingsCategory`, `SettingsDocument` (the file envelope), `SettingsExporter`/`SettingsImporter`, `SettingsValueCodecs` (redaction and merge rules for JSON-blob settings), `SettingsSectionHandlers`, `SettingsCredentialNeeds` ("still needs a key", attributes-only), `SettingsExportSchema`/`SettingsCLIReportSchema` (generate the two JSON Schema files under `docs/schemas/`), and `SettingsCLIReport` (the CLI's `--format json` shape). See "Settings export and import" below. |
 | **Server** | `APIServer` — real, and the only thing in this row that is: it is what `meedya-convert serve` starts (see the CLI table below), and all five HTTP routes call the real engine. `RenderFarmAgent`, `RenderFarmClient`, `RenderFarmConfigurationLoader` (Issue #346) are scaffolding for remote-agent submission with no working network transport — see "Dormant modules" below. |
 | **Native** | Native platform integrations (Intents, App Intents) |
 | **Platform** | `PlatformFormatPolicy` — platform-specific codec availability |
@@ -179,6 +180,8 @@ A thin command-routing layer built on Swift Argument Parser:
 | `ManifestCommand.swift` | `manifest` subcommand — HLS/DASH/CMAF generation |
 | `ValidateCommand.swift` | `validate` subcommand — settings and manifest validation |
 | `ServeCommand.swift` | `serve` subcommand — starts `APIServer` (the only way to start the HTTP API) |
+| `DiscCommand.swift` | `disc` parent subcommand — `drives`/`toc`/`identify`/`image` |
+| `SettingsCommand.swift` | `settings` parent subcommand — `export`/`import` (#506 commit 7); thin argument plumbing over `ConverterEngine`'s `SettingsExporter`/`SettingsImporter`, always targeting the Direct build's own settings domain, never `.standard` |
 | `CLIUtilities.swift` | Shared utilities: exit codes, stderr printing |
 
 ### MeedyaConverter (SwiftUI App)
@@ -188,7 +191,7 @@ The macOS GUI application:
 | Directory / File | Purpose |
 | ---------------- | ------- |
 | `Views/` | SwiftUI views — content, sidebar, source, stream inspector, output settings, queue, log, settings, help, dashboard |
-| `Views/` (advanced) | Pipeline editor, schedule, conditional rules, post-encode actions, normalization, scene detector, comparison library + comparison viewer, FFmpeg preview, quality preview, profile suggestion, bitrate heatmap, audio waveform, encoding graphs, image conversion, metadata editor, media server settings, webhook settings, analytics settings, burn settings, keyboard shortcuts editor, render farm settings, license entry, paywall, resumable jobs |
+| `Views/` (advanced) | Pipeline editor, schedule, conditional rules, post-encode actions, normalization, scene detector, comparison library + comparison viewer, FFmpeg preview, quality preview, profile suggestion, bitrate heatmap, audio waveform, encoding graphs, image conversion, metadata editor, media server settings, webhook settings, analytics settings, burn settings, keyboard shortcuts editor, render farm settings, license entry, paywall, resumable jobs, `SettingsTransferTab`/`SettingsImportPreviewSheet` (Settings › Import & Export, #506 commit 8 — a thin SwiftUI shell over `SettingsTransferViewModel`, which does all the logic and is unit-tested on its own) |
 | `ViewModels/` | `@Observable` view models bridging the UI to the engine |
 | `Components/` | Reusable UI components (progress bars, stream badges, etc.), plus `MenuBarController` — owns the `NSStatusItem` for menu-bar mode (Issue #281), toggled from Settings and persisted via `@AppStorage("menuBarMode")` |
 | `Services/` | App-level services: `StoreManager` (StoreKit/RevenueCat), `AppUpdateChecker` (Sparkle), `ThumbnailCache`, `HardwareAccelerationPreference` (Issue #475 — the app-wide hardware-encoding kill switch, applied at all seven of the app's `EncodingJobConfig` build sites; the CLI and HTTP API are deliberately exempt), `KeyboardShortcutManager` (Issue #331 — user-assignable shortcuts, persisted to `UserDefaults`, with conflict detection), `URLSchemeHandler` (Issue #356 — parses `meedyaconverter://encode\|probe\|open` URLs; `MeedyaConverterApp` routes the parsed action against the live `AppViewModel`), `ComparisonLibraryManager` (Issue #329 — JSON persistence for the A/B comparison library) |
@@ -340,6 +343,102 @@ engine the server was given, and the app's UI has no path yet that hands
 See `.claude/plans/autotag-encode-plan.md` for the full design record,
 including the confidence-scoring rules, the reasons TV episodes and artwork
 are deferred, and the follow-up issues.
+
+---
+
+## Settings export and import (#506)
+
+Moves preferences, connection details and the person's own encoding profiles
+between installations, without ever writing a password, API key, token,
+webhook address or hook to the file. All in `Sources/ConverterEngine/Settings/`
+(`ConverterEngine`, not the app or the CLI), so the app's Settings › Import &
+Export screen and `meedya-convert settings export`/`import` call the exact
+same functions and never disagree about what a given file does.
+
+```text
+SettingsKeyRegistry                     <- the allow-list: ONE decision per
+  (106 settings + 13 file stores)          setting (.allowed(category),
+    │                                       .thisMac, or .never(reason)).
+    │                                       A setting with no decision is
+    │                                       never exported — the safe miss.
+    ▼
+SettingsCategory                        <- general / encoding /
+  (5 tick-box groups)                      encodingProfiles / connections /
+    │                                       thisMac (off by default, warns)
+    ▼
+SettingsExporter ───────► SettingsDocument (the envelope)
+    │  reads a UserDefaults snapshot         { format, version, exportedAt,
+    │  (never live defaults); redacts         appVersion, categories: {…},
+    │  via SettingsValueCodecs; before         notIncluded: [names only] }
+    │  returning, re-reads its OWN
+    │  output through the importer so
+    │  it can never write a file it
+    │  would itself refuse
+    ▼
+SettingsImporter.prepare(data)          <- validates the WHOLE file, writes
+    │                                      nothing yet. One bad value refuses
+    │                                      the whole file (never half-read).
+    ▼
+SettingsImporter.preview(plan, …)       <- counts, what differs, warnings,
+    │                                      cross-checks (e.g. "default
+    │                                      profile isn't here, using X"),
+    │                                      "still needs a key" (via
+    │                                      SettingsCredentialNeeds — asks the
+    │                                      Keychain only "does this exist?",
+    │                                      never reads a secret)
+    ▼
+SettingsImporter.apply(plan, mode, …)   <- writes profiles FIRST (the only
+                                            step that can fail), then
+                                            UserDefaults (cannot fail) — so a
+                                            failure never leaves a half-import
+```
+
+**Merge vs. replace**, both handled inside `SettingsValueCodecs` and
+`SettingsImporter.apply`: merge only changes what the file mentions, and
+merges list-type settings (SFTP servers, cloud destinations, conditional
+rules, saved pipelines, profiles) by `id`; replace, within the ticked groups
+only, also removes what the file doesn't have. Neither mode ever touches a
+`.never` setting, a Keychain item, or an unticked group.
+
+**Two JSON Schema files, both generated, never hand-edited**
+(`SettingsExportSchema.generate()` / `SettingsCLIReportSchema.generate()`),
+committed at `docs/schemas/settings-export-v1.schema.json` and
+`docs/schemas/settings-cli-report-v1.schema.json`. `SettingsSchemaTests`
+fails if either committed file differs from a fresh regeneration. A
+test-only `SettingsSchemaMiniValidator` (in `ConverterEngineTests`, not
+shipped) understands a deliberately small subset of JSON Schema keywords and
+fails on any other keyword, so the schema can never quietly rely on
+something the checker would silently ignore. Three safeguards in the export
+schema catch a leak independently of the registry: an SFTP password must be
+`""`, a cloud access token must be `""`, and a cloud refresh token / S3
+secret key are forbidden outright (`additionalProperties: false` with
+neither one listed).
+
+**Two safety nets that don't trust each other:**
+
+- **`SettingsKeyCoverageTests`** (the tripwire) scans every file under
+  `Sources/` for `@AppStorage`/`forKey:`/`settingKey:` uses and fails,
+  naming them, whenever a setting exists in the code with no registry
+  decision, or the registry lists a setting nothing uses any more. It also
+  feeds the scanner synthetic source to prove what it catches and what it
+  cannot (documented in the scanner's own header) — a private constant
+  whose string changes without a matching map entry being the main blind
+  spot.
+- **`SettingsKeyRegistrySentinelTests`** separately pins the secrets and
+  other risky settings (`mediaServerAPIKey`, `webhookURL`,
+  `postEncodeActionChain`, the analytics ID, the licence cache, and so on)
+  to `.never`, by a hand-written list, without relying on the scan at all —
+  so a bug in the scanner itself cannot silently reclassify a secret as
+  safe.
+- Independently of both, **`SettingsExportNoSecretTests`** plants sentinel
+  strings in every place a secret could hide, exports every group, and
+  re-reads the **bytes on disk** to assert the sentinel appears nowhere —
+  the one test that checks the real output rather than the registry's
+  intentions.
+
+See `.claude/plans/settings-export-import-plan.md` for the full design
+record, including the complete key-by-key inventory, the owner decisions,
+and the follow-up issues.
 
 ---
 

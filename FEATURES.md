@@ -162,6 +162,26 @@ Items marked "found this pass" were not in the prior gap ledger and don't
 yet have a filed issue; file one before building against them so the work
 is trackable.
 
+## Follow-ups found while building #506 (settings export/import)
+
+Settings export/import itself is finished and shipped on the working branch
+(all nine commits, `.claude/plans/settings-export-import-plan.md`). Building
+it surfaced several smaller gaps that were deliberately left for a follow-up
+issue rather than folded into #506 — either because the plan's owner
+decisions put them out of scope for v1, or because they were pre-existing
+and #506 only confirmed they're still there. None of these affect the
+safety of what #506 already ships: no secret travels either way regardless
+of whether any of the below is ever built.
+
+| Gap | Detail | Issue |
+|-----|--------|-------|
+| `webhookURL` / `webhookCustomHeaders` still live in `UserDefaults`, not the Keychain | For the Slack/Discord presets the webhook address itself works like a password, and people put `Authorization` tokens in the custom headers — both are shown in clear text in Settings › Webhooks today. #506 treats both as "never exported" regardless, so this doesn't affect export safety, but the same Keychain-migration pattern #506 commit 1 used for `mediaServerAPIKey` (SECURITY.md F-013) should be applied here too, plus masking the header values in the Settings list | *(none filed — found this pass, tracked as a follow-up in the #506 plan's §9 question 5)* |
+| Hooks (`postEncodeActionChain`) are entirely excluded from settings export, even the harmless actions | A hook chain can run a shell script or call a webhook, so the whole chain is `.never` today — reasonable for v1, but it also excludes the notification, reveal-in-Finder, and SFTP/cloud-upload-by-profile actions, which don't execute anything and could travel safely. A follow-up could let the exporter allow-list those specific action *kinds* while still refusing the chain if it contains a script, webhook, or move-to-Trash action | *(none filed — found this pass, tracked as a follow-up in the #506 plan's §9 question 1)* |
+| Legacy plaintext SFTP passwords are migrated to the Keychain only when the SFTP screen is opened | `SFTPSettingsView.loadProfiles()` is the only place that lifts a pre-F-005 plaintext password into the Keychain; it only runs when that view appears. Someone who upgraded but never opened SFTP settings still has a plaintext password sitting in `sftpProfiles` — #506's exporter blanks it before writing (so export stays safe), but the underlying settings file keeps the plaintext until the SFTP screen happens to be opened. Migrating at app launch, alongside the media-server migration #506 commit 1 added, would close this for good | *(none filed — pre-existing, noted in the #506 plan's §9 "pre-existing bugs found")* |
+| `APIKeyManager`'s index decodes as one array, so an unrecognised provider fails the whole file | `APIKeyManager.reloadLocked()` decodes the whole `StorageEnvelope.records` array in one `JSONDecoder` call; if a newer build adds a provider (as #506 commit 1 did with `.mediaServer`) and an older build then reads that index, the unrecognised enum case fails the *entire* decode, and every saved key — not just the new provider's — looks missing to the older build. The same risk was already accepted when `.intAppsAPI` was added. A follow-up would decode records one at a time so an unknown provider only hides its own entry | *(none filed — pre-existing, noted in the #506 plan's §9 risks; same class of risk as `abcd0f9`)* |
+| `EncodingProfileStore.saveUserProfiles()` (the single-profile path) still only logs a failed write | #506 added `upsertUserProfiles(_:)`/`replaceUserProfiles(with:)`, which throw on a failed disk write and leave memory unchanged — used by settings import's bulk path. The older, single-profile methods (add/rename/delete a profile from the Profiles screen) still call the original `saveUserProfiles()`, which only prints a warning on failure and leaves the in-memory list changed regardless, so a full disk can silently diverge memory from disk on that path. Switching it to the same throwing pattern was out of scope for #506 (it touches call sites #506 didn't otherwise need to touch) | *(none filed — found this pass)* |
+| Built-in encoding profiles get a new random ID every launch | `EncodingProfile.init(id: UUID = UUID())`, with `webStandard` among them — a fresh UUID each time the app starts. Conditional rules store a profile's ID and fall back to the first built-in when the ID they saved no longer matches (`ConditionalRule.swift`, `ConditionalRulesView.swift`), so most rules stop matching their intended profile after a relaunch. #506's settings-import preview surfaces the same symptom by design (a cross-check like "Default profile 'My HEVC' isn't on this Mac … Web Standard will be used" is *expected* to fire for a **user** profile the target Mac lacks, but this bug means it can also misfire for a **built-in** one that's actually present, just under a different ID) | *(none filed — pre-existing, noted in the #506 plan's §9 "pre-existing bugs found")* |
+
 ## Refresh policy
 
 Re-evaluate at the start of each COMPLETE-phase cycle. New issues surfacing

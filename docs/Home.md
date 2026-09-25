@@ -62,6 +62,10 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 - Bitrate heatmap and audio waveform visualisation
 - File size estimation before encoding
 - Filename templates for GUI encode output naming
+- Settings export and import — move your preferences, connections and your
+  own encoding profiles to another Mac, in the app or from the command line;
+  a password, key, token, webhook address or hook is never written to the
+  file (#506)
 
 > **Not yet reachable from the app.** Three more capabilities exist as
 > backend code with no UI or CLI entry point: `ContentAnalyzer`

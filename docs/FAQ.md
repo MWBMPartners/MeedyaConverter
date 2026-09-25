@@ -255,6 +255,27 @@ never replaced, the file's name is never changed, and an existing `.nfo`
 sidecar is never overwritten — if one is already there, it is left exactly as
 it is.
 
+### Does a settings file contain my passwords?
+
+No. Settings › Import & Export (and the matching `meedya-convert settings
+export`/`import` commands) writes a JSON file made up only of settings that
+have been individually decided, in advance, as safe to write. A password, an
+API key, a token, a webhook address, or a hook is never on that list, so none
+of them are ever written — not blanked out afterwards, simply never
+considered for export in the first place. That covers your TMDB and MeedyaDB
+keys, your media server key, your SMTP password, SFTP and cloud storage
+credentials, and your webhook address and headers, all of which stay in the
+Keychain (or, for the webhook, are simply left out) and are never read by
+this feature.
+
+The file does record, by name only and never by value, which of these you
+had already set up on the exporting Mac — for example "a TMDB key was
+saved" — so that importing it on another Mac can tell you exactly what still
+needs entering there, without ever having looked at a real secret to work
+that out. See [Settings: Import & Export](../Sources/MeedyaConverter/Resources/Help/settings-transfer.md)
+(also in the app's own Help) for the full list of what never travels and
+why.
+
 ### Does MeedyaConverter include DRM?
 
 MeedyaConverter does not include or circumvent DRM. It encodes and transcodes unprotected media files. Protected content (DRM-wrapped files) cannot be processed.

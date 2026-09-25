@@ -23,6 +23,27 @@
 
 ### Added
 
+- **Settings export and import**, in both the app (Settings › Import &
+  Export) and the command line (`meedya-convert settings export`/`import`):
+  move your preferences, connection details and your own encoding profiles
+  to another Mac, in four tick-box groups (General, Encoding, Your Profiles,
+  Connections) plus a fifth, "This Mac only", off by default. A single
+  106-setting allow-list decides what is ever considered for export, so a
+  password, API key, token, webhook address or hook is **never** written to
+  the file — not filtered out afterwards, simply never on the list in the
+  first place. Importing always previews what would change before writing
+  anything; "Add to my settings" only changes what the file mentions,
+  "Replace" can also remove what a ticked group's file doesn't have, behind
+  its own separate confirmation. Because secrets never travel, the file
+  records (by name only, never by value) which credentials were set up on
+  the exporting Mac, so the importing Mac can say exactly what still needs
+  entering, and where — without ever reading a real secret to work that out.
+  The Mac App Store build's settings live inside its own sandbox and are
+  invisible to the command-line tool; use the in-app screen for that build.
+  Two generated JSON Schema files (`docs/schemas/settings-export-v1.schema.json`,
+  `docs/schemas/settings-cli-report-v1.schema.json`) document the file format
+  and the CLI's `--format json` output, each checked against its generator by
+  a test. (#506)
 - **Automatic tagging while converting** (Settings › Metadata › "Tag files
   automatically while converting", **off by default**): every file converted
   from the queue (including watch folders and scheduled jobs) or AppleScript

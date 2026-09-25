@@ -341,6 +341,12 @@ enum HelpTopicRegistry {
             summary: "Solutions for common issues.",
             sortOrder: 110
         ),
+        "settings-transfer.md": Metadata(
+            title: "Settings: Import & Export",
+            systemImage: "square.and.arrow.up.on.square",
+            summary: "Move your preferences, connections and profiles to another Mac — never a password or key.",
+            sortOrder: 115
+        ),
         "updates.md": Metadata(
             title: "Updates",
             systemImage: "arrow.down.circle",

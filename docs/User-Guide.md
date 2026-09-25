@@ -415,6 +415,40 @@ VMAF, SSIM, and PSNR are each computed as a separate FFmpeg pass and displayed i
 
 ---
 
+## Settings: Import & Export
+
+**Settings › Import & Export** moves your preferences, connection details
+and your own encoding profiles to another Mac — or the same `meedya-convert
+settings export`/`import` commands, if you'd rather script it. Both call the
+exact same engine code, so a file made by one always works with the other.
+
+Export ticks four groups by default (General, Encoding, Your Profiles,
+Connections) with a fifth, **This Mac only** (where FFmpeg and other tools
+are installed, and your CD drive's model and read offset), off unless you
+turn it on — it only makes sense on a Mac with the same tools and the same
+drive. A password, API key, token, webhook address or hook is **never**
+written, whatever you tick: only settings individually decided to be safe to
+export are ever considered, and a "What's never included" list shows every
+one that isn't, with its reason.
+
+Importing a file always shows a preview first — what would change, group by
+group, with warnings and cross-checks — and writes nothing until you confirm
+it. **Add to my settings** only changes what the file mentions; **Replace my
+settings in the ticked groups** makes those groups match the file exactly,
+removing anything in them the file doesn't have, and asks for a separate
+confirmation before it does. Either way, a password or key already saved on
+this Mac is left alone, and the result screen tells you exactly what still
+needs entering by hand — the file records which credentials were set up on
+the other Mac by name only, never by value.
+
+The Mac App Store build's settings live inside its own sandbox, invisible to
+the command-line tool; use the in-app screen for that build instead.
+
+See the in-app **Help › Settings: Import & Export** topic, or
+[CLI Reference](CLI-Reference)'s `settings` section, for the full detail.
+
+---
+
 ## Next Steps
 
 - [CLI Reference](CLI-Reference) — Automate encoding from the command line.
