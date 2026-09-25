@@ -125,26 +125,67 @@ final class MakeMKVProcessRunnerTests: XCTestCase {
     /// launch to finish and then stop the process. If the gate let go of its lock
     /// between the check and the launch, the cancel would see "not launched yet",
     /// stop nothing, and the process would run on: the F4 race.
+    ///
+    /// DETERMINISTIC OVERLAP (fallback review round 2, finding 5): the previous
+    /// version of this test gave the cancelling thread a 100 ms `Thread.sleep`
+    /// inside the launch closure to land in. That is not long enough on a slow
+    /// or busy machine — and worse, it doesn't need to be, for the WRONG
+    /// reason: `launched` is set to `true` BEFORE the gate ever releases its
+    /// lock (inside the same `lock.withLock` block that ran `launch()`), so a
+    /// cancel that arrives after the sleep ends, once `launch()` has already
+    /// returned, would see `launched == true` even if `requestCancel` had lost
+    /// its own locking entirely. The recorded events would then be identical
+    /// to the genuinely-correct case, and the test would pass for the wrong
+    /// reason — exactly the vacuous failure mode the finding describes.
+    ///
+    /// Fixed with two semaphores instead of a sleep: the launch closure
+    /// signals `launchStarted`, then BLOCKS on `cancelIsCalling`. The
+    /// cancelling thread waits for `launchStarted`, signals `cancelIsCalling`
+    /// as the very last thing it does before making the (possibly blocking)
+    /// call — there is no more precise, non-invasive way to observe "is about
+    /// to call `requestCancel`" than that — and only then calls
+    /// `gate.requestCancel`. This forces the call to happen no later than the
+    /// instant the launch closure is allowed to resume and finish, so
+    /// `launch()` can never have already returned when `requestCancel` runs.
+    /// No wall-clock races, and no captured `var` mutated from a `@Sendable`
+    /// closure — every recorded event goes through the lock-protected
+    /// `Recorder` above.
     func test_launchGate_cancelDuringLaunch_waitsForTheLaunchThenStops() throws {
         let gate = MakeMKVLaunchGate()
         let recorder = Recorder()
+        let launchStarted = DispatchSemaphore(value: 0)
+        let cancelIsCalling = DispatchSemaphore(value: 0)
         let cancelReturned = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            launchStarted.wait()
+            cancelIsCalling.signal()
+            gate.requestCancel(stopIfLaunched: { recorder.event("stop") })
+            recorder.event("cancel-returned")
+            cancelReturned.signal()
+        }
 
         let launched = try gate.launchUnlessCancelled {
             recorder.event("launch-start")
-            DispatchQueue.global().async {
-                gate.requestCancel(stopIfLaunched: { recorder.event("stop") })
-                recorder.event("cancel-returned")
-                cancelReturned.signal()
-            }
-            // Ample time for the other thread to reach the gate and wait on it.
-            Thread.sleep(forTimeInterval: 0.1)
+            launchStarted.signal()
+            // Block until the cancelling thread has committed to calling
+            // `requestCancel`, so the launch cannot finish (and the gate's
+            // lock cannot be released) before that call has begun. The
+            // timeout is only a safety net against a genuinely hung test,
+            // never something the assertion below depends on.
+            XCTAssertEqual(
+                cancelIsCalling.wait(timeout: .now() + 5), .success,
+                "the cancelling thread never reached requestCancel"
+            )
             recorder.event("launch-end")
         }
 
         XCTAssertTrue(launched)
         XCTAssertEqual(cancelReturned.wait(timeout: .now() + 5), .success)
-        XCTAssertEqual(recorder.allEvents, ["launch-start", "launch-end", "stop", "cancel-returned"])
+        XCTAssertEqual(
+            recorder.allEvents, ["launch-start", "launch-end", "stop", "cancel-returned"],
+            "requestCancel must not see the process as launched — and so must not call stop — until launch() has actually finished"
+        )
     }
 
     // MARK: - Output latch (F5), on a real Pipe with no subprocess
