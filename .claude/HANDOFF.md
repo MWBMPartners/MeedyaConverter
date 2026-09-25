@@ -162,6 +162,23 @@ below it.
 >   the orchestrator decides. Also, `APIKeyManagerIndexConsistencyTests` leaks
 >   `.meedyaDB` Keychain items when run locally; its tearDown needs a fix
 >   (follow-up).
+> - **#506 2/9 `7c68933`:** presence checks that never read a secret.
+>   - `KeyPresence` has three answers: `.present` / `.missing` /
+>     `.couldNotCheck(reason)`.
+>   - A STATIC `APIKeyManager.hasStoredKey(...)`: creating an APIKeyManager
+>     already reads every secret, so later commits must NEVER build one on the
+>     "still needs a key" path.
+>   - `SFTPCredentialStore.exists`, and the SMTP constants moved to the engine
+>     (`SMTPPasswordKeychain`).
+>   - An attributes-only Keychain query.
+>   - 43 tests ran locally; 3 planted faults were caught.
+>   - **Plan corrections:** (1) the instance-vs-static point above; (2) the App
+>     Store build is sandboxed, so the CLI can't see its `api_keys.json` and will
+>     report keys missing for App Store users (a limit for commits 5/7); (3) an
+>     old-format index → "couldn't check", never converted.
+>   - The builder followed the Keychain rule. The 2 test leftovers were checked and
+>     deleted by the orchestrator. Root cause raised as **#523** (delete-all removes
+>     one item per call).
 > - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
 >   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
 >   source, **#521** the REST API server can't actually encode and isn't reachable,
