@@ -665,6 +665,11 @@ enum SettingsKeyScanMap {
             + "(GloballyEnabled).",
         "AutoTagSettings.swift": "Opens a per-test suite only when tests pass a suite name; the app "
             + "passes nil and reads its own standard settings.",
+        "SettingsCommand.swift": "The command-line tool is a separate program, so its own "
+            + "`.standard` is NOT the app's settings. It opens the Direct app's domain "
+            + "(`AppInfo.Application.directBundleId`) explicitly, or a throwaway suite passed by "
+            + "tests through the hidden `--defaults-suite` option. Every key it touches still goes "
+            + "through the registry. (#506 7/9; listed here after it made this test fail.)",
     ]
 
     /// Files allowed to spell "Application Support" out in a string, rather

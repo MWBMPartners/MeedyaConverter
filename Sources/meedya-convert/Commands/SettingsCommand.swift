@@ -193,16 +193,23 @@ enum SettingsCommandSupport {
     /// The settings file this command reads or writes: the app's own domain
     /// by default (see the file overview for why never `.standard`), or a
     /// throwaway suite when `suiteOverride` is given (tests only).
-    static func domain(suiteOverride: String?) -> SettingsDomain {
+    ///
+    /// Returns `nil` when macOS refuses the name, and the caller then exits
+    /// with a plain message. This used to `fatalError` on the belief that
+    /// `UserDefaults(suiteName:)` only refuses an empty name. That was wrong:
+    /// it also refuses reserved names such as `NSGlobalDomain`, and the
+    /// running program's own bundle identifier. So `--defaults-suite
+    /// NSGlobalDomain` crashed the tool instead of explaining itself.
+    static func domain(suiteOverride: String?) -> SettingsDomain? {
         let name = suiteOverride ?? AppInfo.Application.directBundleId
-        guard let defaults = UserDefaults(suiteName: name) else {
-            // `UserDefaults(suiteName:)` only returns nil for an empty
-            // name, which can't happen here: `name` is either a fixed,
-            // non-empty constant or a caller-supplied suite name that
-            // `ArgumentParser` has already required to be non-empty.
-            fatalError("UserDefaults(suiteName:) refused “\(name)”.")
-        }
+        guard let defaults = UserDefaults(suiteName: name) else { return nil }
         return SettingsDomain(defaults: defaults, name: name)
+    }
+
+    /// The message printed when `domain(suiteOverride:)` returns `nil`.
+    static func refusedDomainMessage(_ suiteOverride: String?) -> String {
+        let name = suiteOverride ?? AppInfo.Application.directBundleId
+        return "macOS won't open the settings domain “\(name)”. Nothing was changed."
     }
 
     /// Plain English for any thrown error, preferring the engine's own
@@ -319,7 +326,10 @@ struct SettingsExportCommand: AsyncParsableCommand {
             printStderr("Warning: \(warning)")
         }
 
-        let domain = SettingsCommandSupport.domain(suiteOverride: defaultsSuite)
+        guard let domain = SettingsCommandSupport.domain(suiteOverride: defaultsSuite) else {
+            printStderr(SettingsCommandSupport.refusedDomainMessage(defaultsSuite))
+            throw ExitCode(ExitCodes.invalidArguments.rawValue)
+        }
         let profileStore = EncodingProfileStore(storageDirectory: profilesDir.map(URL.init(fileURLWithPath:)))
         let presence = SystemSettingsCredentialPresence(
             apiKeyStorageDirectory: apiKeysDir.map(URL.init(fileURLWithPath:)),
@@ -471,7 +481,10 @@ struct SettingsImportCommand: AsyncParsableCommand {
             throw ExitCode(SettingsCommandSupport.exitCode(for: error).rawValue)
         }
 
-        let domain = SettingsCommandSupport.domain(suiteOverride: defaultsSuite)
+        guard let domain = SettingsCommandSupport.domain(suiteOverride: defaultsSuite) else {
+            printStderr(SettingsCommandSupport.refusedDomainMessage(defaultsSuite))
+            throw ExitCode(ExitCodes.invalidArguments.rawValue)
+        }
         let profileStore = EncodingProfileStore(storageDirectory: profilesDir.map(URL.init(fileURLWithPath:)))
         let presence = SystemSettingsCredentialPresence(
             apiKeyStorageDirectory: apiKeysDir.map(URL.init(fileURLWithPath:)),
