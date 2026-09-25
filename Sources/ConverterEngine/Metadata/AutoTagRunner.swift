@@ -449,6 +449,22 @@ public enum AutoTagRunner {
     /// from the actual audio/video streams, not from the name.
     static func musicQuery(seedTags: [MediaTag], fileName: String) -> MetadataSearchQuery {
         var query = MusicBrainzTagMapping.seedQuery(tags: seedTags, filename: fileName)
+
+        // The shared `FilenameParser.parseMusic` splits on ANY hyphen and takes
+        // the first part as the artist, so "01 - Song Title.mp3" gives the
+        // artist "01", a track number. That would satisfy this runner's "an
+        // artist is required" safety gate with no real artist at all. So a
+        // digits-only artist that came from the FILE NAME is treated as
+        // missing, and the stricter local fallback below decides instead.
+        // An `artist` TAG is always trusted, even if it is digits only: "311"
+        // is a real band. Fixing the shared parser itself is a separate issue,
+        // because it also serves the tag editor's lookup and the film path.
+        if let artist = query.artist,
+           isAllASCIIDigits(artist.trimmingCharacters(in: .whitespaces)),
+           MusicBrainzTagMapping.value(forKey: "artist", in: seedTags) == nil {
+            query.artist = nil
+        }
+
         guard query.artist == nil, let hint = musicArtistTitleFromFileName(fileName) else {
             return query
         }
@@ -463,24 +479,48 @@ public enum AutoTagRunner {
     }
 
     /// A last-resort split of a file name shaped like "Artist - Title" or
-    /// "Artist – Title" (en dash). Tries the en dash FIRST: a name
-    /// containing both ("Artist – Sub-Title") must split on the one that
-    /// actually separates artist from title, and an en dash appearing
-    /// inside a title on its own is far rarer than a hyphen is. Returns
-    /// `nil` when the name doesn't look like either shape (fewer than two
-    /// non-empty parts once split).
+    /// "Artist – Title" (en dash), used only once a file is already known to
+    /// be music.
+    ///
+    /// Splits ONLY on a SPACED dash (" – " or " - "), the conventional
+    /// artist/title separator, so a hyphen INSIDE a name ("Sub-Title",
+    /// "Jay-Z") is never mistaken for one. The en dash is tried first.
+    ///
+    /// Accepted shapes:
+    ///   * exactly two parts, "Artist - Title", when the first part is not
+    ///     just digits;
+    ///   * exactly three parts whose first is just digits, "01 - Artist -
+    ///     Title": the leading track number is dropped.
+    /// Anything else returns `nil`, so no guess is made.
+    ///
+    /// Rejected earlier version (the orchestrator's review of #508 5/10):
+    /// it split on any bare "-" and took the FIRST part as the artist and the
+    /// LAST as the title. So the very common "01 - Song Title.mp3" produced
+    /// the artist "01". That satisfied the "an artist is required" safety
+    /// gate with a track number, which is exactly what that gate exists to
+    /// stop.
     static func musicArtistTitleFromFileName(_ fileName: String) -> (artist: String, title: String)? {
         let name = (fileName as NSString).deletingPathExtension
-        for separator in ["–", "-"] {
-            let parts = name.components(separatedBy: separator).map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            if parts.count >= 2, let artist = parts.first, !artist.isEmpty,
-               let title = parts.last, !title.isEmpty {
-                return (artist, title)
+        for separator in [" – ", " - "] {
+            let parts = name.components(separatedBy: separator)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            switch parts.count {
+            case 2 where !isAllASCIIDigits(parts[0]):
+                return (parts[0], parts[1])
+            case 3 where isAllASCIIDigits(parts[0]) && !isAllASCIIDigits(parts[1]):
+                return (parts[1], parts[2])
+            default:
+                continue
             }
         }
         return nil
+    }
+
+    /// True for a non-empty string made only of ASCII 0-9: a track number
+    /// such as "01", never an artist.
+    static func isAllASCIIDigits(_ text: String) -> Bool {
+        !text.isEmpty && text.utf8.allSatisfy { (0x30...0x39).contains($0) }
     }
 
     /// Whether `fileName` matches `FilenameParser`'s TV-episode pattern.

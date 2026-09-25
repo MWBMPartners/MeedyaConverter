@@ -1008,6 +1008,43 @@ final class AutoTagRunnerTests: XCTestCase {
         XCTAssertEqual(query.title, "Bohemian Rhapsody")
     }
 
+    // MARK: A track number is never an artist (orchestrator review of 5/10)
+
+    /// "01 - Song Title" is a very common music file name. The shared parser
+    /// reads it as the artist "01". A track number must not satisfy the
+    /// "an artist is required" gate, so this plans music with NO artist, and
+    /// the run then skips it, sending nothing.
+    func test_plan_music_aLeadingTrackNumberIsNotAnArtist() {
+        let plan = AutoTagRunner.plan(for: Self.song(named: "01 - Song Title.flac"))
+        guard case .music(let query) = plan else {
+            return XCTFail("expected .music, got \(plan)")
+        }
+        XCTAssertNil(query.artist, "a track number must never be used as the artist")
+    }
+
+    /// "01 - Artist - Title": the track number is dropped, and the real
+    /// artist and title are used.
+    func test_plan_music_trackNumberArtistTitle_dropsTheTrackNumber() {
+        let plan = AutoTagRunner.plan(for: Self.song(named: "01 - Queen - Bohemian Rhapsody.flac"))
+        guard case .music(let query) = plan else {
+            return XCTFail("expected .music, got \(plan)")
+        }
+        XCTAssertEqual(query.artist, "Queen")
+        XCTAssertEqual(query.title, "Bohemian Rhapsody")
+    }
+
+    /// An `artist` TAG made only of digits is a real artist ("311" is a band)
+    /// and is kept. Only a digits-only artist guessed from the FILE NAME is
+    /// discarded.
+    func test_plan_music_aDigitsOnlyArtistTagIsKept() {
+        let file = Self.song(named: "Track 1.flac", tags: ["artist": "311", "title": "Down"])
+        let plan = AutoTagRunner.plan(for: file)
+        guard case .music(let query) = plan else {
+            return XCTFail("expected .music, got \(plan)")
+        }
+        XCTAssertEqual(query.artist, "311")
+    }
+
     func test_plan_music_aTagTitleIsNeverOverwrittenByTheFileNameFallback() {
         // A `title` TAG must win even when the file name also looks like
         // "Artist – Title" — only the missing ARTIST is topped up from the
