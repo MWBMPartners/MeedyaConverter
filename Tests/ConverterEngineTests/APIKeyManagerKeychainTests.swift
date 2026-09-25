@@ -159,7 +159,7 @@ final class APIKeyManagerKeychainTests: XCTestCase {
     /// Verifies that secrets stored by one manager instance are visible
     /// to a fresh manager instance pointed at the same storage and
     /// Keychain service.
-    func test_apiKeyManager_roundTripsAllSecretsThroughKeychain() {
+    func test_apiKeyManager_roundTripsAllSecretsThroughKeychain() throws {
         // -- First instance: store a key with every secret field set. --
         let original = APIKeyManager(
             storageDirectory: storageDirectory,
@@ -174,7 +174,7 @@ final class APIKeyManagerKeychainTests: XCTestCase {
             tokenExpiry: Date(timeIntervalSince1970: 1_800_000_000),
             label: "primary"
         )
-        original.storeKey(stored)
+        try original.storeKey(stored)
 
         // -- Second instance: hydrate from disk + Keychain. --
         let reopened = APIKeyManager(
@@ -217,7 +217,7 @@ final class APIKeyManagerKeychainTests: XCTestCase {
             refreshToken: "REFRESH-TOKEN-LEAK-CANARY",
             label: "rotation-test"
         )
-        manager.storeKey(key)
+        try manager.storeKey(key)
 
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: jsonURL.path),
@@ -320,7 +320,7 @@ final class APIKeyManagerKeychainTests: XCTestCase {
     /// Verifies that `removeKey` actually deletes the matching Keychain
     /// item — otherwise a re-added key would silently inherit the old
     /// secret.
-    func test_apiKeyManager_removeKey_deletesKeychainItem() {
+    func test_apiKeyManager_removeKey_deletesKeychainItem() throws {
         let manager = APIKeyManager(
             storageDirectory: storageDirectory,
             keychainService: keychainService
@@ -330,8 +330,8 @@ final class APIKeyManagerKeychainTests: XCTestCase {
             apiKey: "FIRST-KEY",
             label: "rotation"
         )
-        manager.storeKey(first)
-        manager.removeKey(provider: .tmdb, label: "rotation")
+        try manager.storeKey(first)
+        try manager.removeKey(provider: .tmdb, label: "rotation")
 
         // Re-create the manager — the in-memory cache is gone now, so the
         // only way the secret could come back is if the Keychain still

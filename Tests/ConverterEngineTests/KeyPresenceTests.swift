@@ -276,8 +276,8 @@ final class KeyPresenceTests: XCTestCase {
 
     /// A key that was never saved, while the file DOES exist (holding a
     /// different service's key) → missing, without needing the Keychain.
-    func test_neverStoredKey_withAnIndexPresent_isMissing() {
-        makeManager().storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "some-other-key"))
+    func test_neverStoredKey_withAnIndexPresent_isMissing() throws {
+        try makeManager().storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "some-other-key"))
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: indexURL.path),
             "Set-up: the saved-keys file should exist, so this tests 'no entry', not 'no file'."
@@ -392,7 +392,7 @@ final class KeyPresenceTests: XCTestCase {
     func test_storedKey_isPresent() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
 
-        makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
+        try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
 
         XCTAssertEqual(presence(of: .tmdb), .present)
     }
@@ -401,10 +401,10 @@ final class KeyPresenceTests: XCTestCase {
     func test_removedKey_isMissing() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
         let manager = makeManager()
-        manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
+        try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
         XCTAssertEqual(presence(of: .tmdb), .present, "Set-up: the key should be present before removal.")
 
-        manager.removeKey(provider: .tmdb)
+        try manager.removeKey(provider: .tmdb)
 
         XCTAssertEqual(presence(of: .tmdb), .missing)
     }
@@ -417,7 +417,7 @@ final class KeyPresenceTests: XCTestCase {
     /// "still needs a key" is the truth.
     func test_indexEntryWhoseKeychainItemWasDeletedUnderneath_isMissing() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
-        makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
+        try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
 
         // Test-scoped delete, on this test's own service only. Success also
         // pins the account naming ("<provider>:default" for no label).
@@ -445,7 +445,7 @@ final class KeyPresenceTests: XCTestCase {
     /// can't find it either. Here the file is deleted outright.
     func test_keychainItemWithNoIndexEntry_isMissing() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
-        makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
+        try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key"))
         try FileManager.default.removeItem(at: indexURL)
 
         XCTAssertEqual(presence(of: .tmdb), .missing)
@@ -455,7 +455,7 @@ final class KeyPresenceTests: XCTestCase {
     /// wouldn't use it.
     func test_inactiveKey_isMissing() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
-        makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key", isActive: false))
+        try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "tmdb-test-key", isActive: false))
 
         XCTAssertEqual(presence(of: .tmdb), .missing)
     }
@@ -464,7 +464,7 @@ final class KeyPresenceTests: XCTestCase {
     /// `key(for:)` would use", which here is the one labelled key.
     func test_labelledKey_matchesItsOwnLabel_andNoLabelMeansAny() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
-        makeManager().storeKey(StoredAPIKey(provider: .awsS3, apiKey: "AKIA-TEST", secretKey: "s3-secret", label: "work"))
+        try makeManager().storeKey(StoredAPIKey(provider: .awsS3, apiKey: "AKIA-TEST", secretKey: "s3-secret", label: "work"))
 
         XCTAssertEqual(presence(of: .awsS3, label: "work"), .present)
         XCTAssertEqual(presence(of: .awsS3, label: "home"), .missing)
@@ -475,7 +475,7 @@ final class KeyPresenceTests: XCTestCase {
     /// or without its label.
     func test_mediaServerKey_savedThroughItsStore_isPresent() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
-        MediaServerCredentialStore.saveKey("plex-token-for-test", store: makeManager())
+        try MediaServerCredentialStore.saveKey("plex-token-for-test", store: makeManager())
 
         XCTAssertEqual(presence(of: .mediaServer), .present)
         XCTAssertEqual(presence(of: .mediaServer, label: MediaServerCredentialStore.keyLabel), .present)
@@ -543,7 +543,7 @@ final class KeyPresenceTests: XCTestCase {
     func test_presenceChecks_neverReturnOrPrintTheSecret() throws {
         try XCTSkipUnless(keychainIsAvailable(), noKeychainReason)
         let profile = UUID()
-        makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: sentinel))
+        try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: sentinel))
         try SFTPCredentialStore.save(password: sentinel, forProfileID: profile)
         XCTAssertEqual(addSMTPItem(password: sentinel), errSecSuccess, "Set-up: could not add the test SMTP item.")
 

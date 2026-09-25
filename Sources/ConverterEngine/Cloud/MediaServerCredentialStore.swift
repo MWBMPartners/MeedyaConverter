@@ -28,9 +28,10 @@
 //      plaintext value can never be reintroduced by a future edit.
 //
 // `MediaServerKeyStoring` exists so `MediaServerCredentialStoreTests` can
-// substitute a fake whose `storeKey` silently fails to persist — the one
-// migration path that matters most (what happens when the Keychain refuses
-// the write) cannot be forced against the REAL Keychain on demand.
+// substitute a fake whose `storeKey` silently fails to persist, or refuses
+// by throwing — the migration paths that matter most (what happens when the
+// Keychain refuses the write, or the key list can't be read) cannot be
+// forced against the REAL Keychain on demand.
 // ---------------------------------------------------------------------------
 
 import Foundation
@@ -40,18 +41,21 @@ import Foundation
 /// A narrow view of `APIKeyManager`, covering only what the media-server
 /// migration and lookups need. Lets tests substitute a fake — in
 /// particular one whose `storeKey` accepts the call but never actually
-/// makes the key readable afterwards, to exercise
+/// makes the key readable afterwards, or one that throws, to exercise
 /// `MigrationOutcome.failedKeptLegacyValue` deterministically.
 public protocol MediaServerKeyStoring {
     /// Mirrors `APIKeyManager.key(for:)`: the active key for `provider`,
     /// re-reading the on-disk index and the Keychain first.
     func key(for provider: APIKeyProvider) -> StoredAPIKey?
 
-    /// Mirrors `APIKeyManager.storeKey(_:)`.
-    func storeKey(_ key: StoredAPIKey)
+    /// Mirrors `APIKeyManager.storeKey(_:)`, including its refusal: it
+    /// throws (`APIKeyStoreError` from the real one) when it changed
+    /// nothing because the list of saved keys could not be read safely.
+    func storeKey(_ key: StoredAPIKey) throws
 
-    /// Mirrors `APIKeyManager.removeKey(provider:label:)`.
-    func removeKey(provider: APIKeyProvider, label: String?)
+    /// Mirrors `APIKeyManager.removeKey(provider:label:)`, including its
+    /// refusal (see `storeKey`).
+    func removeKey(provider: APIKeyProvider, label: String?) throws
 }
 
 /// `APIKeyManager` already implements every method above with matching
@@ -98,8 +102,10 @@ public enum MediaServerCredentialStore {
         /// confirm it landed, and then removed from `defaults`.
         case migrated
         /// The legacy value could not be confirmed in the Keychain after
-        /// the write, so it was LEFT in `defaults` untouched. `reason` is
-        /// plain English, suitable for an Activity Log line.
+        /// the write — or the store refused to write it at all (it could
+        /// not read its list of saved keys safely) — so it was LEFT in
+        /// `defaults` untouched. `reason` is plain English, suitable for an
+        /// Activity Log line, and says which of the two happened.
         case failedKeptLegacyValue(reason: String)
     }
 
@@ -127,16 +133,23 @@ public enum MediaServerCredentialStore {
     ///    exist because either the app quit between steps 3 and 5 on a
     ///    previous launch, or an older build wrote it more recently than
     ///    whatever the Keychain currently holds.
+    ///    If `storeKey` THROWS, it refused and changed nothing (the real
+    ///    `APIKeyManager` does that when it cannot read its list of saved
+    ///    keys safely — see `APIKeyStoreError`). That goes straight to the
+    ///    failure half of step 5: `.failedKeptLegacyValue`, with the
+    ///    error's plain-English wording as the reason.
     /// 4. **Verify by reading the key back out through `store`.** This
-    ///    does NOT trust that step 3 "succeeded" — `APIKeyManager
-    ///    .storeKey` does not report Keychain failures to its caller at
-    ///    all (see that method's doc comment); it only logs a warning.
-    ///    A read-back match is the only proof the value actually landed.
+    ///    does NOT trust that step 3 "succeeded" just because it did not
+    ///    throw — `APIKeyManager.storeKey` throws only when it refuses to
+    ///    start; it does not report a Keychain write that fails (see that
+    ///    method's doc comment), it only logs a warning. A read-back match
+    ///    is the only proof the value actually landed.
     /// 5. Match → remove the legacy value from `defaults`, `.migrated`.
-    ///    Mismatch → **leave the legacy value exactly as it was** and
-    ///    return `.failedKeptLegacyValue`. Removing it here on a failed
-    ///    write would be a silent data loss: the key would then exist
-    ///    NOWHERE — not in the Keychain, not in the settings file.
+    ///    Mismatch, or a refusal in step 3 → **leave the legacy value
+    ///    exactly as it was** and return `.failedKeptLegacyValue`.
+    ///    Removing it here on a failed write would be a silent data loss:
+    ///    the key would then exist NOWHERE — not in the Keychain, not in
+    ///    the settings file.
     ///
     /// - Parameters:
     ///   - defaults: Where a legacy plaintext value might still live.
@@ -165,14 +178,20 @@ public enum MediaServerCredentialStore {
             return .removedEmptyLegacyValue
         }
 
-        // Step 3.
-        store.storeKey(
-            StoredAPIKey(provider: .mediaServer, apiKey: legacyValue, label: keyLabel)
-        )
+        // Step 3. A refusal changed nothing, so the legacy value is the
+        // only copy of the key there is: keep it, and say why.
+        do {
+            try store.storeKey(
+                StoredAPIKey(provider: .mediaServer, apiKey: legacyValue, label: keyLabel)
+            )
+        } catch {
+            return .failedKeptLegacyValue(reason: error.localizedDescription)
+        }
 
         // Step 4 — the read-back verification. See the doc comment above
         // for why this cannot be skipped or replaced with "assume it
-        // worked because storeKey didn't throw" (it never throws).
+        // worked because storeKey didn't throw" (it throws only when it
+        // refuses to start, never when the Keychain write itself fails).
         guard store.key(for: .mediaServer)?.apiKey == legacyValue else {
             return .failedKeptLegacyValue(
                 reason: "The Keychain did not accept the media server key."
@@ -226,8 +245,12 @@ public enum MediaServerCredentialStore {
     ///     it (already trimmed by the caller — this function does not
     ///     re-trim, so it cannot silently change what gets saved).
     ///   - store: Where to write it.
-    public static func saveKey(_ apiKey: String, store: MediaServerKeyStoring) {
-        store.storeKey(
+    /// - Throws: Whatever `store.storeKey` throws — from the real
+    ///   `APIKeyManager`, `APIKeyStoreError` when it refused and saved
+    ///   nothing. Passed straight on so the screen can say so rather than
+    ///   claim the key was saved.
+    public static func saveKey(_ apiKey: String, store: MediaServerKeyStoring) throws {
+        try store.storeKey(
             StoredAPIKey(provider: .mediaServer, apiKey: apiKey, label: keyLabel)
         )
     }
@@ -241,8 +264,11 @@ public enum MediaServerCredentialStore {
     /// keep shadowing a user's "Remove Key" tap.
     ///
     /// - Parameter store: Where to remove it from.
-    public static func removeKey(store: MediaServerKeyStoring) {
-        store.removeKey(provider: .mediaServer, label: keyLabel)
-        store.removeKey(provider: .mediaServer, label: nil)
+    /// - Throws: Whatever `store.removeKey` throws (see `saveKey`). If the
+    ///   FIRST removal refuses, the second is not attempted, so a refusal
+    ///   means nothing was removed.
+    public static func removeKey(store: MediaServerKeyStoring) throws {
+        try store.removeKey(provider: .mediaServer, label: keyLabel)
+        try store.removeKey(provider: .mediaServer, label: nil)
     }
 }

@@ -251,6 +251,53 @@ public struct StoredAPIKey: Codable, Sendable {
     }
 }
 
+// MARK: - APIKeyStoreError
+
+/// Why `APIKeyManager` refused to change the saved keys.
+///
+/// Thrown by `APIKeyManager.storeKey(_:)` and
+/// `APIKeyManager.removeKey(provider:label:)` (Codex round-2 review, chunk
+/// 1b, finding 2). Both of those rewrite the WHOLE list of saved keys
+/// (`api_keys.json`) from what they have just read. So when the list is on
+/// disk but could not be read, or was written by a newer version, a rewrite
+/// would silently throw away whatever this version could not see. They
+/// refuse instead, and change nothing at all: no Keychain item is written or
+/// deleted, and the list is left byte-for-byte as it was.
+///
+/// The wording is shown on screen and can end up in the Activity Log, so it
+/// deliberately never names the file's location or any key.
+///
+/// What this does NOT cover: a Keychain write that fails, or a list that
+/// cannot be written back. `storeKey` still only logs those two (see its
+/// doc comment); this type is only about refusing to START a change.
+public enum APIKeyStoreError: Error, LocalizedError, Equatable, Sendable {
+
+    /// The list of saved keys exists but could not be read, or was read but
+    /// is not in any format this version understands (damaged, for
+    /// example).
+    case savedKeysListUnreadable
+
+    /// The list of saved keys says it was written in a newer format than
+    /// this version writes. Rewriting it in the older format could drop
+    /// details only the newer version understands.
+    case savedKeysListFromNewerVersion
+
+    /// Plain-English explanation for the person using the app.
+    public var errorDescription: String? {
+        switch self {
+        case .savedKeysListUnreadable:
+            return "MeedyaConverter could not read its list of saved keys, so it "
+                + "changed nothing: saving now could erase keys it cannot see. "
+                + "Try again; if this keeps happening, the list may be damaged."
+        case .savedKeysListFromNewerVersion:
+            return "The list of saved keys was written by a newer version of "
+                + "MeedyaConverter, so this version changed nothing: saving could "
+                + "lose details only the newer version understands. Use the newer "
+                + "version to change your keys."
+        }
+    }
+}
+
 // MARK: - APIKeyManager
 
 /// Manages API keys for cloud and metadata providers.
@@ -289,26 +336,28 @@ public final class APIKeyManager: @unchecked Sendable {
     /// bumping a last-used timestamp is bookkeeping, not something any UI
     /// needs to redraw for, and posting on every lookup-adjacent write
     /// would make the notification noisy enough that nobody could tell a
-    /// real change from housekeeping.
+    /// real change from housekeeping. Not posted either when `storeKey` or
+    /// `removeKey` REFUSES (throws `APIKeyStoreError`): nothing changed, so
+    /// there is nothing to refresh, and the caller gets the error instead.
     ///
     /// Posted via `NotificationCenter.default` with `object: self`, and —
-    /// this is the part that matters — only AFTER this instance's `lock`
-    /// has been released. `NSLock` is not re-entrant: the whole point of
-    /// this notification is that a settings screen can react by calling
-    /// straight back into the SAME manager (e.g. re-reading `key(for:)`
-    /// to refresh a "key saved" label), and if we posted while still
-    /// holding `lock`, that call would deadlock against itself. See the
-    /// bottom of `storeKey(_:)`/`removeKey(provider:label:)` for where the
-    /// unlock happens relative to the post.
+    /// this is the part that matters — only AFTER the shared `lock` has
+    /// been released. `NSLock` is not re-entrant, and `lock` is ONE lock
+    /// for every `APIKeyManager` in the process (see its own comment). The
+    /// whole point of this notification is that a settings screen can
+    /// react by calling straight back into a manager (e.g. re-reading
+    /// `key(for:)` to refresh a "key saved" label). If we posted while
+    /// still holding `lock`, an observer on the same thread calling ANY
+    /// manager — this one or another — would deadlock. See the bottom of
+    /// `storeKey(_:)`/`removeKey(provider:label:)` for where the unlock
+    /// happens relative to the post.
     ///
     /// WHAT THIS DOES NOT SOLVE (finding 10 covers the notification gap;
     /// this is the boundary of the fix): it only reaches observers inside
-    /// THIS PROCESS. Two separate processes — the app and, in the future,
-    /// a command-line tool — sharing the same `api_keys.json` are not
-    /// coordinated by this notification any more than they are by the
-    /// in-process `lock` documented on `reloadLocked()`. Today that gap is
-    /// theoretical: no CLI target constructs an `APIKeyManager` yet. It is
-    /// written down here as a known limit for whenever one does, not as a
+    /// THIS PROCESS. Two separate processes sharing the same
+    /// `api_keys.json` are not coordinated by this notification, any more
+    /// than they are by `lock` (whose comment says why that is acceptable
+    /// today). It is written down here as a known limit, not as a
     /// guarantee that cross-process observation already works.
     public static let didChangeNotification = Notification.Name(
         "com.mwbm.meedyaconverter.apiKeyManagerDidChange"
@@ -351,12 +400,26 @@ public final class APIKeyManager: @unchecked Sendable {
     /// * v2: metadata-only envelope, secrets in Keychain (current).
     /// * v1: legacy `[StoredAPIKey]` array with embedded secrets (read
     ///   on load to support migration; never written).
+    ///
+    /// A file whose `version` is HIGHER than this was written by a newer
+    /// build. Because a bump means "not backward-compatible", this build
+    /// does not trust its records and never rewrites it — see
+    /// `interpretIndex(_:)` and `APIKeyStoreError.savedKeysListFromNewerVersion`.
     private static let currentStorageVersion = 2
 
     /// The on-disk envelope. Only metadata; no secret material.
     private struct StorageEnvelope: Codable {
         let version: Int
         let records: [MetadataRecord]
+    }
+
+    /// Just the envelope's `version` number, nothing else. Decoded FIRST,
+    /// on its own, so a file from a newer build is recognised as newer
+    /// even when its records would not decode here (for example because
+    /// they name a service this build has never heard of). Holds no secret
+    /// field, so decoding it can never read one.
+    private struct EnvelopeVersion: Decodable {
+        let version: Int
     }
 
     /// A single key entry as persisted to disk. Mirrors `StoredAPIKey`
@@ -409,8 +472,58 @@ public final class APIKeyManager: @unchecked Sendable {
     /// (tests can pass their own service string).
     private let keychainService: String
 
-    /// Lock for thread-safe access.
-    private let lock = NSLock()
+    /// ONE lock shared by every `APIKeyManager` in this process — `static`,
+    /// not one per instance. It guards two things: each instance's `keys`
+    /// array, and the read-modify-write of the list of saved keys
+    /// (`api_keys.json`) that every write does.
+    ///
+    /// **Why shared (Codex round-2 review, chunk 1b, finding 1).** This used
+    /// to be `private let lock`, one per instance. But several instances
+    /// live at once (each settings tab keeps its own in `@State`; view
+    /// models and uploaders create them per call), and each write rewrites
+    /// the WHOLE list from its own array. With a lock per instance, A and B
+    /// could both re-read the list, each add a different key, and both
+    /// save; whichever saved last dropped the other's record. Only a lock
+    /// that every instance takes makes "re-read, change, save" happen as
+    /// one step with respect to every other `APIKeyManager` in the process.
+    ///
+    /// **Rules that keep it deadlock-free.** `NSLock` is not re-entrant, and
+    /// now any manager holding it blocks every other manager, so:
+    /// - It is taken only at the public entry points (`init`, `storeKey`,
+    ///   `removeKey`, `markUsed`, and the lookups). Everything they call
+    ///   while holding it (`reloadForWriteLocked()`, `reloadLocked()`,
+    ///   `hydrate(record:)`, `saveKeys()`, the static file and decode
+    ///   helpers, `KeychainStore`) never takes it, never calls a public
+    ///   method of any manager, and never constructs one.
+    /// - `hasKey(for:)` takes it only indirectly, through `key(for:)`, once.
+    /// - `didChangeNotification` is posted only after it is released, so an
+    ///   observer may call straight back into any manager.
+    ///
+    /// **Cost.** Every lookup and write in the process now queues behind
+    /// every other one, and the Keychain is asked for secrets while the
+    /// lock is held. If the Keychain is ever slow to answer (for example
+    /// while macOS asks the person's permission), every manager in the app
+    /// waits until it does. All of that work is short, synchronous and has
+    /// no `await` inside, so the wait is bounded by the Keychain itself.
+    ///
+    /// **What it cannot do: coordinate SEPARATE PROCESSES.** An `NSLock`
+    /// lives in one process's memory. Two programs writing the same
+    /// `api_keys.json` at once could still lose each other's changes.
+    /// That is acceptable today because no second writer exists:
+    /// - the command-line tool (`meedya-convert`) never constructs an
+    ///   `APIKeyManager` — it only calls the static, read-only
+    ///   `hasStoredKey(for:…)`, and a read cannot lose anyone's record; and
+    /// - the Direct and App Store builds of the app do not share a list:
+    ///   the App Store build is sandboxed, so its Application Support
+    ///   folder (see `defaultStorageDirectory()`) is inside its own
+    ///   container.
+    /// The gap left is two UNSANDBOXED copies of the app running at the
+    /// same time and both saving keys — for example a development build
+    /// beside the installed Direct build. macOS does not start a second
+    /// copy of an app that is opened normally. If a second writing process
+    /// is ever added for real, this needs a file lock (for example `flock`
+    /// on the list) as well as this one.
+    private static let lock = NSLock()
 
     // MARK: - Initialiser
 
@@ -433,15 +546,22 @@ public final class APIKeyManager: @unchecked Sendable {
         self.keychainService = keychainService
         self.keys = []
 
-        // No explicit `lock.lock()` here even though `reloadLocked()`
-        // documents itself as requiring the lock held: at this point in
-        // `init`, `self` has not yet been handed to any caller, so there
-        // is no other thread that could possibly be racing this first
-        // read. Every reload after this one — from `storeKey`,
-        // `removeKey`, `markUsed`, or any of the lookup methods — does
-        // take the lock first. See `reloadLocked()` for the shared logic
-        // and why a reload (not just a one-time load) is needed at all.
-        reloadLocked()
+        // The shared lock IS taken here. It used to be skipped, on the
+        // reasoning that nothing else can see a half-built `self` — true of
+        // this instance's `keys`, but not of the FILE: this first reload
+        // can run the pre-Keychain migration in `reloadLocked()`, which
+        // writes the list, and without the lock that write could land in
+        // the middle of another instance's re-read-change-save and undo it.
+        // Taking it here cannot deadlock: nothing that runs while the lock
+        // is held ever constructs an `APIKeyManager` (see `lock`).
+        //
+        // What the reload found is not needed here. A list that could not
+        // be read leaves `keys` empty (it was set to `[]` just above), and
+        // the next write re-reads the list anyway and refuses if it still
+        // cannot be read.
+        Self.lock.withLock {
+            _ = reloadLocked()
+        }
     }
 
     // MARK: - CRUD
@@ -464,60 +584,78 @@ public final class APIKeyManager: @unchecked Sendable {
     /// classic lost-update race, not a crash, so it went unnoticed until
     /// the audit: the secret really is in the Keychain, but nothing on
     /// disk points back to it, so the app behaves as if the key does not
-    /// exist. `reloadLocked()` re-reads the file (and re-hydrates from
-    /// the Keychain) while `lock` is STILL held, so nothing else in this
-    /// process can write in the gap between "find out what's on disk"
-    /// and "decide what to write" below.
+    /// exist. `reloadForWriteLocked()` re-reads the file (and re-hydrates
+    /// from the Keychain) while the shared `lock` is STILL held. Because
+    /// every `APIKeyManager` in this process takes that same lock, no other
+    /// manager in this process can write in the gap between "find out
+    /// what's on disk" and "decide what to write" below. (A different
+    /// PROCESS could; see `lock` for why that is acceptable today.)
+    ///
+    /// **When it refuses (Codex round-2 review, chunk 1b, finding 2).** If
+    /// the list is on disk but could not be read, or says it was written by
+    /// a newer version, this throws `APIKeyStoreError` and changes NOTHING:
+    /// no Keychain write, no list write, no notification. Before this, it
+    /// carried on and rewrote the whole list from whatever this instance
+    /// last held in memory, which could drop keys another instance had
+    /// saved, or overwrite a newer version's file with an older format.
+    ///
+    /// **What it still does NOT report** (unchanged by that fix, and only
+    /// logged): the Keychain refusing the secret, and the list failing to
+    /// save. In both cases it returns normally. A caller that must know the
+    /// key really landed has to read it back, as
+    /// `MediaServerCredentialStore.migrateLegacyKeyIfNeeded` does.
     ///
     /// - Parameter key: The API key to store.
-    public func storeKey(_ key: StoredAPIKey) {
-        lock.lock()
+    /// - Throws: `APIKeyStoreError` when it refused to change anything.
+    public func storeKey(_ key: StoredAPIKey) throws {
+        // `withLock` releases the lock on the way out whether the closure
+        // returns or throws, so a refusal can never leave it held.
+        try Self.lock.withLock {
+            // Read-modify-write against the file as it stands RIGHT NOW —
+            // see the doc comment above and `reloadLocked()` for why this
+            // must happen before the upsert, under the same lock hold. A
+            // refusal throws here, before anything below has run.
+            try reloadForWriteLocked()
 
-        // Read-modify-write against the file as it stands RIGHT NOW —
-        // see the doc comment above and `reloadLocked()` for why this
-        // must happen before the upsert, under the same lock hold.
-        reloadLocked()
-
-        // Upsert in the in-memory array using the existing (provider,
-        // label) identity so callers see the latest version.
-        if let index = keys.firstIndex(where: { $0.provider == key.provider && $0.label == key.label }) {
-            keys[index] = key
-        } else {
-            keys.append(key)
-        }
-
-        // Write the secrets to the Keychain first. If that fails we still
-        // want to persist the metadata so the user can re-enter the key,
-        // but we log the failure rather than swallow it silently.
-        let account = Self.keychainAccount(provider: key.provider, label: key.label)
-        let secrets = Secrets(
-            apiKey: key.apiKey,
-            secretKey: key.secretKey,
-            accessToken: key.accessToken,
-            refreshToken: key.refreshToken
-        )
-        if secrets.hasAnySecret {
-            do {
-                try KeychainStore.write(
-                    service: keychainService,
-                    account: account,
-                    value: try JSONEncoder().encode(secrets)
-                )
-            } catch {
-                print("Warning: Could not write API key to Keychain: \(error.localizedDescription)")
+            // Upsert in the in-memory array using the existing (provider,
+            // label) identity so callers see the latest version.
+            if let index = keys.firstIndex(where: { $0.provider == key.provider && $0.label == key.label }) {
+                keys[index] = key
+            } else {
+                keys.append(key)
             }
-        } else {
-            // Metadata-only update — make sure any stale secrets are gone.
-            try? KeychainStore.delete(service: keychainService, account: account)
+
+            // Write the secrets to the Keychain first. If that fails we still
+            // want to persist the metadata so the user can re-enter the key,
+            // but we log the failure rather than swallow it silently.
+            let account = Self.keychainAccount(provider: key.provider, label: key.label)
+            let secrets = Secrets(
+                apiKey: key.apiKey,
+                secretKey: key.secretKey,
+                accessToken: key.accessToken,
+                refreshToken: key.refreshToken
+            )
+            if secrets.hasAnySecret {
+                do {
+                    try KeychainStore.write(
+                        service: keychainService,
+                        account: account,
+                        value: try JSONEncoder().encode(secrets)
+                    )
+                } catch {
+                    print("Warning: Could not write API key to Keychain: \(error.localizedDescription)")
+                }
+            } else {
+                // Metadata-only update — make sure any stale secrets are gone.
+                try? KeychainStore.delete(service: keychainService, account: account)
+            }
+
+            saveKeys()
         }
 
-        saveKeys()
-
-        // Unlock BEFORE posting — see `didChangeNotification`'s doc
-        // comment for why posting while still holding `lock` would risk
-        // a deadlock against an observer that reads this same manager.
-        lock.unlock()
-
+        // Posted only AFTER `withLock` has released the lock — see
+        // `didChangeNotification`'s doc comment for why posting while still
+        // holding it would deadlock an observer that reads any manager.
         NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
 
@@ -532,33 +670,42 @@ public final class APIKeyManager: @unchecked Sendable {
     /// see one another instance just added), because the rewrite at the
     /// bottom is of the WHOLE file, from this instance's in-memory array.
     ///
+    /// Refuses, exactly as `storeKey(_:)` does, when the list is on disk
+    /// but could not be read or was written by a newer version: it throws
+    /// `APIKeyStoreError` BEFORE deleting any Keychain item, so a refused
+    /// removal leaves both the list and the Keychain untouched. (Deleting
+    /// the secret but then not rewriting the list would leave an entry
+    /// pointing at nothing; rewriting the list from a stale copy could drop
+    /// other keys.) A Keychain deletion that fails is still ignored, and a
+    /// list that fails to save is still only logged, as before.
+    ///
     /// - Parameters:
     ///   - provider: The provider to remove the key for.
     ///   - label: Optional label to identify which key (if multiple per provider).
-    public func removeKey(provider: APIKeyProvider, label: String? = nil) {
-        lock.lock()
+    /// - Throws: `APIKeyStoreError` when it refused to change anything.
+    public func removeKey(provider: APIKeyProvider, label: String? = nil) throws {
+        // `withLock` releases the lock whether the closure returns or
+        // throws — see `storeKey(_:)`.
+        try Self.lock.withLock {
+            try reloadForWriteLocked()
 
-        reloadLocked()
-
-        // Capture the labels we are about to remove so we can delete the
-        // corresponding Keychain items afterwards.
-        let removed = keys.filter { key in
-            key.provider == provider && (label == nil || key.label == label)
+            // Capture the labels we are about to remove so we can delete the
+            // corresponding Keychain items afterwards.
+            let removed = keys.filter { key in
+                key.provider == provider && (label == nil || key.label == label)
+            }
+            keys.removeAll { key in
+                key.provider == provider && (label == nil || key.label == label)
+            }
+            for key in removed {
+                let account = Self.keychainAccount(provider: key.provider, label: key.label)
+                try? KeychainStore.delete(service: keychainService, account: account)
+            }
+            saveKeys()
         }
-        keys.removeAll { key in
-            key.provider == provider && (label == nil || key.label == label)
-        }
-        for key in removed {
-            let account = Self.keychainAccount(provider: key.provider, label: key.label)
-            try? KeychainStore.delete(service: keychainService, account: account)
-        }
-        saveKeys()
 
-        // Unlock BEFORE posting — see `didChangeNotification`'s doc
-        // comment; posting while still holding `lock` risks a deadlock
-        // against an observer that reads this same manager.
-        lock.unlock()
-
+        // Posted only AFTER the lock is released — see
+        // `didChangeNotification`'s doc comment.
         NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
 
@@ -570,41 +717,54 @@ public final class APIKeyManager: @unchecked Sendable {
     /// truth even when some OTHER `APIKeyManager` instance saved or
     /// removed a key after this one was created.
     ///
+    /// **When the list can't be read** (on disk but unreadable, damaged, or
+    /// written by a newer version), this answers from the copy this
+    /// instance last read successfully, rather than reporting "no keys".
+    /// That is deliberate (TRAP 2 on `reloadLocked()`): a read cannot damage
+    /// anything, and "unknown" should not look like "the person removed
+    /// every key". Only WRITES refuse in that situation. For a brand-new
+    /// instance that has never read the list, the copy is empty, so the
+    /// answer is nil.
+    ///
     /// - Parameter provider: The provider.
     /// - Returns: The active key, or nil.
     public func key(for provider: APIKeyProvider) -> StoredAPIKey? {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
 
-        reloadLocked()
+        // What the reload found is ignored on purpose — see "When the list
+        // can't be read" above.
+        _ = reloadLocked()
         return keys.first { $0.provider == provider && $0.isActive }
     }
 
     /// Get all keys for a provider.
     ///
-    /// Reloads from disk first — see `key(for:)` above.
+    /// Reloads from disk first, and answers from the last good copy when
+    /// the list can't be read — see `key(for:)` above.
     ///
     /// - Parameter provider: The provider.
     /// - Returns: All keys for the provider.
     public func keys(for provider: APIKeyProvider) -> [StoredAPIKey] {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
 
-        reloadLocked()
+        _ = reloadLocked()
         return keys.filter { $0.provider == provider }
     }
 
     /// Get all keys in a category.
     ///
-    /// Reloads from disk first — see `key(for:)` above.
+    /// Reloads from disk first, and answers from the last good copy when
+    /// the list can't be read — see `key(for:)` above.
     ///
     /// - Parameter category: The category.
     /// - Returns: All keys in the category.
     public func keys(in category: APIKeyCategory) -> [StoredAPIKey] {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
 
-        reloadLocked()
+        _ = reloadLocked()
         return keys.filter { $0.provider.category == category }
     }
 
@@ -617,12 +777,19 @@ public final class APIKeyManager: @unchecked Sendable {
     /// `didChangeNotification`: a last-used timestamp is bookkeeping that
     /// no UI redraws for, not a change to whether a key is saved.
     ///
+    /// **When the list can't be read, or is from a newer version, it
+    /// silently does nothing** — no save, no error. The same refusal as
+    /// `storeKey`/`removeKey`, for the same reason (a rewrite from a stale
+    /// copy could drop other keys), but not thrown: a missed "last used"
+    /// date harms nobody, and nothing in the app calls this today, so there
+    /// is no caller that could show an error anyway.
+    ///
     /// - Parameter provider: The provider whose key was used.
     public func markUsed(provider: APIKeyProvider) {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
 
-        reloadLocked()
+        guard reloadLocked() == .upToDate else { return }
 
         if let index = keys.firstIndex(where: { $0.provider == provider && $0.isActive }) {
             keys[index].lastUsedDate = Date()
@@ -640,14 +807,15 @@ public final class APIKeyManager: @unchecked Sendable {
 
     /// Get all providers that have configured keys.
     ///
-    /// Reloads from disk first — see `key(for:)` above.
+    /// Reloads from disk first, and answers from the last good copy when
+    /// the list can't be read — see `key(for:)` above.
     ///
     /// - Returns: Set of providers with active keys.
     public func configuredProviders() -> Set<APIKeyProvider> {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
 
-        reloadLocked()
+        _ = reloadLocked()
         return Set(keys.filter { $0.isActive }.map { $0.provider })
     }
 
@@ -675,13 +843,15 @@ public final class APIKeyManager: @unchecked Sendable {
     ///
     /// **Why it does not touch `reloadLocked()` or `lock`.** It shares no
     /// state with any instance: it reads the file into a local value, looks
-    /// up one entry, and asks the Keychain one question. `lock` protects an
-    /// instance's `keys` array, which this never reads or writes. And the
-    /// file is always replaced whole — `saveKeys()` writes with `.atomic` —
-    /// so a read here sees either the complete old file or the complete new
-    /// one, never half of each. (Neither `lock` nor anything else
-    /// coordinates separate processes; that gap is documented on
-    /// `didChangeNotification` and applies here too.)
+    /// up one entry, and asks the Keychain one question. `lock` protects
+    /// each instance's `keys` array and makes every WRITE's
+    /// re-read-change-save one step; this never touches `keys` and never
+    /// writes. And the file is always replaced whole — `saveKeys()` writes
+    /// with `.atomic` — so a read here sees either the complete old file or
+    /// the complete new one, never half of each. (Neither `lock` nor
+    /// anything else coordinates separate processes; that gap is documented
+    /// on `lock`, and a read like this one is why it is harmless for the
+    /// command-line tool.)
     ///
     /// **Which entry counts.** With `label` nil it uses the FIRST ACTIVE
     /// entry for `provider`, whatever its label — exactly the entry
@@ -698,9 +868,11 @@ public final class APIKeyManager: @unchecked Sendable {
     /// - a file that exists but can't be read → `.couldNotCheck(
     ///   .indexUnreadable)`, and one that is read but isn't in the current
     ///   format (damaged, the pre-Keychain format, or written by a newer
-    ///   version) → `.couldNotCheck(.indexNotRecognised)` (TRAP 2: never
-    ///   "missing" — that would tell someone to re-type a key that may be
-    ///   perfectly safe);
+    ///   version — whether its records would decode here or not, because a
+    ///   newer `version` number is checked first, by `interpretIndex(_:)`)
+    ///   → `.couldNotCheck(.indexNotRecognised)` (TRAP 2: never "missing" —
+    ///   that would tell someone to re-type a key that may be perfectly
+    ///   safe);
     /// - otherwise: no matching active entry → `.missing`; an entry whose
     ///   Keychain item has gone → `.missing` (the Keychain gave a definite
     ///   "not found", and the app itself could not use such an entry: it
@@ -755,18 +927,24 @@ public final class APIKeyManager: @unchecked Sendable {
             data = contents
         }
 
-        // Only the current (v2) shape is accepted. `StorageEnvelope` and
-        // `MetadataRecord` have no secret fields, so a successful decode
-        // never yields a secret. The pre-Keychain (v1) shape is deliberately
-        // NOT decoded here, even though `reloadLocked()` accepts it: that
-        // shape HOLDS the secrets in plain text, and accepting it would mean
-        // either decoding them or migrating them — the second writes to the
-        // Keychain. Both are out of bounds for a check. (If the file IS an
-        // old v1 one, its plain-text bytes have been read from disk into
-        // `data` by this point — a file read, not a Keychain read — and they
-        // are dropped when this function returns; nothing keeps or passes
-        // them on.)
-        guard let envelope = try? makeIndexDecoder().decode(StorageEnvelope.self, from: data) else {
+        // Only the current (v2) shape is accepted, through the same
+        // `interpretIndex(_:)` that `reloadLocked()` uses, so the two can
+        // never disagree about which files they understand. `EnvelopeVersion`,
+        // `StorageEnvelope` and `MetadataRecord` have no secret fields, so a
+        // successful decode never yields a secret. The pre-Keychain (v1)
+        // shape is deliberately NOT decoded here, even though
+        // `reloadLocked()` accepts it: that shape HOLDS the secrets in plain
+        // text, and accepting it would mean either decoding them or
+        // migrating them — the second writes to the Keychain. Both are out
+        // of bounds for a check. (If the file IS an old v1 one, its
+        // plain-text bytes have been read from disk into `data` by this
+        // point — a file read, not a Keychain read — and they are dropped
+        // when this function returns; nothing keeps or passes them on.)
+        let envelope: StorageEnvelope
+        switch interpretIndex(data) {
+        case .current(let decoded):
+            envelope = decoded
+        case .newerVersion, .notAnEnvelope:
             // TRAP 2 (continued): read, but not understood.
             return .couldNotCheck(.indexNotRecognised)
         }
@@ -839,6 +1017,73 @@ public final class APIKeyManager: @unchecked Sendable {
         return decoder
     }
 
+    /// What the saved-keys list's bytes turned out to be, once decoded.
+    private enum IndexContents {
+        /// The current envelope (its `version` is not newer than
+        /// `currentStorageVersion`), decoded in full.
+        case current(StorageEnvelope)
+        /// An envelope whose `version` is newer than this build writes —
+        /// whether or not its records would decode here.
+        case newerVersion
+        /// Not a current or newer envelope at all: damaged, some other
+        /// JSON, or the pre-Keychain (v1) array. Only `reloadLocked()` goes
+        /// on to try the v1 shape; `hasStoredKey` deliberately does not.
+        case notAnEnvelope
+    }
+
+    /// Decodes the list's bytes as an envelope, checking the `version`
+    /// number FIRST. Shared by `reloadLocked()` and `hasStoredKey(for:…)`
+    /// so both treat a newer file the same way ("not understood").
+    ///
+    /// Why the version is checked before the records: a newer build may
+    /// have added a service this build doesn't know, which makes the
+    /// records fail to decode here. Checking the number on its own means
+    /// such a file is still recognised as NEWER, so a refused write can
+    /// say "written by a newer version" rather than the vaguer "could not
+    /// read". A file with a version this build knows but damaged records
+    /// is `.notAnEnvelope`.
+    private static func interpretIndex(_ data: Data) -> IndexContents {
+        let decoder = makeIndexDecoder()
+        if let stamped = try? decoder.decode(EnvelopeVersion.self, from: data),
+           stamped.version > currentStorageVersion {
+            return .newerVersion
+        }
+        if let envelope = try? decoder.decode(StorageEnvelope.self, from: data) {
+            return .current(envelope)
+        }
+        return .notAnEnvelope
+    }
+
+    /// What `reloadLocked()` found, so a WRITE can tell whether rewriting
+    /// the whole list from `keys` is safe.
+    private enum ReloadOutcome: Equatable {
+        /// The list was missing (which means no keys) or was read and
+        /// understood. `keys` now matches it exactly, so rewriting the list
+        /// from `keys` loses nothing.
+        case upToDate
+        /// The list is on disk but could not be read, or was read but not
+        /// understood. `keys` was left as it was.
+        case unreadable
+        /// The list says it was written by a newer version. `keys` was left
+        /// as it was.
+        case newerVersion
+    }
+
+    /// Reloads, then throws if rewriting the list from `keys` could lose
+    /// anything. MUST be called with `lock` held, like `reloadLocked()`.
+    /// Used by `storeKey(_:)` and `removeKey(provider:label:)`, which must
+    /// refuse BEFORE touching the Keychain or the list.
+    private func reloadForWriteLocked() throws {
+        switch reloadLocked() {
+        case .upToDate:
+            return
+        case .unreadable:
+            throw APIKeyStoreError.savedKeysListUnreadable
+        case .newerVersion:
+            throw APIKeyStoreError.savedKeysListFromNewerVersion
+        }
+    }
+
     /// Reads the metadata envelope from disk and hydrates each record's
     /// secrets from the Keychain, REPLACING whatever `keys` currently
     /// holds. Falls back to legacy migration if the file contains an
@@ -876,7 +1121,18 @@ public final class APIKeyManager: @unchecked Sendable {
     /// itself, precisely so `init` and the methods above can share it
     /// without a second, nested `lock.lock()` — `NSLock` is not
     /// re-entrant, so that would deadlock the very first time any of them
-    /// ran.
+    /// ran. Because `lock` is shared by every instance, holding it also
+    /// means no other `APIKeyManager` in this process is part-way through
+    /// rewriting the file while this reads it.
+    ///
+    /// **It reports what it found** (`ReloadOutcome`, Codex round-2 review,
+    /// chunk 1b, finding 2). Before, it returned nothing, so a write could
+    /// not tell "I have the current list" from "I kept an old copy because
+    /// the list was unreadable" — and rewrote the whole file from the old
+    /// copy either way. Now `storeKey`/`removeKey` refuse unless the
+    /// answer is `.upToDate` (through `reloadForWriteLocked()`), `markUsed`
+    /// quietly skips its save, and the lookups ignore the answer and keep
+    /// TRAP 2's behaviour below.
     ///
     /// - TRAP 1 — a MISSING file means "no keys, start empty": `keys` is
     ///   cleared. This is a deliberate change from this method's previous
@@ -888,14 +1144,24 @@ public final class APIKeyManager: @unchecked Sendable {
     ///   is a fresh install another instance hasn't written to yet), an
     ///   instance still holding old in-memory records must drop them,
     ///   not keep insisting they exist.
-    /// - TRAP 2 — a file that EXISTS but can't be READ or DECODED is
-    ///   treated as "unknown", not "empty": `keys` is left as it was.
-    ///   Clearing it here would make a transient disk error (or a file
-    ///   another process is mid-write on) look identical to the user
-    ///   having removed every key, which is worse than doing nothing.
-    ///   This matches this method's behaviour before this fix for this case
-    ///   — only the missing-file case (TRAP 1) changed.
-    private func reloadLocked() {
+    /// - TRAP 2 — a file that EXISTS but can't be READ or DECODED, or that
+    ///   says it was written by a NEWER version, is treated as "unknown",
+    ///   not "empty": `keys` is left as it was, and the answer is
+    ///   `.unreadable` or `.newerVersion`. Clearing `keys` here would make a
+    ///   transient disk error look identical to the user having removed
+    ///   every key, which is worse than doing nothing. Keeping `keys` is
+    ///   right for a READ; for a WRITE it is only safe because every write
+    ///   now refuses on those two answers — before that refusal existed, a
+    ///   write rewrote the whole file from this kept copy.
+    ///   (A newer-version file whose records happen to decode used to be
+    ///   read as if it were current; it is now "unknown" too, because a
+    ///   version bump means the format is not backward-compatible.)
+    ///
+    /// Deliberately NOT `@discardableResult`: every caller must write `_ =`
+    /// to ignore the answer, so a future write that forgets to check it
+    /// gets a compiler warning instead of quietly rewriting a list it could
+    /// not read.
+    private func reloadLocked() -> ReloadOutcome {
         // The file read is shared with `hasStoredKey(for:label:…)` (see
         // `readIndexFile(at:)`), so both sort a file into the same two
         // traps below.
@@ -905,25 +1171,37 @@ public final class APIKeyManager: @unchecked Sendable {
             // TRAP 1: a missing file is authoritative — it means no keys,
             // not "keep trusting whatever this instance last saw".
             keys = []
-            return
+            return .upToDate
         case .unreadable(let error):
             // TRAP 2: unreadable — keep the in-memory copy rather than
-            // wiping it. No worse than the behaviour before this fix.
+            // wiping it, and tell a writer not to rewrite the file.
             print("Warning: Could not load API keys: \(error.localizedDescription)")
-            return
+            return .unreadable
         case .contents(let contents):
             data = contents
         }
 
-        let decoder = Self.makeIndexDecoder()
-
         // -----------------------------------------------------------------
-        // Preferred path: new-shape envelope, secrets in Keychain.
+        // Preferred path: new-shape envelope, secrets in Keychain. Decoded
+        // through `interpretIndex(_:)`, shared with `hasStoredKey`, which
+        // checks for a newer `version` before anything else.
         // -----------------------------------------------------------------
-        if let envelope = try? decoder.decode(StorageEnvelope.self, from: data) {
+        switch Self.interpretIndex(data) {
+        case .current(let envelope):
             keys = envelope.records.map { hydrate(record: $0) }
-            return
+            return .upToDate
+        case .newerVersion:
+            // TRAP 2, newer-version case: keep the in-memory copy, and
+            // tell a writer not to rewrite (and so down-grade) the file.
+            print("Warning: The saved API key list was written by a newer "
+                  + "version of MeedyaConverter; keeping the keys already in "
+                  + "memory and refusing to change it.")
+            return .newerVersion
+        case .notAnEnvelope:
+            break
         }
+
+        let decoder = Self.makeIndexDecoder()
 
         // -----------------------------------------------------------------
         // Legacy path: pre-#380 array of full `StoredAPIKey` records with
@@ -941,7 +1219,9 @@ public final class APIKeyManager: @unchecked Sendable {
             // the lock ALREADY held by its caller (`init`, or one of
             // `storeKey`/`removeKey`/`markUsed`/the lookup methods), so
             // locking again here would be a nested acquisition against a
-            // non-re-entrant `NSLock` and would deadlock.
+            // non-re-entrant `NSLock` and would deadlock. Because every
+            // caller holds the shared lock, the `saveKeys()` below cannot
+            // interleave with another instance's write.
             for key in legacy {
                 let account = Self.keychainAccount(
                     provider: key.provider,
@@ -969,19 +1249,24 @@ public final class APIKeyManager: @unchecked Sendable {
             // Overwrite the file in v2 shape so a second run takes the
             // preferred path and the plaintext secrets disappear.
             saveKeys()
-            return
+            // `.upToDate`: `keys` holds exactly the records the file held,
+            // so a write that follows loses nothing. If `saveKeys()` failed
+            // just now, the file is still v1 and the next reload migrates
+            // again — no record is lost either way.
+            return .upToDate
         }
 
         // TRAP 2 (continued): neither shape decoded. As with the
         // unreadable-file case above, this is treated as "unknown", not
         // "empty" — `keys` is left exactly as it was (which, at `init`,
-        // is still the freshly-set `[]` two lines up in the initialiser,
-        // so this reads as "starting empty" there; on a later reload, it
-        // means keeping whatever this instance already had rather than
-        // wiping it because the file briefly looked wrong).
+        // is still the freshly-set `[]` from the initialiser, so this
+        // reads as "starting empty" there; on a later reload, it means
+        // keeping whatever this instance already had rather than wiping it
+        // because the file briefly looked wrong).
         print("Warning: API key store at \(storageURL.path) could not be "
               + "decoded in either v1 or v2 format; keeping the keys "
               + "already in memory.")
+        return .unreadable
     }
 
     /// Combines a metadata record with its Keychain-resident secrets into
@@ -1069,11 +1354,16 @@ private enum KeychainStore {
     enum KeychainError: Error, CustomStringConvertible {
         case unsupportedPlatform
         case osStatus(OSStatus)
+        /// `deleteAll(service:)` deleted its maximum number of items and
+        /// the Keychain still reported more. Test clean-up only.
+        case stillFindingItems
 
         var description: String {
             switch self {
             case .unsupportedPlatform:
                 return "Keychain operations are not available on this platform."
+            case .stillFindingItems:
+                return "The Keychain still held items for this service after the maximum number of deletions."
             case .osStatus(let status):
                 #if canImport(Security)
                 if let message = SecCopyErrorMessageString(status, nil) as String? {
@@ -1191,17 +1481,41 @@ private enum KeychainStore {
     }
 
     /// Remove every item under the given service. Used by tests to clean
-    /// up between runs without disturbing other Keychain entries.
+    /// up between runs without disturbing other Keychain entries. Only
+    /// ever reached through `APIKeyManagerTestSupport.clearKeychain`.
+    ///
+    /// **Why it loops.** This used to make ONE `SecItemDelete` call, on the
+    /// assumption that one call removes every matching item. On 25 Sept
+    /// 2026 a local test run against this Mac's login keychain showed it
+    /// does not: a test that saved 240 keys under one test service left
+    /// 239 behind, and two tests that saved two keys each left one each.
+    /// So it now repeats the call until the Keychain answers "not found".
+    ///
+    /// It stops, rather than spinning, in three ways: "not found" (nothing
+    /// left — success); any other error (thrown); or `maximumRounds`
+    /// deletions without reaching "not found" (thrown as
+    /// `.stillFindingItems`, since claiming success would be untrue).
     static func deleteAll(service: String) throws {
         #if canImport(Security)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
         ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.osStatus(status)
+        // Far more than any test saves under one service (a handful at
+        // most), so reaching it means something is wrong.
+        let maximumRounds = 10_000
+        for _ in 0..<maximumRounds {
+            let status = SecItemDelete(query as CFDictionary)
+            switch status {
+            case errSecSuccess:
+                continue
+            case errSecItemNotFound:
+                return
+            default:
+                throw KeychainError.osStatus(status)
+            }
         }
+        throw KeychainError.stillFindingItems
         #else
         throw KeychainError.unsupportedPlatform
         #endif

@@ -188,7 +188,7 @@ final class SettingsCredentialNeedsTests: XCTestCase {
         try XCTSkipUnless(fixture.keychainIsAvailable(),
                           "No working Keychain on this host (for example a CI runner); this test needs one.")
         let manager = fixture.makeAPIKeyManager()   // set-up only
-        manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "real-test-tmdb-key", label: "TMDB"))
+        try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "real-test-tmdb-key", label: "TMDB"))
         try SFTPCredentialStore.save(password: "real-test-sftp", forProfileID: SettingsTransferSamples.sftpNASID)
 
         let plan = try file(leftOut: [.tmdbKey, .smtpPassword])
@@ -201,7 +201,7 @@ final class SettingsCredentialNeedsTests: XCTestCase {
         XCTAssertTrue(kinds.contains(.cloudCredential(profileID: SettingsTransferSamples.cloudS3ID)))
 
         XCTAssertTrue(fixture.saveSMTPPassword("real-test-smtp"))
-        manager.removeKey(provider: .tmdb, label: "TMDB")
+        try manager.removeKey(provider: .tmdb, label: "TMDB")
         result = try apply(plan, to: fixture.makeDomain("real-2"), presence: fixture.presence,
                            selection: [.encoding, .connections])
         kinds = result.stillNeeded.map(\.kind)

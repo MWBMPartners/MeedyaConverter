@@ -714,13 +714,20 @@ final class AppViewModel {
         // `MediaServerCredentialStore.currentKey`'s legacy fallback, and
         // migration retries on the next launch — nothing here blocks
         // startup or throws.
+        //
+        // The log line carries the migration's own `reason`. It used to say
+        // "because the Keychain didn't accept it" for every failure, which
+        // stopped being true once `APIKeyManager.storeKey` could also
+        // refuse because it could not read its list of saved keys safely
+        // (Codex round-2 review, chunk 1b). Both reasons are plain English
+        // and name no key and no file.
         for outcome in AppStartupMigrations.run(defaults: .standard, keyManager: APIKeyManager()) {
-            if case .mediaServerKey(.failedKeptLegacyValue(_)) = outcome {
+            if case .mediaServerKey(.failedKeptLegacyValue(let reason)) = outcome {
                 appendLog(
                     .warning,
-                    "Your media server key is still in the app's settings file because the "
-                    + "Keychain didn't accept it. It will be moved automatically when the "
-                    + "Keychain allows.",
+                    "Your media server key is still in the app's settings file. "
+                    + reason
+                    + " MeedyaConverter will try to move it again the next time it starts.",
                     category: .settings
                 )
             }

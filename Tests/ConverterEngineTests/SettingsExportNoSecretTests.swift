@@ -125,7 +125,7 @@ final class SettingsExportNoSecretTests: XCTestCase {
         // Real Keychain items, under this test's own services.
         let keychainWorks = fixture.keychainIsAvailable()
         if keychainWorks {
-            fixture.makeAPIKeyManager().storeKey(
+            try fixture.makeAPIKeyManager().storeKey(
                 StoredAPIKey(provider: .tmdb, apiKey: "\(secret)-tmdb", label: "TMDB")
             )
             XCTAssertTrue(fixture.saveSMTPPassword("\(secret)-smtp"))

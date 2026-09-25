@@ -431,13 +431,28 @@ struct CloudStorageView: View {
     /// `apiKeyManager`, and the redacted metadata goes to
     /// `UserDefaults` so `PostEncodeActionChain.uploadViaCloud` can
     /// resolve this configuration by id later. See `persistConfigs()`.
+    ///
+    /// If the key store refuses (`APIKeyStoreError` — it could not read its
+    /// list of saved keys safely, so it changed nothing), the new entry is
+    /// taken back out of the on-screen list and the status line says why,
+    /// in red. `persistConfigs()` writes nothing to `UserDefaults` in that
+    /// case, so the screen and what is saved still agree: nothing claims
+    /// "saved" for a configuration that was not.
     private func saveCurrentConfig() {
         let config = buildConfigFromForm()
+        let previousSelection = selectedConfigIndex
         savedConfigs.append(config)
         selectedConfigIndex = savedConfigs.count - 1
-        persistConfigs()
-        statusMessage = "Configuration saved."
-        isError = false
+        do {
+            try persistConfigs()
+            statusMessage = "Configuration saved."
+            isError = false
+        } catch {
+            savedConfigs.removeLast()
+            selectedConfigIndex = previousSelection
+            statusMessage = "Configuration not saved. " + error.localizedDescription
+            isError = true
+        }
     }
 
     /// Load a saved configuration into the form fields.
@@ -458,14 +473,34 @@ struct CloudStorageView: View {
     /// `SFTPSettingsView.deleteProfile(at:)`'s cleanup — without this, a
     /// deleted configuration's token would linger in the Keychain
     /// indefinitely (orphaned but still resident).
+    ///
+    /// Two steps can be refused by the key store (`APIKeyStoreError`), and
+    /// each is reported as what actually happened:
+    /// - removing the token: nothing has changed yet, so the configuration
+    ///   is kept (deleting it would orphan a token that is still saved);
+    /// - rewriting the list afterwards: the token IS gone, but the saved
+    ///   list of configurations was not updated. Only possible if the key
+    ///   list became unreadable in the moment between the two steps.
     private func deleteSelectedConfig() {
         guard let idx = selectedConfigIndex, idx < savedConfigs.count else { return }
-        removeStoredToken(for: savedConfigs[idx])
+        do {
+            try removeStoredToken(for: savedConfigs[idx])
+        } catch {
+            statusMessage = "Configuration not deleted. " + error.localizedDescription
+            isError = true
+            return
+        }
         savedConfigs.remove(at: idx)
         selectedConfigIndex = nil
-        persistConfigs()
-        statusMessage = "Configuration deleted."
-        isError = false
+        do {
+            try persistConfigs()
+            statusMessage = "Configuration deleted."
+            isError = false
+        } catch {
+            statusMessage = "The configuration's saved token was removed, but the list of "
+                + "configurations was not updated. " + error.localizedDescription
+            isError = true
+        }
     }
 
     // MARK: - Persistence (Issue #459)
@@ -504,7 +539,16 @@ struct CloudStorageView: View {
     /// `secretAccessKey` — `bucket`/`region`/`endpoint` are not secrets
     /// and round-trip through `UserDefaults` unredacted, same as
     /// `remotePath`/`label`.
-    private func persistConfigs() {
+    ///
+    /// Throws the first refusal from `apiKeyManager.storeKey`
+    /// (`APIKeyStoreError`) and STOPS there, before writing anything to
+    /// `UserDefaults`. Writing the redacted list anyway would save a
+    /// configuration whose token never reached the Keychain — a profile
+    /// that looks saved but cannot upload. What it cannot undo: a
+    /// configuration earlier in the loop whose `storeKey` already
+    /// succeeded stays stored. Those are re-saves of values the Keychain
+    /// already held (or the one being edited), so nothing is lost.
+    private func persistConfigs() throws {
         var redacted: [CloudStorageConfig] = []
 
         for config in savedConfigs {
@@ -532,7 +576,7 @@ struct CloudStorageView: View {
                         secretToStore = existing?.secretKey ?? config.secretAccessKey
                     }
 
-                    apiKeyManager.storeKey(
+                    try apiKeyManager.storeKey(
                         StoredAPIKey(
                             provider: .awsS3,
                             apiKey: accessKeyIDToStore,
@@ -567,7 +611,7 @@ struct CloudStorageView: View {
                         .apiKey ?? ""
                 }
 
-                apiKeyManager.storeKey(
+                try apiKeyManager.storeKey(
                     StoredAPIKey(
                         provider: apiKeyProvider(for: config.provider),
                         apiKey: apiKeyToStore,
@@ -588,9 +632,11 @@ struct CloudStorageView: View {
         }
     }
 
-    /// Removes a configuration's Keychain-stored token.
-    private func removeStoredToken(for config: CloudStorageConfig) {
-        apiKeyManager.removeKey(provider: apiKeyProvider(for: config.provider), label: config.label)
+    /// Removes a configuration's Keychain-stored token. Throws the key
+    /// store's refusal (`APIKeyStoreError`), in which case nothing was
+    /// removed.
+    private func removeStoredToken(for config: CloudStorageConfig) throws {
+        try apiKeyManager.removeKey(provider: apiKeyProvider(for: config.provider), label: config.label)
     }
 
     /// Maps the request-builder-side provider enum to the Keychain-side

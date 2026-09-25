@@ -55,6 +55,14 @@ struct MeedyaDBSettingsTab: View {
     /// Whether a key exists — NOT the key itself.
     @State private var hasStoredKey = false
 
+    /// Why the last Save/Replace/Remove changed nothing, in plain English;
+    /// nil after one that worked. The Status section below reports on
+    /// readiness, not on the last button press, so without this a refused
+    /// save (`APIKeyStoreError` — the list of saved keys could not be read
+    /// safely) would have looked exactly like a successful one. The error
+    /// wording names no key and no file.
+    @State private var keyError: String?
+
     @State private var readiness: MeedyaDBReadiness?
 
     // MARK: Body
@@ -156,6 +164,12 @@ struct MeedyaDBSettingsTab: View {
                 }
             }
 
+            if let keyError {
+                Label(keyError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
             if trimmedPendingKey.isEmpty && !hasStoredKey {
                 Text("Enter the key your MeedyaDB server issued you, then choose Save Key.")
                     .font(.caption)
@@ -249,19 +263,35 @@ struct MeedyaDBSettingsTab: View {
     private func saveKey() {
         let key = trimmedPendingKey
         guard !key.isEmpty else { return }
-        keyManager.storeKey(
-            StoredAPIKey(provider: .meedyaDB, apiKey: key, label: "MeedyaDB")
-        )
-        pendingKey = ""
+        do {
+            try keyManager.storeKey(
+                StoredAPIKey(provider: .meedyaDB, apiKey: key, label: "MeedyaDB")
+            )
+            pendingKey = ""
+            keyError = nil
+        } catch {
+            // Refused, and nothing changed. The typed key stays in the
+            // (secure) field so trying again is one click, not a retype.
+            keyError = "The key was not saved. " + error.localizedDescription
+        }
         refresh()
     }
 
     private func removeKey() {
-        keyManager.removeKey(provider: .meedyaDB, label: "MeedyaDB")
-        // Also clear a key saved without our label, so "Remove" always means
-        // removed rather than "removed the one I happened to name".
-        keyManager.removeKey(provider: .meedyaDB)
-        pendingKey = ""
+        do {
+            try keyManager.removeKey(provider: .meedyaDB, label: "MeedyaDB")
+            // Also clear a key saved without our label, so "Remove" always
+            // means removed rather than "removed the one I happened to name".
+            try keyManager.removeKey(provider: .meedyaDB)
+            pendingKey = ""
+            keyError = nil
+        } catch {
+            // "did not finish" rather than "was not removed": the list could
+            // in principle become unreadable between the two calls above, in
+            // which case the labelled key IS gone. `refresh()` below shows
+            // what is actually saved now.
+            keyError = "Removing the key did not finish. " + error.localizedDescription
+        }
         refresh()
     }
 }

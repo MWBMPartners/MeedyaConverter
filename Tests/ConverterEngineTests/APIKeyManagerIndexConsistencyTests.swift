@@ -36,6 +36,17 @@
 // long-lived screens, and a fresh "reader" instance (C) simulating what the
 // view models create on demand.
 //
+// Codex's round-2 review of that fix (25 Sept 2026, chunk 1b) found three
+// more problems, covered by invariants 5, 7 and 8 below:
+//   - the lock was per INSTANCE, so two instances writing at the same
+//     moment could still lose each other's records (invariant 7 — the lock
+//     is now shared by every instance);
+//   - a list that EXISTS but could not be read or was written by a newer
+//     version was still rewritten whole from a stale copy (invariant 8 —
+//     writes now refuse with `APIKeyStoreError` and change nothing);
+//   - the notification tests could hang instead of failing (invariant 5 —
+//     the write now runs on a background queue under a timeout).
+//
 // A DELIBERATE DIFFERENCE from `APIKeyManagerKeychainTests.swift`: that
 // file's `probeKeychainPersistence()` skips EVERY test if the host's
 // Keychain cannot persist (e.g. a fresh GitHub Actions runner with no
@@ -168,12 +179,12 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
     /// `saveKeys()` call would rewrite the whole file from B's stale
     /// in-memory copy (which never saw A's write) and A's record would be
     /// gone.
-    func test_freshManager_seesBothWritersRecords() {
+    func test_freshManager_seesBothWritersRecords() throws {
         let a = makeManager()
         let b = makeManager()
 
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY-A", label: "TMDB"))
-        b.storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "MEEDYADB-KEY-B", label: "MeedyaDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY-A", label: "TMDB"))
+        try b.storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "MEEDYADB-KEY-B", label: "MeedyaDB"))
 
         let c = makeManager()
 
@@ -206,12 +217,12 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
     /// whole file from B's stale (empty) in-memory array, erasing A's
     /// record as a side effect of removing something that was never
     /// there in the first place.
-    func test_unrelatedRemoval_byAnotherInstance_doesNotEraseFirstWritersRecord() {
+    func test_unrelatedRemoval_byAnotherInstance_doesNotEraseFirstWritersRecord() throws {
         let a = makeManager()
         let b = makeManager()
 
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
-        b.removeKey(provider: .meedyaDB, label: "MeedyaDB")
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try b.removeKey(provider: .meedyaDB, label: "MeedyaDB")
 
         let c = makeManager()
         guard let tmdbRecord = c.key(for: .tmdb) else {
@@ -234,11 +245,11 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
     /// code paths, and a fix that only reloaded in mutators (or only in
     /// `init`) would pass invariant 1 while still leaving a long-lived
     /// reader like `MetadataSettingsTab` showing stale information.
-    func test_existingInstance_seesAnotherWritersRecordThroughItsOwnLookup() {
+    func test_existingInstance_seesAnotherWritersRecordThroughItsOwnLookup() throws {
         let a = makeManager()
         let b = makeManager()
 
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
 
         guard let record = b.key(for: .tmdb) else {
             return XCTFail(
@@ -259,9 +270,9 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
     /// trusting whatever this instance last saw". Exercised by deleting
     /// the index file out from under a manager that already has a key
     /// loaded, then reading through the SAME instance.
-    func test_missingFileAfterReload_meansNoKeys() {
+    func test_missingFileAfterReload_meansNoKeys() throws {
         let a = makeManager()
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
         XCTAssertNotNil(a.key(for: .tmdb), "Sanity check: the key must exist before we delete the file.")
 
         try? FileManager.default.removeItem(at: jsonURL)
@@ -280,14 +291,30 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
 
     /// `storeKey` must post `didChangeNotification` — and, since the
     /// point of the notification is that a settings screen can react by
-    /// reading straight back from the SAME manager, the handler below
-    /// does exactly that. If the manager posted while still holding its
-    /// internal lock, this test would hang (NSLock is not re-entrant)
-    /// instead of failing cleanly, which is why a timeout is given to
-    /// `wait(for:timeout:)` rather than leaving it to hang indefinitely.
+    /// reading straight back from a manager, the handler below does
+    /// exactly that, on the SAME manager.
+    ///
+    /// **Why the write runs on a background queue (Codex round-2 review,
+    /// chunk 1b, finding 3).** The observer is registered with `queue:
+    /// nil`, so it runs synchronously on whichever thread posts. This test
+    /// used to call `storeKey` on the test's own thread, so if a regression
+    /// ever posted while still holding the lock, the observer's `key(for:)`
+    /// would deadlock the TEST thread itself — before `wait(for:timeout:)`
+    /// was even reached — and the whole test process would hang instead of
+    /// failing. Now the write runs on a background queue, and the test
+    /// thread only waits, with a timeout. A deadlock then becomes a clear
+    /// "timed out" failure naming this test.
+    ///
+    /// **What it cannot prevent:** the deadlocked background thread keeps
+    /// holding the lock for good, and that lock is shared by every
+    /// `APIKeyManager` in the process. So after such a failure, the NEXT
+    /// test that creates or uses a manager will hang. The point is that
+    /// the FIRST failure is a readable one, pointing at the cause.
     func test_storeKey_postsDidChangeNotification_andObserverCanReadBackSafely() {
         let a = makeManager()
         let didFire = expectation(description: "didChangeNotification posted by storeKey")
+        let writeReturned = expectation(description: "storeKey returned")
+        let failures = FailureLog()
 
         let observer = NotificationCenter.default.addObserver(
             forName: APIKeyManager.didChangeNotification,
@@ -298,24 +325,35 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
             // manager's from a different test running concurrently.
             guard (notification.object as? APIKeyManager) === a else { return }
             // Reading the SAME manager from inside the handler must not
-            // deadlock — this is exactly the reentrancy that posting
-            // AFTER `lock.unlock()` is meant to make safe.
+            // deadlock — this is exactly the reentrancy that posting only
+            // AFTER the lock is released is meant to make safe.
             _ = a.key(for: .tmdb)
             didFire.fulfill()
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+            } catch {
+                failures.record("storeKey threw: \(error)")
+            }
+            writeReturned.fulfill()
+        }
 
-        wait(for: [didFire], timeout: 5.0)
+        wait(for: [didFire, writeReturned], timeout: 5.0)
+        XCTAssertEqual(failures.all, [])
     }
 
-    /// Same as above, for `removeKey`.
-    func test_removeKey_postsDidChangeNotification_andObserverCanReadBackSafely() {
+    /// Same as above, for `removeKey` — including running the write on a
+    /// background queue so a deadlock fails instead of hanging.
+    func test_removeKey_postsDidChangeNotification_andObserverCanReadBackSafely() throws {
         let a = makeManager()
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
 
         let didFire = expectation(description: "didChangeNotification posted by removeKey")
+        let writeReturned = expectation(description: "removeKey returned")
+        let failures = FailureLog()
         let observer = NotificationCenter.default.addObserver(
             forName: APIKeyManager.didChangeNotification,
             object: nil,
@@ -327,9 +365,17 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
-        a.removeKey(provider: .tmdb, label: "TMDB")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try a.removeKey(provider: .tmdb, label: "TMDB")
+            } catch {
+                failures.record("removeKey threw: \(error)")
+            }
+            writeReturned.fulfill()
+        }
 
-        wait(for: [didFire], timeout: 5.0)
+        wait(for: [didFire, writeReturned], timeout: 5.0)
+        XCTAssertEqual(failures.all, [])
     }
 
     /// `markUsed` deliberately does NOT post `didChangeNotification` (a
@@ -338,9 +384,9 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
     /// expectation rather than by absence of a crash, so a future change
     /// that starts posting here gets caught by a failing test rather than
     /// a silently-more-chatty notification.
-    func test_markUsed_doesNotPostDidChangeNotification() {
+    func test_markUsed_doesNotPostDidChangeNotification() throws {
         let a = makeManager()
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
 
         let didFire = expectation(description: "didChangeNotification must NOT be posted by markUsed")
         didFire.isInverted = true
@@ -381,8 +427,8 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
         let a = makeManager()
         let b = makeManager()
 
-        a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "SECRET-TMDB-KEY", label: "TMDB"))
-        b.storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "SECRET-MEEDYADB-KEY", label: "MeedyaDB"))
+        try a.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "SECRET-TMDB-KEY", label: "TMDB"))
+        try b.storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "SECRET-MEEDYADB-KEY", label: "MeedyaDB"))
 
         let c = makeManager()
         XCTAssertEqual(
@@ -391,5 +437,327 @@ final class APIKeyManagerIndexConsistencyTests: XCTestCase {
             "With a working Keychain, C must recover not just A's record "
             + "but A's actual secret too."
         )
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Invariant 7: ONE lock for every instance (Codex round-2
+    //         review, chunk 1b, finding 1)
+    // -----------------------------------------------------------------
+
+    /// How many times the concurrent-write scenario below is repeated,
+    /// each time over a fresh, empty list, and how many keys each round
+    /// writes: 10 rounds of 12, so 120 concurrent writes per run. Written
+    /// as constants so a failure message can say exactly how much was
+    /// tried.
+    ///
+    /// Why these sizes (measured on 25 Sept 2026, on the maintainer's Mac,
+    /// in the local test harness — `.claude/local-test-harness.md`): with
+    /// the lock planted back to one per instance, 10 runs out of 10 failed,
+    /// and so did all 100 of their rounds (each round lost 3 to 7 of its
+    /// 12 records). Even 3 rounds of 8 failed 10 runs out of 10, so these
+    /// sizes leave a margin rather than being the least that works. Every
+    /// write re-reads the whole list and asks the Keychain about every
+    /// record, so a round's cost grows with the SQUARE of its key count.
+    /// This size took 0.85 seconds in the first measurements. (24 keys per
+    /// round, tried first, took about 2 seconds then, but 7 to 19 seconds
+    /// later the same day while the Mac's load average was above 400 from
+    /// other work — which is why it was halved.)
+    private static let concurrentRounds = 10
+    private static let concurrentKeysPerRound = 12
+
+    /// Two instances over ONE storage directory, many `storeKey` calls at
+    /// once from several threads, each call on one of the two instances
+    /// (even-numbered keys through A, odd through B), every key a
+    /// different (provider, label) pair. Afterwards a FRESH instance must
+    /// see every single record.
+    ///
+    /// This is the lost-update race the per-instance lock allowed: A and B
+    /// each re-read the list, each added a different key, and each saved
+    /// the whole list; whichever saved last dropped the other's record.
+    /// With the lock shared by every instance, "re-read, change, save" is
+    /// one step, so no record can be lost. If the lock ever goes back to
+    /// being per instance, this test fails (checked on 25 Sept 2026 by
+    /// planting exactly that change — see the sizes above for how
+    /// reliably).
+    ///
+    /// **The keys carry NO secret**, only a provider and a label, so no
+    /// Keychain item is ever created (`storeKey` writes a secret only when
+    /// there is one). Deliberately so, for two reasons:
+    /// - the race is in the LIST, which holds only provider, label and
+    ///   dates, so a record-level check is the whole of the proof — and it
+    ///   works whether or not this host's Keychain can persist anything
+    ///   (see the file overview for why that matters on CI);
+    /// - with a real secret per key, one run took 32 seconds on this Mac
+    ///   (every write re-reads every record's secret) and put 240 items in
+    ///   the login Keychain. Tried first, and rejected for both reasons.
+    func test_concurrentStores_acrossTwoInstances_loseNoRecord() {
+        let providers = APIKeyProvider.allCases
+        for round in 0..<Self.concurrentRounds {
+            // A fresh, empty folder per round, so each round's writes start
+            // from nothing and its cost stays small (see the sizes above).
+            let roundDirectory = storageDirectory.appendingPathComponent("round-\(round)")
+            let a = APIKeyManager(storageDirectory: roundDirectory, keychainService: keychainService)
+            let b = APIKeyManager(storageDirectory: roundDirectory, keychainService: keychainService)
+            let failures = FailureLog()
+
+            DispatchQueue.concurrentPerform(iterations: Self.concurrentKeysPerRound) { index in
+                let writer = index.isMultiple(of: 2) ? a : b
+                // `apiKey: ""` and no other secret: a record only — see
+                // "The keys carry NO secret" above.
+                let key = StoredAPIKey(
+                    provider: providers[index % providers.count],
+                    apiKey: "",
+                    label: "concurrent-\(round)-\(index)"
+                )
+                do {
+                    try writer.storeKey(key)
+                } catch {
+                    failures.record("storeKey #\(index) threw: \(error)")
+                }
+            }
+            XCTAssertEqual(failures.all, [], "Round \(round): no write may be refused over a readable list.")
+
+            let expected = Set((0..<Self.concurrentKeysPerRound).map { index in
+                "\(providers[index % providers.count].rawValue)|concurrent-\(round)-\(index)"
+            })
+            let reader = APIKeyManager(storageDirectory: roundDirectory, keychainService: keychainService)
+            let found = Set(providers.flatMap { reader.keys(for: $0) }.map { key in
+                "\(key.provider.rawValue)|\(key.label ?? "")"
+            })
+            let missing = expected.subtracting(found)
+            XCTAssertTrue(
+                missing.isEmpty,
+                "Round \(round) of \(Self.concurrentRounds): a fresh manager is missing "
+                + "\(missing.count) of \(expected.count) records written concurrently "
+                + "through two instances — a lost update. Missing: \(missing.sorted())"
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - Invariant 8: a write never overwrites a list it couldn't
+    //         read (Codex round-2 review, chunk 1b, finding 2)
+    // -----------------------------------------------------------------
+
+    /// Bytes that are not JSON at all — a damaged list.
+    private let garbage = Data("this is not { valid json, it is a damaged list".utf8)
+
+    /// Asks the Keychain whether an item exists under this test's service,
+    /// ATTRIBUTES ONLY (never the secret). `errSecItemNotFound` means no.
+    private func keychainStatus(account: String) -> OSStatus {
+        SecItemCopyMatching([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService!,
+            kSecAttrAccount as String: account,
+        ] as CFDictionary, nil)
+    }
+
+    /// A damaged list on disk: `storeKey` must refuse with
+    /// `.savedKeysListUnreadable`, leave the file byte-for-byte as it was,
+    /// and write no Keychain item. Before the fix it rewrote the whole
+    /// list from this instance's (empty) memory — i.e. replaced a list it
+    /// could not read with one holding only the new key.
+    func test_unreadableIndex_storeKeyRefuses_andChangesNothing() throws {
+        try garbage.write(to: jsonURL)
+        let manager = makeManager()
+
+        XCTAssertThrowsError(
+            try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "MUST-NOT-LAND", label: "TMDB"))
+        ) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListUnreadable)
+        }
+        XCTAssertEqual(try Data(contentsOf: jsonURL), garbage, "A refused write must leave the list byte-for-byte as it was.")
+
+        // Only meaningful where a Keychain exists to be written to: on a
+        // host without one, a write could not have landed anyway.
+        if keychainIsAvailable() {
+            XCTAssertEqual(
+                keychainStatus(account: "tmdb:TMDB"), errSecItemNotFound,
+                "A refused write must not put the secret in the Keychain either."
+            )
+        }
+    }
+
+    /// The same for `removeKey`: a key is saved, then the list is damaged.
+    /// The removal must refuse, leave the file untouched, and NOT delete
+    /// the Keychain item (deleting the secret while the list still names
+    /// it would leave an entry pointing at nothing).
+    func test_unreadableIndex_removeKeyRefuses_andChangesNothing() throws {
+        let manager = makeManager()
+        try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "KEEP-ME", label: "TMDB"))
+        try garbage.write(to: jsonURL)
+
+        XCTAssertThrowsError(try manager.removeKey(provider: .tmdb, label: "TMDB")) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListUnreadable)
+        }
+        XCTAssertEqual(try Data(contentsOf: jsonURL), garbage, "A refused removal must leave the list byte-for-byte as it was.")
+
+        if keychainIsAvailable() {
+            XCTAssertEqual(
+                keychainStatus(account: "tmdb:TMDB"), errSecSuccess,
+                "A refused removal must not delete the Keychain item."
+            )
+        }
+    }
+
+    /// Something that is not a readable FILE at the list's path (here a
+    /// folder with its name) fails at the READ, not the decode — the other
+    /// branch of `reloadLocked()`. It must refuse the same way.
+    func test_indexThatCannotBeReadAtAll_storeKeyRefuses() throws {
+        try FileManager.default.createDirectory(at: jsonURL, withIntermediateDirectories: true)
+        let manager = makeManager()
+
+        XCTAssertThrowsError(
+            try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "MUST-NOT-LAND", label: "TMDB"))
+        ) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListUnreadable)
+        }
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jsonURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue, "The folder in the list's place must be left alone.")
+    }
+
+    /// `markUsed` has no caller to report to, so over a damaged list it
+    /// quietly skips its save — but it must still never rewrite the file.
+    func test_unreadableIndex_markUsedSkipsItsSave() throws {
+        let manager = makeManager()
+        try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try garbage.write(to: jsonURL)
+
+        manager.markUsed(provider: .tmdb)
+
+        XCTAssertEqual(try Data(contentsOf: jsonURL), garbage)
+    }
+
+    /// READS keep today's behaviour over a damaged list: an instance that
+    /// read the list successfully before goes on answering from that copy
+    /// (unknown is not "no keys"), while a brand-new instance, which has no
+    /// earlier copy, finds nothing. Pinned so that nobody "fixes" reads to
+    /// throw or to wipe, without meaning to.
+    func test_unreadableIndex_readsAnswerFromTheLastGoodCopy() throws {
+        let manager = makeManager()
+        try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB"))
+        try garbage.write(to: jsonURL)
+
+        XCTAssertEqual(manager.key(for: .tmdb)?.label, "TMDB")
+        XCTAssertNil(makeManager().key(for: .tmdb))
+    }
+
+    /// A list written by a NEWER version (a higher `version` number, and a
+    /// field this version has never heard of). Rewriting it in this
+    /// version's format would drop that field, so every write refuses with
+    /// `.savedKeysListFromNewerVersion` and the file stays byte-identical.
+    /// The presence check agrees that it is not understood.
+    func test_newerVersionIndex_writesRefuse_andTheFileIsUntouched() throws {
+        let newer = Data("""
+        {
+          "version": 3,
+          "records": [
+            { "provider": "tmdb", "label": "TMDB", "addedDate": "2026-01-01T00:00:00Z",
+              "isActive": true, "keychainAccount": "tmdb:TMDB",
+              "aFieldFromTheFuture": "this version must not drop me" }
+          ]
+        }
+        """.utf8)
+        try newer.write(to: jsonURL)
+        let manager = makeManager()
+
+        XCTAssertThrowsError(
+            try manager.storeKey(StoredAPIKey(provider: .meedyaDB, apiKey: "MUST-NOT-LAND", label: "MeedyaDB"))
+        ) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListFromNewerVersion)
+        }
+        XCTAssertThrowsError(try manager.removeKey(provider: .tmdb, label: "TMDB")) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListFromNewerVersion)
+        }
+        manager.markUsed(provider: .tmdb)
+        XCTAssertEqual(try Data(contentsOf: jsonURL), newer, "No write may rewrite a newer version's list.")
+
+        XCTAssertEqual(
+            APIKeyManager.hasStoredKey(for: .tmdb, storageDirectory: storageDirectory, keychainService: keychainService),
+            .couldNotCheck(.indexNotRecognised)
+        )
+
+        // Set-up sanity: with the version number this build writes, the
+        // same records ARE understood — so the refusal above really is
+        // caused by the version number, not by a typo in the fixture.
+        let sameButCurrent = String(decoding: newer, as: UTF8.self)
+            .replacingOccurrences(of: "\"version\": 3", with: "\"version\": 2")
+        try Data(sameButCurrent.utf8).write(to: jsonURL)
+        XCTAssertEqual(makeManager().key(for: .tmdb)?.label, "TMDB")
+    }
+
+    /// A newer list whose records would NOT decode here (a service this
+    /// version doesn't know) is still recognised as NEWER, because the
+    /// version number is checked on its own first — so the refusal names
+    /// the real cause rather than calling the list unreadable.
+    func test_newerVersionIndex_withRecordsThisVersionCannotDecode_isStillNewer() throws {
+        let newer = Data("""
+        {
+          "version": 3,
+          "records": [
+            { "provider": "a_service_from_the_future", "addedDate": "2026-01-01T00:00:00Z",
+              "isActive": true, "keychainAccount": "a_service_from_the_future:default" }
+          ]
+        }
+        """.utf8)
+        try newer.write(to: jsonURL)
+
+        XCTAssertThrowsError(
+            try makeManager().storeKey(StoredAPIKey(provider: .tmdb, apiKey: "MUST-NOT-LAND", label: "TMDB"))
+        ) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListFromNewerVersion)
+        }
+        XCTAssertEqual(try Data(contentsOf: jsonURL), newer)
+    }
+
+    /// TRAP 1 is unchanged: no list at all still means "no keys", and a
+    /// write over a missing list still works and creates it.
+    func test_missingIndex_isNoKeys_andAWriteStillWorks() throws {
+        XCTAssertFalse(FileManager.default.fileExists(atPath: jsonURL.path), "Set-up: there must be no list yet.")
+        let manager = makeManager()
+        XCTAssertNil(manager.key(for: .tmdb))
+
+        XCTAssertNoThrow(try manager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: "TMDB-KEY", label: "TMDB")))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jsonURL.path))
+        XCTAssertEqual(makeManager().key(for: .tmdb)?.label, "TMDB")
+    }
+
+    /// The refusal wording is shown on screen and can reach the Activity
+    /// Log, so it must never name where the list lives. (It never sees a
+    /// key, so it cannot contain one.)
+    func test_refusalWording_isPlainAndNamesNoFile() {
+        for error in [APIKeyStoreError.savedKeysListUnreadable, .savedKeysListFromNewerVersion] {
+            let text = error.localizedDescription
+            XCTAssertFalse(text.isEmpty)
+            XCTAssertFalse(text.contains("api_keys"), "\(error): must not name the file.")
+            XCTAssertFalse(text.contains("/"), "\(error): must not contain a path.")
+            XCTAssertTrue(text.contains("changed nothing"), "\(error): must say that nothing was changed.")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - FailureLog
+// ---------------------------------------------------------------------------
+
+/// Collects failure messages from background threads, guarded by a lock.
+///
+/// Why this exists rather than a captured `var`: the closures handed to
+/// `DispatchQueue.global().async` are `@Sendable`, and mutating a captured
+/// `var` inside one is a compile error in Swift 6 language mode that
+/// `swiftc -parse` does not catch — it once turned CI red (`d602cf0`). The
+/// test thread reads `all` only after it has waited for the background work.
+private final class FailureLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+
+    func record(_ message: String) {
+        lock.withLock { messages.append(message) }
+    }
+
+    var all: [String] {
+        lock.withLock { messages }
     }
 }

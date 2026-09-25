@@ -90,16 +90,23 @@ final class MediaServerCredentialStoreTests: XCTestCase {
     /// paths deterministically — the real Keychain cannot be told to
     /// refuse or corrupt a specific write on demand.
     ///
-    /// `Behavior` is what separates the two distinct failure shapes the
-    /// plan calls out, both of which the read-back verification in
-    /// `migrateLegacyKeyIfNeeded` must catch even though neither one
-    /// makes `storeKey` throw (it never does — see that method's own doc
-    /// comment):
+    /// `Behavior` separates three failure shapes. The first two are the
+    /// ones the plan calls out, which the read-back verification in
+    /// `migrateLegacyKeyIfNeeded` must catch even though neither makes
+    /// `storeKey` throw (the real `APIKeyManager.storeKey` does not throw
+    /// when the Keychain write fails — see its doc comment):
     ///   - `.discardsWrites`: the write is silently dropped, so
     ///     `key(for:)` afterwards finds NOTHING for the provider.
     ///   - `.corruptsOnWrite`: the write "succeeds" but stores a
     ///     DIFFERENT value than the one asked for, so `key(for:)` finds
     ///     SOMETHING, just not a match.
+    ///   - `.refusesWrites`: `storeKey` and `removeKey` THROW
+    ///     `APIKeyStoreError.savedKeysListUnreadable` and change nothing —
+    ///     what the real manager does when its list of saved keys can't
+    ///     be read safely (Codex round-2 review, chunk 1b, finding 2). The
+    ///     real refusal is covered in `APIKeyManagerIndexConsistencyTests`;
+    ///     this fake lets the migration's handling of it be tested without
+    ///     damaging a file on purpose.
     ///
     /// Backed by an array (not a dictionary keyed by provider), mirroring
     /// `APIKeyManager`'s own storage shape, so `removeKey(provider:label:)`
@@ -117,6 +124,7 @@ final class MediaServerCredentialStoreTests: XCTestCase {
             case persists
             case discardsWrites
             case corruptsOnWrite(replacement: String)
+            case refusesWrites
         }
 
         private let lock = NSLock()
@@ -133,7 +141,7 @@ final class MediaServerCredentialStoreTests: XCTestCase {
             return keys.first { $0.provider == provider && $0.isActive }
         }
 
-        func storeKey(_ key: StoredAPIKey) {
+        func storeKey(_ key: StoredAPIKey) throws {
             lock.lock()
             defer { lock.unlock() }
             switch behavior {
@@ -145,13 +153,27 @@ final class MediaServerCredentialStoreTests: XCTestCase {
                 var corrupted = key
                 corrupted.apiKey = replacement
                 upsertLocked(corrupted)
+            case .refusesWrites:
+                throw APIKeyStoreError.savedKeysListUnreadable
             }
         }
 
-        func removeKey(provider: APIKeyProvider, label: String?) {
+        func removeKey(provider: APIKeyProvider, label: String?) throws {
             lock.lock()
             defer { lock.unlock() }
+            if case .refusesWrites = behavior {
+                throw APIKeyStoreError.savedKeysListUnreadable
+            }
             keys.removeAll { $0.provider == provider && (label == nil || $0.label == label) }
+        }
+
+        /// Test set-up only: puts a record in directly, bypassing
+        /// `behavior`, so a `.refusesWrites` store can start with a key in
+        /// it (its own `storeKey` would refuse).
+        func seed(_ key: StoredAPIKey) {
+            lock.lock()
+            defer { lock.unlock() }
+            upsertLocked(key)
         }
 
         /// Must be called with `lock` already held.
@@ -215,7 +237,7 @@ final class MediaServerCredentialStoreTests: XCTestCase {
     // MARK: - Legacy wins over a different Keychain value
     // -----------------------------------------------------------------
 
-    func test_migrate_legacyValueWinsOverADifferentExistingStoreValue() {
+    func test_migrate_legacyValueWinsOverADifferentExistingStoreValue() throws {
         defaults.set("LEGACY-KEY-VALUE", forKey: MediaServerCredentialStore.legacyDefaultsKey)
         let store = FakeMediaServerKeyStore()
         // Something is already sitting in the store under this provider —
@@ -223,7 +245,7 @@ final class MediaServerCredentialStoreTests: XCTestCase {
         // removal of the legacy value on a previous launch. The plan is
         // explicit that the OLD (legacy) value always wins, overwriting
         // whatever is already there.
-        store.storeKey(
+        try store.storeKey(
             StoredAPIKey(provider: .mediaServer, apiKey: "OLD-STORE-VALUE", label: MediaServerCredentialStore.keyLabel)
         )
 
@@ -292,10 +314,10 @@ final class MediaServerCredentialStoreTests: XCTestCase {
     // MARK: - currentKey precedence
     // -----------------------------------------------------------------
 
-    func test_currentKey_prefersTheStoreOverTheLegacyValue() {
+    func test_currentKey_prefersTheStoreOverTheLegacyValue() throws {
         defaults.set("LEGACY-VALUE", forKey: MediaServerCredentialStore.legacyDefaultsKey)
         let store = FakeMediaServerKeyStore()
-        store.storeKey(
+        try store.storeKey(
             StoredAPIKey(provider: .mediaServer, apiKey: "STORE-VALUE", label: MediaServerCredentialStore.keyLabel)
         )
 
@@ -325,10 +347,10 @@ final class MediaServerCredentialStoreTests: XCTestCase {
     // MARK: - saveKey / removeKey
     // -----------------------------------------------------------------
 
-    func test_saveKey_neverWritesToUserDefaults() {
+    func test_saveKey_neverWritesToUserDefaults() throws {
         let store = FakeMediaServerKeyStore()
 
-        MediaServerCredentialStore.saveKey("NEW-KEY", store: store)
+        try MediaServerCredentialStore.saveKey("NEW-KEY", store: store)
 
         XCTAssertEqual(store.key(for: .mediaServer)?.apiKey, "NEW-KEY")
         XCTAssertNil(defaults.string(forKey: MediaServerCredentialStore.legacyDefaultsKey))
@@ -338,19 +360,64 @@ final class MediaServerCredentialStoreTests: XCTestCase {
         )
     }
 
-    func test_removeKey_removesBothLabelledAndUnlabelledEntries() {
+    func test_removeKey_removesBothLabelledAndUnlabelledEntries() throws {
         let store = FakeMediaServerKeyStore()
-        store.storeKey(
+        try store.storeKey(
             StoredAPIKey(provider: .mediaServer, apiKey: "LABELLED", label: MediaServerCredentialStore.keyLabel)
         )
         // An unlabelled record could exist from a future/other caller —
         // `removeKey` must clear it too, mirroring
         // `MetadataSettingsTab.removeTMDBKey()`'s reasoning.
-        store.storeKey(StoredAPIKey(provider: .mediaServer, apiKey: "UNLABELLED", label: nil))
+        try store.storeKey(StoredAPIKey(provider: .mediaServer, apiKey: "UNLABELLED", label: nil))
 
-        MediaServerCredentialStore.removeKey(store: store)
+        try MediaServerCredentialStore.removeKey(store: store)
 
         XCTAssertNil(store.key(for: .mediaServer))
+    }
+
+    // -----------------------------------------------------------------
+    // MARK: - A refused write (Codex round-2 review, chunk 1b)
+    // -----------------------------------------------------------------
+
+    /// When the store REFUSES (throws — the real manager does this when it
+    /// can't read its list of saved keys safely), the migration must map
+    /// that to `.failedKeptLegacyValue`, carrying the store's own wording
+    /// as the reason, and leave the legacy value exactly where it was.
+    /// Before `storeKey` could throw, there was no such path to test.
+    func test_migrate_refusedWrite_isFailedKeptLegacyValue_withTheStoresReason() {
+        defaults.set("LEGACY-KEY-VALUE", forKey: MediaServerCredentialStore.legacyDefaultsKey)
+        let store = FakeMediaServerKeyStore(behavior: .refusesWrites)
+
+        let outcome = MediaServerCredentialStore.migrateLegacyKeyIfNeeded(defaults: defaults, store: store)
+
+        XCTAssertEqual(
+            outcome,
+            .failedKeptLegacyValue(
+                reason: APIKeyStoreError.savedKeysListUnreadable.localizedDescription
+            )
+        )
+        XCTAssertEqual(
+            defaults.string(forKey: MediaServerCredentialStore.legacyDefaultsKey),
+            "LEGACY-KEY-VALUE",
+            "A refused write changed nothing, so the legacy value is the only copy and must stay."
+        )
+        XCTAssertNil(store.key(for: .mediaServer))
+    }
+
+    /// `saveKey` and `removeKey` pass a refusal straight on, so the
+    /// settings screen can say "not saved" instead of assuming it worked —
+    /// and a refused removal really did remove nothing.
+    func test_saveKeyAndRemoveKey_passTheRefusalOn() {
+        let store = FakeMediaServerKeyStore(behavior: .refusesWrites)
+        store.seed(StoredAPIKey(provider: .mediaServer, apiKey: "EXISTING", label: MediaServerCredentialStore.keyLabel))
+
+        XCTAssertThrowsError(try MediaServerCredentialStore.saveKey("NEW-KEY", store: store)) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListUnreadable)
+        }
+        XCTAssertThrowsError(try MediaServerCredentialStore.removeKey(store: store)) { error in
+            XCTAssertEqual(error as? APIKeyStoreError, .savedKeysListUnreadable)
+        }
+        XCTAssertEqual(store.key(for: .mediaServer)?.apiKey, "EXISTING", "Neither refusal may change the store.")
     }
 
     // -----------------------------------------------------------------

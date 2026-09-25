@@ -79,6 +79,13 @@ struct MediaServerSettingsView: View {
     /// Whether the feedback indicates an error.
     @State private var feedbackIsError = false
 
+    /// The last key save/remove refusal shown in `feedbackMessage`, or nil.
+    /// Compared against `feedbackMessage` so a later successful save clears
+    /// ONLY its own earlier error — never a connection-test, fetch or scan
+    /// message the person may still be reading. (A flag would not do: the
+    /// other actions set `feedbackMessage` without knowing about it.)
+    @State private var lastKeyFeedback: String?
+
     // MARK: - Computed Properties
 
     /// The selected server type derived from the raw `AppStorage` string.
@@ -98,15 +105,24 @@ struct MediaServerSettingsView: View {
     /// presence is inferred from the legacy `UserDefaults` value still
     /// being there: a successful migration removes it immediately, so if
     /// it still exists by the time this screen renders, this launch's
-    /// migration attempt did not succeed. Wording matches the #506 plan
-    /// (§4) verbatim, so a future audit can grep for it.
+    /// migration attempt did not succeed.
+    ///
+    /// The wording was the #506 plan's (§4) verbatim: "...because the
+    /// Keychain didn't accept it. It will be moved automatically when the
+    /// Keychain allows." It was changed when `APIKeyManager.storeKey`
+    /// gained a second way to fail (refusing because it could not read its
+    /// list of saved keys safely): this screen cannot tell which of the two
+    /// happened, so blaming the Keychain would sometimes be untrue. The
+    /// Activity Log line written at launch (`AppViewModel`) carries the
+    /// actual reason. The migration runs once per launch, which is what
+    /// "the next time MeedyaConverter starts" promises — no more.
     private var legacyMigrationWarning: String? {
         guard let legacyValue = UserDefaults.standard.string(forKey: MediaServerCredentialStore.legacyDefaultsKey),
               !legacyValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
-        return "Your media server key is still in the app's settings file because the "
-            + "Keychain didn't accept it. It will be moved automatically when the "
-            + "Keychain allows."
+        return "Your media server key is still in the app's settings file, because it "
+            + "could not be moved to the Keychain. MeedyaConverter will try again the "
+            + "next time it starts; the Activity Log says why it failed."
     }
 
     /// Load the persisted media server configuration independent of this
@@ -369,19 +385,63 @@ struct MediaServerSettingsView: View {
     /// Save (or replace) the media server key. Always via
     /// `MediaServerCredentialStore.saveKey`, which writes to the Keychain
     /// only.
+    ///
+    /// A refusal (`APIKeyStoreError`: the list of saved keys could not be
+    /// read safely, so nothing was changed) is shown in this screen's
+    /// existing feedback line, in red, rather than being lost. The typed
+    /// key then stays in the (secure) field so trying again is one click.
+    /// Success does not write a "saved" message: the "A key is saved"
+    /// label that `refreshKey()` shows is the confirmation, and it comes
+    /// from reading the key back rather than from assuming.
     private func saveKey() {
         let key = trimmedPendingKey
         guard !key.isEmpty else { return }
-        MediaServerCredentialStore.saveKey(key, store: keyManager)
-        pendingAPIKey = ""
+        do {
+            try MediaServerCredentialStore.saveKey(key, store: keyManager)
+            pendingAPIKey = ""
+            // Clear an earlier refusal message so it cannot linger beside a
+            // key that did save. Only a key-related message is ours to
+            // clear; see `clearKeyFeedback()`.
+            clearKeyFeedback()
+        } catch {
+            showKeyFeedback("The key was not saved. " + error.localizedDescription)
+        }
         refreshKey()
     }
 
-    /// Remove the saved media server key.
+    /// Remove the saved media server key. A refusal is reported exactly as
+    /// in `saveKey()`.
     private func removeKey() {
-        MediaServerCredentialStore.removeKey(store: keyManager)
-        pendingAPIKey = ""
+        do {
+            try MediaServerCredentialStore.removeKey(store: keyManager)
+            pendingAPIKey = ""
+            clearKeyFeedback()
+        } catch {
+            // "did not finish": `removeKey(store:)` makes two calls, and in
+            // principle the second could refuse after the first worked.
+            // `refreshKey()` below shows what is actually saved now.
+            showKeyFeedback("Removing the key did not finish. " + error.localizedDescription)
+        }
         refreshKey()
+    }
+
+    /// Shows a key save/remove refusal in the shared feedback line, and
+    /// remembers exactly what was shown (see `lastKeyFeedback`).
+    private func showKeyFeedback(_ message: String) {
+        feedbackMessage = message
+        feedbackIsError = true
+        lastKeyFeedback = message
+    }
+
+    /// Clears the feedback line, but only while it still shows the key
+    /// refusal this screen last put there. If a connection test, fetch or
+    /// scan has replaced it since, that newer message is left alone.
+    private func clearKeyFeedback() {
+        if let lastKeyFeedback, feedbackMessage == lastKeyFeedback {
+            feedbackMessage = nil
+            feedbackIsError = false
+        }
+        lastKeyFeedback = nil
     }
 
     // MARK: - Actions

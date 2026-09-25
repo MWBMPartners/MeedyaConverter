@@ -324,6 +324,13 @@ struct MetadataSettingsTab: View {
     @State private var pendingTMDBKey: String = ""
     /// Whether a key exists — NOT the key itself.
     @State private var hasTMDBKey = false
+    /// Why the last Save/Replace/Remove changed nothing, in plain English;
+    /// nil after one that worked. This tab had no status line of its own,
+    /// so without this a refused save (`APIKeyStoreError` — the list of
+    /// saved keys could not be read safely) would have looked exactly like
+    /// a successful one. Never holds the key itself: the error wording
+    /// names no key and no file.
+    @State private var tmdbKeyError: String?
 
     private var trimmedTMDBKey: String {
         pendingTMDBKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -484,6 +491,12 @@ struct MetadataSettingsTab: View {
                 Link("Get a key\u{2026}", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
             }
 
+            if let tmdbKeyError {
+                Label(tmdbKeyError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
             Text("TMDB gives you two credentials and either works here: the short "
                  + "\"API Key\" or the much longer \"API Read Access Token\". Paste "
                  + "whichever you have.")
@@ -529,22 +542,47 @@ struct MetadataSettingsTab: View {
     private func saveTMDBKey() {
         let key = trimmedTMDBKey
         guard !key.isEmpty else { return }
-        // Clear an unlabelled entry first. `key(for:)` returns the FIRST
-        // active match, so a key saved by an older build without our label
-        // would permanently shadow the one just entered — the field would
-        // appear to save and nothing would change.
-        keyManager.removeKey(provider: .tmdb)
-        keyManager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: key, label: "TMDB"))
-        pendingTMDBKey = ""
+        do {
+            // Clear an unlabelled entry first. `key(for:)` returns the FIRST
+            // active match, so a key saved by an older build without our
+            // label would permanently shadow the one just entered — the
+            // field would appear to save and nothing would change.
+            try keyManager.removeKey(provider: .tmdb)
+            try keyManager.storeKey(StoredAPIKey(provider: .tmdb, apiKey: key, label: "TMDB"))
+            pendingTMDBKey = ""
+            tmdbKeyError = nil
+        } catch {
+            // Refused: say so, in the manager's own plain-English words.
+            // The typed key is deliberately KEPT in the (secure) field so
+            // "Try again" is one click rather than a retype; it is still
+            // only in the field, never shown or logged.
+            //
+            // What the person has afterwards is whatever `refreshKeys()`
+            // reads below — the message does not guess. In practice both
+            // calls refuse together (the list either can or cannot be read
+            // safely), but if the removal worked and the store then refused,
+            // the old TMDB key is gone, and the "A key is saved" line
+            // disappears after `refreshKeys()` to show it.
+            tmdbKeyError = "The key was not saved. " + error.localizedDescription
+        }
         refreshKeys()
     }
 
     private func removeTMDBKey() {
-        // Both the labelled entry and any unlabelled one, so "Remove" means
-        // removed rather than "removed the one I happened to name".
-        keyManager.removeKey(provider: .tmdb, label: "TMDB")
-        keyManager.removeKey(provider: .tmdb)
-        pendingTMDBKey = ""
+        do {
+            // Both the labelled entry and any unlabelled one, so "Remove"
+            // means removed rather than "removed the one I happened to name".
+            try keyManager.removeKey(provider: .tmdb, label: "TMDB")
+            try keyManager.removeKey(provider: .tmdb)
+            pendingTMDBKey = ""
+            tmdbKeyError = nil
+        } catch {
+            // "did not finish" rather than "was not removed": the list could
+            // in principle become unreadable between the two calls above, in
+            // which case the labelled key IS gone. `refreshKeys()` below
+            // shows what is actually saved now.
+            tmdbKeyError = "Removing the key did not finish. " + error.localizedDescription
+        }
         refreshKeys()
     }
 }

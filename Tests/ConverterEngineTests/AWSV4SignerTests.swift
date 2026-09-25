@@ -552,13 +552,13 @@ final class S3UploaderSigningTests: XCTestCase {
     /// this host. Full Keychain round-trip persistence for `.awsS3`
     /// secrets specifically is already covered by
     /// `APIKeyManagerKeychainTests.test_apiKeyManager_roundTripsAllSecretsThroughKeychain`.
-    func test_loadCredential_mapsStoredAWSKeyIntoCloudCredential() {
+    func test_loadCredential_mapsStoredAWSKeyIntoCloudCredential() throws {
         let manager = APIKeyManager(
             storageDirectory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("s3uploader-tests-\(UUID().uuidString)"),
             keychainService: "Ltd.MWBMpartners.MeedyaConverter.Tests.S3.\(UUID().uuidString)"
         )
-        manager.storeKey(StoredAPIKey(
+        try manager.storeKey(StoredAPIKey(
             provider: .awsS3,
             apiKey: "AKIA-FROM-KEYCHAIN",
             secretKey: "secret-from-keychain"
