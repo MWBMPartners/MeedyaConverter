@@ -12,9 +12,9 @@
 // stores in its settings file (`UserDefaults`), plus one for every file it
 // keeps in `~/Library/Application Support/MeedyaConverter/`.
 //
-// This is an allow-list. Export will write only settings marked `.allowed`
-// or `.thisMac`, and import will write only those, only in the groups the
-// person ticked. A setting that is not in this table at all is never
+// This is an allow-list. Export writes only settings marked `.allowed` or
+// `.thisMac`, and import writes only those, only in the groups the person
+// ticked (`SettingsExporter`, `SettingsImporter`). A setting that is not in this table at all is never
 // exported. That is the safe failure, but it would still be a silent gap,
 // so `Tests/ConverterEngineTests/SettingsKeyCoverageTests.swift` scans
 // `Sources/` and FAILS whenever:
@@ -533,8 +533,11 @@ public enum SettingsKeyRegistry {
 
     private static let connectionEntries: [SettingsKeyEntry] = [
         // Email. The SMTP password is in the Keychain and never travels.
+        // The host is checked as an ADDRESS (#506 commit 5): a host typed as
+        // `user:password@smtp.example.com` would otherwise carry the
+        // password into the file.
         allowed(
-            "emailSMTPHost", .connections, .text,
+            "emailSMTPHost", .connections, .address,
             label: "Email: SMTP server",
             location: "Settings › Email"
         ),
@@ -586,8 +589,10 @@ public enum SettingsKeyRegistry {
             label: "Media server: type (Plex, Jellyfin or Emby)",
             location: "Settings › Media Server"
         ),
+        // Checked as an ADDRESS (#506 commit 5): Plex addresses are often
+        // copied with `?X-Plex-Token=…` on the end, which is the key itself.
         allowed(
-            "mediaServerHost", .connections, .text,
+            "mediaServerHost", .connections, .address,
             label: "Media server: host",
             location: "Settings › Media Server"
         ),

@@ -543,6 +543,13 @@ enum SettingsKeyScanMap {
         /// It is not a settings key at all (a dictionary, a cache, a
         /// translation look-up, a parameter), for `reason`.
         case notUserDefaults(reason: String)
+        /// It IS a settings key, but not one fixed name: a variable in the
+        /// settings export/import engine holding a key it took from
+        /// `SettingsKeyRegistry` at run time, so only ever one the registry
+        /// allows (#506 commit 5). The registry itself is what decides those
+        /// keys, so there is nothing to map. `SettingsKeyCoverageTests` checks
+        /// this is only used inside `Sources/ConverterEngine/Settings/`.
+        case keyFromRegistry(reason: String)
     }
 
     static let symbols: [String: Target] = [
@@ -598,6 +605,14 @@ enum SettingsKeyScanMap {
         "MakeMKVSettingsTab.swift|MakeMKVConsentStore.Keys.binaryPath": .key("makemkv.binaryPath"),
 
         "MediaServerCredentialStore.swift|legacyDefaultsKey": .key("mediaServerAPIKey"),
+        // #506 commit 5: the "is the old media server key still here?" check.
+        "SettingsCredentialNeeds.swift|MediaServerCredentialStore.legacyDefaultsKey": .key("mediaServerAPIKey"),
+        // #506 commit 5: the settings engine's only two writes (`set` and
+        // `removeObject`), whose key comes from the registry at run time.
+        "SettingsDomain.swift|key": .keyFromRegistry(
+            reason: "SettingsDomain.write/remove: every key is one SettingsKeyRegistry allows, checked by "
+                + "SettingsImporter.apply before its first write."
+        ),
         "MediaServerSettingsView.swift|MediaServerCredentialStore.legacyDefaultsKey": .key("mediaServerAPIKey"),
 
         "MeedyaDBAccess.swift|Keys.enabled": .key("meedyadb.enabled"),

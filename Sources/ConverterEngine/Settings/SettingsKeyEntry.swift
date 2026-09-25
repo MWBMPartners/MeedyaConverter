@@ -30,9 +30,9 @@
 // from "nobody decided", and so the app can list what is never included.
 //
 // What this file does NOT do: it only records rules. Nothing here reads a
-// setting, writes one, or checks a value against its rules. The exporter and
-// importer that apply these rules are a later commit of #506 (commit 5 in
-// `.claude/plans/settings-export-import-plan.md`).
+// setting, writes one, or checks a value against its rules. Those rules are
+// applied by `SettingsValueCodecs.swift`, for `SettingsExporter` and
+// `SettingsImporter` (#506 commit 5).
 // ---------------------------------------------------------------------------
 
 import Foundation
@@ -261,8 +261,10 @@ public enum SettingsValueKind: Sendable, Equatable {
 /// A setting whose value is a JSON document (a list of servers, rules, …)
 /// rather than a single value. Each one is exported by decoding it into its
 /// real Swift type, so checks and redaction work on typed fields rather than
-/// raw bytes. The decoders ("codecs") are a later commit of #506; this enum
-/// only names each blob and records the facts that matter for safety.
+/// raw bytes. The typed codecs are `SettingsBlobCodec` in
+/// `SettingsValueCodecs.swift`, which switches over every case (so a new
+/// blob cannot be added without deciding how it is handled); this enum only
+/// names each blob and records the facts that matter for safety.
 public enum SettingsJSONBlob: String, Sendable, CaseIterable {
 
     /// The chosen colour theme. App type `CustomTheme`
@@ -323,9 +325,11 @@ public enum SettingsJSONBlob: String, Sendable, CaseIterable {
     /// must remove itself, field by field, before anything is written, and
     /// that the importer must refuse if a file carries one.
     ///
-    /// This is a requirement on the later exporter, recorded here so it is
-    /// pinned by a test now (`SettingsKeyRegistrySentinelTests`) rather than
-    /// remembered.
+    /// The removal itself is each item type's `exportForm()`, and the
+    /// refusal its `importProblem()`, both in `SettingsValueCodecs.swift`;
+    /// `SettingsExportNoSecretTests` plants a secret in every such field and
+    /// checks none reaches the file. This flag records WHICH blobs need it,
+    /// pinned by `SettingsKeyRegistrySentinelTests`.
     public var mustRemoveSecretsOnExport: Bool {
         switch self {
         case .sftpProfiles, .cloudStorageProfiles:
@@ -359,7 +363,9 @@ public enum SettingsTakesEffect: String, Sendable {
 
     /// Read once when the app opens (and in some cases written back whole
     /// later), so an import only applies the next time MeedyaConverter
-    /// opens. The later import screen lists these.
+    /// opens. The import preview and result list these
+    /// (`SettingsImportPreview.takesEffectNextLaunch`,
+    /// `SettingsImportResult.takesEffectNextLaunch`).
     case nextLaunch
 }
 

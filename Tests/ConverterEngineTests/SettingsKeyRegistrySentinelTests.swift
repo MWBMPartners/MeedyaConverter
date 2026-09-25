@@ -141,6 +141,10 @@ final class SettingsKeyRegistrySentinelTests: XCTestCase {
         XCTAssertEqual(entry(CloudStorageProfileStore.userDefaultsKey)?.rules?.kind, .json(.cloudStorageProfiles))
         XCTAssertEqual(entry("teamProfiles.gitRemote")?.rules?.kind, .address)
         XCTAssertEqual(entry(MeedyaDBConfigStore.Keys.baseURL)?.rules?.kind, .address)
+        // #506 commit 5: two host settings people paste whole addresses
+        // into (a Plex address often ends `?X-Plex-Token=…`, the key itself).
+        XCTAssertEqual(entry("mediaServerHost")?.rules?.kind, .address)
+        XCTAssertEqual(entry("emailSMTPHost")?.rules?.kind, .address)
 
         // Every other blob is checked to have NO secret field: if one gains
         // a secret, it must be moved into `mustRemoveSecretsOnExport`

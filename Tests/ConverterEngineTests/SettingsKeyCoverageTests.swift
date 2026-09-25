@@ -222,6 +222,24 @@ final class SettingsKeyCoverageTests: XCTestCase {
         }
     }
 
+    /// A name standing for "any key the registry allows" is only acceptable
+    /// inside the settings export/import engine, which takes its keys from
+    /// the registry. Anywhere else it would hide a real key from this check.
+    func test_registryDrivenKeysAreOnlyUsedInsideTheSettingsEngine() throws {
+        let result = try scanRealSources()
+        for (symbol, target) in SettingsKeyScanMap.symbols {
+            guard case .keyFromRegistry = target else { continue }
+            let sites = result.symbolReferences[symbol, default: []]
+            XCTAssertFalse(sites.isEmpty, "\(symbol) is mapped but not used.")
+            for site in sites {
+                XCTAssertTrue(
+                    site.file.hasPrefix("ConverterEngine/Settings/"),
+                    "\(symbol) is marked as a registry-driven key but is used outside the settings engine: \(site)"
+                )
+            }
+        }
+    }
+
     // MARK: - Other settings domains
 
     func test_otherSettingsDomainsAreOnlyOpenedWhereExpected() throws {

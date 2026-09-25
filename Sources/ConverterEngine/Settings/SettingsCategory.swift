@@ -23,8 +23,8 @@
 //   - "This Mac only" is OFF by default, on export as well as import
 //     (question 3), and carries a warning explaining why.
 //
-// This file only describes the groups. Nothing reads or writes a settings
-// file yet: that is a later commit of #506.
+// This file only describes the groups. `SettingsExporter` and
+// `SettingsImporter` (#506 commit 5) write and read settings files by them.
 // ---------------------------------------------------------------------------
 
 import Foundation
