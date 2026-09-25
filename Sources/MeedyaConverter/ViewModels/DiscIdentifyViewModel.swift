@@ -140,17 +140,23 @@ final class DiscIdentifyViewModel {
     /// What the CURRENTLY RUNNING (or most recently started) run promised
     /// about contributing, frozen the instant it started.
     ///
-    /// While `isWorking` is true the view must read THIS, never
-    /// `willContribute` — `willContribute` re-reads the live settings, and a
-    /// run's own `MeedyaDBContributor.contribute` `recheck` can only narrow
-    /// or withdraw what that run sends, never retroactively widen it. If the
-    /// view kept showing live settings during a run, turning contributing ON
-    /// partway through would flip the notice to "will be contributed" for a
-    /// run that started with it off and has no way to turn it on for itself
-    /// — a promise the run cannot keep. Once nothing is running this is
-    /// stale and `willContribute` is what should be shown instead; the view
-    /// picks between the two based on `isWorking`.
+    /// The view does not read this directly: it reads
+    /// `showsContributionPromise`, which combines this frozen value with the
+    /// live settings while a run is in progress. This half is what stops a
+    /// mid-run switch-ON from over-promising: a run's own
+    /// `MeedyaDBContributor.contribute` `recheck` can only narrow or withdraw
+    /// what that run sends, never retroactively widen it, so a run that
+    /// started with contributing off has no way to turn it on for itself.
+    /// Once nothing is running this is stale.
     private(set) var runWillContribute = false
+
+    /// The exact MeedyaDB configuration the currently running (or most
+    /// recently started) run captured, or `nil` when it captured none. The
+    /// SAME value the run's `recheck` compares the live configuration with:
+    /// the run withdraws its contribution unless the live one still equals
+    /// this, so the notice has to make the same comparison (see
+    /// `showsContributionPromise`). Codex round-2 review, chunk 1a.
+    private var runConfig: MeedyaDBPublisherConfig?
 
     /// Whether the on-screen notice should CURRENTLY claim a contribution is
     /// coming. Combines the frozen `runWillContribute` with the LIVE
@@ -163,13 +169,24 @@ final class DiscIdentifyViewModel {
     ///     `MeedyaDBContributor.contribute`'s `recheck` re-reads settings
     ///     again immediately before sending, so switching off narrows what
     ///     the run actually does, and the notice must not keep claiming a
-    ///     contribution that recheck is about to withdraw.
-    /// Before this fix the notice used `runWillContribute` alone during a
-    /// run, so it kept saying "will be contributed" right up until the run
-    /// ended and then silently sent nothing.
+    ///     contribution that recheck is about to withdraw;
+    ///   * the live configuration must also still EQUAL the one the run
+    ///     captured (`runConfig`). The recheck withdraws on any difference —
+    ///     another server address, or a replaced API key — even when the new
+    ///     settings are perfectly valid, so "still ready" is not enough
+    ///     (Codex round-2 review, chunk 1a).
+    /// Before the fallback fix the notice used `runWillContribute` alone
+    /// during a run, so it kept saying "will be contributed" right up until
+    /// the run ended and then silently sent nothing.
     /// Once nothing is running this collapses to plain `willContribute`.
+    ///
+    /// STATED LIMIT: this is only as fresh as `meedyaDBReadiness`, which the
+    /// view refreshes when the switch, the server address or a saved key
+    /// changes. It is a notice, not a guarantee: the recheck inside the run
+    /// is what actually decides.
     var showsContributionPromise: Bool {
-        isWorking ? (runWillContribute && willContribute) : willContribute
+        guard isWorking else { return willContribute }
+        return runWillContribute && willContribute && meedyaDBReadiness?.config == runConfig
     }
 
     // MARK: - Running
@@ -275,6 +292,7 @@ final class DiscIdentifyViewModel {
         // itself is about to use, for the same reason `contribute` is
         // derived from `config` above rather than computed twice.
         runWillContribute = contribute
+        runConfig = config
 
         // Codex round-1 review, finding F1: re-checked immediately before
         // the network call, from the SAME two providers used just above to

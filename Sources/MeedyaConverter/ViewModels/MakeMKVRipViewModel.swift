@@ -735,15 +735,21 @@ final class MakeMKVRipViewModel {
     /// What the CURRENTLY RUNNING (or most recently started) identify run
     /// promised about contributing, frozen the instant it started.
     ///
-    /// While `isIdentifying` is true the view must read THIS, never
-    /// `willContribute` — see `DiscIdentifyViewModel.runWillContribute`'s
-    /// doc comment for the full reasoning, which applies here unchanged: a
-    /// run's own `recheck` can only narrow or withdraw what it sends, never
-    /// widen it, so the on-screen notice must not retroactively promise more
-    /// than that for a run already under way. Stale once nothing is
-    /// identifying; the view picks between this and `willContribute` based
-    /// on `isIdentifying`.
+    /// The view does not read this directly: it reads
+    /// `showsContributionPromise`, which combines this frozen value with the
+    /// live settings while an identify run is in progress. See
+    /// `DiscIdentifyViewModel.runWillContribute`'s doc comment for the full
+    /// reasoning, which applies here unchanged: a run's own `recheck` can only
+    /// narrow or withdraw what it sends, never widen it. Stale once nothing is
+    /// identifying.
     private(set) var runWillContribute = false
+
+    /// The exact MeedyaDB configuration the current (or most recent) identify
+    /// run captured, or `nil`. The SAME value that run's `recheck` compares
+    /// the live configuration with, so the notice can make the same
+    /// comparison. See `DiscIdentifyViewModel.runConfig`. Codex round-2
+    /// review, chunk 1a.
+    private var runConfig: MeedyaDBPublisherConfig?
 
     /// Whether the on-screen notice should CURRENTLY claim a contribution is
     /// coming. Combines the frozen `runWillContribute` with the LIVE
@@ -756,13 +762,23 @@ final class MakeMKVRipViewModel {
     ///     the contributor's own `recheck` re-reads settings again
     ///     immediately before sending, so switching off narrows what the run
     ///     actually does, and the notice must not keep claiming a
-    ///     contribution that recheck is about to withdraw.
-    /// Before this fix the notice used `runWillContribute` alone during a
-    /// run, so it kept saying "will be contributed" right up until the run
-    /// ended and then silently sent nothing.
+    ///     contribution that recheck is about to withdraw;
+    ///   * the live configuration must also still EQUAL the one the run
+    ///     captured (`runConfig`), because the recheck withdraws on any
+    ///     difference — another server address, or a replaced API key — even
+    ///     when the new settings are perfectly valid (Codex round-2 review,
+    ///     chunk 1a).
+    /// Before the fallback fix the notice used `runWillContribute` alone
+    /// during a run, so it kept saying "will be contributed" right up until
+    /// the run ended and then silently sent nothing.
     /// Once nothing is identifying this collapses to plain `willContribute`.
+    ///
+    /// STATED LIMIT: only as fresh as `meedyaDBReadiness`, which the view
+    /// refreshes when the switch, the server address or a saved key changes.
+    /// It is a notice, not a guarantee: the recheck inside the run decides.
     var showsContributionPromise: Bool {
-        isIdentifying ? (runWillContribute && willContribute) : willContribute
+        guard isIdentifying else { return willContribute }
+        return runWillContribute && willContribute && meedyaDBReadiness?.config == runConfig
     }
 
     /// F3 follow-on decision: identification is blocked by the same
@@ -859,6 +875,7 @@ final class MakeMKVRipViewModel {
         // Frozen the moment this run starts — see `runWillContribute`'s doc
         // comment above.
         runWillContribute = contribute
+        runConfig = config
 
         // Codex round-1 review, finding F1: re-checked immediately before
         // the network call, from the SAME two providers used just above —

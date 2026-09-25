@@ -1622,6 +1622,57 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         await task.value
     }
 
+    /// Codex round-2 review, chunk 1a: a mid-run change to ANOTHER VALID
+    /// configuration (a different server address, or a replaced API key)
+    /// leaves MeedyaDB "ready", so `willContribute` stays true, yet the run's
+    /// recheck withdraws because the live configuration no longer equals the
+    /// one it captured. The notice must follow the recheck, not "still
+    /// ready". Checks the wire as well as the notice, so the promise and the
+    /// delivery are proved to agree rather than each asserted on its own.
+    func test_showsContributionPromise_serverOrKeyReplacedMidRun_stopsPromisingAndNothingIsSent() async throws {
+        let original = MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)
+        let replacements: [(label: String, config: MeedyaDBPublisherConfig)] = [
+            ("another server address", MeedyaDBPublisherConfig(baseURL: "https://a-different-server.example", apiKey: "k", enabled: true)),
+            ("a replaced API key", MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "a-replaced-key", enabled: true)),
+        ]
+        for replacement in replacements {
+            let publishClient = PublishStubHTTPClient()
+            let gate = AsyncGate()
+            let box = MeedyaDBSettingsBox(readiness: .ready(original), mode: .anonymous)
+            let vm = makeIdentifyViewModel(
+                runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+                publishClient: publishClient,
+                candidateProvider: { _ in await gate.wait(); return [] },
+                settingsBox: box
+            )
+            await scanned(vm)
+
+            guard let task = vm.identify() else { return XCTFail("expected an identify task (\(replacement.label))") }
+            await gate.waitUntilParked()
+            XCTAssertTrue(vm.showsContributionPromise, "precondition: promised before the change (\(replacement.label))")
+
+            box.readiness = .ready(replacement.config)
+            vm.refreshMeedyaDBReadiness()
+            XCTAssertTrue(
+                vm.willContribute,
+                "precondition: the new settings are valid, so a 'still ready' check alone would pass (\(replacement.label))"
+            )
+            XCTAssertFalse(
+                vm.showsContributionPromise,
+                "the run will withdraw, so the notice must stop promising (\(replacement.label))"
+            )
+
+            gate.open()
+            await task.value
+            XCTAssertEqual(publishClient.callCount, 0, "nothing may be sent (\(replacement.label))")
+            XCTAssertEqual(
+                vm.identifyResult?.contribution,
+                .notAttempted(reason: MeedyaDBContributor.withdrawnReason),
+                "the run withdrew, as the notice said it would (\(replacement.label))"
+            )
+        }
+    }
+
     /// The mirror case, for the direction `runWillContribute` alone already
     /// covers: a mid-run switch-ON must not make `showsContributionPromise`
     /// promise a contribution this run has no way to make.
