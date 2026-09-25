@@ -229,7 +229,19 @@ below it.
 >   `SettingsSchemaMiniValidator` (the plan's exact keyword list; it fails on any
 >   other). The three leak safeguards were proven by a planted fault. 47 tests ran
 >   locally. There's no jsonschema module locally for a cross-check.
-> - #506 7/9 (the CLI `settings export/import`): in progress.
+> - **#506 7/9 `364d1b5`:** `meedya-convert settings export|import`.
+>   - Import only previews unless `--apply`; `--mode merge|replace`.
+>   - It targets `AppInfo.Application.directBundleId`, never `.standard`.
+>   - Hidden test-only redirects: `--defaults-suite`, `--profiles-dir`,
+>     `--api-keys-dir`, `--keychain-service`.
+>   - `SettingsCLIReport` lives in the engine, so it can be schema-tested.
+>   - `docs/api/meedya-convert-api.yaml` is updated.
+>   - The CLI test file is type-checked only (CI runs it). Planted fault caught.
+>   - Its help text points App Store users to "Settings › Import & Export", which
+>     commit 8 creates.
+> - **CI GREEN on `6cd4bf5`** (#508 + the probe fix; run 36121593527). The #508
+>   issue has a completion comment with AC evidence; it stays open until merge.
+> - #506 8/9 (the Import & Export Settings screen): in progress.
 > - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
 >   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
 >   Reason: round 2 now runs in small chunks with pasted diffs spread across the
