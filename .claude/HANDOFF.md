@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-25 13:40 · VERSION 0.1.0
+**Last updated:** 2026-09-25 14:55 · VERSION 0.1.0
 
 ## 📍 CURRENT STATE — 2026-09-23, updated through 25 Sept (read this first)
 
@@ -13,12 +13,12 @@ This is the resume point for a **fresh session with no chat history**. Everythin
 needed to carry on is in this block, `.claude/standing_tasks.md`, and the sections
 below it.
 
-### ▶ Newest position — 25 Sept 13:40 (read before anything else in this block)
+### ▶ Newest position — 25 Sept 14:55 (read before anything else in this block)
 
 | # | Task | Issue | Status | Notes |
 |---|------|-------|--------|-------|
 | 1 | Codex round 1 (17–21 Sept work): 11 findings | #502 #503 #504 #205 | Done: all fixed, CI green | details in "FIRST JOB" below |
-| 1b | Codex round 2 (checks the round-1 fixes) | same | In progress: run in small chunks | chunk 1 (privacy) at 14:47, once Codex's allowance comes back (it said 2:43 PM) |
+| 1b | Codex round 2 (checks the round-1 fixes) | same | In progress: run in small chunks | chunk 1 (privacy) DONE: 1a fixed in `fe1a758`; 1b's 3 findings being fixed (Opus, main tree); chunks 2-5 still to run |
 | 2 | Half-set-up MeedyaDB said "wasn't requested" | #507 | Done | in F1's fix, `9d47730` and after |
 | 3 | AutoTagger actually runs during an encode | #508 | Done: on the branch, CI green | Codex review still owed |
 | 4 | Settings export/import | #506 | Done: on the branch, CI green on `4203c35` | Codex review still owed |
@@ -40,7 +40,33 @@ below it.
     row by fingerprint); and gave the wrong reason for identical bytes. **I also
     nearly added a false claim myself** (that the CLI's `--submit` passes an off
     config; it refuses instead). Checking each claim against the code caught it.
-  - 2/10 (Opus) building from 14:05: models, store, dedup, registry line.
+  - `427153d` 2/10 (Opus): models, store, dedup, registry line. 105 tests ran in
+    the harness; 5 planted faults caught. Orchestrator review: no changes. Two
+    departures ACCEPTED: `reconcile` also removes labels from HELD entries (so
+    the planned "also removes the label" caption is true); switching off also
+    deletes files this version can't read. Known limit: a set-aside unreadable
+    file keeps any label until contributing is switched off (it is never sent).
+    **For commit 7:** every store read re-reads and decodes the whole file (up
+    to about 3 MB), so the view model must cache and refresh on the notification,
+    never read in a SwiftUI body. **Dates are whole seconds**, so later tests
+    should use whole-second dates.
+  - 3/10 (Sonnet) building from 14:45: the JSON Schema for the list file.
+- **Codex round 2, CHUNK 1 DONE (14:44–14:49, 78k tokens in total).** Record:
+  `.claude/reviews/codex-2026-09-25-r2-chunk1.md`.
+  - 1a (F1 recheck): F1, F10 and fallback #2 judged COMPLETE. 1 MINOR, REAL: the
+    notice ignored a mid-run change of server or key to another VALID value. Fixed
+    in `fe1a758` (`runConfig`, and tests that also check the wire).
+  - 1b (F2 key store): judged INCOMPLETE, 2 MAJOR + 1 MINOR, all REAL. The lock
+    is per instance (a latent hazard: `markUsed` has no caller and all writers
+    are on the main thread; the comment claiming otherwise is false). An
+    unreadable or newer index gets overwritten by a write. A notification test
+    would hang rather than fail. **An Opus builder is fixing them in the MAIN
+    tree** (a process-wide lock; `storeKey`/`removeKey` become `throws` and
+    refuse; the callers show the error). Not pushed until reviewed.
+  - **Next chunks:** re-review `fe1a758` and the 1b fix; then (2) MakeMKV
+    F3/F4/F5/F9, (3) F6 + fallback #4, (4) F8 + fallback #1, (5) wording.
+    **Chunk sizes that worked:** about 34k-token and 14k-token prompts, answered
+    in one go in 1-3 minutes. The allowance per reset is at least 78k tokens.
 - **#505 build rules for this session.** Build in a WORKTREE, and cherry-pick onto the
   branch only while NO Codex chunk is running. A chunk takes a few minutes, and Codex
   reads whole files from the main working tree for context. Plan section 10 says
