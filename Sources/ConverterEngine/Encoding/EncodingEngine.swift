@@ -120,8 +120,67 @@ public final class EncodingEngine: @unchecked Sendable {
     /// job exists at a time.
     private var activeControllers: [UUID: FFmpegProcessController] = [:]
 
+    /// Every job currently inside `encode(job:onProgress:)`, keyed by its
+    /// `EncodingJobConfig.id`, with how many `encode` calls for that id are
+    /// running (#508 commit 6).
+    ///
+    /// Why this exists at all: `activeControllers` only knows about a job
+    /// while one of its FFmpeg passes is actually running. Before the first
+    /// pass starts — during the source probe and, from #508, during an
+    /// auto-tag lookup that can take up to 30 seconds — a job has no
+    /// controller, so a Stop pressed then used to reach nothing and was
+    /// silently lost. This registry lets `stopEncoding()` and
+    /// `stopEncoding(jobID:)` record a stop for a job in that phase, which
+    /// `encode` honours before it starts FFmpeg.
+    ///
+    /// A COUNT, not a set, so that two `encode` calls for the same job id
+    /// running at once (which `ScriptingBridge` can cause today — an
+    /// existing bug, recorded in the #508 plan's follow-ups) cannot have the
+    /// first to finish wipe out the second's registration and stop flag.
+    ///
+    /// Only ever touched with `lock` held.
+    private var inFlightJobIDs: [UUID: Int] = [:]
+
+    /// Jobs in `inFlightJobIDs` that the user has asked to stop. Only an id
+    /// that is in flight is ever added, and an id is removed when its last
+    /// `encode` call ends, so a stop can never linger and cancel a later run
+    /// of the same job. Only ever touched with `lock` held.
+    private var stopRequestedJobIDs: Set<UUID> = []
+
     /// Lock for thread-safe state access.
     private let lock = NSLock()
+
+    // MARK: - Auto-tagging (#508)
+
+    /// Where this engine reads the auto-tag setting from at the start of
+    /// every job, or `nil` for an engine that never auto-tags.
+    ///
+    /// `nil` is the default, and every engine the code builds today leaves
+    /// it `nil` — including the app's, until #508 commit 8 passes one in
+    /// `AppViewModel.init`. So as of this commit auto-tagging is reachable
+    /// only by code (tests) that builds its own engine with a source. An
+    /// engine with a source and the setting OFF behaves exactly like an
+    /// engine with no source: only the on/off switches are read (the TMDB
+    /// key is not even fetched), nothing is sent, nothing is published on
+    /// `autoTagEvents`, and the FFmpeg arguments are identical.
+    public let autoTagSettings: AutoTagSettingsSource?
+
+    /// What each job's auto-tag lookup did, as it happens. See
+    /// `AutoTagJobEvent`.
+    ///
+    /// - Buffers at most the NEWEST 64 events, dropping older ones, so an
+    ///   engine nobody listens to (the command-line tool, most tests, and
+    ///   the app until #508 commit 8) never piles events up in memory.
+    /// - An `AsyncStream` has ONE reader: two loops reading it at once would
+    ///   each see only some of the events. The app is meant to run exactly
+    ///   one reader (#508 commit 8).
+    /// - Finished when the engine is released (`deinit`), so a reader's
+    ///   `for await` loop ends instead of waiting forever.
+    public let autoTagEvents: AsyncStream<AutoTagJobEvent>
+
+    /// The writing end of `autoTagEvents`. `AsyncStream.Continuation` is
+    /// safe to use from any thread, so it needs no lock.
+    private let autoTagEventContinuation: AsyncStream<AutoTagJobEvent>.Continuation
 
     // MARK: - Initialiser
 
@@ -132,11 +191,16 @@ public final class EncodingEngine: @unchecked Sendable {
     ///   - ffprobePath: Optional user-specified FFprobe path.
     ///   - tempDirectory: Optional custom temp directory.
     ///   - featureGate: Feature gate instance (defaults to all-unlocked).
+    ///   - autoTagSettings: Where to read the auto-tag setting from at the
+    ///     start of each job (#508). Defaults to `nil` — never auto-tag.
+    ///     Deliberately the LAST parameter and defaulted, so every existing
+    ///     `EncodingEngine(…)` call compiles and behaves exactly as before.
     public init(
         ffmpegPath: String? = nil,
         ffprobePath: String? = nil,
         tempDirectory: URL? = nil,
-        featureGate: FeatureGateProtocol = DefaultFeatureGate()
+        featureGate: FeatureGateProtocol = DefaultFeatureGate(),
+        autoTagSettings: AutoTagSettingsSource? = nil
     ) {
         self.bundleManager = FFmpegBundleManager(ffmpegPath: ffmpegPath, ffprobePath: ffprobePath)
         self.tempManager = TempFileManager(baseDirectory: tempDirectory)
@@ -147,6 +211,19 @@ public final class EncodingEngine: @unchecked Sendable {
         self.doviTool = DoviToolWrapper()
         self.hlgTools = HlgToolsWrapper()
         self.subtitleTonemapper = SubtitleTonemapWrapper()
+        self.autoTagSettings = autoTagSettings
+        let (events, continuation) = AsyncStream<AutoTagJobEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(64)
+        )
+        self.autoTagEvents = events
+        self.autoTagEventContinuation = continuation
+    }
+
+    deinit {
+        // Ends any reader's `for await` loop over `autoTagEvents`. Events
+        // still in the buffer are delivered first; `finish()` only stops
+        // new ones.
+        autoTagEventContinuation.finish()
     }
 
     // MARK: - Configuration
@@ -196,21 +273,83 @@ public final class EncodingEngine: @unchecked Sendable {
 
     /// Encode a single job and report progress.
     ///
-    /// This is the main encoding entry point. It:
-    /// 1. Validates the input file exists
-    /// 2. Creates a temp directory for intermediary files
-    /// 3. Builds FFmpeg arguments from the job config
-    /// 4. Launches FFmpeg and monitors progress
-    /// 5. Cleans up temp files on completion
+    /// This is the main encoding entry point. In order, it:
+    /// 1. Records the job as in flight, so a Stop pressed before FFmpeg has
+    ///    started is remembered rather than lost (see step 6).
+    /// 2. Checks FFmpeg is configured, the input exists, the output folder
+    ///    is writable and there is at least 1 GB free.
+    /// 3. Creates a temp directory for intermediary files.
+    /// 4. Probes the source (a failed probe is tolerated) and checks the
+    ///    codec/container combination.
+    /// 5. Auto-tagging (#508) — ONLY when this engine was given an
+    ///    `autoTagSettings` source and the setting is on: looks the file up
+    ///    and works out which tags it lacks. See "Auto-tagging" below.
+    /// 6. Throws `CancellationError` if a stop was requested for this job,
+    ///    BEFORE any FFmpeg pass has started.
+    /// 7. Runs the Dolby Vision RPU extraction pass, when one is needed.
+    /// 8. Adjusts the job from the probe (HDR tone mapping, PQ→HLG routing,
+    ///    HLG signalling, HDR10 metadata), adds the looked-up tags from
+    ///    step 5 to its output tags, and runs any subtitle tone-map passes.
+    /// 9. Builds the FFmpeg arguments and runs the pass(es), reporting
+    ///    progress.
+    /// 10. Runs the Dolby Vision re-injection or DV-over-HLG passes, when
+    ///    needed.
+    /// The temp directory is removed on the way out, however it ends.
+    ///
+    /// **Auto-tagging (step 5).** The setting is read once, at the start of
+    /// this job, so a change made mid-queue applies from the next job. The
+    /// lookup's missing tags are added to `outputMetadata`, which the
+    /// argument builder turns into `-metadata key=value` arguments; the
+    /// file's own tags still travel by the builder's usual
+    /// `-map_metadata 0`. Precedence, highest first:
+    ///   1. the job's own `outputMetadata`;
+    ///   2. the source file's own (non-blank) tags;
+    ///   3. looked-up tags — which only ever fill a key both of the above
+    ///      lack (`AutoTagMerge`, including aliases such as `date`/`year`).
+    /// A lookup that is skipped, finds nothing, is not confident, fails or
+    /// runs out of time NEVER fails the encode: the file is converted
+    /// exactly as it would have been without auto-tagging. What happened is
+    /// published on `autoTagEvents`. Not done here yet: the Kodi `.nfo`
+    /// sidecar (#508 commit 7), and the app passing a settings source and
+    /// logging the events (#508 commit 8) — until then no app encode
+    /// auto-tags.
+    ///
+    /// **Stopping.** `stopEncoding()` / `stopEncoding(jobID:)` reach a job
+    /// in steps 1-6 through a stop flag rather than a running process: the
+    /// lookup notices within about a quarter of a second, and step 6 throws
+    /// before FFmpeg is ever launched. The step-6 check runs whether or not
+    /// auto-tagging is on, so a Stop pressed during the source probe is
+    /// honoured too; before #508 commit 6 such a Stop reached nothing and
+    /// the encode ran to the end regardless.
+    ///
+    /// What this does NOT cover: a Stop that arrives after step 6 while no
+    /// FFmpeg pass is registered — for example while the separate
+    /// `subtitle_tonemap` tool runs in step 8, or in the moment between two
+    /// passes — still reaches nothing, exactly as before #508. Nothing
+    /// re-checks the flag after step 6.
     ///
     /// - Parameters:
     ///   - job: The encoding job configuration.
     ///   - onProgress: Callback for progress updates.
     /// - Throws: `EncodingEngineError` if encoding fails.
+    ///   `CancellationError` if a stop was requested for this job before
+    ///   FFmpeg started, or the calling task was cancelled during an
+    ///   auto-tag lookup. (A stop that arrives while FFmpeg is running kills
+    ///   the process exactly as before #508; that usually surfaces as
+    ///   `EncodingEngineError.encodingFailed`, because the killed process
+    ///   exits with a non-zero status.)
     public func encode(
         job: EncodingJobConfig,
         onProgress: @escaping @Sendable (FFmpegProgressInfo) -> Void = { _ in }
     ) async throws {
+        // Registered FIRST, before anything that can take time, so a Stop
+        // pressed at any point before FFmpeg starts is recorded (step 1).
+        // The `defer` removes the registration and any stop flag however
+        // this call ends — success, failure or cancellation — so a flag can
+        // never outlive the run it was meant for.
+        beginTrackingJob(job.id)
+        defer { endTrackingJob(job.id) }
+
         guard let ffmpegPath = ffmpegInfo?.path else {
             throw EncodingEngineError.ffmpegUnavailable("FFmpeg not configured. Call configure() first.")
         }
@@ -248,6 +387,25 @@ public final class EncodingEngine: @unchecked Sendable {
 
         // Validate container-codec compatibility before encoding
         try validateCodecContainerCompatibility(job: job)
+
+        // Auto-tagging (#508, step 5). Here, and not earlier or later,
+        // because:
+        //   * it needs the probe (film or music, the running time that
+        //     scores a match, and the file's own tags that must not be
+        //     overwritten);
+        //   * a job that fails validation above costs no network request;
+        //   * nothing has been launched yet, so stopping during the lookup
+        //     costs nothing — in particular it is BEFORE the Dolby Vision
+        //     extraction pass below, which is itself an FFmpeg run.
+        // Returns an empty dictionary whenever nothing is to be added
+        // (no settings source, switched off, skipped, failed, …).
+        let lookedUpTags = try await autoTagLookupIfSwitchedOn(job: job, sourceInfo: sourceInfo)
+
+        // Step 6: the last point before any FFmpeg pass. Deliberately runs
+        // whether or not a lookup ran (see the doc comment's "Stopping").
+        if isStopRequested(jobID: job.id) {
+            throw CancellationError()
+        }
 
         // Dolby Vision preservation pipeline (Phase 3.8)
         // If source has DV and we're re-encoding video (not passthrough),
@@ -293,10 +451,20 @@ public final class EncodingEngine: @unchecked Sendable {
             try? FileManager.default.removeItem(at: hevcES)
         }
 
+        var enrichedJob = job
+
+        // Looked-up tags (#508) fill only keys the job doesn't set itself:
+        // on a clash the job's own value wins. The runner already left out
+        // every key the job or the source file carries (`AutoTagMerge`), so
+        // this closure is a second line of defence for the job's tags, not
+        // the main rule. The file's own tags are not in `outputMetadata` at
+        // all — they reach the output through `-map_metadata 0` — which is
+        // why the runner, not this merge, is what protects them.
+        enrichedJob.outputMetadata.merge(lookedUpTags) { jobValue, _ in jobValue }
+
         // Automatic HDR-to-SDR tone mapping trigger (Phase 3.9c / Issue #248)
         // When the source is HDR but the output codec or container cannot carry HDR,
         // automatically enable tone mapping to prevent washed-out colours.
-        var enrichedJob = job
         if let sourceInfo, sourceInfo.hasHDR,
            !job.profile.videoPassthrough,
            !job.profile.toneMapToSDR,
@@ -767,7 +935,16 @@ public final class EncodingEngine: @unchecked Sendable {
     }
 
     /// Cancel/stop every encoding process currently in flight.
+    ///
+    /// Also records a stop for every job inside `encode` that has not
+    /// started FFmpeg yet (#508 commit 6) — one being probed or auto-tagged —
+    /// which then throws `CancellationError` before launching anything. How
+    /// a RUNNING FFmpeg process is stopped is unchanged. With nothing in
+    /// flight this still does nothing at all.
     public func stopEncoding() {
+        lock.withLock {
+            stopRequestedJobIDs.formUnion(inFlightJobIDs.keys)
+        }
         for controller in currentControllers() {
             controller.stopEncoding()
         }
@@ -785,9 +962,18 @@ public final class EncodingEngine: @unchecked Sendable {
         controller(forJobID: jobID)?.resumeEncoding()
     }
 
-    /// Stop only the pass belonging to `jobID`. A no-op when that job has
-    /// no pass in flight.
+    /// Stop only the job `jobID`: its FFmpeg pass if one is running, and —
+    /// from #508 commit 6 — a stop flag if it is inside `encode` but has not
+    /// started FFmpeg yet (see `stopEncoding()`). Other jobs are untouched.
+    /// A no-op when that job is not in flight at all: no flag is recorded
+    /// for a job that isn't running, so a stale stop can never cancel it
+    /// when it does run later.
     public func stopEncoding(jobID: UUID) {
+        lock.withLock {
+            if inFlightJobIDs[jobID] != nil {
+                stopRequestedJobIDs.insert(jobID)
+            }
+        }
         controller(forJobID: jobID)?.stopEncoding()
     }
 
@@ -807,6 +993,101 @@ public final class EncodingEngine: @unchecked Sendable {
     }
 
     // MARK: - Private Helpers
+
+    /// Registers one `encode` call for `jobID` (see `inFlightJobIDs`).
+    private func beginTrackingJob(_ jobID: UUID) {
+        lock.withLock {
+            inFlightJobIDs[jobID, default: 0] += 1
+        }
+    }
+
+    /// Ends one `encode` call for `jobID`. When it was the last one for that
+    /// id, the id AND its stop flag are removed, so neither outlives the run.
+    private func endTrackingJob(_ jobID: UUID) {
+        lock.withLock {
+            let remaining = (inFlightJobIDs[jobID] ?? 1) - 1
+            if remaining > 0 {
+                inFlightJobIDs[jobID] = remaining
+            } else {
+                inFlightJobIDs.removeValue(forKey: jobID)
+                stopRequestedJobIDs.remove(jobID)
+            }
+        }
+    }
+
+    /// Whether a stop has been requested for `jobID` since it started.
+    /// Cheap and safe from any thread: the auto-tag runner polls it every
+    /// quarter of a second from a background task.
+    private func isStopRequested(jobID: UUID) -> Bool {
+        lock.withLock { stopRequestedJobIDs.contains(jobID) }
+    }
+
+    /// Step 5 of `encode`: runs the auto-tag lookup when this engine has a
+    /// settings source and the setting is on, publishes what happened on
+    /// `autoTagEvents`, and returns the tags to add (empty whenever nothing
+    /// is to be added).
+    ///
+    /// - Throws: `CancellationError` only — when the job is stopped, or the
+    ///   calling task cancelled, during the lookup. Nothing else a lookup
+    ///   does can make this throw, so a lookup can never fail an encode.
+    private func autoTagLookupIfSwitchedOn(
+        job: EncodingJobConfig,
+        sourceInfo: MediaFile?
+    ) async throws -> [String: String] {
+        // Read ONCE per job, now — never cached across jobs — so flipping
+        // the setting mid-queue applies from the next job. `nil` means no
+        // settings source or switched off: no events, no requests, and the
+        // encode is exactly what it would have been without auto-tagging.
+        guard let request = autoTagSettings?.currentRequest() else {
+            return [:]
+        }
+
+        let jobID = job.id
+        let fileName = job.inputURL.lastPathComponent
+        let events = autoTagEventContinuation
+
+        let report: AutoTagLookupReport
+        if let sourceInfo {
+            do {
+                report = try await AutoTagRunner.run(
+                    request: request,
+                    source: sourceInfo,
+                    jobTags: job.outputMetadata,
+                    shouldStop: { self.isStopRequested(jobID: jobID) },
+                    onLookingUp: { provider in
+                        events.yield(AutoTagJobEvent(jobID: jobID, fileName: fileName, kind: .lookingUp(provider)))
+                    }
+                )
+            } catch is CancellationError {
+                // A stop (or the task being cancelled). Passed on so the
+                // job ends as stopped; no `.lookup` event is published.
+                throw CancellationError()
+            } catch {
+                // Not expected: `AutoTagRunner.run` is documented to throw
+                // only `CancellationError`, turning every other problem into
+                // a report. Handled anyway because a tagging helper must
+                // never be able to fail an encode. The error's own text is
+                // deliberately NOT included: this path has no guarantee it
+                // went through the TMDB key redaction, and a URL-bearing
+                // error description could carry the key. Its type name
+                // cannot.
+                report = AutoTagLookupReport(
+                    outcome: .failed(reason: "The lookup failed unexpectedly (\(type(of: error)))."),
+                    provider: nil
+                )
+            }
+        } else {
+            // The probe failed (`encode` tolerates that and carries on), so
+            // there is nothing to identify the file from.
+            report = AutoTagLookupReport(
+                outcome: .skipped(reason: AutoTagRunner.Reasons.emptyProbe),
+                provider: nil
+            )
+        }
+
+        events.yield(AutoTagJobEvent(jobID: jobID, fileName: fileName, kind: .lookup(report)))
+        return report.metadataToAdd
+    }
 
     /// A lock-protected snapshot of every registered controller.
     ///

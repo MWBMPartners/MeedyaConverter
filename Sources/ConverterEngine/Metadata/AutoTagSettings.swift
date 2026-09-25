@@ -13,13 +13,14 @@
 // `UserDefaults` it was handed, and a gate that returns a plain-English
 // reason rather than a bare `false`.
 //
-// ⚠️ NOTHING IN THIS FILE IS CALLED BY THE ENGINE YET. `EncodingEngine`
-// reading `AutoTagSettingsSource.currentRequest()` at the start of a job is
-// issue #508's plan, commit 6 — see `.claude/plans/autotag-encode-plan.md`.
-// Until that commit lands, every type below is dead code exercised only by
-// its own tests (`AutoTagSettingsTests.swift`). Read a doc comment here that
-// describes what a caller "does" as describing what commit 6's caller WILL
-// do, not something already happening.
+// ⚠️ WHAT IS AND ISN'T WIRED UP. `EncodingEngine` calls
+// `AutoTagSettingsSource.currentRequest()` once at the start of every job —
+// but only an engine that was GIVEN a source when it was built (#508
+// commit 6). The app does not give its engine one until #508 commit 8, and
+// the Settings toggle that writes `autotag.enabled` is commit 9. Until
+// then, no real encode in the app reads these settings; they are exercised
+// by `AutoTagSettingsTests` and, through a real `encode`, by
+// `AutoTagEncodeDeliveryTests`. See `.claude/plans/autotag-encode-plan.md`.
 //
 // Auto-tagging is OFF by default. An absent `autotag.enabled` key reads as
 // `false` from `UserDefaults.bool(forKey:)`, which is exactly the default
@@ -218,9 +219,9 @@ public struct AutoTagRequest: Sendable {
 /// Builds an `AutoTagRequest` for the job about to run, reading the setting
 /// fresh every time it's asked.
 ///
-/// `EncodingEngine` (from #508 commit 6) is meant to hold exactly one of
-/// these and call `currentRequest()` once at the start of EACH job — never
-/// caching the result across jobs. That is the whole reason this type
+/// `EncodingEngine` (from #508 commit 6) holds at most one of these
+/// (`autoTagSettings`) and calls `currentRequest()` once at the start of
+/// EACH job — never caching the result across jobs. That is the whole reason this type
 /// exists rather than the engine just holding a captured `AutoTagConfig`:
 /// flipping the Settings toggle mid-queue must apply starting with the very
 /// next job, without restarting the app or re-creating the engine.
@@ -304,9 +305,9 @@ public final class AutoTagSettingsSource: @unchecked Sendable {
     /// runner (#508 commit 4) must treat that as "skip film lookups", never
     /// as a failure.
     ///
-    /// Nothing calls this yet — see this file's header. It exists for
-    /// `EncodingEngine` to call, starting at #508 commit 6; until then it is
-    /// exercised only by `AutoTagSettingsTests`.
+    /// Called by `EncodingEngine.encode(job:onProgress:)` once per job, for an
+    /// engine built with a settings source (#508 commit 6) — see this file's
+    /// header for why no app encode reaches it before #508 commit 8.
     public func currentRequest() -> AutoTagRequest? {
         let defaults = self.defaults()
         let config = AutoTagSettingsStore.config(in: defaults)

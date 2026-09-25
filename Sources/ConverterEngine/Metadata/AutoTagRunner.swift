@@ -12,10 +12,14 @@
 // `AutoTagRequest` (built per job by `AutoTagSettingsSource.currentRequest()`,
 // commit 3).
 //
-// ⚠️ WHAT THIS COMMIT DOES NOT DO YET — read before assuming anything runs:
-//   * NOTHING CALLS `AutoTagRunner.run` YET. `EncodingEngine` calling it after
-//     the source probe is #508 commit 6. Until then this file is exercised
-//     only by `AutoTagRunnerTests`.
+// ⚠️ WHAT IS AND ISN'T WIRED UP — read before assuming anything runs:
+//   * `EncodingEngine.encode(job:onProgress:)` calls `AutoTagRunner.run` after
+//     the source probe and before any FFmpeg pass (#508 commit 6) — but ONLY
+//     for an engine that was given an `AutoTagSettingsSource` when it was
+//     built, and only while the setting is on. The app does not give its
+//     engine one until #508 commit 8, so until then no real encode in the
+//     app reaches this file; `AutoTagEncodeDeliveryTests` drives it through
+//     a real `encode` with fake FFmpeg/ffprobe programs.
 //   * TV EPISODES ARE NOT LOOKED UP. A file whose name matches
 //     `FilenameParser`'s "S01E02" pattern is skipped (`Reasons.tvEpisode`).
 //   * NO ARTWORK, NO NFO, NO RENAMING. The NFO writer is commit 7; artwork
@@ -644,6 +648,15 @@ public enum AutoTagRunner {
     ///   - shouldStop: Returns `true` once the user has asked for this job to
     ///     stop. Called from a background task, so it must be cheap and safe
     ///     to call from any thread.
+    ///   - onLookingUp: Called at most once, with the service about to be
+    ///     asked, immediately before the FIRST request is sent — never for a
+    ///     skip (off, a TV name, no key, a music file with no artist, …),
+    ///     because a skip sends nothing. Added in #508 commit 6 so the engine
+    ///     can report "looking this file up on TMDB" only when that is true,
+    ///     without copying this function's skip decisions into the engine
+    ///     (a copy would drift). Called on the calling task, before the race
+    ///     starts, so it always happens before `run` returns. Defaults to
+    ///     doing nothing, so earlier callers are unchanged.
     /// - Returns: The report. Every failure is IN the report, never thrown.
     /// - Throws: `CancellationError` — and nothing else — when `shouldStop()`
     ///   returns `true` or the calling task is cancelled, before or during
@@ -653,7 +666,8 @@ public enum AutoTagRunner {
         request: AutoTagRequest,
         source: MediaFile,
         jobTags: [String: String],
-        shouldStop: @escaping @Sendable () -> Bool
+        shouldStop: @escaping @Sendable () -> Bool,
+        onLookingUp: @escaping @Sendable (MetadataSource) -> Void = { _ in }
     ) async throws -> AutoTagLookupReport {
         try throwIfStopped(shouldStop)
 
@@ -666,11 +680,13 @@ public enum AutoTagRunner {
             return .skipped(reason)
         case .film(let query):
             return try await runFilmLookup(
-                query: query, request: request, source: source, jobTags: jobTags, shouldStop: shouldStop
+                query: query, request: request, source: source, jobTags: jobTags,
+                shouldStop: shouldStop, onLookingUp: onLookingUp
             )
         case .music(let query):
             return try await runMusicLookup(
-                query: query, request: request, source: source, jobTags: jobTags, shouldStop: shouldStop
+                query: query, request: request, source: source, jobTags: jobTags,
+                shouldStop: shouldStop, onLookingUp: onLookingUp
             )
         }
     }
@@ -686,7 +702,8 @@ public enum AutoTagRunner {
         request: AutoTagRequest,
         source: MediaFile,
         jobTags: [String: String],
-        shouldStop: @escaping @Sendable () -> Bool
+        shouldStop: @escaping @Sendable () -> Bool,
+        onLookingUp: @escaping @Sendable (MetadataSource) -> Void = { _ in }
     ) async throws -> AutoTagLookupReport {
         let order = AutoTagger.determineLookupOrder(query: query, config: request.config)
         switch chooseProvider(from: order, runnable: [.tmdb], hasTMDBService: request.tmdbService != nil) {
@@ -700,6 +717,9 @@ public enum AutoTagRunner {
         guard let service = request.tmdbService else {
             return .skipped(Reasons.noTMDBKey)
         }
+
+        // Every skip is behind us: the next thing that happens is a request.
+        onLookingUp(.tmdb)
 
         let config = request.config
         let winner = try await race(
@@ -748,7 +768,8 @@ public enum AutoTagRunner {
         request: AutoTagRequest,
         source: MediaFile,
         jobTags: [String: String],
-        shouldStop: @escaping @Sendable () -> Bool
+        shouldStop: @escaping @Sendable () -> Bool,
+        onLookingUp: @escaping @Sendable (MetadataSource) -> Void = { _ in }
     ) async throws -> AutoTagLookupReport {
         guard let artist = query.artist?.trimmingCharacters(in: .whitespacesAndNewlines), !artist.isEmpty else {
             return .skipped(Reasons.noArtistForMusic)
@@ -765,6 +786,9 @@ public enum AutoTagRunner {
         case .lookUp:
             break
         }
+
+        // Every skip is behind us: the next thing that happens is a request.
+        onLookingUp(.musicBrainz)
 
         let service = request.musicBrainzService
         let config = request.config

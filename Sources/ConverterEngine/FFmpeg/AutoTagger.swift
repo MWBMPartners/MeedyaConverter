@@ -163,19 +163,20 @@ public enum NamingTemplate: String, Codable, Sendable, CaseIterable {
 /// **What this type actually does today.** It is a bag of stateless helper
 /// functions — filename parsing/sanitising, output-filename and NFO-path
 /// generation, lookup-order and confidence-threshold checks. None of them run
-/// automatically. Nothing in this codebase calls them from a real encode: the
-/// only callers outside this file are its own tests
-/// (`ConverterEngineTests+ToolingAndMetadata.swift`).
+/// on their own. `AutoTagRunner` (#508 commits 4-5) calls
+/// `determineLookupOrder` and `meetsThreshold`; the others (output-filename,
+/// NFO-path, artwork and filename-sanitising) have no caller outside this
+/// file and its own tests (`ConverterEngineTests+ToolingAndMetadata.swift`)
+/// yet.
 ///
-/// **What is missing, and where it is being built.** The piece that actually
-/// runs a lookup during an encode and merges the result into the job's
-/// metadata is being added incrementally under issue #508 — see
-/// `.claude/plans/autotag-encode-plan.md`. `AutoTagSettingsStore` and
-/// `AutoTagSettingsSource` (added in that plan's third commit) hold the
-/// setting and the fixed parts of the configuration; `EncodingEngine` reads
-/// them and calls into a runner (a later commit) that uses the helpers below.
-/// Until that wiring lands, changing `AutoTagConfig`'s fields has no visible
-/// effect on any encode.
+/// **What is wired, and what is not yet.** Issue #508 is adding the lookup
+/// to real encodes step by step — see `.claude/plans/autotag-encode-plan.md`.
+/// `AutoTagSettingsStore` / `AutoTagSettingsSource` (commit 3) hold the
+/// setting and the fixed parts of the configuration, and from commit 6
+/// `EncodingEngine.encode` reads them at the start of every job and runs
+/// `AutoTagRunner` — but only for an engine given a settings source. The app
+/// does not give its engine one until commit 8, so until then changing
+/// `AutoTagConfig`'s fields has no visible effect on any encode the app runs.
 ///
 /// Previously this type also had `buildMetadataArguments(result:config:)`,
 /// which was removed in this commit: it had no caller anywhere in `Sources/`

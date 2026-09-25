@@ -22,8 +22,10 @@
 // and then sorting its output back into "rows it appended" (safe to add) and
 // "rows it replaced" (must NOT be touched; the pre-existing value is kept).
 //
-// Nothing calls this yet. The runner that will call it during an encode is a
-// later commit in issue #508's plan (`.claude/plans/autotag-encode-plan.md`).
+// Called by `AutoTagRunner` when it accepts a match, which `EncodingEngine`
+// runs during an encode from #508 commit 6 — for an engine given an
+// `AutoTagSettingsSource`, which the app's engine is not until #508 commit 8
+// (`.claude/plans/autotag-encode-plan.md`).
 // ============================================================================
 
 import Foundation
