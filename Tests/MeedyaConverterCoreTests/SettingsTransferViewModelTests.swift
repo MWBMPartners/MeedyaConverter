@@ -457,12 +457,22 @@ final class SettingsTransferViewModelTests: XCTestCase {
         exportModel.exportSettings()
         XCTAssertNil(exportModel.errorMessage)
 
+        // The target needs a "General" setting the file does NOT mention, so
+        // Replace has something to remove and therefore something to
+        // confirm. An EMPTY target (the first version of this test) gives
+        // Replace nothing to remove. It then rightly applies straight away
+        // like a merge, since the confirmation exists to warn about
+        // removals, and the test's premise failed on CI (run 36132295070).
+        // The same setup as test_replaceMode_requiresConfirmationThenWrites.
         let targetDomain = world.makeDomain("cancel-dst")
+        targetDomain.defaults.set(true, forKey: "confirmBeforeEncoding")
         let targetStore = world.makeProfileStore("cancel-dst")
         let importModel = makeSettingsTransferTestModel(domain: targetDomain, profileStore: targetStore, importURL: fileURL)
 
         importModel.beginImport()
         importModel.setImportMode(.replace)
+        XCTAssertNotNil(importModel.importPreview?.replaceConfirmation,
+                        "precondition: Replace has something to remove, so it must ask")
         importModel.requestApply()
         XCTAssertTrue(importModel.isAwaitingReplaceConfirmation, "got as far as awaiting confirmation")
 
@@ -475,6 +485,8 @@ final class SettingsTransferViewModelTests: XCTestCase {
         XCTAssertFalse(importModel.isAwaitingReplaceConfirmation)
         XCTAssertNil(targetDomain.defaults.string(forKey: "appearanceMode"),
                     "cancel must never write, even after Replace was awaiting confirmation")
+        XCTAssertEqual(targetDomain.defaults.object(forKey: "confirmBeforeEncoding") as? Bool, true,
+                       "cancel must not remove what Replace would have removed")
     }
 
     // MARK: - Errors
