@@ -32,6 +32,32 @@ import Foundation
 public enum MeedyaDBSubmissionMode: String, Sendable {
     case anonymous
     case full
+
+    /// EXPLICIT order from narrowest (sends least) to widest (sends most) —
+    /// not the enum's declaration order, and not the raw value's string
+    /// comparison, either of which a reader would have to double-check
+    /// rather than simply read. `.anonymous` sends less than `.full` by
+    /// definition, so it is narrower.
+    ///
+    /// If MeedyaDB ever grows a third mode, add it here deliberately —
+    /// do not assume where it sits relative to the other two.
+    private var narrownessRank: Int {
+        switch self {
+        case .anonymous: return 0
+        case .full: return 1
+        }
+    }
+
+    /// The narrower (send-less) of two modes.
+    ///
+    /// `MeedyaDBContributor` uses this to combine a submission mode captured
+    /// at the start of a run with one re-read immediately before the network
+    /// call, so a `recheck` closure that is wrong — buggy, or handed a stale
+    /// value — can only ever make a run send LESS than it originally
+    /// promised, never more.
+    public static func narrower(_ a: MeedyaDBSubmissionMode, _ b: MeedyaDBSubmissionMode) -> MeedyaDBSubmissionMode {
+        a.narrownessRank <= b.narrownessRank ? a : b
+    }
 }
 
 /// The disc block of a `disc_ingest` submission.

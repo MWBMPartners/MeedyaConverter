@@ -166,6 +166,14 @@ public struct VideoDiscIdentifier: Sendable {
     ///     machine in `.full` mode.
     ///   - contribute: set false to identify only and send nothing.
     ///   - mode: `.anonymous` (the default) strips `labelText` before sending.
+    ///   - declinedBecause: #507 — forwarded to `MeedyaDBContributor.contribute`.
+    ///     The specific reason to report when `contribute` is `false`, if the
+    ///     caller has one; `nil` falls back to the generic "wasn't requested".
+    ///     Appended after the existing parameters, defaulting to `nil`, so no
+    ///     existing call site needs to change.
+    ///   - recheck: forwarded to `MeedyaDBContributor.contribute` — see its
+    ///     doc comment. `nil` here (the default) for callers with no way to
+    ///     re-read settings mid-run; the two GUI screens supply one.
     /// - Throws: `CancellationError`, and nothing else.
     public func identify(
         info: MakeMKVDiscInfo,
@@ -174,7 +182,9 @@ public struct VideoDiscIdentifier: Sendable {
         seedTitle: String? = nil,
         labelText: String? = nil,
         contribute: Bool = true,
-        mode: MeedyaDBSubmissionMode = .anonymous
+        mode: MeedyaDBSubmissionMode = .anonymous,
+        declinedBecause: String? = nil,
+        recheck: (@Sendable () -> MeedyaDBSubmissionMode?)? = nil
     ) async throws -> VideoDiscIdentificationResult {
 
         let signals = Self.signals(for: info, discType: discType, seedTitle: seedTitle)
@@ -208,7 +218,9 @@ public struct VideoDiscIdentifier: Sendable {
         let contribution = try await contributor.contribute(
             submission,
             requested: contribute,
-            mode: mode
+            mode: mode,
+            declinedBecause: declinedBecause,
+            recheck: recheck
         )
 
         return VideoDiscIdentificationResult(

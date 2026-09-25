@@ -891,12 +891,103 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         }
     }
 
+    /// A one-shot gate an async test can park a stub on, then release once it
+    /// has changed whatever shared state the test cares about. `NSLock`
+    /// throughout, never raw `lock()`/`unlock()` — CI runs
+    /// `swift test --parallel`, and Swift 6 refuses raw lock calls from an
+    /// `async` context anyway.
+    ///
+    /// `waitUntilParked()` exists so the TEST never races the code under
+    /// test: without it, a test could mutate state and call `open()` before
+    /// the candidate provider had actually reached `wait()`, silently turning
+    /// the whole scenario into a no-op that happens to pass.
+    private final class AsyncGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var isOpen = false
+        private var hasParked = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var parkObservers: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumeNow = false
+                var toWake: [CheckedContinuation<Void, Never>] = []
+                lock.withLock {
+                    if isOpen {
+                        resumeNow = true
+                    } else {
+                        waiters.append(continuation)
+                        hasParked = true
+                        toWake = parkObservers
+                        parkObservers = []
+                    }
+                }
+                for observer in toWake { observer.resume() }
+                if resumeNow { continuation.resume() }
+            }
+        }
+
+        func waitUntilParked() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumeNow = false
+                lock.withLock {
+                    if hasParked {
+                        resumeNow = true
+                    } else {
+                        parkObservers.append(continuation)
+                    }
+                }
+                if resumeNow { continuation.resume() }
+            }
+        }
+
+        func open() {
+            let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
+                isOpen = true
+                let w = waiters
+                waiters = []
+                return w
+            }
+            for continuation in toResume { continuation.resume() }
+        }
+    }
+
+    /// A lock-protected, mutable stand-in for the two live MeedyaDB providers
+    /// (`meedyaDBReadinessProvider`/`submissionModeProvider`) — the video
+    /// counterpart of `GateBox` above, for the same reason: a test needs to
+    /// flip readiness or the submission mode WHILE an identify run is
+    /// reading it, to prove the mid-run `recheck` in
+    /// `MeedyaDBContributor.contribute` re-reads live state.
+    private final class MeedyaDBSettingsBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _readiness: MeedyaDBReadiness
+        private var _mode: MeedyaDBSubmissionMode
+
+        init(readiness: MeedyaDBReadiness, mode: MeedyaDBSubmissionMode) {
+            self._readiness = readiness
+            self._mode = mode
+        }
+
+        var readiness: MeedyaDBReadiness {
+            get { lock.withLock { _readiness } }
+            set { lock.withLock { _readiness = newValue } }
+        }
+        var mode: MeedyaDBSubmissionMode {
+            get { lock.withLock { _mode } }
+            set { lock.withLock { _mode = newValue } }
+        }
+    }
+
     private func makeIdentifyViewModel(
         runner: MockMakeMKVRunner,
         meedyaDBReady: Bool = false,
         publishClient: PublishStubHTTPClient? = nil,
         submissionMode: MeedyaDBSubmissionMode = .anonymous,
-        candidateProvider: (@Sendable (DiscSignals) async throws -> [MetadataResult])? = nil
+        candidateProvider: (@Sendable (DiscSignals) async throws -> [MetadataResult])? = nil,
+        // When present, BOTH providers below read live from this box instead
+        // of the fixed `meedyaDBReady`/`submissionMode` values — see
+        // `DiscIdentifyViewModelTests`'s identical seam for why.
+        settingsBox: MeedyaDBSettingsBox? = nil
     ) -> MakeMKVRipViewModel {
         let readiness: MeedyaDBReadiness = meedyaDBReady
             ? .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
@@ -919,8 +1010,8 @@ final class MakeMKVRipViewModelTests: XCTestCase {
                     candidateProvider: candidateProvider
                 )
             },
-            submissionModeProvider: { submissionMode },
-            meedyaDBReadinessProvider: { readiness },
+            submissionModeProvider: { settingsBox?.mode ?? submissionMode },
+            meedyaDBReadinessProvider: { settingsBox?.readiness ?? readiness },
             // No TMDB key in CI, and none of these tests should ever want one.
             tmdbKeyProvider: { nil }
         )
@@ -1076,6 +1167,214 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         XCTAssertNotNil(result.lookupFailure, "the failure should be recorded\u{2026}")
         XCTAssertNil(vm.identifyErrorMessage, "\u{2026}but not shown as the run failing")
         XCTAssertEqual(publishClient.callCount, 1, "the disc is still worth contributing")
+    }
+
+    // MARK: - #507: the after-the-run caption names the right reason
+
+    /// Switched on but not finished being set up must name the missing
+    /// piece, not the generic "wasn't requested" — the same fix as the
+    /// identify screen's, proven independently here.
+    func test_incompleteMeedyaDB_namesTheMissingPieceNotGenericWording() async throws {
+        let box = MeedyaDBSettingsBox(readiness: .incomplete(reason: MeedyaDBGate.missingKeyReason), mode: .anonymous)
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        XCTAssertEqual(
+            vm.identifyResult?.contribution,
+            .notAttempted(reason: MeedyaDBGate.missingKeyReason),
+            "the specific missing-key reason must reach the result, not the generic wording"
+        )
+    }
+
+    /// Genuinely off must keep saying so.
+    func test_off_stillSaysWasntRequested() async throws {
+        let box = MeedyaDBSettingsBox(readiness: .off(reason: MeedyaDBGate.offReason), mode: .anonymous)
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await task.value
+
+        XCTAssertEqual(
+            vm.identifyResult?.contribution,
+            .notAttempted(reason: MeedyaDBContributor.notRequestedReason)
+        )
+    }
+
+    // MARK: - Mid-run: MeedyaDB settings changing while an identify run is in flight (F1)
+    //
+    // Each test scans normally, then starts `identify()` with a candidate
+    // provider parked on an `AsyncGate` — this is the video path's
+    // equivalent of the music path parking its TOC read: after the disc's
+    // own signals are ready, before `MeedyaDBContributor.contribute`'s
+    // `recheck`, which runs immediately before the network call. Only
+    // requests whose address contains `action=disc_ingest` count as an
+    // upload; `PublishStubHTTPClient` is dedicated to that seam here, so its
+    // `callCount` already reflects only those.
+
+    /// (a) Switching contributing OFF mid-run withdraws the submission
+    /// entirely and says so, rather than silently sending the old promise.
+    func test_midRun_meedyaDBSwitchedOff_withdrawsAndReportsWhy() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .anonymous
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            publishClient: publishClient,
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+        box.readiness = .off(reason: MeedyaDBGate.offReason)
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 0, "switching off mid-run must withdraw the upload")
+        XCTAssertEqual(
+            vm.identifyResult?.contribution,
+            .notAttempted(reason: MeedyaDBContributor.withdrawnReason)
+        )
+    }
+
+    /// (b) Narrowing full → anonymous mid-run must actually narrow what
+    /// reaches the wire, including stripping the label that was only ever
+    /// going to be sent because `.full` was chosen when the run started.
+    func test_midRun_fullNarrowedToAnonymous_sendsAnonymousAndDropsTheLabel() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .full
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            publishClient: publishClient,
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+        box.mode = .anonymous
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "narrowing must still deliver the disc's identifiers")
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"], "the label must never reach the wire once narrowed to anonymous")
+    }
+
+    /// (c) The reverse direction must NOT widen: a run that started
+    /// anonymous stays anonymous even if the live setting becomes full
+    /// before the upload goes out.
+    func test_midRun_anonymousWidenedToFull_staysAnonymous() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .anonymous
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            publishClient: publishClient,
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+        box.mode = .full
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1)
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous",
+                       "a run that started anonymous must not be widened to full mid-run")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"])
+    }
+
+    /// (f) Nothing changing at all must still deliver — the recheck must not
+    /// itself become a way to accidentally suppress a legitimate, unchanged
+    /// contribution.
+    func test_midRun_nothingChanged_stillContributes() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(
+            readiness: .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true)),
+            mode: .full
+        )
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            publishClient: publishClient,
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "an unchanged run must still actually contribute")
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "full")
+    }
+
+    // MARK: - The on-screen notice during a run (`runWillContribute`)
+
+    /// Without a frozen `runWillContribute`, turning contributing ON while an
+    /// identify run that started without it is still going would flip the
+    /// notice to promise a contribution that run has no way to make.
+    func test_runWillContribute_reflectsWhatThisRunPromised_notLiveSettings() async throws {
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: .off(reason: MeedyaDBGate.offReason), mode: .anonymous)
+        let vm = makeIdentifyViewModel(
+            runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]),
+            candidateProvider: { _ in await gate.wait(); return [] },
+            settingsBox: box
+        )
+        await scanned(vm)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task") }
+        await gate.waitUntilParked()
+
+        XCTAssertFalse(vm.runWillContribute, "this run started with contributing off")
+        box.readiness = .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
+        XCTAssertTrue(vm.willContribute, "precondition: the LIVE setting really did change")
+        XCTAssertFalse(vm.runWillContribute, "a run already in progress must not retroactively promise more")
+
+        gate.open()
+        await task.value
+
+        XCTAssertFalse(
+            vm.identifyResult?.contribution.didSubmit ?? true,
+            "switching on mid-run cannot make an already-declined run start contributing"
+        )
     }
 
     /// Scanning a DIFFERENT disc must not leave the previous one's name on

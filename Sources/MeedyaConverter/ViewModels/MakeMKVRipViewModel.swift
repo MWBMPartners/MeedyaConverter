@@ -655,6 +655,19 @@ final class MakeMKVRipViewModel {
         meedyaDBReadiness?.isReady == true
     }
 
+    /// What the CURRENTLY RUNNING (or most recently started) identify run
+    /// promised about contributing, frozen the instant it started.
+    ///
+    /// While `isIdentifying` is true the view must read THIS, never
+    /// `willContribute` — see `DiscIdentifyViewModel.runWillContribute`'s
+    /// doc comment for the full reasoning, which applies here unchanged: a
+    /// run's own `recheck` can only narrow or withdraw what it sends, never
+    /// widen it, so the on-screen notice must not retroactively promise more
+    /// than that for a run already under way. Stale once nothing is
+    /// identifying; the view picks between this and `willContribute` based
+    /// on `isIdentifying`.
+    private(set) var runWillContribute = false
+
     var canIdentify: Bool {
         !isScanning && !isIdentifying && discInfo != nil && selectedDiscType != nil
     }
@@ -702,7 +715,31 @@ final class MakeMKVRipViewModel {
         let config = meedyaDBReadiness?.config
         let contribute = config != nil
         let mode = submissionModeProvider()
+        // #507: the SPECIFIC reason when contributing was switched on but
+        // isn't finished being set up (`.incomplete`) — `nil` for `.off`
+        // (never asked) and `.ready` (nothing to decline).
+        let declinedBecause = meedyaDBReadiness?.declinedReason
         let identifier = videoIdentifierFactory(config, Self.tmdbService(from: tmdbKeyProvider()))
+
+        // Frozen the moment this run starts — see `runWillContribute`'s doc
+        // comment above.
+        runWillContribute = contribute
+
+        // Codex round-1 review, finding F1: re-checked immediately before
+        // the network call, from the SAME two providers used just above —
+        // never from `self`, so the closure is safe to hand to a background
+        // task. See `DiscIdentifyViewModel.startRun`'s twin of this closure
+        // for the full reasoning; it is identical here.
+        let capturedConfig = config
+        let readinessProvider = meedyaDBReadinessProvider
+        let modeProvider = submissionModeProvider
+        let recheck: @Sendable () -> MeedyaDBSubmissionMode? = {
+            guard let captured = capturedConfig,
+                  let current = readinessProvider().config,
+                  current == captured
+            else { return nil }
+            return modeProvider()
+        }
 
         isIdentifying = true
         isCancellingIdentify = false
@@ -714,7 +751,9 @@ final class MakeMKVRipViewModel {
                 discType: discType,
                 identifier: identifier,
                 contribute: contribute,
-                mode: mode
+                mode: mode,
+                declinedBecause: declinedBecause,
+                recheck: recheck
             )
         }
         identifyTask = task
@@ -726,7 +765,9 @@ final class MakeMKVRipViewModel {
         discType: DiscType,
         identifier: VideoDiscIdentifier,
         contribute: Bool,
-        mode: MeedyaDBSubmissionMode
+        mode: MeedyaDBSubmissionMode,
+        declinedBecause: String?,
+        recheck: @escaping @Sendable () -> MeedyaDBSubmissionMode?
     ) async {
         // The label is taken from the signals rather than read off `info`
         // again, so what is sent can never disagree with what was ranked.
@@ -740,7 +781,9 @@ final class MakeMKVRipViewModel {
                 discType: discType,
                 labelText: label,
                 contribute: contribute,
-                mode: mode
+                mode: mode,
+                declinedBecause: declinedBecause,
+                recheck: recheck
             )
         } catch is CancellationError {
             identifyErrorMessage = "Identifying the disc was cancelled."

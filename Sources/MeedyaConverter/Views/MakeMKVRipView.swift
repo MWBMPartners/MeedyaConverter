@@ -19,6 +19,7 @@
 // ============================================================================
 
 import SwiftUI
+import Combine
 import ConverterEngine
 
 // MARK: - MakeMKVRipView
@@ -90,6 +91,21 @@ struct MakeMKVRipView: View {
         .onChange(of: makemkvBinaryPath) { viewModel.refreshGate() }
         .onChange(of: meedyaDBEnabled) { viewModel.refreshMeedyaDBReadiness() }
         .onChange(of: meedyaDBBaseURL) { viewModel.refreshMeedyaDBReadiness() }
+        // `@AppStorage` above only covers the two settings that live in
+        // `UserDefaults`. The API key lives in the Keychain instead (see
+        // `MeedyaDBAccess.swift`'s file header), so adding, changing or
+        // removing it fires no `.onChange` here, and this screen's notice
+        // would go stale until something else redrew it. `APIKeyManager`
+        // posts this notification on every write — the same fix already
+        // applied to `SettingsView` and `MeedyaDBSettingsTab`, and to
+        // `DiscIdentifyView` alongside this (Codex round-1 review, finding
+        // F10).
+        .onReceive(
+            NotificationCenter.default.publisher(for: APIKeyManager.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            viewModel.refreshMeedyaDBReadiness()
+        }
         .onDisappear {
             viewModel.cancelRip()
             viewModel.cancelScan()
@@ -353,9 +369,20 @@ struct MakeMKVRipView: View {
     /// What this run WILL do about contributing, said before it runs. The
     /// view model derives the actual behaviour from the same value, so this
     /// can never promise something the run doesn't do.
+    ///
+    /// While an identification is in progress this reads `runWillContribute`
+    /// — what THAT run promised, frozen at its start — rather than the live
+    /// `willContribute`. See `MakeMKVRipViewModel.runWillContribute`'s doc
+    /// comment: a run's own re-check can only narrow or withdraw what it
+    /// sends, never widen it, so this notice must not promise more than that
+    /// for a run already under way.
+    private var showsWillContribute: Bool {
+        viewModel.isIdentifying ? viewModel.runWillContribute : viewModel.willContribute
+    }
+
     @ViewBuilder
     private var contributionNotice: some View {
-        if viewModel.willContribute {
+        if showsWillContribute {
             Text("This disc will also be contributed to MeedyaDB.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

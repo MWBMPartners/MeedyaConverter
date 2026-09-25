@@ -16,11 +16,19 @@
 //     reading it, so the screen explains what happened and offers a button
 //     (owner decision, 2026-09-21).
 //   * The screen always says whether a contribution will be sent, BEFORE the
-//     run rather than after, so nothing is uploaded that the user did not
-//     expect. With MeedyaDB off it says identification still works fine.
+//     run starts, and the promise it makes is the one the run keeps: the
+//     engine re-reads MeedyaDB's settings again immediately before anything
+//     is sent, so switching contributing off (or narrowing full to
+//     anonymous) while a run is in progress still takes effect for that run.
+//     With MeedyaDB off it says identification still works fine.
+//     LIMIT (worth saying plainly, not overselling this): once that request
+//     has been handed to the network layer, a change arriving after that
+//     instant cannot recall it — the re-check closes the window as far as it
+//     can be closed, not all the way.
 // ============================================================================
 
 import SwiftUI
+import Combine
 import ConverterEngine
 
 // MARK: - DiscIdentifyView
@@ -51,6 +59,21 @@ struct DiscIdentifyView: View {
         .onAppear { viewModel.refreshMeedyaDBReadiness() }
         .onChange(of: meedyaDBEnabled) { viewModel.refreshMeedyaDBReadiness() }
         .onChange(of: meedyaDBBaseURL) { viewModel.refreshMeedyaDBReadiness() }
+        // `@AppStorage` above only covers the two settings that live in
+        // `UserDefaults`. The API key does not — it lives in the Keychain
+        // (see `MeedyaDBAccess.swift`'s file header) — so adding, changing or
+        // removing it fires no `.onChange` here at all, and this notice would
+        // go on saying "no API key yet" (or the reverse) until something else
+        // happened to redraw the screen. `APIKeyManager` posts this
+        // notification on every write, which is how `SettingsView` and
+        // `MeedyaDBSettingsTab` already keep themselves in step (Codex
+        // round-1 review, finding F10).
+        .onReceive(
+            NotificationCenter.default.publisher(for: APIKeyManager.didChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            viewModel.refreshMeedyaDBReadiness()
+        }
         .onDisappear { viewModel.cancel() }
     }
 
@@ -180,10 +203,20 @@ struct DiscIdentifyView: View {
 
     // MARK: - Will anything be sent?
 
+    /// Whether the notice below should currently claim a contribution is
+    /// coming. While a run is in progress this is what THAT RUN promised,
+    /// frozen at its start (`runWillContribute`) — never the live settings
+    /// (`willContribute`), which can change mid-run without being able to
+    /// retroactively add a contribution to a run that started without one.
+    /// See `DiscIdentifyViewModel.runWillContribute`'s doc comment.
+    private var showsWillContribute: Bool {
+        viewModel.isWorking ? viewModel.runWillContribute : viewModel.willContribute
+    }
+
     @ViewBuilder
     private var contributionSection: some View {
         Section("MeedyaDB") {
-            if viewModel.willContribute {
+            if showsWillContribute {
                 Label(
                     "This disc will also be contributed to MeedyaDB.",
                     systemImage: "arrow.up.circle"

@@ -125,6 +125,24 @@ public enum MeedyaDBReadiness: Sendable, Equatable {
             return nil
         }
     }
+
+    /// The reason to show AFTER a run when contributing was requested but
+    /// could not go ahead, for #507. `nil` for `.ready` (there is nothing to
+    /// decline) and, deliberately, for `.off` too: that case did not ask for
+    /// anything, so `MeedyaDBContributor.notRequestedReason` ("wasn't
+    /// requested") stays the honest description of it.
+    ///
+    /// `.incomplete` is the one case this exists for: the user DID switch
+    /// contributing on, so telling them afterwards that it "wasn't
+    /// requested" is false — it was requested, and simply is not finished
+    /// being set up. `reason` already says exactly which piece is missing,
+    /// so this just makes that reason available to a caller that only has a
+    /// `Bool` to hand the contributor (see `MeedyaDBContributor.contribute`'s
+    /// `declinedBecause` parameter).
+    public var declinedReason: String? {
+        if case .incomplete(let reason) = self { return reason }
+        return nil
+    }
 }
 
 // MARK: - MeedyaDBGate
@@ -205,6 +223,14 @@ public struct MeedyaDBContributor: Sendable {
         "Contributing to MeedyaDB wasn't requested, so nothing was sent."
     public static let noIdentityReason =
         "This disc didn't produce a usable identifier, so nothing was sent."
+    /// Codex round-1 review, finding F1: shown when a `recheck` closure reports that MeedyaDB's settings
+    /// no longer match what this run started with, immediately before the
+    /// network call. Named and public for the same reason as the two above —
+    /// so a caller or a test can recognise this specific outcome without
+    /// string-matching, and so an edit to the wording is treated as a
+    /// user-facing copy change.
+    public static let withdrawnReason =
+        "MeedyaDB settings changed while this disc was being identified, so nothing was sent."
 
     private let publisher: MeedyaDBPublisher
 
@@ -217,17 +243,74 @@ public struct MeedyaDBContributor: Sendable {
         self.publisher = publisher
     }
 
+    /// - Parameters:
+    ///   - requested: whether the caller asked to contribute at all.
+    ///   - mode: the submission mode captured when the run started.
+    ///   - declinedBecause: #507. When `requested` is `false`, the SPECIFIC
+    ///     reason contributing did not happen, if the caller has one — for
+    ///     example "contributing is on, but MeedyaDB has no API key yet"
+    ///     (`MeedyaDBReadiness.declinedReason`). `nil` falls back to
+    ///     `notRequestedReason`, which stays correct for the two callers that
+    ///     genuinely never asked: the CLI without `--submit`, and MeedyaDB
+    ///     switched off outright (`MeedyaDBReadiness.declinedReason` returns
+    ///     `nil` for `.off` on purpose — see its doc comment).
+    ///   - recheck: an optional re-read of the CURRENT submission mode,
+    ///     called IMMEDIATELY before `publisher.submit` — as late as this
+    ///     type can make it, short of being inside the network call itself.
+    ///
+    ///     This exists because a run can take a while: the music path waits
+    ///     on a disc read plus one MusicBrainz request, and the video path
+    ///     can wait on up to about seven TMDB requests. Without a recheck,
+    ///     switching contributing off — or narrowing `.full` to `.anonymous`
+    ///     — after a run has already started has no effect, because the
+    ///     `mode` and `requested` above were captured once, at the start.
+    ///
+    ///     `recheck` returning `nil` means "the settings this run started
+    ///     with no longer hold" (switched off, server changed, key removed
+    ///     or replaced — see the app-layer callers for the exact equality
+    ///     check), and withdraws the whole submission. Returning a mode
+    ///     combines it with the CAPTURED `mode` by taking the NARROWER of
+    ///     the two (`MeedyaDBSubmissionMode.narrower`), so a `recheck`
+    ///     closure that is wrong can only make a run send LESS than it
+    ///     promised, never more — the narrowing happens HERE, in the one
+    ///     shared place, rather than trusting every caller to get it right.
+    ///
+    ///     `nil` (the default) skips the recheck entirely: the engine has no
+    ///     Keychain access (see this file's header) and cannot build one
+    ///     itself, and the CLI's settings cannot change while it runs, so
+    ///     there is nothing for it to re-read. The two GUI screens
+    ///     (`DiscIdentifyViewModel`, `MakeMKVRipViewModel`) are the callers
+    ///     that supply one, built from the same providers they used to
+    ///     capture the original config and mode.
+    ///
+    ///     STATED LIMIT: this closes the window as far as it can be closed
+    ///     from here, but not all the way. Once `publisher.submit` has
+    ///     handed the request to the network layer, a change arriving after
+    ///     that point cannot recall it — there is no message in flight to
+    ///     cancel.
     /// - Throws: `CancellationError`, and nothing else.
     public func contribute(
         _ submission: MeedyaDBDiscSubmissionInputs,
         requested: Bool,
-        mode: MeedyaDBSubmissionMode
+        mode: MeedyaDBSubmissionMode,
+        declinedBecause: String? = nil,
+        recheck: (@Sendable () -> MeedyaDBSubmissionMode?)? = nil
     ) async throws -> MeedyaDBContribution {
         guard requested else {
-            return .notAttempted(reason: Self.notRequestedReason)
+            return .notAttempted(reason: declinedBecause ?? Self.notRequestedReason)
         }
         guard submission.hasUsableIdentity else {
             return .notAttempted(reason: Self.noIdentityReason)
+        }
+
+        // The LAST check before anything leaves the machine. See `recheck`'s
+        // doc comment above for why this exists and what it cannot do.
+        var modeToSend = mode
+        if let recheck {
+            guard let currentMode = recheck() else {
+                return .notAttempted(reason: Self.withdrawnReason)
+            }
+            modeToSend = MeedyaDBSubmissionMode.narrower(mode, currentMode)
         }
 
         do {
@@ -235,7 +318,7 @@ public struct MeedyaDBContributor: Sendable {
                 disc: submission.disc,
                 identifiers: submission.identifiers,
                 candidates: submission.candidates,
-                mode: mode
+                mode: modeToSend
             )
             return .succeeded(result)
         } catch is CancellationError {

@@ -294,6 +294,15 @@ public struct MusicDiscIdentifier: Sendable {
     ///     Only ever leaves the machine in `.full` mode.
     ///   - contribute: set false to identify only and send nothing.
     ///   - mode: `.anonymous` (the default) strips `labelText` before sending.
+    ///   - declinedBecause: #507 — forwarded to `MeedyaDBContributor.contribute`.
+    ///     The specific reason to report when `contribute` is `false`, if the
+    ///     caller has one; `nil` falls back to the generic "wasn't requested".
+    ///     Appended after the existing parameters, defaulting to `nil`, so no
+    ///     existing call site (including the CLI's) needs to change.
+    ///   - recheck: forwarded to `MeedyaDBContributor.contribute` — see its
+    ///     doc comment. `nil` here (the default) for every caller that has no
+    ///     way to re-read settings mid-run, which includes this engine's own
+    ///     defaults and the CLI.
     /// - Returns: everything the run learned; partial failures are recorded
     ///   in the result rather than thrown.
     /// - Throws: `CancellationError`, and nothing else.
@@ -301,7 +310,9 @@ public struct MusicDiscIdentifier: Sendable {
         toc: DiscTableOfContents,
         labelText: String? = nil,
         contribute: Bool = true,
-        mode: MeedyaDBSubmissionMode = .anonymous
+        mode: MeedyaDBSubmissionMode = .anonymous,
+        declinedBecause: String? = nil,
+        recheck: (@Sendable () -> MeedyaDBSubmissionMode?)? = nil
     ) async throws -> MusicDiscIdentificationResult {
 
         let identity = Self.identity(for: toc)
@@ -343,7 +354,9 @@ public struct MusicDiscIdentifier: Sendable {
         let contribution = try await contributeIfPossible(
             submission,
             contribute: contribute,
-            mode: mode
+            mode: mode,
+            declinedBecause: declinedBecause,
+            recheck: recheck
         )
 
         return MusicDiscIdentificationResult(
@@ -363,9 +376,17 @@ public struct MusicDiscIdentifier: Sendable {
     private func contributeIfPossible(
         _ submission: MeedyaDBDiscSubmissionInputs,
         contribute: Bool,
-        mode: MeedyaDBSubmissionMode
+        mode: MeedyaDBSubmissionMode,
+        declinedBecause: String?,
+        recheck: (@Sendable () -> MeedyaDBSubmissionMode?)?
     ) async throws -> MeedyaDBContribution {
-        try await contributor.contribute(submission, requested: contribute, mode: mode)
+        try await contributor.contribute(
+            submission,
+            requested: contribute,
+            mode: mode,
+            declinedBecause: declinedBecause,
+            recheck: recheck
+        )
     }
 
     // MARK: - Plain-English reasons

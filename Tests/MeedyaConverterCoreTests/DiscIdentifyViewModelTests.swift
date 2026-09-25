@@ -46,25 +46,126 @@ final class DiscIdentifyViewModelTests: XCTestCase {
     }
 
     /// Counts how many times the drive was read, and what it returned.
+    ///
+    /// Optionally parks on an `AsyncGate` before returning, so a test can
+    /// change MeedyaDB's settings WHILE a run is in flight — reading the
+    /// disc happens before `MeedyaDBContributor.contribute`'s `recheck`, so
+    /// parking here reliably puts the test's edit before that recheck runs.
     private final class TOCReaderBox: @unchecked Sendable {
         private let lock = NSLock()
         private var attempts = 0
         private let outcomes: [Result<DiscTableOfContents, any Error>]
+        private let gate: AsyncGate?
 
         /// One outcome per expected read, in order; the last repeats.
-        init(_ outcomes: [Result<DiscTableOfContents, any Error>]) {
+        init(_ outcomes: [Result<DiscTableOfContents, any Error>], gate: AsyncGate? = nil) {
             self.outcomes = outcomes
+            self.gate = gate
         }
 
         var readCount: Int { lock.withLock { attempts } }
 
-        func next() throws -> DiscTableOfContents {
+        func next() async throws -> DiscTableOfContents {
+            await gate?.wait()
             let outcome: Result<DiscTableOfContents, any Error> = lock.withLock {
                 let index = min(attempts, outcomes.count - 1)
                 attempts += 1
                 return outcomes[index]
             }
             return try outcome.get()
+        }
+    }
+
+    /// A one-shot gate an async test can park a stub on, then release once it
+    /// has changed whatever shared state the test cares about. `NSLock`
+    /// throughout, never raw `lock()`/`unlock()` — CI runs
+    /// `swift test --parallel`, and Swift 6 refuses raw lock calls from an
+    /// `async` context anyway.
+    ///
+    /// `waitUntilParked()` exists so the TEST never races the code under
+    /// test: without it, a test could mutate state and call `open()` before
+    /// the run had actually reached `wait()`, silently turning the whole
+    /// scenario into a no-op that happens to pass.
+    private final class AsyncGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var isOpen = false
+        private var hasParked = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var parkObservers: [CheckedContinuation<Void, Never>] = []
+
+        /// Called by the code under test. Blocks until `open()` is called,
+        /// or returns immediately if `open()` already was.
+        func wait() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumeNow = false
+                var toWake: [CheckedContinuation<Void, Never>] = []
+                lock.withLock {
+                    if isOpen {
+                        resumeNow = true
+                    } else {
+                        waiters.append(continuation)
+                        hasParked = true
+                        toWake = parkObservers
+                        parkObservers = []
+                    }
+                }
+                for observer in toWake { observer.resume() }
+                if resumeNow { continuation.resume() }
+            }
+        }
+
+        /// Called by the TEST. Blocks until something has actually called
+        /// `wait()` and is parked.
+        func waitUntilParked() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumeNow = false
+                lock.withLock {
+                    if hasParked {
+                        resumeNow = true
+                    } else {
+                        parkObservers.append(continuation)
+                    }
+                }
+                if resumeNow { continuation.resume() }
+            }
+        }
+
+        /// Releases every waiter parked so far; any later `wait()` returns
+        /// immediately.
+        func open() {
+            let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
+                isOpen = true
+                let w = waiters
+                waiters = []
+                return w
+            }
+            for continuation in toResume { continuation.resume() }
+        }
+    }
+
+    /// A lock-protected, mutable stand-in for the two live MeedyaDB providers
+    /// (`meedyaDBReadinessProvider`/`submissionModeProvider`), so a test can
+    /// flip readiness or the submission mode WHILE a run is reading it —
+    /// proving the mid-run `recheck` in `MeedyaDBContributor.contribute`
+    /// actually re-reads live state rather than a snapshot. `NSLock`, never
+    /// raw lock/unlock, for the same `swift test --parallel` reason as above.
+    private final class MeedyaDBSettingsBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _readiness: MeedyaDBReadiness
+        private var _mode: MeedyaDBSubmissionMode
+
+        init(readiness: MeedyaDBReadiness, mode: MeedyaDBSubmissionMode) {
+            self._readiness = readiness
+            self._mode = mode
+        }
+
+        var readiness: MeedyaDBReadiness {
+            get { lock.withLock { _readiness } }
+            set { lock.withLock { _readiness = newValue } }
+        }
+        var mode: MeedyaDBSubmissionMode {
+            get { lock.withLock { _mode } }
+            set { lock.withLock { _mode = newValue } }
         }
     }
 
@@ -93,7 +194,14 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         unmountRunner: StubToolRunner = StubToolRunner(),
         meedyaDBReady: Bool = false,
         publishClient: PublishStubHTTPClient? = nil,
-        submissionMode: MeedyaDBSubmissionMode = .anonymous
+        submissionMode: MeedyaDBSubmissionMode = .anonymous,
+        // When present, BOTH providers below read live from this box instead
+        // of the fixed `meedyaDBReady`/`submissionMode` values — this is what
+        // lets an F1 test change readiness or mode WHILE a run is in flight,
+        // through the SAME two seams `startRun` captures at the beginning and
+        // the `recheck` closure reads again immediately before the network
+        // call.
+        settingsBox: MeedyaDBSettingsBox? = nil
     ) -> DiscIdentifyViewModel {
         let readiness: MeedyaDBReadiness = meedyaDBReady
             ? .ready(MeedyaDBPublisherConfig(baseURL: "https://db.example", apiKey: "k", enabled: true))
@@ -117,11 +225,11 @@ final class DiscIdentifyViewModelTests: XCTestCase {
                     publisher: MeedyaDBPublisher(config: config, httpClient: publisherClient)
                 )
             },
-            submissionModeProvider: { submissionMode },
+            submissionModeProvider: { settingsBox?.mode ?? submissionMode },
             unmounter: DiscUnmounter(runner: unmountRunner, diskutilPath: "/usr/sbin/diskutil"),
-            tocReader: { _ in try toc.next() },
+            tocReader: { _ in try await toc.next() },
             tocFileReader: { _ in "" },
-            meedyaDBReadinessProvider: { readiness }
+            meedyaDBReadinessProvider: { settingsBox?.readiness ?? readiness }
         )
     }
 
@@ -385,6 +493,265 @@ final class DiscIdentifyViewModelTests: XCTestCase {
         let vm = makeViewModel(toc: TOCReaderBox([.success(audioCD())]), meedyaDBReady: true)
         vm.refreshMeedyaDBReadiness()
         XCTAssertTrue(vm.willContribute)
+    }
+
+    // MARK: - #507: the after-the-run caption names the right reason
+
+    /// Switched on but not finished being set up must name the missing
+    /// piece, not the generic "wasn't requested" — that generic wording is
+    /// what made this indistinguishable from `.off` before #507.
+    func test_incompleteMeedyaDB_namesTheMissingPieceNotGenericWording() async throws {
+        let box = MeedyaDBSettingsBox(readiness: .incomplete(reason: MeedyaDBGate.missingKeyReason), mode: .anonymous)
+        let vm = makeViewModel(toc: TOCReaderBox([.success(audioCD())]), settingsBox: box)
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        XCTAssertEqual(
+            vm.result?.contribution,
+            .notAttempted(reason: MeedyaDBGate.missingKeyReason),
+            "the specific missing-key reason must reach the result, not the generic wording"
+        )
+    }
+
+    /// Genuinely off must keep saying so — #507's fix must not change this
+    /// case's wording.
+    func test_off_stillSaysWasntRequested() async throws {
+        let box = MeedyaDBSettingsBox(readiness: .off(reason: MeedyaDBGate.offReason), mode: .anonymous)
+        let vm = makeViewModel(toc: TOCReaderBox([.success(audioCD())]), settingsBox: box)
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await task.value
+
+        XCTAssertEqual(
+            vm.result?.contribution,
+            .notAttempted(reason: MeedyaDBContributor.notRequestedReason)
+        )
+    }
+
+    // MARK: - Mid-run: MeedyaDB settings changing while a run is in flight (F1)
+    //
+    // Each test parks the TOC read on an `AsyncGate`, changes the shared
+    // `MeedyaDBSettingsBox` the view model's providers are reading from,
+    // THEN releases the gate — so the change is guaranteed to land before
+    // `MeedyaDBContributor.contribute`'s `recheck`, which runs immediately
+    // before the network call, ever fires. Only requests whose address
+    // contains `action=disc_ingest` count as an upload: `PublishStubHTTPClient`
+    // is dedicated to the MeedyaDB publisher seam here (the MusicBrainz
+    // lookup goes through a separate `OfflineStubHTTPClient`), so its
+    // `callCount` already only reflects `disc_ingest` requests.
+
+    private func readyReadiness(
+        baseURL: String = "https://db.example",
+        apiKey: String = "k"
+    ) -> MeedyaDBReadiness {
+        .ready(MeedyaDBPublisherConfig(baseURL: baseURL, apiKey: apiKey, enabled: true))
+    }
+
+    private func audioCDWithLabel(_ title: String) -> DiscTableOfContents {
+        DiscTableOfContents(
+            tracks: [
+                DiscTrack(number: 1, startSector: 0, sectorCount: 18_000),
+                DiscTrack(number: 2, startSector: 18_000, sectorCount: 21_000),
+            ],
+            leadOutSector: 55_500,
+            cdText: CDTextInfo(albumTitle: title)
+        )
+    }
+
+    /// (a) Switching contributing OFF mid-run withdraws the submission
+    /// entirely and says so, rather than silently sending the old promise.
+    func test_midRun_meedyaDBSwitchedOff_withdrawsAndReportsWhy() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(), mode: .anonymous)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        box.readiness = .off(reason: MeedyaDBGate.offReason)
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 0, "switching off mid-run must withdraw the upload")
+        XCTAssertEqual(
+            vm.result?.contribution,
+            .notAttempted(reason: MeedyaDBContributor.withdrawnReason)
+        )
+    }
+
+    /// (b) Narrowing full → anonymous mid-run must actually narrow what
+    /// reaches the wire, including stripping a label that was only ever
+    /// going to be sent because `.full` was chosen when the run started.
+    func test_midRun_fullNarrowedToAnonymous_sendsAnonymousAndDropsTheLabel() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(), mode: .full)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCDWithLabel("My Private Disc Label"))], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        box.mode = .anonymous
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "narrowing must still deliver the disc's identifiers")
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"], "the label must never reach the wire once narrowed to anonymous")
+    }
+
+    /// (c) The reverse direction must NOT widen: a run that started
+    /// anonymous stays anonymous even if the live setting becomes full
+    /// before the upload goes out.
+    func test_midRun_anonymousWidenedToFull_staysAnonymous() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(), mode: .anonymous)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCDWithLabel("My Private Disc Label"))], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        box.mode = .full
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1)
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "anonymous",
+                       "a run that started anonymous must not be widened to full mid-run")
+        let disc = try XCTUnwrap(sent["disc"] as? [String: Any])
+        XCTAssertNil(disc["labelText"])
+    }
+
+    /// (d) The server address changing mid-run is a config change like any
+    /// other — the live config no longer equals the one this run captured,
+    /// so it withdraws exactly as switching off does.
+    func test_midRun_serverAddressChanged_withdraws() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(baseURL: "https://db.example"), mode: .anonymous)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        box.readiness = readyReadiness(baseURL: "https://a-different-server.example")
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 0, "a changed server address must withdraw, not redirect")
+        XCTAssertEqual(vm.result?.contribution, .notAttempted(reason: MeedyaDBContributor.withdrawnReason))
+    }
+
+    /// (e) The API key being removed mid-run must withdraw too — this
+    /// exercises the OTHER branch of the equality check, where the live
+    /// config disappears entirely (`.incomplete`) rather than merely
+    /// differing (`.ready` with different fields, covered by (d)).
+    func test_midRun_apiKeyRemoved_withdraws() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(), mode: .anonymous)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        box.readiness = .incomplete(reason: MeedyaDBGate.missingKeyReason)
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 0, "a removed API key must withdraw the upload")
+        XCTAssertEqual(vm.result?.contribution, .notAttempted(reason: MeedyaDBContributor.withdrawnReason))
+    }
+
+    /// (f) Nothing changing at all must still deliver — the recheck must not
+    /// itself become a way to accidentally suppress a legitimate, unchanged
+    /// contribution.
+    func test_midRun_nothingChanged_stillContributes() async throws {
+        let publishClient = PublishStubHTTPClient()
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: readyReadiness(), mode: .full)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())], gate: gate),
+            publishClient: publishClient,
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(publishClient.callCount, 1, "an unchanged run must still actually contribute")
+        let body = try XCTUnwrap(publishClient.lastBody)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["submission"] as? String, "full")
+    }
+
+    // MARK: - The on-screen notice during a run (`runWillContribute`)
+
+    /// The regression #… F1's screen-wiring half exists for: without a
+    /// frozen `runWillContribute`, turning contributing ON while a run that
+    /// started without it is still going would flip the notice to promise a
+    /// contribution that run has no way to make.
+    func test_runWillContribute_reflectsWhatThisRunPromised_notLiveSettings() async throws {
+        let gate = AsyncGate()
+        let box = MeedyaDBSettingsBox(readiness: .off(reason: MeedyaDBGate.offReason), mode: .anonymous)
+        let vm = makeViewModel(
+            toc: TOCReaderBox([.success(audioCD())], gate: gate),
+            settingsBox: box
+        )
+        vm.devicePath = "/dev/rdisk2"
+
+        guard let task = vm.identify() else { return XCTFail("expected a task") }
+        await gate.waitUntilParked()
+
+        XCTAssertFalse(vm.runWillContribute, "this run started with contributing off")
+        // The live setting flips ON while the run is still going...
+        box.readiness = readyReadiness()
+        XCTAssertTrue(vm.willContribute, "precondition: the LIVE setting really did change")
+        // ...but the frozen promise for the run already in progress must not
+        // follow it, because that run's own `recheck` can only narrow or
+        // withdraw, never add a contribution that was never asked for.
+        XCTAssertFalse(vm.runWillContribute, "a run already in progress must not retroactively promise more")
+
+        gate.open()
+        await task.value
+
+        XCTAssertFalse(
+            vm.result?.contribution.didSubmit ?? true,
+            "switching on mid-run cannot make an already-declined run start contributing"
+        )
     }
 
     // MARK: - Guards and blocked reasons

@@ -137,6 +137,21 @@ final class DiscIdentifyViewModel {
         meedyaDBReadiness?.isReady == true
     }
 
+    /// What the CURRENTLY RUNNING (or most recently started) run promised
+    /// about contributing, frozen the instant it started.
+    ///
+    /// While `isWorking` is true the view must read THIS, never
+    /// `willContribute` — `willContribute` re-reads the live settings, and a
+    /// run's own `MeedyaDBContributor.contribute` `recheck` can only narrow
+    /// or withdraw what that run sends, never retroactively widen it. If the
+    /// view kept showing live settings during a run, turning contributing ON
+    /// partway through would flip the notice to "will be contributed" for a
+    /// run that started with it off and has no way to turn it on for itself
+    /// — a promise the run cannot keep. Once nothing is running this is
+    /// stale and `willContribute` is what should be shown instead; the view
+    /// picks between the two based on `isWorking`.
+    private(set) var runWillContribute = false
+
     // MARK: - Running
 
     private(set) var isWorking = false
@@ -229,6 +244,37 @@ final class DiscIdentifyViewModel {
         let identifier = identifierFactory(config)
         let contribute = config != nil
         let mode = submissionModeProvider()
+        // #507: the SPECIFIC reason when contributing was switched on but
+        // isn't finished being set up (`.incomplete`) — `nil` for `.off`
+        // (never asked) and `.ready` (nothing to decline), so the contributor
+        // still falls back to "wasn't requested" for those.
+        let declinedBecause = meedyaDBReadiness?.declinedReason
+
+        // Frozen the moment this run starts — see `runWillContribute`'s doc
+        // comment. Must be set from the same `contribute` value the run
+        // itself is about to use, for the same reason `contribute` is
+        // derived from `config` above rather than computed twice.
+        runWillContribute = contribute
+
+        // Codex round-1 review, finding F1: re-checked immediately before
+        // the network call, from the SAME two providers used just above to
+        // capture `config` and `mode` — never from `self`, so this closure
+        // is safe to hand to a background task (see its `@Sendable`).
+        // `capturedConfig` is this run's own snapshot; the run withdraws
+        // unless the LIVE config is still EXACTLY that snapshot (switching
+        // off, changing the server, or removing/replacing the key all change
+        // it), and otherwise narrows to whatever the live submission mode is
+        // now via `MeedyaDBSubmissionMode.narrower` inside the contributor.
+        let capturedConfig = config
+        let readinessProvider = meedyaDBReadinessProvider
+        let modeProvider = submissionModeProvider
+        let recheck: @Sendable () -> MeedyaDBSubmissionMode? = {
+            guard let captured = capturedConfig,
+                  let current = readinessProvider().config,
+                  current == captured
+            else { return nil }
+            return modeProvider()
+        }
 
         isWorking = true
         isCancelling = false
@@ -242,7 +288,9 @@ final class DiscIdentifyViewModel {
                 source: source,
                 identifier: identifier,
                 contribute: contribute,
-                mode: mode
+                mode: mode,
+                declinedBecause: declinedBecause,
+                recheck: recheck
             )
         }
         work = task
@@ -265,7 +313,9 @@ final class DiscIdentifyViewModel {
         source: Source,
         identifier: MusicDiscIdentifier,
         contribute: Bool,
-        mode: MeedyaDBSubmissionMode
+        mode: MeedyaDBSubmissionMode,
+        declinedBecause: String?,
+        recheck: @escaping @Sendable () -> MeedyaDBSubmissionMode?
     ) async {
         do {
             let toc = try await loadTOC(source)
@@ -282,7 +332,9 @@ final class DiscIdentifyViewModel {
                 toc: toc,
                 labelText: toc.cdText?.albumTitle,
                 contribute: contribute,
-                mode: mode
+                mode: mode,
+                declinedBecause: declinedBecause,
+                recheck: recheck
             )
             result = outcome
             statusMessage = nil
