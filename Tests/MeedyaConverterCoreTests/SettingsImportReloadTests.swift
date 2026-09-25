@@ -48,7 +48,16 @@ import ConverterEngine
 /// .swift`, gives in full). A free function rather than a shared type
 /// because each test here only ever needs ONE suite.
 private func makeReloadTestSuite(root: URL, _ label: String) -> UserDefaults {
-    let name = root.appendingPathComponent("\(label).plist").path
+    // Named by an absolute path WITHOUT a ".plist" suffix, inside a
+    // "Preferences" folder: exactly the naming the engine's
+    // SettingsTransferTestSupport uses, which passes on CI. An earlier
+    // version added ".plist". On the CI runner (macOS 15),
+    // `persistentDomain(forName:)`, the call SettingsDomain reads
+    // through, then found NOTHING, so every export came back empty and
+    // four tests failed (CI run 36131537575). It worked on the owner's
+    // newer macOS, which is why local checks didn't catch it. macOS adds
+    // ".plist" to the file itself.
+    let name = root.appendingPathComponent("Preferences").appendingPathComponent(label).path
     guard let defaults = UserDefaults(suiteName: name) else {
         fatalError("UserDefaults(suiteName:) refused \(name)")
     }
@@ -59,7 +68,11 @@ private func makeReloadTestSuite(root: URL, _ label: String) -> UserDefaults {
 private func makeReloadTestRoot() -> URL {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("settings-import-reload-tests-\(UUID().uuidString)")
-    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    // Also create the "Preferences" folder the path-named suites live in, as
+    // the engine's SettingsTransferTestSupport does (see makeReloadDomain).
+    try? FileManager.default.createDirectory(
+        at: root.appendingPathComponent("Preferences"), withIntermediateDirectories: true
+    )
     return root
 }
 

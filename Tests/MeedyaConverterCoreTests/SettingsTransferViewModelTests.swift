@@ -61,14 +61,29 @@ private final class SettingsTransferTestWorld {
     init() {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("settings-transfer-vm-tests-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // The "Preferences" folder that makeDomain's path-named suites live
+        // in is created up front, as the engine's SettingsTransferTestSupport
+        // does. On an older macOS the settings service may not create a
+        // missing folder, which would silently lose the suite.
+        try? FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Preferences"), withIntermediateDirectories: true
+        )
     }
 
     /// A settings domain stored at a path inside `root`, so its file
     /// disappears when `root` is removed rather than lingering in
     /// `~/Library/Preferences` (see the file overview).
     func makeDomain(_ label: String) -> SettingsDomain {
-        let name = root.appendingPathComponent("\(label).plist").path
+        // Named by an absolute path WITHOUT a ".plist" suffix, inside a
+        // "Preferences" folder: exactly the naming the engine's
+        // SettingsTransferTestSupport uses, which passes on CI. An earlier
+        // version added ".plist". On the CI runner (macOS 15),
+        // `persistentDomain(forName:)`, the call SettingsDomain reads
+        // through, then found NOTHING, so every export came back empty and
+        // four tests failed (CI run 36131537575). It worked on the owner's
+        // newer macOS, which is why local checks didn't catch it. macOS adds
+        // ".plist" to the file itself.
+        let name = root.appendingPathComponent("Preferences").appendingPathComponent(label).path
         suiteNames.append(name)
         guard let defaults = UserDefaults(suiteName: name) else {
             fatalError("UserDefaults(suiteName:) refused \(name)")
