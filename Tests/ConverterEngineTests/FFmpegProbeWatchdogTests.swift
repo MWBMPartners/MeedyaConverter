@@ -244,6 +244,82 @@ final class FFmpegProbeWatchdogTests: XCTestCase {
         }
     }
 
+    // MARK: - Output still arriving when FFprobe exits (CI red on 2a948bf, #508)
+
+    /// FFprobe has exited but its output has not all been read yet: the
+    /// probe must wait for end-of-file, not give up after a fixed wait.
+    ///
+    /// WHAT WENT WRONG. The probe used to wait 500 ms per drainer after
+    /// FFprobe exited, then treat whatever had been read as the whole
+    /// output. On a busy machine the drainer threads (low priority) can
+    /// be that late collecting output FFprobe has already written, and
+    /// good output then comes back as "FFprobe produced no output". That
+    /// is the most likely reason CI went red on 2a948bf; see the comment
+    /// at the wait in `FFmpegProbe.runFFprobe` for the evidence.
+    ///
+    /// WHY THIS SHAPE. From the probe's side, a late READER and a late
+    /// WRITER look the same: FFprobe has exited, and end-of-file has not
+    /// been read yet. A late reader needs a starved CPU, which a test
+    /// cannot arrange reliably. A late writer can be arranged exactly.
+    /// Here the script exits at once, and a background child that shares
+    /// its stdout writes the answer 2 seconds later. That is longer than
+    /// the old waits added together (2 × 500 ms), so before the fix this
+    /// failed every time, with `.invalidOutput`.
+    func test_runFFprobe_outputStillArrivingAfterExit_isWaitedFor_notThrownAway() throws {
+        let script = """
+        #!/bin/sh
+        ( sleep 2; printf 'late but complete\\n' ) &
+        exit 0
+        """
+        let path = try makeFixture(script)
+        let probe = FFmpegProbe(
+            ffprobePath: path,
+            timeoutSeconds: 10.0,
+            byteCap: 1_000_000
+        )
+
+        let data = try probe.runFFprobe(arguments: [])
+        XCTAssertEqual(String(data: data, encoding: .utf8), "late but complete\n")
+    }
+
+    /// The other side of the same wait. When the pipe stays open past the
+    /// watchdog's final deadline, the result is `.timeout`, never the
+    /// fragment read so far.
+    ///
+    /// The script writes the start of a JSON answer and exits. A
+    /// background `sleep` keeps its stdout open for 10 seconds, well past
+    /// the deadline (0.5 s watchdog + 3 s SIGKILL grace). Before the
+    /// fix, the fragment `{"streams":[` came back after about 1 second as
+    /// if it were the whole output.
+    func test_runFFprobe_pipeHeldOpenPastTheDeadline_throwsTimeout_neverAFragment() throws {
+        let script = """
+        #!/bin/sh
+        printf '{"streams":['
+        sleep 10 &
+        exit 0
+        """
+        let path = try makeFixture(script)
+        let probe = FFmpegProbe(
+            ffprobePath: path,
+            timeoutSeconds: 0.5,
+            byteCap: 1_000_000
+        )
+
+        let start = ProcessInfo.processInfo.systemUptime
+        XCTAssertThrowsError(try probe.runFFprobe(arguments: [])) { error in
+            guard case FFmpegProbeError.timeout(let seconds) = error else {
+                return XCTFail("Expected .timeout, got \(error)")
+            }
+            XCTAssertEqual(seconds, 0.5, accuracy: 0.001)
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - start
+
+        // The wait ends at the deadline (about 3.5 s), not when the 10 s
+        // `sleep` lets go of the pipe. Same loose 7 s CI ceiling as the
+        // SIGTERM test above, and still well short of 10 s.
+        XCTAssertLessThan(elapsed, 7.0, "the wait must end at the watchdog's deadline (got \(elapsed)s)")
+    }
+
     // MARK: - Path that doesn't exist
 
     func test_runFFprobe_nonexistentBinary_throwsNotAvailable() throws {

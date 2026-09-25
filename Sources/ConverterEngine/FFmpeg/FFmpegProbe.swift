@@ -241,6 +241,14 @@ public final class FFmpegProbe: Sendable {
     ///    kept reading. The two-drainer pattern is the standard
     ///    Process pipe-deadlock-avoidance recipe.
     ///
+    /// And one rule about finishing: **when FFprobe exits by itself, its
+    /// output counts only once both drainers have read to end-of-file.**
+    /// That wait is bounded by the watchdog's own final (SIGKILL)
+    /// deadline, never by a shorter guess, and running out of time is
+    /// `.timeout`, never a partial output. See the comment at the wait
+    /// below for the flat 500 ms wait this replaced, and why it lost
+    /// good output on a busy machine.
+    ///
     /// `internal` rather than `private` so the watchdog tests in
     /// the test target (which uses `@testable import
     /// ConverterEngine`) can drive the path directly with mocked
@@ -292,8 +300,13 @@ public final class FFmpegProbe: Sendable {
         // script with a 1-second timeout exits within ~5s wall-
         // clock instead of running the full 30 seconds.
         // -------------------------------------------------------
+        // The watchdog's final deadline. It is also the limit on waiting
+        // for the drainers after FFprobe exits by itself (see "Wait for
+        // the two drainers" below), so that wait adds no new way for a
+        // probe to run longer than the watchdog already allowed.
+        let killDeadline = DispatchTime.now() + timeoutSeconds + 3.0
         let killTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        killTimer.schedule(deadline: .now() + timeoutSeconds + 3.0, leeway: .milliseconds(50))
+        killTimer.schedule(deadline: killDeadline, leeway: .milliseconds(50))
         killTimer.setEventHandler { [weak process] in
             guard let p = process else { return }
             // SIGKILL escalation, gated on !finished + isRunning under
@@ -359,13 +372,72 @@ public final class FFmpegProbe: Sendable {
         timer.cancel()
         killTimer.cancel()
 
-        // Drainers will see EOF on the now-closed pipes and
-        // signal. Wait briefly so we don't lose their final
-        // bytes; a short ceiling guards against the kernel
-        // taking longer than expected to close pipes after
-        // SIGKILL.
-        _ = stdoutDone.wait(timeout: .now() + .milliseconds(500))
-        _ = stderrDone.wait(timeout: .now() + .milliseconds(500))
+        // -------------------------------------------------------
+        // Wait for the two drainers to reach end-of-file.
+        //
+        // FFPROBE EXITED BY ITSELF: its output is complete only once
+        // both drainers have read to end-of-file, so wait for exactly
+        // that. The wait is bounded by `killDeadline`, the watchdog's
+        // own final deadline, and never by a shorter guess.
+        //
+        // WHAT THIS REPLACED, AND WHY IT WAS WRONG. This used to be a
+        // flat 500 ms per drainer, after which whatever had been read
+        // so far was treated as the whole output. That is a race with
+        // the scheduler, not a property of FFprobe. The drainers run
+        // at `.utility` priority, so on a busy machine they may simply
+        // not get a CPU for half a second after FFprobe has exited. The
+        // probe then threw "FFprobe produced no output" (or a JSON
+        // error, for a half-read answer) for a file FFprobe had read
+        // perfectly well. `EncodingEngine.encode` tolerates a failed
+        // probe, so the job then carried on silently WITHOUT the
+        // source's duration, HDR / Dolby Vision details and tags.
+        //
+        // That is what turned CI red on 2a948bf (#508). On the 3-CPU
+        // macos-15 runner, the second job's probe on one engine failed,
+        // so auto-tagging skipped the file as "nothing could be read".
+        // Both failing tests also ran about a second longer there than
+        // locally, which is these two 500 ms waits running out. (CI
+        // cannot show the error itself: `encode` swallows it.) On a
+        // developer Mac under heavy load, this wait was then seen
+        // running out while a drainer was still working.
+        //
+        // FFmpegProcessController's pipe handlers made it much likelier
+        // straight after an encode. They kept spinning at end-of-file,
+        // at a higher priority than these drainers, right through the
+        // next job's probe. That is fixed in FFmpegProcessController.
+        // But no amount of CPU contention should be able to fail a
+        // probe, so this wait is fixed as well.
+        //
+        // Why the wait still has a limit. A process FFprobe started
+        // (for example a wrapper script's leftover background child)
+        // can hold the pipe open after FFprobe itself has gone, and
+        // then end-of-file never comes. Running out of time is reported
+        // as `.timeout` below, never as success with part of an output.
+        //
+        // THE WATCHDOG OR THE BYTE CAP ENDED THE RUN: the output is
+        // thrown away regardless, so keep the old short grace. This
+        // matters. A killed shell script's own child (the `sleep` in
+        // FFmpegProbeWatchdogTests) keeps the pipe open, and waiting
+        // for it would add its whole run time to an error that is
+        // already known. `timedOut` cannot change after `markFinished`
+        // above. `capExceededStream` still can: when an over-sized
+        // output's last part is still in the pipe as FFprobe exits, a
+        // drainer trips the cap while reading it. That drainer then
+        // stops and signals, so the wait ends, and the classification
+        // below re-reads the flag and reports the cap.
+        // -------------------------------------------------------
+        let drainersFinished: Bool
+        if state.timedOut || state.capExceededStream != nil {
+            _ = stdoutDone.wait(timeout: .now() + .milliseconds(500))
+            _ = stderrDone.wait(timeout: .now() + .milliseconds(500))
+            // Never read: on this path the cap or watchdog error below
+            // is always thrown first.
+            drainersFinished = false
+        } else {
+            let stdoutFinished = stdoutDone.wait(timeout: killDeadline) == .success
+            let stderrFinished = stderrDone.wait(timeout: killDeadline) == .success
+            drainersFinished = stdoutFinished && stderrFinished
+        }
 
         // -------------------------------------------------------
         // Classify the result.
@@ -379,6 +451,13 @@ public final class FFmpegProbe: Sendable {
             throw FFmpegProbeError.bufferLimitExceeded(stream: stream, byteCap: byteCap)
         }
         if state.timedOut {
+            throw FFmpegProbeError.timeout(seconds: timeoutSeconds)
+        }
+        // FFprobe exited, but its output did not finish arriving before
+        // the watchdog's final deadline: something still holds the pipe
+        // open. What has been read so far may be a fragment, and a
+        // fragment must never be parsed as if it were the whole answer.
+        guard drainersFinished else {
             throw FFmpegProbeError.timeout(seconds: timeoutSeconds)
         }
 

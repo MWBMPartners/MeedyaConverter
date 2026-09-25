@@ -231,12 +231,44 @@ public final class FFmpegProcessController: @unchecked Sendable {
                 continuation.finish()
             }
 
+            // BOTH HANDLERS BELOW STOP THEMSELVES AT END-OF-FILE.
+            //
+            // `availableData` comes back empty only at end-of-file, when
+            // FFmpeg has exited (or closed the pipe) and every byte has
+            // already been read, so stopping there loses nothing.
+            //
+            // They used to just `return` on empty data and stay set. A
+            // pipe at end-of-file always counts as "readable", so
+            // Foundation then called each handler again straight away,
+            // with empty data, over and over, until the FileHandle was
+            // finally freed. Measured on 2026-09-25: about 9,600 empty
+            // calls per FFmpeg run, at default priority. With the
+            // controller kept alive after its run, the two handlers
+            // burned 1.75 s of CPU in 2 s of idle time. Worse, in the
+            // engine the spinning outlived the pass and ran right through
+            // the NEXT job's probe, whose pipe readers run at a lower
+            // priority. On CI's 3-CPU runner, that is the likeliest thing
+            // that made the probe's readers late, and the probe then
+            // dropped its output. CI went red on 2a948bf (#508). The
+            // probe's own half of that is fixed at "Wait for the two
+            // drainers" in `FFmpegProbe.runFFprobe`.
+            //
+            // Setting `readabilityHandler` to nil is Apple's documented
+            // way to stop reading. `MakeMKVExecutor`'s reader does it the
+            // same way, inside the handler at end-of-file, and outside any
+            // lock of its own (as here). `FFmpegProcessControllerPipeTests`
+            // pins it.
+
             // Read stderr asynchronously for logging and error capture.
             // Bound the buffer at 10 MiB so a misbehaving encoder that
             // floods stderr cannot OOM the host app.
             stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
-                guard !data.isEmpty, let self = self else { return }
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil  // End-of-file: see above.
+                    return
+                }
+                guard let self = self else { return }
                 if let text = String(data: data, encoding: .utf8) {
                     self.lock.lock()
                     self.stderrBuffer += text
@@ -248,7 +280,11 @@ public final class FFmpegProcessController: @unchecked Sendable {
             // Read stdout asynchronously for progress parsing.
             stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
-                guard !data.isEmpty, let self = self else { return }
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil  // End-of-file: see above.
+                    return
+                }
+                guard let self = self else { return }
                 if let text = String(data: data, encoding: .utf8) {
                     self.lock.lock()
                     self.stdoutBuffer += text
