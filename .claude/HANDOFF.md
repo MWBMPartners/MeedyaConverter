@@ -36,6 +36,30 @@ below it.
 
 ### ⏰ FIRST JOB: the owed Codex catch-up review
 
+> **25 Sept — ALL 11 ROUND-1 FINDINGS FIXED, PUSHED AND CI-GREEN** (run 36083107664; the last is F7/F11
+> wording, `d3553cc`). **CODEX ROUND 2 STARTED** over `codex-r2-base` (local-only,
+> at `cd6b5a4`) `..d3553cc`, using `.claude/reviews/codex-2026-09-25-r2-brief.txt`.
+> Output goes to the scratchpad `codex-review-r2.final.md`, plus its `.log`.
+> **Don't commit to the branch while it runs** (Codex reads `git diff …..HEAD`). If
+> this session dies, look for the newest `codex-review-r2.final.md` under
+> `/private/tmp/claude-501/` before re-running, because the allowance is small.
+>
+> **⚠️ UPDATE 02:42: round 2 did NOT run.** Codex refused: "usage limit … try again at
+> 4:36 AM". **Fallback decision:** wait for Codex rather than substitute a Claude
+> reviewer. Nothing is blocked on this review (no PR is being opened), and every fix
+> was already reviewed by Opus, the orchestrator, which didn't build them. Recorded
+> here, as the fallback rule requires.
+> - **The review range is now PINNED** with local branches: `codex-r2-base` (at
+>   `cd6b5a4`) and `codex-r2-end` (at `d3553cc`). The brief uses `base..end`, so
+>   later commits are excluded. A background wake-up fires at 04:40 to run it.
+> - **Meanwhile, #508 commits 1-3 are being built in a WORKTREE** (Sonnet). **Don't
+>   cherry-pick them onto the working branch until round 2 has finished**, because
+>   Codex also reads whole files from the main working tree for context.
+>
+> **#508 build status:** commits 1-3 (AutoTagger made honest; probe keys + merge;
+> settings) are in progress in a worktree. The #508 plan's commits 4 (film runner)
+> and 6 (engine wiring) are Opus work.
+>
 > **24 Sept, 23:43 — ROUND 1 FINISHED: 11 findings (1 blocker, 7 major, 3 minor).**
 > Saved word for word in `.claude/reviews/codex-2026-09-24-r1.md` (brief beside it).
 > Next: check each finding against the code (three Opus checkers, run side by side,
