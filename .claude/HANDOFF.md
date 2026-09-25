@@ -58,8 +58,16 @@ below it.
     pick up `fe1a758`. The new hashes are `337fb75` 1/10, `04be39f` review fix,
     `a2538cb` 2/10 and `a16af63` 3/10. Older hashes in this file (e9dded9, 403addc,
     427153d, 2296d40) are the same commits before the rebase.
-  - 4/10 (Opus) building from 15:27: the `.queued` result, saving on a temporary
-    failure, and every switch including the CLI's.
+  - `ddf3667` 4/10 (Opus): a `.retryLater` failure is saved when the caller gives
+    a list AND a recheck (the recheck runs again just before saving, and
+    narrowing removes the label first with a new key); `.queued` is handled in all
+    6 switches (both screens, the CLI's 3, `reason`); the API yaml documents it.
+    221 tests ran in the harness; 6 planted faults were caught. Orchestrator
+    review: no changes. **CORRECTION to plan §9: commits 4–7 (not 4–6) must land
+    together before any PR**, because the `.queued` wording points at the
+    Settings list that only commit 7 builds.
+  - 5/10 (Opus) building from 16:05: the sender (retries, the wait ladder,
+    single-flight, round pause).
 - **Codex round 2, CHUNK 1 DONE (14:44–14:49, 78k tokens in total).** Record:
   `.claude/reviews/codex-2026-09-25-r2-chunk1.md`.
   - 1a (F1 recheck): F1, F10 and fallback #2 judged COMPLETE. 1 MINOR, REAL: the
