@@ -63,9 +63,21 @@ then the changes land as NEW commits on top, before commit 6.
 
 ### ▶ Since the owner's decisions (25 Sept 17:05 onward)
 
-- **#505 revision:** an Opus planner (read-only) is designing the changes for Q1, Q2,
-  Q9 and the off rule. The plan will be saved as
-  `.claude/plans/submission-queue-revision-plan.md`. Commit 5 (`e1384e0`, the
+- **#505 revision PLANNED:** `.claude/plans/submission-queue-revision-plan.md`
+  (Opus, read-only). It adds commits 5a–5g on top of `e1384e0`, then changes
+  commits 6–10:
+  - 5a: one shared address check;
+  - 5b: never write a file it can't read back;
+  - 5c: only the ACT of switching off deletes (the store refuses saves while off);
+  - 5d: no count limit;
+  - 5e: `SubmissionDestination` `.server`/`.notTiedYet`, tied for good;
+  - 5f: keep a disc before setup;
+  - 5g: a configurable schedule.
+  Owner answers to its section 10 (17:50):
+  - Q-A: an import that turns contributing off still brings its own items in,
+    PAUSED (after deleting this Mac's list);
+  - Q-B: items for a server not set here are imported HELD;
+  - the server field saves on Return, with a caption. Commit 5 (`e1384e0`, the
   sender; 190 tests ran in the harness; 7 planted faults were caught) is built but
   NOT yet reviewed by the orchestrator: review it together with the revision.
 - **#508: first second-system review DONE (Fable fallback, 17:30): 9 MINOR, 0
