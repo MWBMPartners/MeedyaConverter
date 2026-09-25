@@ -123,6 +123,31 @@ below it.
 >     `~/Library/Preferences` per UUID test suite when tests run locally. 432 were
 >     created by this session's harness runs and ALL have been deleted. A
 >     follow-up could delete the plist file in tearDown.
+> - `fb0b073` 7/10: `AutoTagNFOWriter` plus an engine hook at the very end of
+>   `encode`. It uses the same per-job request; `.withoutOverwriting`; never fails
+>   the encode; a pending stop means it silently skips. 123 tests ran locally; a
+>   planted fault was caught.
+> - `863b8bb` 8/10: app wiring.
+>   - The `AppViewModel` engine gets `AutoTagSettingsSource(suiteName: nil)`.
+>   - An event → Activity Log task (weak self per event, cancelled in deinit).
+>   - `AutoTagWording` (exhaustive switches, no default).
+>   - `runJob` gets a `catch is CancellationError` → `.cancelled`, skipping all the
+>     failure-only notifications, email, webhooks and hooks.
+>   - Orchestrator-reviewed. 105 tests ran locally; a planted fault was caught.
+> - `a8e49a1` 9/10: the Settings switch (`AutoTagSettingsSection` in Settings ›
+>   Metadata). Its status line comes from the same `AutoTagGate` the run uses; the
+>   FFmpeg preview caption. Every sentence was checked against the code.
+> - `436684a` 10/10: docs. FAQ + in-app help privacy text, README, FEATURES, Home,
+>   Architecture (with a flow diagram), CHANGELOG, the plan marked IMPLEMENTED with
+>   "where the build differed", and stale code comments fixed. The orchestrator
+>   amended one word ("silently skipped" contradicted the Activity Log).
+> - **#508 IS COMPLETE IN THE WORKTREE** (`0d7359d`…`436684a`, 12 commits). **Next:**
+>   after Codex round 2 finishes, cherry-pick onto `wip/alpha-consolidation`,
+>   push, CI, then Codex reviews #508 (round 3, or a fallback).
+> - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
+>   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
+>   source, **#521** the REST API server can't actually encode and isn't reachable,
+>   **#522** a Stop that kills FFmpeg is reported as Failed.
 > - **⚠️ The commit 6 plan needs a fixture change:** the planned delivery test's
 >   fake ffprobe title "My own title" scores 0.65 (< 0.7), so nothing would apply.
 >   Use a title tag such as "Inception", or no title tag.
