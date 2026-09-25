@@ -81,7 +81,12 @@ public enum MediaLookupType: String, Codable, Sendable {
 // MARK: - MetadataSearchQuery
 
 /// A query for metadata search.
-public struct MetadataSearchQuery: Codable, Sendable {
+///
+/// `Equatable` since #508 commit 4, so the auto-tag runner's `AutoTagPlan`
+/// and `AutoTagOutcome` (which carry the query that was, or would have been,
+/// searched for) can be compared in tests. Every field is a plain value, so
+/// the synthesised comparison is exactly "same fields, same values".
+public struct MetadataSearchQuery: Codable, Sendable, Equatable {
     /// The media type to search for.
     public var mediaType: MediaLookupType
 

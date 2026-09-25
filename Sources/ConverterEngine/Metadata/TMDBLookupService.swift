@@ -134,6 +134,20 @@ public struct TMDBLookupService: Sendable {
         return text.replacingOccurrences(of: key, with: "<redacted>")
     }
 
+    /// `redacting(_:key:)` using THIS service's own key.
+    ///
+    /// Exists for the auto-tag runner (#508, `AutoTagRunner`), which passes
+    /// every failure reason through it as a second guard before the reason
+    /// can reach the Activity Log. The runner is handed a service, never the
+    /// key itself — keeping the key out of `AutoTagRequest` was deliberate —
+    /// so without this it would have no way to apply the redaction.
+    ///
+    /// Internal, not public: it does not reveal the key, but nothing outside
+    /// this module has any reason to call it.
+    func redactingKey(in text: String) -> String {
+        Self.redacting(text, key: apiKey)
+    }
+
     // MARK: Request building (pure)
 
     /// Build a request for a TMDB path plus query items.
