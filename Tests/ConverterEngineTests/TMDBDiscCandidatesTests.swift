@@ -372,25 +372,76 @@ final class TMDBDiscCandidatesTests: XCTestCase {
     }
 
     func test_provider_dropsATrailingNumberOnlyAsALastResort() async throws {
-        // Exercises all three search fallback steps in order: the
-        // year-filtered search, the year-folded-into-the-title retry, and
-        // finally dropping the trailing "3" (kept during cleaning because it
-        // is the film's own number) in case it was disc numbering after all.
-        // Each one runs ONLY because the step before it found nothing.
+        // Exercises all four search fallback steps IN THE FALLBACK-REVIEW-R2
+        // FINDING 1 ORDER (1, 2, 4, 3 in the old numbering — see the comment
+        // above the attempt chain): the year-filtered search, the
+        // year-folded-into-the-title retry, the PLAIN title with no filter,
+        // and only then dropping the trailing "3" (kept during cleaning
+        // because it is the film's own number) in case it was disc numbering
+        // after all. Each one runs ONLY because the step before it found
+        // nothing — and the plain title runs BEFORE the number is dropped,
+        // because it is strictly narrower and can never rank a wrong film in
+        // the franchise confidently the way the number-dropped search can.
         let empty = Data(#"{"results":[]}"#.utf8)
-        let client = CandidateStubHTTPClient(payloads: [empty, empty, searchJSON, detailsJSON])
+        let client = CandidateStubHTTPClient(payloads: [empty, empty, empty, searchJSON, detailsJSON])
         let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
         let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
 
         let candidates = try await provider(signals(label: "BACK_TO_THE_FUTURE_3_1990"))
 
-        XCTAssertEqual(candidates.count, 1, "the third attempt should have found the film")
-        XCTAssertEqual(client.calls.count, 4, "three search fallbacks then one detail fetch")
+        XCTAssertEqual(candidates.count, 1, "the fourth attempt should have found the film")
+        XCTAssertEqual(client.calls.count, 5, "four search fallbacks then one detail fetch")
         XCTAssertEqual(queryValue(client.calls[0], name: "query"), "BACK TO THE FUTURE 3")
         XCTAssertEqual(queryValue(client.calls[0], name: "year"), "1990")
         XCTAssertEqual(queryValue(client.calls[1], name: "query"), "BACK TO THE FUTURE 3 1990")
         XCTAssertNil(queryValue(client.calls[1], name: "year"))
-        XCTAssertEqual(queryValue(client.calls[2], name: "query"), "BACK TO THE FUTURE")
+        XCTAssertEqual(
+            queryValue(client.calls[2], name: "query"), "BACK TO THE FUTURE 3",
+            "the plain title with no filter must run before the number is dropped"
+        )
         XCTAssertNil(queryValue(client.calls[2], name: "year"))
+        XCTAssertEqual(
+            queryValue(client.calls[3], name: "query"), "BACK TO THE FUTURE",
+            "dropping the number is the true last resort, tried only once the plain title has also failed"
+        )
+        XCTAssertNil(queryValue(client.calls[3], name: "year"))
+    }
+
+    func test_provider_triesThePlainTitleBeforeDroppingItsNumber_halloween5() async throws {
+        // The regression scenario from fallback review r2, finding 1: the
+        // film is "Halloween 5" (1989), but the disc's label carries its DVD
+        // release year, 1990, so steps 1-2 (the year-filtered search and the
+        // year-folded-into-the-title retry) both find nothing. The FIX under
+        // test is that step 3 — "HALLOWEEN 5" with NO filter — must run and
+        // succeed before the trailing "5" is ever dropped. Before this fix,
+        // dropping the number ran first and searched for "HALLOWEEN" alone,
+        // which returns the whole franchise; only the first few results get a
+        // running-time lookup, and "Halloween 5" could fall outside them and
+        // never be found at all. So no request for the bare franchise name
+        // must ever be sent once the plain title has already succeeded.
+        let empty = Data(#"{"results":[]}"#.utf8)
+        let client = CandidateStubHTTPClient(payloads: [empty, empty, searchJSON, detailsJSON])
+        let service = TMDBLookupService(apiKey: "0123456789abcdef0123456789abcdef", httpClient: client)
+        let provider = TMDBDiscCandidates.provider(service: service, currentYear: 2026)
+
+        let candidates = try await provider(signals(label: "HALLOWEEN_5_1990"))
+
+        XCTAssertEqual(candidates.count, 1, "the plain title with no filter should have found the film")
+        XCTAssertEqual(client.calls.count, 4, "two filtered/text attempts, the plain-title success, then one detail fetch")
+        XCTAssertEqual(queryValue(client.calls[0], name: "query"), "HALLOWEEN 5")
+        XCTAssertEqual(queryValue(client.calls[0], name: "year"), "1990")
+        XCTAssertEqual(queryValue(client.calls[1], name: "query"), "HALLOWEEN 5 1990")
+        XCTAssertNil(queryValue(client.calls[1], name: "year"))
+        XCTAssertEqual(
+            queryValue(client.calls[2], name: "query"), "HALLOWEEN 5",
+            "the plain title (still \"HALLOWEEN 5\") must succeed before the number is dropped"
+        )
+        XCTAssertNil(queryValue(client.calls[2], name: "year"))
+        for call in client.calls {
+            XCTAssertNotEqual(
+                queryValue(call, name: "query"), "HALLOWEEN",
+                "the broad, number-dropped search must never be sent once the plain title has already succeeded"
+            )
+        }
     }
 }

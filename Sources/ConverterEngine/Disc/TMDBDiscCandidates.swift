@@ -316,7 +316,20 @@ public enum TMDBDiscCandidates {
             // relaxing them one at a time is always safe. `seenRequestKeys`
             // stops an identical (title, year) request being sent twice,
             // which matters whenever the label had no year at all: step 1
-            // and step 4 below are then the exact same request.
+            // and step 3 below are then the exact same request.
+            //
+            // ⚠️ FALLBACK REVIEW ROUND 2, FINDING 1 (#205) — the number-dropped
+            // search (now step 4) used to run BEFORE the plain title with no
+            // filter (now step 3). For a label like "HALLOWEEN_5_1990" that
+            // put a search for the bare franchise name ("HALLOWEEN") ahead of
+            // the film's own title ("HALLOWEEN 5"): TMDB returned the whole
+            // franchise, only the first few results get a running-time
+            // lookup (`maxDetailFetches`), and "Halloween 5" fell outside
+            // them — never even considered by the ranker. The plain title is
+            // strictly NARROWER than the number-dropped one (dropping the
+            // number can only ever return the same films or more), so it can
+            // only find more of the right film, never less. It now runs
+            // first, and dropping the number is truly the last resort.
             var attempts: [(title: String, year: Int?)] = []
             var seenRequestKeys = Set<String>()
 
@@ -339,18 +352,22 @@ public enum TMDBDiscCandidates {
                 addAttempt("\(title) \(year)", year: nil)
             }
 
-            // (3) A trailing 1-2 digit number that cleaning deliberately
+            // (3) The plain cleaned title with no filter at all. Broader than
+            // (1) and (2) but never narrower than (4) below, so it can only
+            // ever find MORE of the right film — never rank a wrong one
+            // confidently — and must run before the number is ever dropped.
+            addAttempt(title, year: nil)
+
+            // (4) A trailing 1-2 digit number that cleaning deliberately
             // KEPT ("Apollo 13", "District 9") might still have been disc
             // numbering after all ("MOVIE_2" meaning disc 2 of one film).
-            // Tried only once everything more specific has failed.
+            // The TRUE last resort: it widens the search past even the plain
+            // title (see the finding above — it can confidently rank the
+            // wrong film in a franchise), so it only runs once everything
+            // else has failed.
             if let numberless = droppingTrailingBareNumber(from: title) {
                 addAttempt(numberless, year: nil)
             }
-
-            // (4) The plain cleaned title with no filter at all — today's
-            // existing last-resort retry, letting the running-time ranking
-            // sort out which film it is.
-            addAttempt(title, year: nil)
 
             var results: [MetadataResult] = []
             for attempt in attempts {
