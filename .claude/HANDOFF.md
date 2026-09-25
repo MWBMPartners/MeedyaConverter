@@ -204,6 +204,23 @@ below it.
 >   session's scratchpad `f4f5-repro/`) and caught a real error that way. Brief
 >   every builder to do the same, or to at least grep new tests for captured `var`s
 >   mutated inside `@Sendable` closures.
+> - **✅ A REAL local test-file type-check now exists** (found by the F3 builder,
+>   25 Sept), with no licence acceptance, sudo or xcode-select. It proved itself by
+>   rejecting planted errors, including the exact `@Sendable` captured-`var` bug
+>   behind the `d602cf0` CI failure.
+>   1. Build `MeedyaConverterCore.swiftmodule` with `swiftc -typecheck`-style flags
+>      plus `-emit-module -wmo -enable-testing -emit-module-path <tmp>/modout/…`,
+>      over all of `Sources/MeedyaConverter` + a stub `Bundle.module` (kept outside
+>      the repo), `-I .build/out/Products/Debug`, `-target arm64-apple-macosx15.0
+>      -swift-version 6`, the SDK from `xcrun --sdk macosx --show-sdk-path`, and
+>      `-plugin-path` to Xcode's toolchain and the MacOSX platform
+>      `usr/lib/swift/host/plugins`.
+>   2. `swiftc -typecheck <TestFile>` with `-I <modout> -I <Xcode MacOSX
+>      platform>/usr/lib -F <Xcode MacOSX platform>/Library/Frameworks`, using Xcode's
+>      on-disk XCTest by FILE PATH only.
+>
+>   It doesn't RUN tests; CI still does. Engine tests would need the same
+>   treatment against ConverterEngine built with `-enable-testing`.
 > - **Follow-up issues raised (25 Sept):**
 >   - #509: `ExternalToolRunner`/`DiscImagingController` have the F4/F5 faults.
 >   - #510: built-in profiles get a new random ID every launch, which breaks
