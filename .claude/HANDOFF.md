@@ -69,9 +69,28 @@ below it.
     is per instance (a latent hazard: `markUsed` has no caller and all writers
     are on the main thread; the comment claiming otherwise is false). An
     unreadable or newer index gets overwritten by a write. A notification test
-    would hang rather than fail. **An Opus builder is fixing them in the MAIN
-    tree** (a process-wide lock; `storeKey`/`removeKey` become `throws` and
-    refuse; the callers show the error). Not pushed until reviewed.
+    would hang rather than fail. **FIXED in `2a87078`** (Opus builder; reviewed
+    by the orchestrator; pushed 15:50):
+    - one `static` lock for every manager;
+    - `storeKey`/`removeKey` now `throws` `APIKeyStoreError` and change nothing
+      over an unreadable or newer-version list, and every screen shows the
+      refusal;
+    - the notification tests fail after 5 s instead of hanging;
+    - the tests' Keychain cleaner now loops, because one `SecItemDelete` removed
+      only ONE item on this Mac.
+    55 tests ran in the harness; 3 planted faults were caught. **Still needs its
+    Codex re-review (queue item 1).**
+    - **Clean-up done by the orchestrator (15:48):** the builder's first run left
+      241 login-Keychain items under three `...Tests.IndexConsistency.<UUID>`
+      services, plus 120 empty 42-byte
+      `~/Library/Preferences/com.mwbm.MeedyaConverter.Tests.MediaServerCredentialStore.<UUID>.plist`
+      files. Each service and name was checked for `.Tests.` and a UUID (accounts
+      listed first; all `concurrent-N-M` test entries) before deleting. Result:
+      0 MeedyaConverter Keychain items and 0 test plists left. The real
+      `...APIKeys` service had no items on this Mac.
+    - Follow-ups raised as **#529**: `storeKey` still only logs a failed Keychain
+      write or a failed list save; `SFTPCredentialStore.deleteAll` and the
+      KeyPresence SMTP clean-up use the same one-item `SecItemDelete`.
   - **Next chunks:** re-review `fe1a758` and the 1b fix; then (2) MakeMKV
     F3/F4/F5/F9, (3) F6 + fallback #4, (4) F8 + fallback #1, (5) wording.
     **Chunk sizes that worked:** about 34k-token and 14k-token prompts, answered
