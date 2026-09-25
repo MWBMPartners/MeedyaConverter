@@ -803,6 +803,137 @@ final class MakeMKVRipViewModelTests: XCTestCase {
 
         vm.cancelScan()
         await task.value
+
+        // F3 added a THIRD disabled state to this contract: everything else
+        // about the form looks ready (titles picked, destination chosen),
+        // but the source field has moved since the scan that produced those
+        // titles. A fresh, non-blocking view model is used here because
+        // reaching this state needs a scan that actually SUCCEEDS, unlike
+        // the two states above.
+        let sourceChangeRunner = MockMakeMKVRunner(scripts: [.init(lines: singleTitleInfoLines, exitCode: 0)])
+        let sourceChangeVM = makeReadyViewModel(runner: sourceChangeRunner)
+        sourceChangeVM.discIndexText = "0"
+        guard let sourceScanTask = sourceChangeVM.scan() else { return XCTFail("expected a scan task") }
+        await sourceScanTask.value
+        sourceChangeVM.destinationPath = uniqueDestinationPath()
+        XCTAssertTrue(sourceChangeVM.canRip, "precondition: enabled before the field is touched")
+
+        sourceChangeVM.discIndexText = "1"
+        XCTAssertFalse(sourceChangeVM.canRip)
+        XCTAssertNotNil(sourceChangeVM.ripBlockedReason, "must still name a reason, not just go quiet")
+    }
+
+    // MARK: - F3: rip must refuse when the source has moved since the scan
+    //
+    // `rip()` used to resolve its source from whatever was CURRENTLY typed
+    // into the source fields while the titles it ripped came from the LAST
+    // scan. Nothing recorded which source that scan had actually read, and
+    // nothing compared the two, so scanning drive 0 and then, before
+    // pressing Rip, retyping the drive number to "1" silently ripped disc 1
+    // using disc 0's title selection. These tests scan a MockMakeMKVRunner
+    // (not the blocking one — the point here is that the scan actually
+    // FINISHES and is still wrong to act on afterwards) and prove the rip
+    // never reaches the runner once the fields disagree with the scan.
+
+    func test_rip_blockedWhenSourceChangesAfterScan_andRunsOnceReverted() async {
+        let runner = MockMakeMKVRunner(scripts: [
+            .init(lines: twoTitleInfoLines, exitCode: 0),
+            .init(lines: ripLinesSuccess, exitCode: 0),
+        ])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+        // Select every listed title — this is also what turns the rip into
+        // the `.all` optimisation used below, which is exactly the shape
+        // that hides a mismatch best: no title-count check to catch it.
+        vm.selectedTitleIndices = Set(vm.orderedTitles.map(\.index))
+        vm.destinationPath = uniqueDestinationPath()
+        XCTAssertTrue(vm.canRip, "precondition: the form is otherwise complete")
+
+        // The user edits the drive number after the scan, without pressing
+        // Scan again.
+        vm.discIndexText = "1"
+
+        XCTAssertFalse(vm.canRip)
+        XCTAssertEqual(
+            vm.ripBlockedReason,
+            "The source has changed since the last scan. Scan again before ripping."
+        )
+        XCTAssertNil(vm.rip(), "a mismatched source must start nothing")
+        XCTAssertEqual(runner.invocationCount, 1, "only the scan happened — the rip must never reach the runner")
+        XCTAssertEqual(vm.outcomeMessage, "The source has changed since the last scan. Scan again before ripping.")
+        XCTAssertTrue(vm.outcomeIsError)
+
+        // Undoing the edit — the whole point of BLOCKING rather than
+        // clearing the selection — must let the same rip through unharmed.
+        vm.discIndexText = "0"
+        XCTAssertTrue(vm.canRip)
+        XCTAssertNil(vm.ripBlockedReason)
+
+        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task once the field is reverted") }
+        await ripTask.value
+
+        XCTAssertEqual(runner.invocationCount, 2, "1 scan + 1 rip, now that the source matches again")
+        XCTAssertEqual(
+            runner.calls.last?.arguments,
+            MakeMKVBackend.buildRipArguments(source: .disc(0), titles: .all, destinationDirectory: vm.destinationPath)
+        )
+        XCTAssertFalse(vm.outcomeIsError)
+    }
+
+    func test_rip_blockedWhenSwitchingToDiscImageAfterScan() async {
+        let runner = MockMakeMKVRunner(scripts: [.init(lines: twoTitleInfoLines, exitCode: 0)])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+        vm.selectedTitleIndices = Set(vm.orderedTitles.map(\.index))
+        vm.destinationPath = uniqueDestinationPath()
+        XCTAssertTrue(vm.canRip, "precondition: the form is otherwise complete")
+
+        // Switching source KIND entirely — not just editing the drive
+        // number — must be caught the same way: `resolvedSource` now
+        // describes a disc image, not the drive that was actually scanned.
+        vm.sourceKind = .discImage
+        vm.isoPath = "/Volumes/Movies/disc.iso"
+
+        XCTAssertFalse(vm.canRip)
+        XCTAssertEqual(
+            vm.ripBlockedReason,
+            "The source has changed since the last scan. Scan again before ripping."
+        )
+        XCTAssertNil(vm.rip())
+        XCTAssertEqual(runner.invocationCount, 1, "only the scan happened — the rip must never reach the runner")
+    }
+
+    func test_scan_failure_leavesScannedSourceNilSoRipStaysBlocked() async {
+        let runner = MockMakeMKVRunner(scripts: [
+            .init(lines: [#"MSG:5010,0,0,"Failed to open disc","Failed to open disc""#], exitCode: 12)
+        ])
+        let vm = makeReadyViewModel(runner: runner)
+        vm.discIndexText = "0"
+
+        guard let scanTask = vm.scan() else { return XCTFail("expected a scan task") }
+        await scanTask.value
+
+        XCTAssertNil(vm.scannedSource, "a failed scan must not record a source to trust")
+
+        // Set the rest of the form by hand (as a real scan would have) to
+        // isolate the source-mismatch guard from the separate "no titles
+        // selected" guard that a failed scan would otherwise also trigger.
+        vm.selectedTitleIndices = [0]
+        vm.destinationPath = uniqueDestinationPath()
+
+        XCTAssertFalse(vm.canRip)
+        XCTAssertEqual(
+            vm.ripBlockedReason,
+            "The source has changed since the last scan. Scan again before ripping."
+        )
+        XCTAssertNil(vm.rip())
+        XCTAssertEqual(runner.invocationCount, 1, "only the failed scan — the rip must never reach the runner")
     }
 
     // MARK: - Stale cross-operation banners
@@ -1053,6 +1184,48 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         XCTAssertFalse(vm.canIdentify)
         XCTAssertEqual(vm.identifyBlockedReason, "Scan the disc first, then it can be identified.")
         XCTAssertNil(vm.identify())
+    }
+
+    /// F3 follow-on decision: identify uses `discInfo`, never the live
+    /// source fields, so nothing about the DATA it would identify is wrong
+    /// here — but the screen (and its "will also be contributed to
+    /// MeedyaDB" notice) is still implying this is about whatever the
+    /// source fields currently say, which is no longer the disc that was
+    /// scanned. Blocking is the same honest choice as `rip()`'s, and a
+    /// contribution can't be recalled once sent — see `canIdentify`'s doc
+    /// comment for the full reasoning.
+    func test_identify_blockedWhenSourceChangesAfterScan_andRunsOnceReverted() async {
+        let vm = makeIdentifyViewModel(runner: MockMakeMKVRunner(scripts: [.init(lines: identifiableInfoLines)]))
+        await scanned(vm)
+        XCTAssertTrue(vm.canIdentify, "precondition: ready right after the scan")
+
+        // The user edits the drive number after the scan, without pressing
+        // Scan again.
+        vm.discIndexText = "1"
+
+        XCTAssertFalse(vm.canIdentify)
+        XCTAssertEqual(
+            vm.identifyBlockedReason,
+            "The source has changed since the last scan. Scan again before identifying."
+        )
+        XCTAssertNil(vm.identify(), "a mismatched source must start nothing")
+        XCTAssertEqual(
+            vm.identifyErrorMessage,
+            "The source has changed since the last scan. Scan again before identifying."
+        )
+        XCTAssertNil(vm.identifyResult)
+
+        // Reverting the field must let identification through again — the
+        // underlying `discInfo` was never touched by any of this.
+        vm.discIndexText = "0"
+        XCTAssertTrue(vm.canIdentify)
+        XCTAssertNil(vm.identifyBlockedReason)
+
+        guard let task = vm.identify() else { return XCTFail("expected an identify task once reverted") }
+        await task.value
+
+        XCTAssertNotNil(vm.identifyResult)
+        XCTAssertNil(vm.identifyErrorMessage)
     }
 
     /// ⚠️ THE REGRESSION THAT MATTERS. The identify screen once held a single

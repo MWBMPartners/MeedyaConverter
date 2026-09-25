@@ -208,6 +208,34 @@ final class MakeMKVRipViewModel {
     private(set) var titleSummaries: [Int: MakeMKVTitleSummary] = [:]
     private(set) var scanErrorMessage: String?
 
+    /// The `MakeMKVSource` that the CURRENT `discInfo`/`titleSummaries`
+    /// actually came from — cleared the instant a scan starts, and written
+    /// only once that scan succeeds.
+    ///
+    /// ⚠️ THIS IS WHAT F3 WAS MISSING. `rip()` used to resolve its source
+    /// from `resolvedSource` — the CURRENT contents of the source fields —
+    /// while the titles it ripped came from whatever the LAST scan found.
+    /// Nothing recorded which source that scan had actually read, so
+    /// scanning drive 0, then typing "1" into the drive number field before
+    /// pressing Rip, silently ripped disc 1 using disc 0's title list — and
+    /// when every one of disc 0's titles happened to be selected,
+    /// `MakeMKVRipPlanning.selectors` collapses that to `.all`, so it would
+    /// have ripped ALL of disc 1's titles with no count mismatch to even
+    /// hint something was wrong.
+    ///
+    /// `rip()` and `identify()` both compare `resolvedSource` against this
+    /// before doing anything, and BLOCK (not clear the scan or the
+    /// selection) on a mismatch — an unintentional keystroke in the drive
+    /// number field must not throw away titles the user already picked.
+    ///
+    /// KNOWN LIMIT: this cannot catch the physical disc being swapped in
+    /// the SAME drive at the SAME index (or the same device path/ISO path
+    /// re-used for different media). Nothing in the source FIELDS changes
+    /// when that happens, so `resolvedSource == scannedSource` still holds.
+    /// Catching that would need MakeMKV to report a disc identity, which
+    /// `makemkvcon info` does not give us.
+    private(set) var scannedSource: MakeMKVSource?
+
     /// The user's selected title indices — pre-filled by
     /// `MakeMKVRipPlanning.defaultSelection` after a scan, then editable.
     var selectedTitleIndices: Set<Int> = []
@@ -299,6 +327,10 @@ final class MakeMKVRipViewModel {
         discInfo = nil
         titleSummaries = [:]
         selectedTitleIndices = []
+        // F3: cleared the moment a scan STARTS, not just on failure — while
+        // a scan is running, or before one has ever succeeded, nothing on
+        // screen may be treated as trustworthy enough to rip or identify.
+        scannedSource = nil
         // A previous disc's identification must not survive into this one.
         // Leaving the old name on screen while a different disc is scanned
         // is worse than showing nothing: it names the wrong film.
@@ -320,6 +352,11 @@ final class MakeMKVRipViewModel {
         do {
             let info = try await executor.info(source: source)
             discInfo = info
+            // F3: recorded ONLY on success, and recorded as the source this
+            // specific scan was actually asked to read (the parameter, not a
+            // fresh read of the fields — those may have changed while the
+            // scan was running).
+            scannedSource = source
             titleSummaries = Dictionary(
                 uniqueKeysWithValues: info.titles.map { ($0.index, MakeMKVTitleSummary(title: $0)) }
             )
@@ -384,9 +421,17 @@ final class MakeMKVRipViewModel {
         var runLabel: String
     }
 
+    /// F3: also requires the CURRENT source fields to still resolve to the
+    /// exact source that produced the titles being ripped
+    /// (`resolvedSource == scannedSource`). Without this, editing the drive
+    /// number/device path/ISO path/folder path AFTER a scan — nothing in the
+    /// view ever stopped that — left the Rip button enabled and pointed at a
+    /// different source than the one the selected titles came from. See
+    /// `scannedSource`'s doc comment for the full story and its known limit.
     var canRip: Bool {
         !isScanning && !isRipping && !selectedTitleIndices.isEmpty
             && !destinationPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && scannedSource != nil && resolvedSource == scannedSource
     }
 
     /// Why the Rip button is disabled, in plain English, or `nil` when it is
@@ -403,6 +448,13 @@ final class MakeMKVRipViewModel {
         }
         if destinationPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Choose a destination folder to save the ripped titles in."
+        }
+        // F3: named LAST, after titles and destination, because those are
+        // the more immediate next step when several things are missing at
+        // once — this only has anything to say once the rest of the form
+        // already looks ready to go.
+        if scannedSource == nil || resolvedSource != scannedSource {
+            return "The source has changed since the last scan. Scan again before ripping."
         }
         return nil
     }
@@ -455,6 +507,31 @@ final class MakeMKVRipViewModel {
             return fail("Select at least one title to rip.")
         }
 
+        // F3 (Codex round-1 review): `source` above is resolved from
+        // whatever is CURRENTLY typed into the source fields; `selectors`
+        // just above was built from `orderedTitles`, which came from the
+        // LAST scan. Those can disagree — the fields are never locked
+        // during or after a scan — and until now nothing here noticed. This
+        // is the one guard that makes that impossible: it refuses to start
+        // ANYTHING (no executor call, no state change) unless the source
+        // typed in right now is the exact same one that was actually read.
+        // It BLOCKS rather than clearing the selection, so a keystroke the
+        // user hasn't even finished (or hasn't noticed) can be undone by
+        // fixing the field, without losing the titles they picked.
+        //
+        // Binding `scannedSource` here (shadowing the property) also makes
+        // the rip run FROM the recorded source, not from `source` — the two
+        // are equal at this point by construction, but ripping from the
+        // recorded value is what actually matches the spec's intent ("rip
+        // from `scannedSource`") rather than merely happening to agree.
+        //
+        // KNOWN LIMIT: swapping the physical disc in the SAME drive index
+        // (or reusing the same device/ISO/folder path for different media)
+        // cannot be caught this way — see `scannedSource`'s doc comment.
+        guard let scannedSource, source == scannedSource else {
+            return fail("The source has changed since the last scan. Scan again before ripping.")
+        }
+
         let titleCount = selectedTitleIndices.count
         isRipping = true
         isCancellingRip = false
@@ -462,7 +539,7 @@ final class MakeMKVRipViewModel {
         let task = Task { [weak self] in
             guard let self else { return }
             await self.executeRip(
-                source: source, destination: destination, executor: executor,
+                source: scannedSource, destination: destination, executor: executor,
                 selectors: selectors, titleCount: titleCount)
         }
         ripTask = task
@@ -668,8 +745,30 @@ final class MakeMKVRipViewModel {
     /// on `isIdentifying`.
     private(set) var runWillContribute = false
 
+    /// F3 follow-on decision: identification is blocked by the same
+    /// source-changed condition as ripping, even though `identify()` itself
+    /// never touches `resolvedSource` and works entirely from `discInfo`.
+    ///
+    /// The reasoning is the same, not the mechanism: `discInfo` is always
+    /// correct for whatever it holds — it is set once, from one scan, and
+    /// nothing here can make it disagree with itself. What can go wrong is
+    /// the SCREEN implying it is about a disc it no longer is. If someone
+    /// scans drive 0, then repoints the source fields at drive 1 (meaning
+    /// to look at a different disc next) without pressing Scan again, the
+    /// Identify button — and the "this disc will also be contributed to
+    /// MeedyaDB" notice beside it — are still sitting on drive 0's data.
+    /// Pressing it would identify, and possibly contribute to a shared
+    /// database, the disc the fields no longer point at, while everything
+    /// on screen reads as if it were about the one they do. A contribution
+    /// cannot be recalled once sent, which is exactly why the identify
+    /// screen's own doc comments (`videoIdentifierFactory`,
+    /// `runWillContribute`) already treat "looks right but sent something
+    /// else" as the one failure mode worth refusing rather than risking.
+    /// Blocking here costs nothing but an extra Scan press once the field
+    /// is deliberately changed, so it is the safer default.
     var canIdentify: Bool {
         !isScanning && !isIdentifying && discInfo != nil && selectedDiscType != nil
+            && resolvedSource == scannedSource
     }
 
     /// Why the Identify button is disabled, or `nil` when it is enabled. A
@@ -683,6 +782,13 @@ final class MakeMKVRipViewModel {
         if isScanning { return "Wait for the scan to finish \u{2014} identifying uses what it finds." }
         if discInfo == nil { return "Scan the disc first, then it can be identified." }
         if selectedDiscType == nil { return "Choose what kind of disc this is first." }
+        // F3: the wording matches `ripBlockedReason`'s in substance (same
+        // honest sentence about what happened) but names THIS action —
+        // saying "before ripping" under the Identify button would describe
+        // something the user isn't doing.
+        if resolvedSource != scannedSource {
+            return "The source has changed since the last scan. Scan again before identifying."
+        }
         return nil
     }
 
@@ -701,6 +807,15 @@ final class MakeMKVRipViewModel {
         }
         guard let discType = selectedDiscType else {
             identifyErrorMessage = "Choose what kind of disc this is first."
+            return nil
+        }
+        // F3 follow-on: see `canIdentify`'s doc comment for why this blocks
+        // on the same condition as `rip()`'s guard even though identify
+        // itself never reads `resolvedSource` — `discInfo` is fine either
+        // way, but the screen must not act on it while claiming to be about
+        // a disc the source fields no longer name.
+        guard resolvedSource == scannedSource else {
+            identifyErrorMessage = "The source has changed since the last scan. Scan again before identifying."
             return nil
         }
 
