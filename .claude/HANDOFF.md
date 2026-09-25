@@ -411,6 +411,14 @@ below it.
 > then in the main copy: F1+#507+F10 screen wiring → F3 → F6 → F7+F11 wording
 > (together with the documentation sweep).
 >
+> ⚠️ **Trap found (25 Sept 07:55): watching "the newest CI run" can watch the WRONG
+> run.** Right after a push, `gh run list --limit 1` returned a run for `f78d9bd`
+> (15 Sept) because the new run hadn't registered yet, and reported "success". All
+> earlier watches printed their sha and matched. **Always select the run whose
+> `headSha` equals the pushed commit** (wait for it to appear), and check the printed
+> sha. There is a helper in this session's scratchpad (`watch-ci-for-sha.sh`); the
+> logic is simple enough to inline.
+>
 > ⚠️ **Trap found: `~/.claude/bin/watchdog.sh quiet` on an agent's `tasks/<id>.output`
 > fires falsely after 15 minutes.** That path is a symlink, and the script's
 > `stat -f %m` reads the link's own timestamp, not the transcript's. Point it at
