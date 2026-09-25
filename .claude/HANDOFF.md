@@ -13,6 +13,54 @@ This is the resume point for a **fresh session with no chat history**. Everythin
 needed to carry on is in this block, `.claude/standing_tasks.md`, and the sections
 below it.
 
+### ✅ OWNER DECISIONS — 25 Sept ~17:05 (answered as questions; FINAL, do not reopen)
+
+**How the work is checked**
+1. **Codex allowance:** Codex reviews the SECURITY items (keys, privacy, exports,
+   data loss). Everything else gets a Fable fallback review, clearly labelled
+   "fallback review (Fable)", never presented as Codex.
+2. **Xcode (D2):** the OWNER will select Xcode and accept its licence themselves. Never
+   do it for them. Check `xcode-select -p` at the start of later sessions: once it
+   points at Xcode.app, `swift test` can run locally.
+3. **`PROJECT.md` and `.dev-team/autopilot.json`:** kept, and marked as historical
+   (a banner at the top of PROJECT.md).
+4. **D1 confirmed:** on a fuzzy MusicBrainz match, send the Disc ID and track
+   layout, with NO album candidates.
+
+**#505 (plan section 9), final answers**
+
+Differs from the plan:
+- **Q2: YES, save even when MeedyaDB isn't fully set up.** An item saved before any
+  server address exists is tied to the FIRST server set up afterwards, then only to
+  that one. Items saved while an address was already entered stay tied to it.
+- **Q1: NO LIMIT on how many items wait.** Keep the per-item size check. An export
+  that would exceed the settings file's 10 MB limit must refuse and say why, never
+  quietly drop items.
+- **Q9: the schedule stays 1 min rising to 24 h, stopping after 10 tries, but ALL
+  of it is CONFIGURABLE** (first wait, longest wait, tries before it stops).
+- **Off rule:** waiting items are deleted only by the ACT of switching off (the
+  Settings switch, or an import that turns it off), with the warning shown first.
+  While contributing is merely off, nothing is sent and nothing is deleted.
+- **Q12: an import onto a switched-off Mac keeps the items, PAUSED, until
+  contributing is switched on.**
+
+As recommended:
+- Q7: export off by default (own tick-box).
+- Q6: switching off deletes straight away (see the off rule above).
+- Q5: key replaced → keep items, send with the new key.
+- Q10: retry when the network comes back (commit 6b).
+- Q3: narrowing removes the label permanently.
+- Q4: a changed server holds items.
+- Q8: the CLI never saves or sends, but can export and import.
+- Q11: stopped items are never exported.
+
+**#506's 8 defaults and #508's 6 defaults: all confirmed.**
+
+**What this means for the #505 code already built** (commits 1–5, local, on
+`build/505-queue`): Q1, Q2, Q9 and the off rule change the models, store, schema,
+contributor and sender. An Opus planner works out the revision first (read-only),
+then the changes land as NEW commits on top, before commit 6.
+
 ### ▶ Newest position — 25 Sept 14:55 (read before anything else in this block)
 
 | # | Task | Issue | Status | Notes |

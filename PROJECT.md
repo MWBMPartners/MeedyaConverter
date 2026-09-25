@@ -1,3 +1,9 @@
+> **HISTORICAL — not the current plan.** This is the dev-team plugin's brief for
+> its July 2026 "autopilot" run, which recorded itself as finished on 1 July 2026
+> (see `.dev-team/autopilot.json`). It is kept for the record only. The live
+> state, plan and next steps are in [`.claude/HANDOFF.md`](.claude/HANDOFF.md).
+> Marked historical on the maintainer's decision, 25 Sept 2026.
+
 # MeedyaConverter — Autopilot Project Brief
 
 > Machine-authoritative state: `.dev-team/autopilot.json`. This file is the

@@ -1,6 +1,6 @@
 <!-- Copyright © 2026 MWBM Partners Ltd. All rights reserved. -->
 
-> **Status: PLANNED, not built.** Opus deep-plan (read-only), 2026-09-25, against `b0de681`. Re-check line numbers by text before editing.
+> **Status: BUILDING (commits 1-5 built locally on `build/505-queue`; owner answers to section 9 recorded there, and a revision for them is being planned).** Originally: Opus deep-plan (read-only), 2026-09-25, against `b0de681`. Re-check line numbers by text before editing.
 
 # #505 plan: a saved "waiting list" for MeedyaDB contributions
 
@@ -502,6 +502,15 @@ New `actor`, file `Sources/ConverterEngine/Submissions/SubmissionQueueSender.swi
 10. **Retry when the network comes back (6b)?** *Recommend yes*, as a small separate commit.
 11. **Stopped entries are not exported?** *Recommend yes.*
 12. **Importing onto a Mac where contributing is off:** refuse the group rather than switch it on or hold? *Recommend refuse.*
+
+**OWNER ANSWERS (25 Sept 2026, ~17:05). These override the recommendations above where they differ:**
+- **Q1: NO LIMIT** on the number of waiting items. Keep the per-item size check. An export that would exceed the 10 MB settings-file limit refuses and says why.
+- **Q2: YES**, save even when MeedyaDB isn't fully set up. An item saved with no server address yet is tied to the FIRST server set up afterwards, then only to that one.
+- **Q3, Q4, Q5, Q7, Q8, Q10, Q11:** as recommended.
+- **Q6 and the off rule:** deletion happens on the ACT of switching off (the Settings switch, or an import that turns it off), after the warning. While merely off, nothing is sent and nothing is deleted.
+- **Q9:** the defaults are as recommended (1 min rising to 24 h; stop after 10 tries), but first wait, longest wait and tries-before-stopping are all CONFIGURABLE.
+- **Q12:** an import onto a switched-off Mac keeps the items PAUSED until contributing is switched on (NOT refused).
+- **Also found while building:** commits 4–7 (not 4–6) must land together. The `.queued` wording points at the Settings list that commit 7 builds.
 
 ---
 
