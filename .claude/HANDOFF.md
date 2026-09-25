@@ -51,8 +51,31 @@ below it.
   the API description promises an `Idempotency-Key` header (a per-request label, so
   the server can spot and skip a repeat), but `api.php` doesn't implement it. Busy
   replies do carry `Retry-After` (503: 5 s; 429: 60 s). The server spots repeat
-  discs by their table-of-contents fingerprint. → A MeedyaDB issue is owed to honour
-  the header.
+  discs by their table-of-contents fingerprint. → Raised as **MeedyaDB#2** (checked
+  on its `wip/bootstrap` at `9f8e0a9`: the `tblApiKeyIdempotency` table exists, but
+  no code uses it, and `api-docs.yaml` doesn't mention the header).
+- **Codex round-2 chunk 1 is READY to run** (the prompts have the diffs pasted in,
+  and Codex is told to answer in one go without exploring, because exploring is
+  what used up the allowance before):
+  - 1a (F1 recheck + #507 + fallback #2: `52a4a3e`, `d602cf0`, `6057d8e`, `4269b36`),
+    about 34k tokens: scratchpad `codex-r2-chunk1a-prompt.txt`;
+  - 1b (F2 key store `75a37bd`), about 14k tokens: `codex-r2-chunk1b-prompt.txt`.
+  - Run: `codex exec -c model="gpt-6-astra" -s read-only -o <out.md> - < <prompt>`.
+    If the scratchpad is gone, rebuild with `git show -U12 <commits> -- Sources Tests`
+    under the same header (the brief's wording is in `.claude/reviews/` once run).
+- **The documentation sweep's known list (queue row 6)**, beyond #505's own docs:
+  - Disc ripping is described as "planned" or "orphaned" in several places, although
+    audio-CD reading, identification and MakeMKV ripping now run: `docs/FAQ.md:289`
+    ("planned for v1.1+", "22 disc types", AccurateRip); the README "Optical Disc
+    Ripping & Authoring" row in "Planned / scaffolded" (~line 126) and the Phase 10
+    roadmap row (~362); `docs/Home.md:103` (AccurateRip); and
+    `docs/Architecture.md:122, 157` (lists `AudioCDReader` etc. as dormant). Each
+    claim must be checked against the code; don't over-correct. Disc imaging (#495)
+    is Direct-only, and AccurateRip may genuinely still be dormant.
+  - README's metadata row sits under "Planned / scaffolded" but is now mostly real:
+    move or split it.
+  - `README.md:121`, stale about TMDB/disc-ID (from the round-1 checker).
+  - DONE here: `SECURITY.md` F-007 now records the probe fix `6301879`.
 
 ### Where things stand (23 Sept; history, superseded by the table above)
 
