@@ -68,9 +68,10 @@ content.
 
 Reading from a drive currently only reads the first (music) session, so this
 row does not appear yet for a disc read that way — the Disc ID above is still
-correct, because it only ever needed that first session. A saved
-table-of-contents file that already records a second session shows the
-whole-disc identifier correctly.
+correct, because it only ever needed that first session. No session table can
+be read from a table-of-contents file today either: a hand-built file that
+lists the data track after the music produces an *estimated* whole-disc ID,
+not one read from a real second session.
 
 If MusicBrainz has never seen the disc, that is a perfectly good answer and
 not an error. The identifiers are still worked out, and are still worth

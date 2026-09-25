@@ -88,9 +88,9 @@ apart* from a pressing with different bonus content.
 so the whole-disc identifier does not appear yet for a disc read this way; the
 row above is simply not shown. This does not affect the Disc ID itself: it is
 still measured correctly, because it only ever needed that first session
-anyway. A saved table of contents that already records a second session (for
-example, produced by a fuller tool) is read correctly and does show the
-whole-disc identifier.
+anyway. No session table can be read from a saved table of contents today
+either — a hand-built file that lists the data track after the music produces
+an *estimated* whole-disc ID, not one read from a real second session.
 
 If MusicBrainz has never seen the disc, that is a perfectly good answer and
 not an error. The identifiers are still worked out, and are still worth

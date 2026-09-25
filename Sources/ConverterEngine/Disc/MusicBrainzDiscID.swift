@@ -60,10 +60,13 @@
 // step 1 would have used had the session table been read, so the MUSIC Disc ID
 // this computes is still what MusicBrainz measures. It is not hardware-verified;
 // it follows from how cdrdao and libdiscid both define a session's lead-out.
-// A saved `.toc` file built by a fuller reader (or by hand) that DOES carry a
-// real second session will still be read correctly by steps 1/2 above — this
-// limitation is about what the drive reader currently supplies, not about this
-// type's own logic.
+// A hand-built `.toc` that lists the data track after the music still
+// produces an ESTIMATED whole-disc ID (step 2 above reads the data track's
+// start position straight from the file). But `CdrdaoTocParser` has NO
+// session-table handling at all today (fallback review round 2, finding 3),
+// so step 1 — an ACTUALLY REPORTED second session — can never fire from any
+// file, hand-built or not. That would need a fuller reader that parses
+// cdrdao's own session markers, and none exists yet.
 //
 // `MusicBrainzDiscLookupService.musicBrainzTOCString` uses the SAME music-session
 // lead-out and must always move in step with this, or the ID and the lookup would

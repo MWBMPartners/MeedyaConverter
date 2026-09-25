@@ -1260,7 +1260,10 @@ paths:
         the first on an Enhanced CD. Reading a disc from a drive currently
         only reads its first (music) session, so that second ID does not
         appear yet for a disc identified this way — the music ID is unaffected,
-        since it never needed the second session anyway. Then asks
+        since it never needed the second session anyway. No session table can
+        be read from a `.toc` file today either: a hand-built `.toc` that
+        lists the data track after the music produces only an ESTIMATED
+        whole-disc ID, not one read from a real second session. Then asks
         MusicBrainz which release it is. The request always names the disc's
         own computed Disc ID, so a disc MusicBrainz recognises comes back as
         an EXACT match (`matchKind: exact` in `--format json`; the text output
