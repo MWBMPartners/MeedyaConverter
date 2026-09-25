@@ -49,6 +49,16 @@ private final class ContributorStubHTTPClient: MetadataHTTPClient, @unchecked Se
     }
 }
 
+/// Records whether a `@Sendable` closure ran. A class behind a lock because a
+/// `@Sendable` closure may not mutate a captured local variable in Swift 6.
+private final class ContributorRecheckCallFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var called = false
+
+    func markCalled() { lock.withLock { called = true } }
+    var wasCalled: Bool { lock.withLock { called } }
+}
+
 final class MeedyaDBContributorTests: XCTestCase {
 
     // MARK: - Fixtures
@@ -211,19 +221,25 @@ final class MeedyaDBContributorTests: XCTestCase {
 
     func test_recheck_isNeverCalledWhenNotRequested() async throws {
         let client = ContributorStubHTTPClient()
-        var recheckWasCalled = false
+        // A lock-protected flag, not a plain `var`: `recheck` is `@Sendable`,
+        // and Swift 6 refuses to let a `@Sendable` closure mutate a captured
+        // local ("mutation of captured var … in concurrently-executing
+        // code"). A plain `var` here broke the CI build on 9d47730 even
+        // though `swiftc -parse` accepted it, because only a real type-check
+        // sees the rule.
+        let recheckFlag = ContributorRecheckCallFlag()
 
         _ = try await contributor(client).contribute(
             usableSubmission(),
             requested: false,
             mode: .anonymous,
             recheck: {
-                recheckWasCalled = true
+                recheckFlag.markCalled()
                 return .full
             }
         )
 
-        XCTAssertFalse(recheckWasCalled, "there is nothing to re-check for a run that was never asked to contribute")
+        XCTAssertFalse(recheckFlag.wasCalled, "there is nothing to re-check for a run that was never asked to contribute")
     }
 
     // MARK: - #507: `MeedyaDBReadiness.declinedReason` pins the three cases apart
