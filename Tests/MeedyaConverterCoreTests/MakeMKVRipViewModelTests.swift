@@ -958,25 +958,43 @@ final class MakeMKVRipViewModelTests: XCTestCase {
         await secondScan.value
     }
 
-    func test_startingARip_clearsAPreviousScanError() async {
+    /// After a FAILED scan, pressing Rip is refused with "scan again", and no
+    /// rip is launched. The rip's own reason replaces the scan banner, as for
+    /// every other refusal.
+    ///
+    /// This test used to assert the OPPOSITE: that the user could pick a title
+    /// by hand after a failed scan and rip anyway. That premise is gone for two
+    /// reasons (Codex round 1, finding 3, 2026-09-25):
+    ///   * the real screen can't reach it — titles are only selectable as
+    ///     toggles over a SUCCESSFUL scan's list, and starting a scan clears
+    ///     any earlier selection, so the old test got there only by writing
+    ///     `selectedTitleIndices` directly;
+    ///   * a rip must now come from a source that was actually scanned, or it
+    ///     can rip one disc with another disc's title numbers.
+    /// It failed CI on 483877a, which is how the stale premise was found.
+    func test_afterAFailedScan_ripIsRefusedAndReplacesTheScanBanner() async {
         let runner = MockMakeMKVRunner(scripts: [
             .init(lines: [], exitCode: 1),
-            .init(lines: ripLinesSuccess, exitCode: 0),
         ])
         let vm = makeReadyViewModel(runner: runner)
         vm.discIndexText = "0"
         guard let failedScan = vm.scan() else { return XCTFail("expected a scan task") }
         await failedScan.value
         XCTAssertNotNil(vm.scanErrorMessage, "the failed scan should have left a banner")
+        XCTAssertNil(vm.scannedSource, "a failed scan records no scanned source")
 
-        // The user picks a title by hand and rips anyway — the failed scan's
-        // banner is about the scan, not this rip, so it must go.
+        // Force the state the screen itself can't produce, to prove the
+        // guard holds even if a future UI change made it reachable.
         vm.selectedTitleIndices = [0]
         vm.destinationPath = uniqueDestinationPath()
 
-        guard let ripTask = vm.rip() else { return XCTFail("expected a rip task") }
-        XCTAssertNil(vm.scanErrorMessage, "a stale scan error must not hang over a running rip")
-        await ripTask.value
+        XCTAssertNil(vm.rip(), "a rip must not start from a source that was never scanned")
+        XCTAssertEqual(runner.invocationCount, 1, "only the failed scan ran; no rip was launched")
+        XCTAssertNil(vm.scanErrorMessage, "the rip's own reason replaces the stale scan banner")
+        XCTAssertEqual(
+            vm.outcomeMessage,
+            "The source has changed since the last scan. Scan again before ripping."
+        )
     }
 
     // MARK: - Identify the disc (#502)
