@@ -112,6 +112,63 @@ public final class FFmpegProbe: Sendable {
         self.byteCap = byteCap
     }
 
+    // MARK: - Format tag keys
+
+    /// The `format_tags` keys ffprobe is asked to return.
+    ///
+    /// **Why this list matters beyond just "what the probe reports".** Issue
+    /// #508's auto-tag merge (`AutoTagMerge.additions`, added alongside this
+    /// change) only fills in a tag key the file DOESN'T already have — the
+    /// job's own tags and the source file's tags always win over a looked-up
+    /// value. But that rule can only see a key the probe actually asked
+    /// ffprobe for. The original eight-key list (`title, artist, album,
+    /// date, comment, genre, track, encoder`) left out most of what
+    /// `TMDBTagMapping.applying` and `MusicBrainzTagMapping.applying` write,
+    /// so "never overwrite" was blind to an existing `year`, `description`,
+    /// `director`, `tmdb_id`, `album_artist`, `tracknumber`, `disc`, or any
+    /// MusicBrainz identifier tag — a file that already carried one of those
+    /// under an alias spelling could have ended up with a second, redundant
+    /// copy from the lookup sitting next to it.
+    ///
+    /// Confirmed against a real `ffprobe` build (9.0.1) on 2026-09-25 that
+    /// `-show_entries format_tags=<list>` genuinely narrows the JSON output
+    /// to only the named keys, rather than ffprobe ignoring the filter — a
+    /// file tagged with `title`, `artist`, `director`, `album_artist` and
+    /// `tmdb_id` returned only `title`/`artist`/`comment` when the filter
+    /// named just those three, and returned all five once the filter named
+    /// them.
+    ///
+    /// **Keep this list in step with the canonical keys (and aliases) that
+    /// `TMDBTagMapping.applying` and `MusicBrainzTagMapping.applying`
+    /// write.** `AutoTagMergeTests` pins `keysItMayWrite ⊆ formatTagKeys` so
+    /// a future key added to either mapping without a matching probe key
+    /// fails a test instead of silently duplicating a tag.
+    ///
+    /// **This is also the only place this string is built** — confirmed by
+    /// `grep -rn format_tags= Sources Tests --include=*.swift` before this
+    /// change, which found just this one call site — so widening it here is
+    /// the whole change. It does have a visible side effect though: this
+    /// dictionary becomes `MediaFile.metadata`, which both the app's tag
+    /// editor (`MetadataTagEditorView`) and the `meedya-convert probe`
+    /// command display by iterating every key present, so widening this
+    /// list means both of those now show more tag rows for files that carry
+    /// them — that is intended (those tags were always in the file; the
+    /// probe just wasn't asking for them), not a regression.
+    public static let formatTagKeys: [String] = [
+        // The original eight.
+        "title", "artist", "album", "date", "comment", "genre", "track", "encoder",
+        // TMDB (`TMDBTagMapping.applying`): `year` is the alias `date` is
+        // checked against; the rest had no probe key at all before this.
+        "year", "description", "synopsis", "director", "tmdb_id",
+        // MusicBrainz (`MusicBrainzTagMapping.applying`): album-level and
+        // track/disc fields, plus `tracknumber`, the alias `track` is
+        // checked against.
+        "album_artist", "tracknumber", "disc",
+        // MusicBrainz identifiers, written only when a lookup includes them.
+        "musicbrainz_trackid", "musicbrainz_albumid",
+        "musicbrainz_releasegroupid", "musicbrainz_artistid",
+    ]
+
     // MARK: - Public API
 
     /// Analyse a media file and return its complete metadata.
@@ -143,7 +200,7 @@ public final class FFmpegProbe: Sendable {
             + "bits_per_raw_sample,duration,nb_frames,"
             + "disposition",
             "-show_entries", "stream_tags=language,title,BPS,BPS-eng,NUMBER_OF_FRAMES",
-            "-show_entries", "format_tags=title,artist,album,date,comment,genre,track,encoder",
+            "-show_entries", "format_tags=\(Self.formatTagKeys.joined(separator: ","))",
             "-show_entries", "stream_side_data=side_data_type",
             url.path
         ]
