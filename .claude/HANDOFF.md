@@ -257,8 +257,18 @@ below it.
 > - **Builder hygiene:** the 8/9 builder used `git stash` (the stash list is shared;
 >   it was empty afterwards, so nothing was lost). **Rule: builders never use git
 >   stash; they use a temporary commit.**
-> - #506 9/9 (docs): in progress. **Then:** cherry-pick #506 (`522367d`…9/9)
->   onto the branch, push, and watch CI BY COMMIT.
+> - **#506 9/9 `8a29ffa` (docs):**
+>   - A new Help topic `settings-transfer.md` (+ a HelpView entry), FAQ, CLI
+>     reference, the API spec ("nine subcommands"), Architecture, User-Guide,
+>     README, CHANGELOG, Home.
+>   - `SECURITY.md` **F-014** (a settings export never carries a secret).
+>   - FEATURES.md has a follow-ups table; the plan is marked IMPLEMENTED.
+>   - It deliberately did NOT note the probe fix in F-007, because `6301879`
+>     wasn't in the worktree. Add that in the docs sweep.
+> - **#506 CHERRY-PICKED onto `wip/alpha-consolidation` (11 commits → `d83c692`),
+>   cleanly.** The YAML and JSON schemas are valid; the engine and CLI build; 62
+>   settings tests ran locally on the combined tree and all pass. CI is being
+>   watched BY COMMIT.
 > - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
 >   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
 >   Reason: round 2 now runs in small chunks with pasted diffs spread across the
