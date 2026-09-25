@@ -179,6 +179,24 @@ below it.
 >   - The builder followed the Keychain rule. The 2 test leftovers were checked and
 >     deleted by the orchestrator. Root cause raised as **#523** (delete-all removes
 >     one item per call).
+> - **#506 3/9 `9bb49a2`:** `EncodingProfileStore.upsertUserProfiles` /
+>   `replaceUserProfiles`. IDs kept; validate → write atomically → then memory;
+>   throws on failure. A profile claiming `isBuiltIn` is REFUSED, not coerced (the
+>   plan said "force false"; later commits must expect the throw). 14 tests ran
+>   locally; a planted fault was caught.
+> - **#506 4/9 `1074751`:** `SettingsKeyRegistry`, with decisions for **106**
+>   stored settings (the plan's 104 + the 2 `autotag.*`): 71 allowed, 7 this-Mac,
+>   28 never. There are 13 Application Support stores, and only
+>   `user_profiles.json` is exported.
+>   - The tripwire (`SettingsKeyCoverageTests`, which scans Sources) and a sentinel
+>     for the secrets. Both were proven by planted faults.
+>   - 6 settings the plan allowed are now never: no UI changes them.
+>   - `JSONValue` moved to Utilities.
+>   - Notes for commit 5: a missing `useHardwareAcceleration` means ON;
+>     `emailToAddresses` is TEXT holding JSON.
+>   - `keyboard_shortcuts` / `savedPipelines` are "next launch" until commit 8 adds
+>     reloads.
+> - **#506 5/9 (the export/import engine, Opus): in progress.**
 > - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
 >   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
 >   source, **#521** the REST API server can't actually encode and isn't reachable,
