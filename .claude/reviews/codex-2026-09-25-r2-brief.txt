@@ -1,0 +1,34 @@
+You are reviewing code changes in this git repository. You are read-only: do not edit any file. Read the changes with `git log --oneline codex-r2-base..HEAD` and `git diff codex-r2-base..HEAD`, reading individual files in full where you need context. The previous review (round 1, which you wrote) is in `.claude/reviews/codex-2026-09-24-r1.md`, and the verified fix specs are in `.claude/reviews/codex-2026-09-24-r1-fix-specs.md`.
+
+This is ROUND 2. Every one of your 11 round-1 findings was confirmed real and has been fixed by Claude. No other system has checked the fixes. Review them as one body of work. Report only real defects, meaning things that are wrong or would go wrong. Do not report style. For each finding give the file:line, what goes wrong, and a concrete scenario that triggers it. Also say plainly for each round-1 finding whether its fix is COMPLETE, INCOMPLETE, or introduced a NEW problem.
+
+Look hardest at these (each is a place a fix could itself be wrong):
+
+1. F1 privacy recheck (MeedyaDBContributor.contribute `recheck`, MeedyaDBSubmissionMode.narrower, the two view models' closures).
+   - Can a mid-run change ever WIDEN what is sent?
+   - Can the label leak in any path?
+   - Is the equality check on MeedyaDBPublisherConfig sound, and does it compare the key?
+   - Can the closure's reads of UserDefaults or the Keychain run on a thread where that's unsafe?
+   - Does runWillContribute ever show a promise the run won't keep?
+2. F2 APIKeyManager reload-before-every-read-and-write.
+   - Any lock left held on an early exit?
+   - Any path where a reload can WIPE keys that exist?
+   - The legacy-migration branch re-running on every reload?
+   - Performance: every lookup now reads the index file and every Keychain item. Is it called in a hot path, such as a SwiftUI body, in a way that matters?
+   - Is the notification posted after unlock on every path?
+3. F4/F5 MakeMKVLaunchGate and MakeMKVOutputLatch in MakeMKVExecutor.swift.
+   - Can the continuation resume twice or never?
+   - Can a line be delivered after completion, or out of order?
+   - What happens when the 5 s end-of-output wait races the reader?
+   - Is holding the gate lock across Process.run() safe?
+   - Does cancel-after-launch still map to CancellationError for info() and rip()?
+4. F3 scannedSource. Any path where the rip or identify still uses a source other than the one scanned, or where a legitimate rip is now wrongly blocked?
+5. F6 MusicBrainz exact/fuzzy.
+   - Is the exact rule (top-level id == requested id AND offsets present) right for every real response shape, including a 404, a CD stub, and several discs?
+   - The lookup sends the "preferred" Disc ID: a stored one if the TOC carries it, otherwise computed. MusicBrainz does not cross-check an ID against the TOC. Is there any production path that sets a stored ID, which would allow an "exact" match for the wrong disc?
+6. F8 TMDBDiscCandidates cleaner and fallback chain. Titles still mangled? Up to 4 searches plus 5 detail fetches per run: acceptable, and still correctly capped?
+7. F9 MakeMKV backslash escaping.
+8. F7/F11 wording, and any NEW text: does every sentence in the changed docs, help, UI captions and comments hold at every call site?
+9. The new and changed tests. Do any assert the promise rather than the delivery? Are any timing-dependent in a way that will flake under `swift test --parallel`?
+
+Finish with a numbered list of findings, most severe first, each marked BLOCKER / MAJOR / MINOR, then a per-round-1-finding verdict table, then one line: TOTAL: n findings.
