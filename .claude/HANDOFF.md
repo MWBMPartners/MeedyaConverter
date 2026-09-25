@@ -267,8 +267,20 @@ below it.
 >     wasn't in the worktree. Add that in the docs sweep.
 > - **#506 CHERRY-PICKED onto `wip/alpha-consolidation` (11 commits → `d83c692`),
 >   cleanly.** The YAML and JSON schemas are valid; the engine and CLI build; 62
->   settings tests ran locally on the combined tree and all pass. CI is being
->   watched BY COMMIT.
+>   settings tests ran locally on the combined tree and all pass.
+> - **#506 CI:** red on `0bb246f` (4 view-model tests), then red on `4193c18` (1
+>   test), then **GREEN on `4203c35`** (run 36132731028).
+>   - Cause 1: app test stores were named `<root>/<label>.plist`. On the macOS 15
+>     CI runner, `persistentDomain(forName:)` can't read ".plist"-suffixed path
+>     suites back; it works on newer macOS. **Rule: path-named test suites have
+>     NO .plist suffix, inside a created "Preferences" folder**, as the engine's
+>     `SettingsTransferTestSupport` does.
+>   - Cause 2: the cancel test's premise. Replace with nothing to remove rightly
+>     applies without asking.
+>   - #506 has a completion comment with AC evidence; it closes on merge.
+>   - #506 follow-ups raised: **#524–#528**, plus a comment on #510.
+> - **#505 planning started** (Opus, read-only). #506 is done, so #505 can plug in
+>   as a settings category.
 > - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
 >   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
 >   Reason: round 2 now runs in small chunks with pasted diffs spread across the
