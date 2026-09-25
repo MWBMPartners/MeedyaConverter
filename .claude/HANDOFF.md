@@ -173,8 +173,29 @@ below it.
 >   ConverterEngine` is the only local gate; app-layer code (views, view models) is
 >   compile-checked by CI only. Possibly it's only a fresh-worktree effect. Check it
 >   in the main copy.
-> - **Still running:** F2+F10 (Sonnet, main copy; slow because of heavy machine
->   load, a load average over 200); F4+F5 (Opus, worktree `agent-a921046e6720175b1`).
+> - **F2+F10 (`75a37bd`) LANDED, CI passed (run 36074336340).** Opus review
+>   confirmed: no early exit can skip the unlock, and the notification tests filter
+>   by their own manager.
+> - **F4+F5 (`7892de9`) LANDED, CI passed (run 36075578716).** Built by Opus in a worktree
+>   and reviewed by the orchestrator (the launch gate's lock is held across
+>   `process.run()`; the latch resumes exactly once on every path).
+>   - Reproduction: old 70/400 lost, new 0/400; old cancel race 22/60, new 0/60.
+>   - The repro sources are in this session's scratchpad (`f4f5-repro/`), so they
+>     can be re-run.
+>   - Open unknowns: makemkvcon's SIGTERM behaviour (there is no SIGKILL fallback),
+>     and a rip consumer hears "ended" before makemkvcon has actually exited.
+> - **The environment claim is CONFIRMED and wider than first reported.**
+>   - The toolchain is now **Swift 6.4**.
+>   - Xcode 27 is installed but not selected, and its licence is not accepted.
+>   - The whole-package build stops at `actool`; with `--build-system native` it
+>     fails on SwiftUI macros in about 83 view files.
+>   - W10's filter gate is obsolete. Only `swift build --target ConverterEngine`
+>     works locally. App-layer code is compile-checked by CI, or by a manual
+>     `swiftc -typecheck` with a stub `Bundle.module`.
+>   - **Owner decision D2 (asked):** select Xcode and accept its licence.
+>   - The memory is updated; W10 and the `.OpenAI` mirror are corrected in the
+>     next notes commit.
+> - **In progress:** F1 + #507 + the F10 screen wiring (Sonnet, main copy).
 >
 > **Build order (so no two builders edit the same file):** F2+F10 (key store, main
 > copy) ∥ F4+F5 (Opus, worktree) ∥ F8 then F9 (Sonnet, one worktree, two commits) →

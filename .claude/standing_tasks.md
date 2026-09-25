@@ -340,11 +340,21 @@ Established 2026-09-01. Older notes saying "no local macOS build available" are
 **wrong** and should not be trusted.
 
 - **`swift build --target ConverterEngine` — RUN THIS BEFORE EVERY SWIFT COMMIT.**
-  A Swift 6.3.3 toolchain is present at `/usr/bin/swift`. This is a real compile
-  gate and catches the class of error that used to reach CI.
-- **`swift build` (whole package) fails on `#Preview` macros** — the active
-  developer directory is CommandLineTools, which has no `PreviewsMacros` plugin.
-  This is an environment limitation. **Do not "fix" the `#Preview` blocks.**
+  A Swift toolchain is present at `/usr/bin/swift` (6.4 as of 2026-09-25). This
+  is a real compile gate and catches the class of error that used to reach CI.
+  The machine is sometimes heavily loaded, so allow 10+ minutes.
+- **The whole-package `swift build` does NOT reach Swift compilation on the
+  owner's Mac (updated 2026-09-25).** The active developer directory is
+  CommandLineTools. Xcode 27 is installed but not selected, and its licence is
+  not accepted. The default build stops at `actool` (the app target's asset
+  catalog); `--build-system native` fails on SwiftUI's own macros in about 83
+  view files. The old "filter out `#Preview` errors" gate is obsolete. App-layer
+  code is compile-checked by CI, or by a manual `swiftc -typecheck` of the
+  `MeedyaConverterCore` sources with a stub `Bundle.module` kept outside the
+  repo. **Never use `sudo`, `xcodebuild` or `xcode-select` on the owner's
+  behalf.** Selecting Xcode and accepting its licence is the owner's call
+  (asked 2026-09-25); once done, re-check every line of W10.
+  **Do not "fix" the `#Preview` blocks.**
 - **`swift test` CANNOT run** — no Xcode, so no `XCTest` module. For a new or
   changed test file, `swiftc -parse <file>` gives a syntax check; type-checking
   and execution are **CI's** job. Never claim tests pass locally.

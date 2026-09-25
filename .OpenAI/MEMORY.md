@@ -273,11 +273,15 @@ subprocesses to keep the proprietary app code licence-clean.
 
 ## Environment facts (do not re-learn the hard way)
 
-- Swift 6.3 toolchain is present: `swift build --target ConverterEngine` works and
-  is the pre-commit gate. `swift test` / SwiftLint cannot run locally (no Xcode) —
-  **CI is the test gate**.
-- `swift build` of the whole package fails only on `#Preview` macros (a
-  CommandLineTools limitation) — not a code bug; do not "fix" the previews.
+- A Swift toolchain (6.4 as of 2026-09-25) is present: `swift build --target
+  ConverterEngine` works and is the pre-commit gate. `swift test` and SwiftLint
+  cannot run locally — **CI is the test gate**.
+- The whole-package `swift build` does NOT reach compilation on the owner's Mac.
+  Xcode 27 is installed but not selected and its licence is not accepted, so the
+  build stops at `actool`; the native build system fails on SwiftUI macros. The
+  old "filter out `#Preview` errors" gate is obsolete. App-layer code is
+  compile-checked by CI. Never use sudo, xcodebuild or xcode-select for the
+  owner; that is their decision (asked 2026-09-25).
 - CI runs on every push to `wip/**` (#496).
 - **Cloud sessions push to the working branch too.** On 2026-09-23 the owner's local
   checkout was 59 commits behind `origin/wip/alpha-consolidation` (all the 17–21 Sept
