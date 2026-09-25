@@ -196,6 +196,20 @@ below it.
 >   - The memory is updated; W10 and the `.OpenAI` mirror are corrected in the
 >     next notes commit.
 > - **In progress:** F1 + #507 + the F10 screen wiring (Sonnet, main copy).
+> - **Follow-up issues raised (25 Sept):**
+>   - #509: `ExternalToolRunner`/`DiscImagingController` have the F4/F5 faults.
+>   - #510: built-in profiles get a new random ID every launch, which breaks
+>     conditional rules.
+>   - #511: AppleScript "encode" converts the file twice.
+>   - #512: the "Provider backend" picker has no reader.
+>   - #513: disc follow-ups (MakeMKV line continuation, CLI JSON schema, ranking on
+>     the raw seed title, the Enhanced CD full-TOC reader).
+>   - **MeedyaDB #1** (in the MeedyaDB repo): `disc_ingest` flattens candidates into
+>     facts and ignores confidence; `resolveByIdentifier` uses `LIMIT 1` with no
+>     type filter.
+>   - Still to raise when their work starts: the SECURITY.md F-004(c) correction and
+>     SFTP password migration at launch (both in the #506 plan, commit 1); `runJob`
+>     marking a killed-FFmpeg cancel as Failed (#508 plan).
 >
 > **Build order (so no two builders edit the same file):** F2+F10 (key store, main
 > copy) ∥ F4+F5 (Opus, worktree) ∥ F8 then F9 (Sonnet, one worktree, two commits) →
