@@ -66,7 +66,24 @@ below it.
   - **Next chunks:** re-review `fe1a758` and the 1b fix; then (2) MakeMKV
     F3/F4/F5/F9, (3) F6 + fallback #4, (4) F8 + fallback #1, (5) wording.
     **Chunk sizes that worked:** about 34k-token and 14k-token prompts, answered
-    in one go in 1-3 minutes. The allowance per reset is at least 78k tokens.
+    in one go in 1-3 minutes.
+  - **14:58: chunk 2a REFUSED** ("usage limit … try again at 7:44 PM"). So the
+    allowance is about **78k tokens per 5-hour reset**: chunk 1 used all of it.
+    The chunk 2a prompt is ready (`codex-r2-chunk2a-prompt.txt`, about 18k tokens,
+    F4/F5/F9). A timer fires at 19:45.
+  - **Codex queue, re-ordered by the owner's standing rule** (spend Codex on
+    security, privacy, money and data loss first):
+    1. re-review the chunk 1b key-store fix (keys; data loss);
+    2. #505's privacy core (commit 2 store/models, then commits 4-5 as they land);
+    3. #506's "no secret in an export" parts;
+    4. then round-2 chunks 2-5 (MakeMKV, F6, F8, wording). The Fable fallback
+       round 2 already covered these, so they are lower priority;
+    5. #508 (auto-tagging).
+    Each is recorded as "not fully reviewed" until its Codex chunk has run.
+  - **Owner question (raised 25 Sept 15:00):** at about 78k tokens per 5 hours,
+    this queue needs roughly 15 chunks, which is days. Recommend raising the Codex
+    limit. Otherwise, accept Fable fallback reviews (labelled as such) for the
+    non-security areas.
 - **#505 build rules for this session.** Build in a WORKTREE, and cherry-pick onto the
   branch only while NO Codex chunk is running. A chunk takes a few minutes, and Codex
   reads whole files from the main working tree for context. Plan section 10 says
