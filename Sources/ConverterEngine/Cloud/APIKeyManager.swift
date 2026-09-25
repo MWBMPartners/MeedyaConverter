@@ -316,6 +316,35 @@ public final class APIKeyManager: @unchecked Sendable {
 
     // MARK: - Persistence model
 
+    /// The Keychain service (`kSecAttrService`) every production
+    /// `APIKeyManager` uses. Named here, once, because two things need it:
+    /// `init`'s default, and `hasStoredKey(for:label:storageDirectory:
+    /// keychainService:)`'s default — which runs WITHOUT an instance, so
+    /// it cannot borrow an instance's value. Stable across releases:
+    /// changing it would orphan every saved key.
+    public static let productionKeychainService = "Ltd.MWBMpartners.MeedyaConverter.APIKeys"
+
+    /// File name of the saved-keys list (the metadata index) inside the
+    /// storage directory. One name, shared by `init` and `hasStoredKey`, so
+    /// the two can never look at different files.
+    private static let indexFileName = "api_keys.json"
+
+    /// `~/Library/Application Support/MeedyaConverter/Keys` for THIS
+    /// process. Shared by `init` and `hasStoredKey` for the same reason as
+    /// `indexFileName`.
+    ///
+    /// Note what "for this process" means: a sandboxed build (the App Store
+    /// build has `com.apple.security.app-sandbox`) gets its own private
+    /// Application Support folder inside its container, while the
+    /// command-line tool is not sandboxed. The two therefore read DIFFERENT
+    /// saved-keys lists. Nothing here can bridge that; it is recorded so
+    /// nobody assumes the command-line tool sees the App Store app's keys.
+    private static func defaultStorageDirectory() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MeedyaConverter")
+            .appendingPathComponent("Keys")
+    }
+
     /// Storage-format version. Increment when the on-disk shape changes
     /// in a non-backward-compatible way.
     ///
@@ -397,14 +426,10 @@ public final class APIKeyManager: @unchecked Sendable {
     ///     Keychain entries.
     public init(
         storageDirectory: URL? = nil,
-        keychainService: String = "Ltd.MWBMpartners.MeedyaConverter.APIKeys"
+        keychainService: String = APIKeyManager.productionKeychainService
     ) {
-        let defaultDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("MeedyaConverter")
-            .appendingPathComponent("Keys")
-
-        let dir = storageDirectory ?? defaultDir
-        self.storageURL = dir.appendingPathComponent("api_keys.json")
+        let dir = storageDirectory ?? Self.defaultStorageDirectory()
+        self.storageURL = dir.appendingPathComponent(Self.indexFileName)
         self.keychainService = keychainService
         self.keys = []
 
@@ -626,6 +651,140 @@ public final class APIKeyManager: @unchecked Sendable {
         return Set(keys.filter { $0.isActive }.map { $0.provider })
     }
 
+    // MARK: - Presence check (never reads a secret)
+
+    /// Whether a key is saved for `provider`, found WITHOUT reading the key.
+    ///
+    /// It reads the saved-keys list (`api_keys.json`, which holds no
+    /// secrets), finds the matching entry, then asks the Keychain only
+    /// whether that entry's item EXISTS — see `KeyPresence.swift` for why
+    /// the Keychain is asked about existence and nothing more (in short: the
+    /// command-line tool is a different program from the app, and reading
+    /// secret data the app saved would probably make macOS prompt, or
+    /// refuse).
+    ///
+    /// **Why this is `static`, not an instance method.** Creating an
+    /// `APIKeyManager` is itself a secret read: `init` calls
+    /// `reloadLocked()`, which calls `hydrate(record:)`, which reads the
+    /// secret DATA of every saved key from the Keychain. So an instance
+    /// method would already have done the very thing this check exists to
+    /// avoid before it ran a single line. As a static, it can be called with
+    /// no instance at all — which is how the command-line tool must call it.
+    /// Written as `APIKeyManager.hasStoredKey(for: .tmdb)`, it reads exactly
+    /// like the #506 plan's `hasStoredKey(for:label:)`.
+    ///
+    /// **Why it does not touch `reloadLocked()` or `lock`.** It shares no
+    /// state with any instance: it reads the file into a local value, looks
+    /// up one entry, and asks the Keychain one question. `lock` protects an
+    /// instance's `keys` array, which this never reads or writes. And the
+    /// file is always replaced whole — `saveKeys()` writes with `.atomic` —
+    /// so a read here sees either the complete old file or the complete new
+    /// one, never half of each. (Neither `lock` nor anything else
+    /// coordinates separate processes; that gap is documented on
+    /// `didChangeNotification` and applies here too.)
+    ///
+    /// **Which entry counts.** With `label` nil it uses the FIRST ACTIVE
+    /// entry for `provider`, whatever its label — exactly the entry
+    /// `key(for:)` would return — so "present" means "the entry the app's
+    /// own lookup would use has a Keychain item behind it", not merely
+    /// "some key for this service exists somewhere". With a label, it uses the first active entry with that
+    /// exact label (the same exact-match rule `storeKey` uses to decide
+    /// what to replace). An inactive entry never counts, because
+    /// `key(for:)` skips it too.
+    ///
+    /// **The three answers**, matching `reloadLocked()`'s two traps:
+    /// - no saved-keys file at all → `.missing` (TRAP 1: a missing file
+    ///   means no keys);
+    /// - a file that exists but can't be read → `.couldNotCheck(
+    ///   .indexUnreadable)`, and one that is read but isn't in the current
+    ///   format (damaged, the pre-Keychain format, or written by a newer
+    ///   version) → `.couldNotCheck(.indexNotRecognised)` (TRAP 2: never
+    ///   "missing" — that would tell someone to re-type a key that may be
+    ///   perfectly safe);
+    /// - otherwise: no matching active entry → `.missing`; an entry whose
+    ///   Keychain item has gone → `.missing` (the Keychain gave a definite
+    ///   "not found", and the app itself could not use such an entry: it
+    ///   would hydrate it with an empty key); an entry whose item exists →
+    ///   `.present`; a Keychain error → `.couldNotCheck(.keychainRefused)`.
+    ///
+    /// **What it never does:** decode a secret field, read a secret from the
+    /// Keychain, migrate a pre-Keychain file, or write anything. The legacy
+    /// migration lives only in `reloadLocked()`; a check that migrated as a
+    /// side effect would write to the Keychain from the command-line tool.
+    ///
+    /// **What it cannot prove:** that the key is correct, still accepted by
+    /// the service, or readable by the program that will use it — only that
+    /// the list names it and a Keychain item with the right name exists. A
+    /// Keychain item with no list entry pointing at it (left behind by the
+    /// lost-update bug described on `reloadLocked()`) counts as missing,
+    /// because the app cannot find it either.
+    ///
+    /// - Parameters:
+    ///   - provider: The service to ask about.
+    ///   - label: Which saved key, when a service has several; nil means
+    ///     "whichever `key(for:)` would use".
+    ///   - storageDirectory: The folder holding `api_keys.json`. nil means
+    ///     this process's default — see `defaultStorageDirectory()` for why
+    ///     a sandboxed app and the command-line tool resolve that to
+    ///     different folders.
+    ///   - keychainService: The Keychain service the keys were saved under.
+    ///     Tests pass a unique one.
+    /// - Returns: `.present`, `.missing` or `.couldNotCheck(reason)`. It
+    ///   never contains the key, because the key is never read.
+    public static func hasStoredKey(
+        for provider: APIKeyProvider,
+        label: String? = nil,
+        storageDirectory: URL? = nil,
+        keychainService: String = APIKeyManager.productionKeychainService
+    ) -> KeyPresence {
+        let indexURL = (storageDirectory ?? defaultStorageDirectory())
+            .appendingPathComponent(indexFileName)
+
+        let data: Data
+        switch readIndexFile(at: indexURL) {
+        case .missing:
+            // TRAP 1, as in `reloadLocked()`: no file means no keys.
+            return .missing
+        case .unreadable:
+            // TRAP 2, as in `reloadLocked()`: the file is there but can't be
+            // read — unknown, not empty. The error itself isn't passed on;
+            // it could only describe the FILE, and the reason code says
+            // enough.
+            return .couldNotCheck(.indexUnreadable)
+        case .contents(let contents):
+            data = contents
+        }
+
+        // Only the current (v2) shape is accepted. `StorageEnvelope` and
+        // `MetadataRecord` have no secret fields, so a successful decode
+        // never yields a secret. The pre-Keychain (v1) shape is deliberately
+        // NOT decoded here, even though `reloadLocked()` accepts it: that
+        // shape HOLDS the secrets in plain text, and accepting it would mean
+        // either decoding them or migrating them — the second writes to the
+        // Keychain. Both are out of bounds for a check. (If the file IS an
+        // old v1 one, its plain-text bytes have been read from disk into
+        // `data` by this point — a file read, not a Keychain read — and they
+        // are dropped when this function returns; nothing keeps or passes
+        // them on.)
+        guard let envelope = try? makeIndexDecoder().decode(StorageEnvelope.self, from: data) else {
+            // TRAP 2 (continued): read, but not understood.
+            return .couldNotCheck(.indexNotRecognised)
+        }
+
+        guard let record = envelope.records.first(where: { record in
+            record.provider == provider
+                && record.isActive
+                && (label == nil || record.label == label)
+        }) else {
+            return .missing
+        }
+
+        // The account string comes from the saved record, exactly as
+        // `hydrate(record:)` uses it — not recomputed — so this asks about
+        // the very item the app would read.
+        return KeychainStore.exists(service: keychainService, account: record.keychainAccount)
+    }
+
     // MARK: - Persistence
 
     /// Stable Keychain account identity for a key.
@@ -640,6 +799,44 @@ public final class APIKeyManager: @unchecked Sendable {
     ) -> String {
         let labelComponent = label?.isEmpty == false ? label! : "default"
         return "\(provider.rawValue):\(labelComponent)"
+    }
+
+    /// What was found at the saved-keys list's path, before any decoding.
+    ///
+    /// Shared by `reloadLocked()` and `hasStoredKey(for:label:…)` so the
+    /// two can never disagree about which of the "missing" / "can't read"
+    /// cases a file falls into — they are the two traps documented on
+    /// `reloadLocked()`, and they must mean the same thing in both places.
+    private enum IndexFileRead {
+        /// Nothing at the path (TRAP 1: no keys).
+        case missing
+        /// Something is at the path but reading it failed (TRAP 2).
+        case unreadable(Error)
+        /// The raw bytes, not yet decoded.
+        case contents(Data)
+    }
+
+    /// Reads the saved-keys list's raw bytes, sorting the result into the
+    /// three `IndexFileRead` cases. Static and stateless, so the presence
+    /// check can use it without an instance or `lock`.
+    private static func readIndexFile(at url: URL) -> IndexFileRead {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return .missing
+        }
+        do {
+            return .contents(try Data(contentsOf: url))
+        } catch {
+            return .unreadable(error)
+        }
+    }
+
+    /// The decoder for the saved-keys list. One definition, so the date
+    /// format (ISO 8601, matching `saveKeys()`'s encoder) is set in one
+    /// place for both readers.
+    private static func makeIndexDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 
     /// Reads the metadata envelope from disk and hydrates each record's
@@ -699,25 +896,26 @@ public final class APIKeyManager: @unchecked Sendable {
     ///   This matches this method's behaviour before this fix for this case
     ///   — only the missing-file case (TRAP 1) changed.
     private func reloadLocked() {
-        guard FileManager.default.fileExists(atPath: storageURL.path) else {
+        // The file read is shared with `hasStoredKey(for:label:…)` (see
+        // `readIndexFile(at:)`), so both sort a file into the same two
+        // traps below.
+        let data: Data
+        switch Self.readIndexFile(at: storageURL) {
+        case .missing:
             // TRAP 1: a missing file is authoritative — it means no keys,
             // not "keep trusting whatever this instance last saw".
             keys = []
             return
-        }
-
-        let data: Data
-        do {
-            data = try Data(contentsOf: storageURL)
-        } catch {
+        case .unreadable(let error):
             // TRAP 2: unreadable — keep the in-memory copy rather than
             // wiping it. No worse than the behaviour before this fix.
             print("Warning: Could not load API keys: \(error.localizedDescription)")
             return
+        case .contents(let contents):
+            data = contents
         }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = Self.makeIndexDecoder()
 
         // -----------------------------------------------------------------
         // Preferred path: new-shape envelope, secrets in Keychain.
@@ -958,6 +1156,20 @@ private enum KeychainStore {
         #else
         throw KeychainError.unsupportedPlatform
         #endif
+    }
+
+    /// Whether an item exists at `(service, account)`, asked with
+    /// ATTRIBUTES ONLY — unlike `read` above, this never requests
+    /// `kSecReturnData`, so it never asks for, or receives, the secret.
+    ///
+    /// Used only by `APIKeyManager.hasStoredKey(for:label:…)`. It hands
+    /// straight to `KeychainItemExistence.check` (in `KeyPresence.swift`)
+    /// rather than building its own query, so the SFTP, SMTP and API-key
+    /// checks all share one attributes-only query, and the one test that
+    /// inspects that query covers all three. Returns rather than throws,
+    /// because "couldn't check" is an ordinary answer here, not a failure.
+    static func exists(service: String, account: String) -> KeyPresence {
+        KeychainItemExistence.check(service: service, account: account)
     }
 
     /// Delete the Keychain item at `(service, account)`. Silently no-ops

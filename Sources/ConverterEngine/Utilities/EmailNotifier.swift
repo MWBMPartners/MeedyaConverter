@@ -75,6 +75,57 @@ public struct SMTPConfig: Codable, Sendable {
     }
 }
 
+// MARK: - SMTPPasswordKeychain
+
+/// Where the SMTP (email) password lives in the Keychain, and a way to ask
+/// whether it is saved WITHOUT reading it.
+///
+/// **Why these names live in the engine now (#506 commit 2).** They used to
+/// be private constants inside the app's `EmailSettingsView`, which is the
+/// only code that saves and reads the password. The settings import's
+/// "what still needs entering?" step also has to ask about this password,
+/// and that step runs in the command-line tool too — which cannot see
+/// anything inside the app module. Moving the two names here, and pointing
+/// `EmailSettingsView` at them, keeps a single copy: if the view and the
+/// check ever disagreed, the check would report a saved password as
+/// missing, with nothing on screen to show why.
+///
+/// Saving and reading the password stay in `EmailSettingsView`; only the
+/// names and the existence check moved. (Moving the save/read code as well
+/// would be a larger change than this commit needs.)
+public enum SMTPPasswordKeychain {
+
+    /// `kSecAttrService` for the SMTP password. Must never change:
+    /// every password already saved is filed under exactly this string,
+    /// and a different one would make them all look missing.
+    public static let service = "Ltd.MWBMpartners.MeedyaConverter.smtp"
+
+    /// `kSecAttrAccount` for the SMTP password. There is one SMTP server
+    /// setting, so one fixed account name. Same "must never change" rule.
+    public static let account = "smtpPassword"
+
+    /// Whether an SMTP password is saved, asked with attributes only — the
+    /// password itself is never requested, received or decrypted. See
+    /// `KeyPresence.swift` for why that matters (the command-line tool is a
+    /// different program from the app that saved it) and for the shared
+    /// query this uses.
+    ///
+    /// **What it cannot prove:** that the password is correct or that the
+    /// mail server still accepts it; only that the Keychain item exists.
+    public static func exists() -> KeyPresence {
+        exists(service: service, account: account)
+    }
+
+    /// Test seam: the same check against a caller-chosen service and
+    /// account, so `KeyPresenceTests` can use a throwaway `.Tests.<UUID>`
+    /// service instead of the owner's real SMTP password item. Internal
+    /// (reachable only through `@testable import`), so production code
+    /// cannot point it anywhere else by mistake.
+    static func exists(service: String, account: String) -> KeyPresence {
+        KeychainItemExistence.check(service: service, account: account)
+    }
+}
+
 // MARK: - EmailNotifier
 
 /// Builds and dispatches email notifications for encoding job events.

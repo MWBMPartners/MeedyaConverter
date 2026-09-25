@@ -387,11 +387,14 @@ struct EmailSettingsView: View {
 
     // MARK: - Keychain Helpers
 
-    /// The Keychain service identifier for the SMTP password.
-    private static let keychainService = "Ltd.MWBMpartners.MeedyaConverter.smtp"
-
-    /// The Keychain account key for the SMTP password.
-    private static let keychainAccount = "smtpPassword"
+    // The Keychain service and account names for the SMTP password used to
+    // be two private constants here. They now live in the engine, as
+    // `SMTPPasswordKeychain.service` / `.account` (#506 commit 2), because
+    // the settings import's "what still needs entering?" check — which
+    // also runs in the command-line tool, outside this app module — has to
+    // ask about the same Keychain item. One copy of the names means the
+    // check and this screen can never drift apart and disagree about
+    // whether a password is saved.
 
     /// Save the SMTP password to the macOS Keychain.
     ///
@@ -402,8 +405,8 @@ struct EmailSettingsView: View {
         // Delete any existing entry first.
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
+            kSecAttrService as String: SMTPPasswordKeychain.service,
+            kSecAttrAccount as String: SMTPPasswordKeychain.account,
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
@@ -418,8 +421,8 @@ struct EmailSettingsView: View {
         // Time Machine backups.
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
+            kSecAttrService as String: SMTPPasswordKeychain.service,
+            kSecAttrAccount as String: SMTPPasswordKeychain.account,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
@@ -428,8 +431,9 @@ struct EmailSettingsView: View {
 
     /// Load the SMTP password from the macOS Keychain.
     ///
-    /// Static because it depends only on the type-level `keychainService`
-    /// / `keychainAccount` constants, never on instance state — which lets
+    /// Static because it depends only on the engine's type-level
+    /// `SMTPPasswordKeychain.service` / `.account` names, never on instance
+    /// state — which lets
     /// `loadSMTPConfig()` below (and any other caller, e.g. `AppViewModel`'s
     /// completion-email wiring, re #348) call it without a live view.
     ///
@@ -437,8 +441,8 @@ struct EmailSettingsView: View {
     static func loadPasswordFromKeychain() -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
+            kSecAttrService as String: SMTPPasswordKeychain.service,
+            kSecAttrAccount as String: SMTPPasswordKeychain.account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]

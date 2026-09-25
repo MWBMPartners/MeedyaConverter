@@ -150,6 +150,37 @@ public enum SFTPCredentialStore {
         #endif
     }
 
+    // MARK: - Exists (never reads the password)
+
+    /// Whether a password is saved for `profileID`, found WITHOUT reading
+    /// it: the Keychain is asked only whether an item with this service
+    /// and account (the profile's UUID) exists.
+    ///
+    /// **Why not just call `read` and check for nil?** `read` asks for the
+    /// secret data (`kSecReturnData`). The settings import runs in the
+    /// command-line tool as well as the app, and the command-line tool is a
+    /// different program from the one that saved the password; asking for
+    /// the data from there would probably make macOS prompt, or refuse.
+    /// Existence needs none of the protected data. See `KeyPresence.swift`
+    /// for the shared query this uses and the test that checks it.
+    ///
+    /// **Honours `serviceOverride`** exactly as `save`/`read`/`delete` do,
+    /// so tests can point it at their own throwaway service.
+    ///
+    /// **What it cannot prove:** that the password is correct, or that the
+    /// server still accepts it — only that a Keychain item for this profile
+    /// exists. It also knows nothing about the profile's sign-in method: a
+    /// profile using a key file or the SSH agent normally has no Keychain
+    /// item, so `.missing` is the expected answer for it, and whether a
+    /// key FILE exists is a separate check for the caller. Only ask this
+    /// about profiles that sign in with a password.
+    ///
+    /// - Returns: `.present`, `.missing`, or `.couldNotCheck` when the
+    ///   Keychain answers with an error (never folded into `.missing`).
+    public static func exists(forProfileID profileID: UUID) -> KeyPresence {
+        KeychainItemExistence.check(service: service, account: profileID.uuidString)
+    }
+
     // MARK: - Delete
 
     /// Removes the stored password for `profileID`. Idempotent —
