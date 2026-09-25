@@ -101,7 +101,11 @@ below it.
     F4/F5/F9). A timer fires at 19:45.
   - **Codex queue, re-ordered by the owner's standing rule** (spend Codex on
     security, privacy, money and data loss first):
-    1. re-review the chunk 1b key-store fix (keys; data loss);
+    1. re-review the chunk 1b key-store fix (keys; data loss). **READY:** scratchpad
+       `codex-rr1-prompt.txt` (about 25k tokens: `fe1a758` plus the ENGINE part of
+       `2a87078`). Run it at 19:45 BEFORE chunk 2a. The screens-and-tests part of
+       `2a87078` (about 23k tokens: `git show -U8 2a87078 -- Sources/MeedyaConverter
+       Tests`) goes in the next reset;
     2. #505's privacy core (commit 2 store/models, then commits 4-5 as they land);
     3. #506's "no secret in an export" parts;
     4. then round-2 chunks 2-5 (MakeMKV, F6, F8, wording). The Fable fallback
