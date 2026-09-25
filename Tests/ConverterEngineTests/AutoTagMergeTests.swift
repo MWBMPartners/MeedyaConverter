@@ -42,6 +42,32 @@ final class AutoTagMergeTests: XCTestCase {
     // MARK: - Fills gaps only
 
     /// A file with none of TMDB's fields should gain all of them.
+    /// Two input rows sharing one id used to crash the process: the id lookup
+    /// was built with `Dictionary(uniqueKeysWithValues:)`, which traps on a
+    /// duplicate. That is reachable because `MediaTag.init` accepts a
+    /// caller-supplied id. It must now simply work, and still refuse to
+    /// overwrite the title the file already has.
+    func test_additions_duplicateIDsAcrossInputs_doNotCrash() {
+        let sharedID = UUID()
+        let existing = [MediaTag(id: sharedID, key: "title", value: "My Own Title")]
+        let jobTags = [MediaTag(id: sharedID, key: "genre", value: "Mine")]
+
+        let result = AutoTagMerge.additions(
+            existing: existing,
+            jobTags: jobTags,
+            applying: tmdbApplying(tmdbResult())
+        )
+
+        XCTAssertFalse(
+            result.added.contains { $0.key.caseInsensitiveCompare("title") == .orderedSame },
+            "the file's own title must still never be overwritten"
+        )
+        XCTAssertFalse(
+            result.added.contains { $0.key.caseInsensitiveCompare("genre") == .orderedSame },
+            "the job's own genre must still win"
+        )
+    }
+
     func test_additions_fillsEveryMissingField_whenFileHasNone() {
         let outcome = AutoTagMerge.additions(
             existing: [],

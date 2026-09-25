@@ -137,7 +137,16 @@ public enum AutoTagMerge {
         // append — so an id from `result` that is NOT in this set can only
         // be a row `applying` appended because it found no existing key or
         // alias for it. That is exactly "genuinely missing".
-        let baseIDsByID = Dictionary(uniqueKeysWithValues: base.map { ($0.id, $0) })
+        //
+        // `uniquingKeysWith`, NOT `uniqueKeysWithValues`: the latter TRAPS
+        // (crashes the process) on a duplicate id. `MediaTag.init` accepts a
+        // caller-supplied id, so two rows sharing one is unlikely but
+        // possible, e.g. the same tag passed in both `existing` and
+        // `jobTags`. This runs inside an encode (from #508 commit 6), and a
+        // tagging helper must never be able to crash one. On a duplicate,
+        // the first row wins; the only effect is which copy is reported as
+        // "kept".
+        let baseIDsByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         let result = applying(base)
 
