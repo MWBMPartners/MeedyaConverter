@@ -559,6 +559,27 @@ final class AppViewModel {
     /// this `@MainActor` view model, in `startQueue()`.
     let etaPredictor = ETAPredictor()
 
+    // MARK: - Auto-tagging (#508 commit 8)
+
+    /// Background task that drains `engine.autoTagEvents` and turns each one
+    /// into an Activity Log line, for as long as this view model is alive.
+    ///
+    /// Held (rather than a fire-and-forget `Task { }`) so `deinit` can cancel
+    /// it — the same shape `StoreManager.transactionListenerTask` already
+    /// uses for its own long-lived `Transaction.updates` listener, and for
+    /// the same reason: `AsyncStream.Continuation.finish()` (called from
+    /// `EncodingEngine.deinit`) ends the `for await` loop on its own once the
+    /// engine itself goes away, but `AppViewModel` and `engine` are released
+    /// together — nothing guarantees the engine's `deinit` runs BEFORE this
+    /// object's — so this task cancels itself explicitly rather than relying
+    /// on that ordering. `@ObservationIgnored`: a `Task` handle is not UI
+    /// state, and `@Observable` would otherwise wrap every read/write of it.
+    /// `nonisolated(unsafe)`: only ever touched from `init()` (assignment)
+    /// and `deinit` (cancel), never concurrently — `Task.cancel()` is
+    /// documented safe to call from any thread regardless.
+    @ObservationIgnored
+    nonisolated(unsafe) private var autoTagEventTask: Task<Void, Never>?
+
     // MARK: - Initialiser
 
     init() {
@@ -573,9 +594,26 @@ final class AppViewModel {
         // placeholder) means "no override", not a literal empty path.
         let customFFmpegPath = UserDefaults.standard.string(forKey: "customFFmpegPath")
         let customFFprobePath = UserDefaults.standard.string(forKey: "customFFprobePath")
+
+        // Auto-tagging (#508 commit 8). `suiteName: nil` reads
+        // `UserDefaults.standard` — the same store `@AppStorage` implicitly
+        // reads/writes, which is what `AutoTagSettingsSource
+        // .readsStandardDefaults` (checked by `AutoTagAppWiringTests`) is
+        // there to prove: this engine and the Settings toggle a later commit
+        // adds (#508 commit 9, `@AppStorage(AutoTagSettingsStore.Keys
+        // .enabled)`) read and write the exact same place, not an
+        // accidental copy of it. The key is read from a CLOSURE, not fetched
+        // once here and captured: `AutoTagSettingsSource.currentRequest()`
+        // calls this on every job, so a key added, changed or removed in
+        // Settings mid-queue takes effect starting with the very next job,
+        // with nothing here ever holding a copy of the raw secret itself.
+        let autoTagSettings = AutoTagSettingsSource(
+            tmdbKeyProvider: { APIKeyManager().key(for: .tmdb)?.apiKey }
+        )
         let engine = EncodingEngine(
             ffmpegPath: (customFFmpegPath?.isEmpty == false) ? customFFmpegPath : nil,
-            ffprobePath: (customFFprobePath?.isEmpty == false) ? customFFprobePath : nil
+            ffprobePath: (customFFprobePath?.isEmpty == false) ? customFFprobePath : nil,
+            autoTagSettings: autoTagSettings
         )
         self.engine = engine
 
@@ -663,6 +701,70 @@ final class AppViewModel {
         // nothing listened for them, so its Start Next / View Log / Retry
         // actions were inert. Wired here.
         setupNotificationActionObservers()
+
+        // Drain `engine.autoTagEvents` for the lifetime of this view model
+        // and turn each one into an Activity Log line (#508 commit 8). This
+        // is the ONLY reader of that stream — `AsyncStream` delivers each
+        // event to just one `for await` loop, and `EncodingEngine
+        // .autoTagEvents`'s own doc comment says the app is meant to run
+        // exactly one. `[weak self, engine]`: `engine` (the LOCAL constant
+        // above, captured directly, not through `self`) is what the loop
+        // iterates, so starting/continuing it never needs `self` to be
+        // alive; `self` is checked FRESH inside the loop body, on every
+        // event, rather than once before it. That distinction matters: a
+        // single `guard let self else { return }` placed BEFORE the `for
+        // await` would bind a new, STRONG local `self` that stays alive for
+        // the rest of the closure — including while suspended awaiting the
+        // NEXT event — which would keep this view model (and, through it,
+        // `engine`) alive for as long as the stream has more events to
+        // deliver, defeating the point of `[weak self]` entirely. Checking
+        // inside the loop (mirroring `StoreManager.listenForTransactions()`'s
+        // own `for await result in … { guard let self else { return } … }`)
+        // means `self` is only ever strongly held for the few lines needed
+        // to log ONE event, and is free to deallocate the moment nothing
+        // else references it.
+        //
+        // Deliberately the LAST thing `init()` does, not placed next to
+        // `self.engine = engine` above: a closure that captures `self` —
+        // even weakly — before every stored property has been assigned
+        // fails to compile ("variable 'self.xyz' used before being
+        // initialized"). Swift's two-phase-init rule treats `self`
+        // ESCAPING into a closure (which a weak capture still does) the
+        // same as reading a property directly, since the closure could run
+        // before `init()` finishes. `engine` itself has no such
+        // restriction — it is a plain local `EncodingEngine` reference,
+        // unrelated to `self`'s initialization state — so capturing it
+        // directly, here, is what lets this task even exist this early in
+        // `init()`'s tail.
+        //
+        // Settings toggle to switch this on is #508 commit 9 — until then
+        // `AutoTagSettingsStore.isEnabled` reads `false` for a fresh
+        // install, `currentRequest()` returns `nil` for every job, and this
+        // loop simply never receives an event, matching every other engine
+        // built with no settings source at all.
+        autoTagEventTask = Task { [weak self, engine] in
+            for await event in engine.autoTagEvents {
+                guard let self else { return }
+                self.appendLog(
+                    AutoTagWording.isWarning(for: event) ? .warning : .info,
+                    AutoTagWording.message(for: event),
+                    category: .metadata,
+                    jobID: event.jobID
+                )
+            }
+        }
+    }
+
+    deinit {
+        // Stops the auto-tag event-consumer loop (#508 commit 8) rather than
+        // leaving it to notice the engine's `AsyncStream` finishing on its
+        // own — see `autoTagEventTask`'s own doc comment for why that
+        // ordering isn't guaranteed. `Task.cancel()` is documented safe to
+        // call from any thread/isolation, which is what lets a `deinit`
+        // (nonisolated, even for an otherwise `@MainActor` class) call it
+        // directly. Every other property here is `let`/value state that
+        // needs no explicit teardown.
+        autoTagEventTask?.cancel()
     }
 
     /// Wires the three decoupled notification-action posts to real behaviour
@@ -1981,6 +2083,85 @@ final class AppViewModel {
             if UserDefaults.standard.bool(forKey: "deleteSourceAfterEncode") {
                 deleteSourceFileIfSafe(job: jobState.config)
             }
+
+        } catch is CancellationError {
+            // #508 commits 6-8. Before commit 6, `engine.encode(job:
+            // onProgress:)` had no way at all to notice a Stop pressed while
+            // it was still probing the source or running the auto-tag
+            // lookup — `EncodingEngine`'s stop registry only reached a
+            // FFmpeg process that had actually started, so a Stop pressed
+            // in that window reached nothing and the job ran to completion
+            // regardless. Commit 6 closed that gap by having `encode` throw
+            // `CancellationError` for exactly this window (see its own doc
+            // comment, "Stopping"). Without THIS branch, that
+            // `CancellationError` fell into the generic `catch` below and
+            // was reported as "Failed: … — The operation was cancelled." —
+            // wrong twice over: it was not a failure, and Swift's own
+            // `localizedDescription` for `CancellationError` names the
+            // error type, not what happened. That mismatch is why commits
+            // 6 and 8 must land together: shipping commit 6 alone would
+            // have made Stop look BROKEN (a "failure") for any job stopped
+            // before FFmpeg started, worse than before commit 6 existed.
+            //
+            // This branch MUST come before the generic `catch {}` below —
+            // Swift tries `catch` clauses in order, and a `catch {}` with no
+            // type matches everything, so `is CancellationError` would never
+            // be reached if it came second.
+            //
+            // What state this leaves the job in: `cancelCurrentJob()` (the
+            // only path in the app today that calls `engine.stopEncoding()`)
+            // already sets every then-active `jobState.status` to
+            // `.cancelled` and writes its own resume checkpoint SYNCHRONOUSLY,
+            // before this `encode()` call has a chance to return — so by the
+            // time this branch runs, `jobState.status` is normally already
+            // `.cancelled`. This branch sets it again anyway rather than
+            // relying on that ordering, because `EncodingEngine
+            // .stopEncoding(jobID:)` (added alongside `stopEncoding()` in
+            // commit 6) can stop a SINGLE job without anything else ever
+            // touching `jobState` first — no UI calls it yet, but a runner-
+            // level test can, and a future per-job Stop button would reach
+            // exactly this branch with no prior `.cancelled` write to rely
+            // on. Both paths are made to end in the exact same state
+            // (`.cancelled`, `completedAt` set, no error message), which is
+            // the point of writing this branch at all rather than letting
+            // the generic `catch` paper over the difference.
+            //
+            // What this branch deliberately does NOT do, because the job
+            // did not fail: no `errorMessage` is set (`.cancelled`'s own
+            // `summaryString` never reads it anyway), none of the
+            // failure-only notification/email/webhook/post-encode-hook
+            // calls in the generic branch below run, and `analytics
+            // .encodeFailed` is not tracked. It also does not repeat
+            // `cancelCurrentJob()`'s own queue-wide "Encoding cancelled"
+            // log line or resume-checkpoint save (the job had made no
+            // progress yet — probing/looking-up happens before the first
+            // FFmpeg progress tick — so there is nothing meaningful to
+            // checkpoint); it logs its own per-job line instead, the same
+            // way the success and failure branches each log their own line
+            // alongside whatever the queue-level caller already logged.
+            //
+            // NOT handled here, and not a new problem: a Stop that reaches
+            // FFmpeg AFTER it has already started still kills the process
+            // and still throws `EncodingEngineError.encodingFailed` (a
+            // non-zero exit status), which still falls into the generic
+            // `catch` below and is still reported as "Failed" even though
+            // the user asked for it. That pre-existing mismatch is recorded
+            // as its own follow-up in the plan ("`runJob` marks a
+            // killed-FFmpeg cancel as Failed") and is out of scope here —
+            // fixing it needs `ProcessFFmpegBackend`/`FFmpegProcessController`
+            // to distinguish "killed by Stop" from "crashed", which nothing
+            // in #508 touches.
+            jobState.status = .cancelled
+            jobState.completedAt = Date()
+
+            // Same reasoning as the failure branch's own removal below: a
+            // cancelled job must not run its watch-folder post-action next
+            // time, since `PostProcessingAction` only ever fires after a
+            // genuinely successful encode.
+            watchFolderJobs.removeValue(forKey: jobState.config.id)
+
+            appendLog(.warning, "Cancelled: \(jobState.config.inputURL.lastPathComponent)",
+                      category: .encoding, jobID: jobState.config.id)
 
         } catch {
             jobState.status = .failed
