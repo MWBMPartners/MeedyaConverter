@@ -72,6 +72,16 @@ below it.
 >     them in the main copy: 5 local commits, not pushed until reviewed.
 >   - **Then: Codex round 2 at 09:45 should cover `cd6b5a4..<after these fixes>`.**
 >     Move `codex-r2-end` forward before running it.
+> - **09:45: Codex round 2 retried with a "print per area" brief. It ran out
+>   AGAIN** after 85k tokens / 2 minutes ("try again at 2:43 PM"), with NO findings
+>   of its own. **Lesson:** Codex's allowance per reset (about 85k-165k tokens) is
+>   used up while it EXPLORES a range this big. **New approach from 14:45:** review
+>   in small CHUNKS, one area per run, with the exact `git diff` for that area
+>   PASTED INTO the prompt, so it reviews instead of exploring. Order: (1) privacy
+>   (F1 recheck `9d47730`+fixes, the F2 key store `75a37bd`, and fallback fix #2
+>   `4269b36`); (2) MakeMKV F3/F4/F5/F9; (3) F6 MusicBrainz + fallback #4; (4) F8
+>   + fallback #1; (5) wording F7/F11 + fallback #3. One chunk per reset, until all
+>   are covered. Record each chunk's result.
 > - **The review range is now PINNED** with local branches: `codex-r2-base` (at
 >   `cd6b5a4`) and `codex-r2-end` (at `d3553cc`). The brief uses `base..end`, so
 >   later commits are excluded. A background wake-up fires at 04:40 to run it.
@@ -197,6 +207,11 @@ below it.
 >   - `keyboard_shortcuts` / `savedPipelines` are "next launch" until commit 8 adds
 >     reloads.
 > - **#506 5/9 (the export/import engine, Opus): in progress.**
+> - **~10:00: #508's 12 commits CHERRY-PICKED onto `wip/alpha-consolidation`**
+>   (`0d7359d`…`436684a` → ending `ca72a0c`), without waiting for Codex round 2.
+>   Reason: round 2 now runs in small chunks with pasted diffs spread across the
+>   day, and CI hadn't yet tested #508 at all. The engine and CLI build on the
+>   combined tree. #506 1-4 are still only in the worktree.
 > - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
 >   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
 >   source, **#521** the REST API server can't actually encode and isn't reachable,
