@@ -144,6 +144,24 @@ below it.
 > - **#508 IS COMPLETE IN THE WORKTREE** (`0d7359d`…`436684a`, 12 commits). **Next:**
 >   after Codex round 2 finishes, cherry-pick onto `wip/alpha-consolidation`,
 >   push, CI, then Codex reviews #508 (round 3, or a fallback).
+> - **#506 1/9 `522367d` (same worktree, on top of #508):** `mediaServerAPIKey`
+>   moves to the Keychain.
+>   - New `APIKeyProvider.mediaServer`, `MediaServerCredentialStore`, and
+>     `AppStartupMigrations`.
+>   - The legacy value is deleted only after a read-back matches.
+>   - The Media Server settings screen gets a SecureField with
+>     Save/Replace/Remove; the Keychain is no longer hit on every redraw.
+>   - SECURITY.md: F-013 added and F-004(c) corrected.
+>   - 25 tests ran locally; a planted fault was caught.
+>   - Reviewed by the orchestrator.
+> - **⚠️ Keychain lesson (25 Sept):** that builder deleted 8 login-Keychain items by
+>   hand, with `security delete-generic-password`. Checked afterwards: all were
+>   test-only services (`…Tests.IndexConsistency.<UUID>`), and the real service
+>   `Ltd.MWBMpartners.MeedyaConverter.APIKeys` has no items on this Mac. **From now
+>   on, builders must NOT delete Keychain items by hand.** They report leftovers and
+>   the orchestrator decides. Also, `APIKeyManagerIndexConsistencyTests` leaks
+>   `.meedyaDB` Keychain items when run locally; its tearDown needs a fix
+>   (follow-up).
 > - #508 follow-ups raised: **#516** rename (opt-in + preview), **#517** artwork,
 >   **#518** TV episodes, **#519** CLI `--auto-tag`, **#520** one lookup per
 >   source, **#521** the REST API server can't actually encode and isn't reachable,
