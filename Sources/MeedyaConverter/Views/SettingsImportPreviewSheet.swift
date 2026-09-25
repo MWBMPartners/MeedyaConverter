@@ -333,11 +333,20 @@ struct SettingsImportPreviewSheet: View {
             } else {
                 Button("Cancel", role: .cancel) { model.cancelImport() }
                     .accessibilityHint(Text("Closes this without changing anything."))
-                Button(model.isAwaitingReplaceConfirmation ? "Replace Anyway" : "Import") {
+                // While a Replace confirmation is showing, this button is
+                // greyed out, and the ONLY way on is the red "Replace Anyway"
+                // button inside the warning above. It used to relabel itself
+                // "Replace Anyway" and apply on a second press, so a
+                // double-click here replaced settings unread.
+                Button("Import") {
                     model.requestApply()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.importPreview == nil || model.importSelection.isEmpty)
+                .disabled(
+                    model.importPreview == nil
+                        || model.importSelection.isEmpty
+                        || model.isAwaitingReplaceConfirmation
+                )
             }
         }
         .padding(20)

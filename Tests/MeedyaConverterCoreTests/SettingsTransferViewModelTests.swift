@@ -401,6 +401,15 @@ final class SettingsTransferViewModelTests: XCTestCase {
 
         importModel.requestApply()
         XCTAssertTrue(importModel.isAwaitingReplaceConfirmation, "must wait, not apply yet")
+
+        // A second press of the footer button (a double-click) must STILL not
+        // apply: only confirmReplaceAndApply() may. (Orchestrator review of
+        // #506 8/9: it used to apply on the second call.)
+        importModel.requestApply()
+        XCTAssertTrue(importModel.isAwaitingReplaceConfirmation, "a second request must keep waiting")
+        XCTAssertNil(importModel.importResult, "a second request must not apply a Replace")
+        XCTAssertEqual(targetDomain.defaults.object(forKey: "confirmBeforeEncoding") as? Bool, true,
+                       "nothing may be written before the explicit confirmation")
         XCTAssertNil(importModel.importResult, "nothing written while waiting for confirmation")
         XCTAssertEqual(targetDomain.defaults.bool(forKey: "confirmBeforeEncoding"), true,
                        "target untouched before confirmation")

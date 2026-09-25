@@ -322,7 +322,14 @@ final class SettingsTransferViewModel {
     /// pressed a second time, which is itself the confirmation.
     func requestApply() {
         guard let importPreview else { return }
-        if importMode == .replace, importPreview.replaceConfirmation != nil, !isAwaitingReplaceConfirmation {
+        // In Replace mode with something to remove, this ONLY ever asks. It
+        // never applies, however many times it is called. It used to apply
+        // on a second call ("the second press confirms"), so a quick
+        // double-click on the footer button replaced settings before the
+        // warning could be read (the orchestrator's review of #506 8/9). The
+        // one way to apply is `confirmReplaceAndApply()`, from the separate
+        // red button inside the warning.
+        if importMode == .replace, importPreview.replaceConfirmation != nil {
             isAwaitingReplaceConfirmation = true
             return
         }
@@ -335,6 +342,10 @@ final class SettingsTransferViewModel {
     /// Anyway" button can be wired to something whose name says what it
     /// does.
     func confirmReplaceAndApply() {
+        // Only valid while a confirmation is actually on screen. A stray call
+        // (e.g. a stale button after the mode changed back to Merge) must not
+        // apply a Replace nobody was asked about.
+        guard isAwaitingReplaceConfirmation else { return }
         performApply()
     }
 
