@@ -50,71 +50,10 @@ import Foundation
 // ---------------------------------------------------------------------------
 // MARK: - JSONValue
 // ---------------------------------------------------------------------------
-/// A minimal type-erased JSON value, used only for `FeatureFlag.metadata`
-/// (an arbitrary, admin-authored JSON object per the OpenAPI schema —
-/// `"metadata": { "type": "object", "nullable": true }`, no fixed shape).
-///
-/// `Codable`'s `Any` can't be synthesised, and this codebase has no JSON
-/// library dependency to reach for (see the commented-out `Yams`/
-/// `ZIPFoundation` entries in `Package.swift` — third-party dependencies
-/// are added deliberately, not by default), so this is a small, local,
-/// fully `Sendable` stand-in sufficient for round-tripping whatever the
-/// admin dashboard puts in a flag's metadata.
-public enum JSONValue: Codable, Sendable, Equatable {
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case object([String: JSONValue])
-    case array([JSONValue])
-    case null
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-            return
-        }
-        // Order matters: `Bool` must be tried before `Double`/`Int`-ish
-        // decoding, since JSONDecoder will NOT coerce "true"/"false" into
-        // a Double, so there's no ambiguity risk trying Bool first.
-        if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-            return
-        }
-        if let value = try? container.decode(Double.self) {
-            self = .number(value)
-            return
-        }
-        if let value = try? container.decode(String.self) {
-            self = .string(value)
-            return
-        }
-        if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-            return
-        }
-        if let value = try? container.decode([String: JSONValue].self) {
-            self = .object(value)
-            return
-        }
-        throw DecodingError.dataCorruptedError(
-            in: container,
-            debugDescription: "Unsupported JSON value in FeatureFlag.metadata"
-        )
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .string(let value):  try container.encode(value)
-        case .number(let value):  try container.encode(value)
-        case .bool(let value):    try container.encode(value)
-        case .object(let value):  try container.encode(value)
-        case .array(let value):   try container.encode(value)
-        case .null:                try container.encodeNil()
-        }
-    }
-}
+// `FeatureFlag.metadata` below is typed `[String: JSONValue]`. `JSONValue`
+// used to be defined here; it moved to `Utilities/JSONValue.swift` (#506
+// commit 4) so settings export/import can use it too. Same module, same
+// public name, so nothing that uses it had to change.
 
 // ---------------------------------------------------------------------------
 // MARK: - FeatureFlag
