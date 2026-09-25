@@ -294,6 +294,11 @@ public final class EncodingEngine: @unchecked Sendable {
     ///    progress.
     /// 10. Runs the Dolby Vision re-injection or DV-over-HLG passes, when
     ///    needed.
+    /// 11. Writes a Kodi `.nfo` sidecar next to the output (#508 commit 7) —
+    ///    ONLY when step 5's lookup identified a film AND the setting read in
+    ///    step 5 asked for one (`AutoTagConfig.writeNFO`). See "The NFO
+    ///    sidecar (step 11)" below. Runs last, and only once, so the output
+    ///    it sits next to is guaranteed to already exist.
     /// The temp directory is removed on the way out, however it ends.
     ///
     /// **Auto-tagging (step 5).** The setting is read once, at the start of
@@ -309,10 +314,30 @@ public final class EncodingEngine: @unchecked Sendable {
     /// A lookup that is skipped, finds nothing, is not confident, fails or
     /// runs out of time NEVER fails the encode: the file is converted
     /// exactly as it would have been without auto-tagging. What happened is
-    /// published on `autoTagEvents`. Not done here yet: the Kodi `.nfo`
-    /// sidecar (#508 commit 7), and the app passing a settings source and
-    /// logging the events (#508 commit 8) — until then no app encode
-    /// auto-tags.
+    /// published on `autoTagEvents`. Not done here yet: the app passing a
+    /// settings source and logging the events (#508 commit 8) — until then no
+    /// app encode auto-tags, even though this engine can.
+    ///
+    /// **The NFO sidecar (step 11).** `AutoTagNFOWriter.write` does the
+    /// actual writing (see its own doc comment for the three rules: never
+    /// overwrite, the output must exist first, never throw); this method
+    /// only decides WHEN to call it and publishes what happened. It uses the
+    /// SAME `AutoTagRequest` step 5 already read — never a second,
+    /// independently-timed read of the setting — so a job that started with
+    /// NFO writing on finishes with it on even if the setting were flipped
+    /// mid-job, and a job that started with it off never writes one no
+    /// matter what changes later. Skipped entirely (no write attempted, no
+    /// event published) when a stop was requested for this job by the time
+    /// this step runs: every FFmpeg pass has already finished successfully
+    /// by this point (an error from any earlier step would have already
+    /// thrown out of this method), so the ONE way the stop flag can still be
+    /// set here is `stopEncoding()` marking it and killing the controller at
+    /// almost the same moment the last pass was finishing anyway. Writing an
+    /// extra file for a job the user just asked to stop is the wrong side to
+    /// err on, and — mirroring how a lookup stopped mid-request publishes no
+    /// `.lookup` event at all — nothing is published either, so a reader of
+    /// `autoTagEvents` never sees an outcome for work that was deliberately
+    /// never attempted.
     ///
     /// **Stopping.** `stopEncoding()` / `stopEncoding(jobID:)` reach a job
     /// in steps 1-6 through a stop flag rather than a running process: the
@@ -397,9 +422,13 @@ public final class EncodingEngine: @unchecked Sendable {
         //   * nothing has been launched yet, so stopping during the lookup
         //     costs nothing — in particular it is BEFORE the Dolby Vision
         //     extraction pass below, which is itself an FFmpeg run.
-        // Returns an empty dictionary whenever nothing is to be added
-        // (no settings source, switched off, skipped, failed, …).
-        let lookedUpTags = try await autoTagLookupIfSwitchedOn(job: job, sourceInfo: sourceInfo)
+        // `tagsToAdd` is empty, and `identifiedFilm` is nil, whenever there is
+        // nothing to add or nothing was identified (no settings source,
+        // switched off, skipped, failed, …). `writeNFO` is this job's own
+        // resolved setting, read once here — step 11 reuses it rather than
+        // reading `autoTagSettings` a second time, so what was decided at the
+        // start of the job is exactly what happens at the end of it.
+        let autoTagResult = try await autoTagLookupIfSwitchedOn(job: job, sourceInfo: sourceInfo)
 
         // Step 6: the last point before any FFmpeg pass. Deliberately runs
         // whether or not a lookup ran (see the doc comment's "Stopping").
@@ -460,7 +489,7 @@ public final class EncodingEngine: @unchecked Sendable {
         // the main rule. The file's own tags are not in `outputMetadata` at
         // all — they reach the output through `-map_metadata 0` — which is
         // why the runner, not this merge, is what protects them.
-        enrichedJob.outputMetadata.merge(lookedUpTags) { jobValue, _ in jobValue }
+        enrichedJob.outputMetadata.merge(autoTagResult.tagsToAdd) { jobValue, _ in jobValue }
 
         // Automatic HDR-to-SDR tone mapping trigger (Phase 3.9c / Issue #248)
         // When the source is HDR but the output codec or container cannot carry HDR,
@@ -772,6 +801,26 @@ public final class EncodingEngine: @unchecked Sendable {
             try? FileManager.default.removeItem(at: hevcES)
             try? FileManager.default.removeItem(at: injectedES)
         }
+
+        // Step 11 (#508 commit 7): the Kodi .nfo sidecar. Deliberately the
+        // VERY LAST thing this method does — after the single/multi-pass
+        // encode above AND both DV blocks — so `job.outputURL` is guaranteed
+        // to already hold the finished file `AutoTagNFOWriter.write` needs to
+        // sit next to. See this method's own doc comment, "The NFO sidecar
+        // (step 11)", for the stop decision below.
+        if let identifiedFilm = autoTagResult.identifiedFilm, autoTagResult.writeNFO {
+            if isStopRequested(jobID: job.id) {
+                // A stop landed for this job at almost the exact moment the
+                // last pass finished anyway (every earlier throwing point
+                // above would already have exited this method otherwise).
+                // Deliberately no write and no event — see the doc comment.
+            } else {
+                let outcome = AutoTagNFOWriter.write(film: identifiedFilm, nextTo: job.outputURL)
+                autoTagEventContinuation.yield(
+                    AutoTagJobEvent(jobID: job.id, fileName: job.inputURL.lastPathComponent, kind: .nfo(outcome))
+                )
+            }
+        }
     }
 
     // MARK: - Crop Detection
@@ -1022,10 +1071,39 @@ public final class EncodingEngine: @unchecked Sendable {
         lock.withLock { stopRequestedJobIDs.contains(jobID) }
     }
 
+    /// What `autoTagLookupIfSwitchedOn` learned, beyond the tags it already
+    /// resolved for `encode` to merge into `outputMetadata`. Kept as its own
+    /// small type — rather than returning `AutoTagLookupReport` itself, or a
+    /// bare tuple — so that `encode`'s step 11 (the NFO write) reads as "the
+    /// two facts it actually needs", not "reach into a report meant for
+    /// something else".
+    private struct AutoTagStepResult {
+        /// Tags to merge into the job's `outputMetadata`. Empty whenever
+        /// there is nothing to add (see `autoTagLookupIfSwitchedOn`'s doc
+        /// comment for every case that leaves this empty).
+        let tagsToAdd: [String: String]
+
+        /// The film step 5's lookup identified, if any — copied straight
+        /// from `AutoTagLookupReport.identifiedFilm`. `nil` for a skip, a
+        /// failure, no match, an ambiguous or below-threshold result, AND
+        /// always `nil` for a music match (see that property's own doc
+        /// comment in `AutoTagRunner.swift`). Step 11 only ever attempts an
+        /// NFO write when this is non-`nil`.
+        let identifiedFilm: MetadataResult?
+
+        /// This job's resolved `AutoTagConfig.writeNFO`, read once alongside
+        /// everything else in step 5. `false` whenever there was no request
+        /// at all (no settings source, or switched off) — matching
+        /// `tagsToAdd`/`identifiedFilm` being empty/`nil` in that case, so a
+        /// caller never needs to check "was there even a request?" itself.
+        let writeNFO: Bool
+    }
+
     /// Step 5 of `encode`: runs the auto-tag lookup when this engine has a
     /// settings source and the setting is on, publishes what happened on
     /// `autoTagEvents`, and returns the tags to add (empty whenever nothing
-    /// is to be added).
+    /// is to be added) together with the two facts step 11 (the NFO write)
+    /// needs from this same, single settings read.
     ///
     /// - Throws: `CancellationError` only — when the job is stopped, or the
     ///   calling task cancelled, during the lookup. Nothing else a lookup
@@ -1033,13 +1111,15 @@ public final class EncodingEngine: @unchecked Sendable {
     private func autoTagLookupIfSwitchedOn(
         job: EncodingJobConfig,
         sourceInfo: MediaFile?
-    ) async throws -> [String: String] {
+    ) async throws -> AutoTagStepResult {
         // Read ONCE per job, now — never cached across jobs — so flipping
         // the setting mid-queue applies from the next job. `nil` means no
         // settings source or switched off: no events, no requests, and the
         // encode is exactly what it would have been without auto-tagging.
+        // This same `request` is also where `writeNFO` below comes from —
+        // step 11 never reads `autoTagSettings` a second time.
         guard let request = autoTagSettings?.currentRequest() else {
-            return [:]
+            return AutoTagStepResult(tagsToAdd: [:], identifiedFilm: nil, writeNFO: false)
         }
 
         let jobID = job.id
@@ -1086,7 +1166,11 @@ public final class EncodingEngine: @unchecked Sendable {
         }
 
         events.yield(AutoTagJobEvent(jobID: jobID, fileName: fileName, kind: .lookup(report)))
-        return report.metadataToAdd
+        return AutoTagStepResult(
+            tagsToAdd: report.metadataToAdd,
+            identifiedFilm: report.identifiedFilm,
+            writeNFO: request.config.writeNFO
+        )
     }
 
     /// A lock-protected snapshot of every registered controller.

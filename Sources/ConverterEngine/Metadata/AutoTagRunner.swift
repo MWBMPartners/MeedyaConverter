@@ -22,9 +22,14 @@
 //     a real `encode` with fake FFmpeg/ffprobe programs.
 //   * TV EPISODES ARE NOT LOOKED UP. A file whose name matches
 //     `FilenameParser`'s "S01E02" pattern is skipped (`Reasons.tvEpisode`).
-//   * NO ARTWORK, NO NFO, NO RENAMING. The NFO writer is commit 7; artwork
-//     embedding and renaming are separate follow-up issues (see the plan).
-//     There is no music equivalent of the film NFO planned at all.
+//   * NO ARTWORK, NO RENAMING. Both are separate follow-up issues (see the
+//     plan). This file has no part in either.
+//   * THE NFO WRITER (`AutoTagNFOWriter`, #508 commit 7) IS A SEPARATE FILE.
+//     This runner never writes one itself; it only ever hands the engine a
+//     report whose `identifiedFilm` the engine can pass on. There is no
+//     music equivalent of the film NFO planned at all — `identifiedFilm` is
+//     always `nil` on the music path (see that property's own doc comment
+//     below), so the engine has nothing to write one from for a song.
 //   See `.claude/plans/autotag-encode-plan.md`.
 //
 // FOUR TRAPS THIS FILE IS BUILT AROUND

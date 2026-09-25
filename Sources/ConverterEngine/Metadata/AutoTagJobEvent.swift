@@ -1,12 +1,13 @@
 // ============================================================================
-// MeedyaConverter — AutoTagJobEvent (Issue #508, commit 6/10)
+// MeedyaConverter — AutoTagJobEvent (Issue #508, commits 6-7/10)
 // Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 // Proprietary and confidential. Unauthorized copying or distribution
 // of this file, via any medium, is strictly prohibited.
 // ============================================================================
 //
-// What `EncodingEngine` says about a job's auto-tag lookup while it runs,
-// published on `EncodingEngine.autoTagEvents`.
+// What `EncodingEngine` says about a job's auto-tag lookup (and, from commit
+// 7, its Kodi `.nfo` write) while it runs, published on
+// `EncodingEngine.autoTagEvents`.
 //
 // DELIBERATELY MINIMAL. This is data only: which job, which file, and what
 // happened. It carries NO user-facing wording. Turning an event into an
@@ -17,9 +18,11 @@
 // nobody is listening (see `EncodingEngine.autoTagEvents`).
 //
 // No API key can travel in an event. The only text an event carries is the
-// file name and the lookup report, and every failure reason in a report has
-// already been through the TMDB key redaction (`AutoTagRunner.failed`).
-// `AutoTagEncodeDeliveryTests` checks the key appears in no event.
+// file name, the lookup report and (from commit 7) the NFO outcome's path or
+// plain-English failure reason — never a URL, so never a key. Every failure
+// reason a lookup report carries has already been through the TMDB key
+// redaction (`AutoTagRunner.failed`). `AutoTagEncodeDeliveryTests` checks the
+// key appears in no event.
 // ============================================================================
 
 import Foundation
@@ -52,6 +55,24 @@ public struct AutoTagJobEvent: Sendable {
         /// encode throws `CancellationError` instead, and the job's own
         /// "cancelled" handling is what reports that.
         case lookup(AutoTagLookupReport)
+
+        /// The auto-tag lookup identified a film and this job's resolved
+        /// config said to also save a Kodi `.nfo` sidecar
+        /// (`AutoTagConfig.writeNFO`): what `AutoTagNFOWriter.write` did
+        /// about it (#508 commit 7). See that type's own doc comment for the
+        /// three rules it follows — never overwrite, the output must exist
+        /// first, never throw.
+        ///
+        /// Published at most once per job, and only when a `.lookup` event
+        /// with a non-`nil` `report.identifiedFilm` came before it. Never
+        /// published for music: `identifiedFilm` is always `nil` there (see
+        /// that property's own doc comment), so the engine never has a film
+        /// to pass to the writer for a song. Also never published when
+        /// `AutoTagConfig.writeNFO` is off, or when a stop was requested for
+        /// this job by the time the encode reaches this step — see
+        /// `EncodingEngine.encode`'s own doc comment for why that last case
+        /// is a deliberate silent skip, not a `.failed` outcome.
+        case nfo(AutoTagNFOOutcome)
     }
 
     /// The `EncodingJobConfig.id` of the job this is about. With several

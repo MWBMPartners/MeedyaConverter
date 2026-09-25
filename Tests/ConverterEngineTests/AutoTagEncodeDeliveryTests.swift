@@ -1,20 +1,25 @@
 // ============================================================================
-// MeedyaConverter — AutoTagEncodeDeliveryTests (Issue #508, commit 6/10)
+// MeedyaConverter — AutoTagEncodeDeliveryTests (Issue #508, commits 6-7/10)
 // Copyright © 2026 MWBM Partners Ltd. All rights reserved.
 // Proprietary and confidential. Unauthorized copying or distribution
 // of this file, via any medium, is strictly prohibited.
 // ============================================================================
 //
 // Proves DELIVERY: that a looked-up tag actually reaches the argument list a
-// real `EncodingEngine.encode(job:onProgress:)` launches FFmpeg with — not
-// merely that some function returned the right dictionary. The runner's own
-// decisions (scoring, ambiguity, the deadline, …) are pinned by
-// `AutoTagRunnerTests`; this file pins the wiring around it.
+// real `EncodingEngine.encode(job:onProgress:)` launches FFmpeg with, and
+// (from commit 7) that an identified film's Kodi `.nfo` sidecar actually
+// lands on disk next to the output — not merely that some function returned
+// the right value. The runner's own decisions (scoring, ambiguity, the
+// deadline, …) are pinned by `AutoTagRunnerTests`; the NFO writer's own rules
+// (never overwrite, never throw) are pinned by `AutoTagNFOTests`; this file
+// pins the wiring around both.
 //
 // HOW. Every test builds a private folder holding:
 //   * a fake `ffmpeg` — a shell script that answers `-version` (so
 //     `configure()` accepts it) and otherwise writes its whole argument list,
-//     each argument followed by a NUL byte, to a file, then exits 0. The
+//     each argument followed by a NUL byte, to a file, THEN TOUCHES THE REAL
+//     OUTPUT PATH (added for commit 7 — the NFO writer refuses to write
+//     unless the output it sits next to actually exists), then exits 0. The
 //     engine adds `-progress pipe:1` AFTER the output path, so nothing here
 //     treats the last argument as the output;
 //   * a fake `ffprobe` — prints JSON for a ~148-minute h264 + AAC Matroska
@@ -211,7 +216,14 @@ private struct AutoTagFakeToolchain: Sendable {
 
         let ffmpeg = """
         #!/bin/sh
-        # Fake ffmpeg for AutoTagEncodeDeliveryTests. Never encodes anything.
+        # Fake ffmpeg for AutoTagEncodeDeliveryTests. Never encodes anything,
+        # but DOES leave a placeholder file at the real output path — added
+        # for #508 commit 7 (the NFO writer), which refuses to write a
+        # sidecar unless the output it sits next to genuinely exists. Every
+        # "real" launch touches the SAME fixed output path (a fresh job still
+        # reuses `toolchain.outputURL`), which is harmless: nothing in this
+        # file's tests inspects the output's bytes, only whether the NFO
+        # writer found it there or not.
         if [ "$1" = "-version" ]; then
           echo "ffmpeg version 0.0-autotag-delivery-fake Copyright (c) test fixture"
           exit 0
@@ -222,6 +234,7 @@ private struct AutoTagFakeToolchain: Sendable {
           printf '%s\\000' "$arg" >> '\(argumentsFile.path).partial'
         done
         mv '\(argumentsFile.path).partial' '\(argumentsFile.path)'
+        : > '\(outputURL.path)'
         exit 0
         """
         let ffprobe = """
@@ -281,6 +294,43 @@ private struct AutoTagFakeToolchain: Sendable {
         ]
         let data = try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
         try data.write(to: probeJSONFile)
+    }
+
+    /// Makes the fake `ffprobe` describe an audio-only file — one MP3
+    /// stream, NO video stream at all — `seconds` long, carrying `tags`.
+    /// Used by the "music never gets an NFO" case (#508 commit 7): no video
+    /// stream means `looksLikeVideoContent` is false and `hasAudio` is true,
+    /// so `AutoTagRunner.plan` treats this as music (see that file's header,
+    /// trap 2) without needing the "MP3 with cover art" trap
+    /// `AutoTagRunnerTests` exercises on its own.
+    func writeMusicProbe(seconds: Double, tags: [String: String] = [:]) throws {
+        var format: [String: Any] = [
+            "format_name": "mp3",
+            "duration": String(format: "%.6f", seconds),
+        ]
+        if !tags.isEmpty {
+            format["tags"] = tags
+        }
+        let root: [String: Any] = [
+            "streams": [
+                [
+                    "index": 0, "codec_name": "mp3", "codec_type": "audio",
+                    "sample_rate": "44100", "channels": 2, "channel_layout": "stereo",
+                ],
+            ],
+            "format": format,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+        try data.write(to: probeJSONFile)
+    }
+
+    /// Where `AutoTagNFOWriter` (#508 commit 7) would save a sidecar for
+    /// this toolchain's output — mirrors `AutoTagger.generateNFOPath`'s own
+    /// rule (swap the extension for `.nfo`) so a test can assert on the
+    /// exact path without depending on that production function to prove
+    /// its own correctness.
+    var nfoURL: URL {
+        URL(fileURLWithPath: (outputURL.path as NSString).deletingPathExtension + ".nfo")
     }
 
     /// A new job (a fresh id each call) for this folder's input and output.
@@ -357,6 +407,7 @@ private final class AutoTagDeliverySettings {
         client: AutoTagDeliveryStubHTTPClient,
         key: String?,
         enabled: Bool,
+        writeNFO: Bool = false,
         deadline: Duration = .seconds(60)
     ) throws {
         guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -364,6 +415,7 @@ private final class AutoTagDeliverySettings {
         }
         self.defaults = defaults
         defaults.set(enabled, forKey: AutoTagSettingsStore.Keys.enabled)
+        defaults.set(writeNFO, forKey: AutoTagSettingsStore.Keys.writeNFO)
         source = AutoTagSettingsSource(
             suiteName: suiteName,
             tmdbKeyProvider: { key },
@@ -377,8 +429,23 @@ private final class AutoTagDeliverySettings {
         defaults.set(enabled, forKey: AutoTagSettingsStore.Keys.enabled)
     }
 
+    /// Removes this test's isolated defaults suite, both from memory
+    /// (`removePersistentDomain`) and its on-disk plist.
+    ///
+    /// `removePersistentDomain` alone is NOT enough: it clears the suite's
+    /// in-memory values, but `UserDefaults` still leaves a roughly 42-byte
+    /// plist behind at `~/Library/Preferences/<suiteName>.plist` on disk —
+    /// confirmed by running this file's tests locally and finding one such
+    /// file per run in that folder afterwards. Left alone, every test run
+    /// (local or CI) accumulates one more of these, forever, in a folder
+    /// this project does not own. Deleting the file is best-effort: a
+    /// missing file (nothing was ever flushed to disk for this suite) is not
+    /// an error worth failing a test over.
     func remove() {
         defaults.removePersistentDomain(forName: suiteName)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plist)
     }
 }
 
@@ -418,6 +485,34 @@ final class AutoTagEncodeDeliveryTests: XCTestCase {
         "description=An overview.",
         "tmdb_id=\(autoTagDeliveryInceptionID)",
     ]
+
+    // MARK: MusicBrainz response body (for "music never gets an NFO")
+
+    private static let bohemianRhapsodyMBID = "b1a9c0e9-d987-4042-ae91-78d6a3267d69"
+    private static let queenMBID = "0383dadf-2a4e-4d10-a46a-e9e041da8eb3"
+
+    /// A single, confident, length-matching MusicBrainz result for
+    /// "Bohemian Rhapsody" / "Queen", 354 seconds. Used to prove the music
+    /// path can reach a real `.applied` outcome end-to-end — so that "no NFO
+    /// for music" in the delivery test is shown to follow from
+    /// `identifiedFilm` staying `nil` on that path (see its own doc comment
+    /// in `AutoTagRunner.swift`), not merely from the lookup having failed
+    /// or found nothing.
+    private static let bohemianRhapsodySearch = Data(#"""
+    {"recordings":[{"id":"\#(bohemianRhapsodyMBID)","score":100,"title":"Bohemian Rhapsody","length":354000,"artist-credit":[{"name":"Queen","joinphrase":"","artist":{"id":"\#(queenMBID)","name":"Queen"}}]}]}
+    """#.utf8)
+
+    /// Answers MusicBrainz's `/recording` search; every other path
+    /// (including TMDB's `/search/movie`) is a 404 — so a music lookup that
+    /// accidentally reached TMDB would fail loudly rather than quietly
+    /// succeed.
+    private static let bohemianRhapsodyRoute: @Sendable (URLRequest) -> AutoTagDeliveryStubHTTPClient.Reply = { request in
+        let path = request.url?.path ?? ""
+        if path.hasSuffix("/recording") {
+            return .respond(status: 200, body: bohemianRhapsodySearch)
+        }
+        return .respond(status: 404, body: Data())
+    }
 
     // MARK: Helpers
 
@@ -934,5 +1029,170 @@ final class AutoTagEncodeDeliveryTests: XCTestCase {
                 "the key is in an event: \(String(reflecting: event))"
             )
         }
+    }
+
+    // MARK: - NFO (#508 commit 7)
+    //
+    // The unit-level rules (never overwrite, output must exist, never throw)
+    // are pinned by `AutoTagNFOTests`; these cases pin only the ENGINE'S
+    // decision of WHEN to call the writer at all, end to end through a real
+    // `encode`. The fake ffmpeg (see `AutoTagFakeToolchain`) now touches the
+    // real output path on every launch, specifically so these tests can
+    // exercise the writer for real rather than always hitting its "the
+    // output doesn't exist" refusal.
+
+    func test_writeNFO_on_aFilmIsIdentified_writesTheSidecar_andEmitsAnNFOEvent() async throws {
+        let toolchain = try AutoTagFakeToolchain()
+        defer { toolchain.remove() }
+        let client = AutoTagDeliveryStubHTTPClient(route: Self.inceptionRoute)
+        let settings = try AutoTagDeliverySettings(
+            client: client, key: autoTagDeliveryTestKey, enabled: true, writeNFO: true
+        )
+        defer { settings.remove() }
+        let job = toolchain.job()
+
+        let (_, events) = try await Self.withEngine(toolchain, settings: settings.source) { engine in
+            try await Self.encodeAndRecord(engine, job, toolchain)
+        }
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: toolchain.nfoURL.path),
+            "the .nfo was saved next to the output"
+        )
+        let nfo = try String(contentsOf: toolchain.nfoURL, encoding: .utf8)
+        XCTAssertTrue(nfo.contains("<title>Inception</title>"), "the NFO carries the film's title:\n\(nfo)")
+        XCTAssertTrue(nfo.contains("<year>2010</year>"), "the NFO carries the film's year:\n\(nfo)")
+        XCTAssertTrue(
+            nfo.contains("uniqueid type=\"tmdb\">\(autoTagDeliveryInceptionID)</uniqueid>"),
+            "the NFO carries the TMDB id:\n\(nfo)"
+        )
+
+        guard events.count == 3,
+              case .lookingUp = events[0].kind,
+              case .lookup(let report) = events[1].kind,
+              case .nfo(let outcome) = events[2].kind else {
+            return XCTFail("expected [.lookingUp, .lookup, .nfo], got:\n\(Self.describe(events))")
+        }
+        XCTAssertEqual(report.outcome, .applied)
+        XCTAssertEqual(outcome, .written(path: toolchain.nfoURL.path))
+    }
+
+    func test_writeNFO_off_noSidecarIsWritten_andNoNFOEventEmitted() async throws {
+        let toolchain = try AutoTagFakeToolchain()
+        defer { toolchain.remove() }
+        let client = AutoTagDeliveryStubHTTPClient(route: Self.inceptionRoute)
+        // `writeNFO` defaults to `false` — spelled out anyway so this test
+        // reads as a deliberate case, not an accident of the default.
+        let settings = try AutoTagDeliverySettings(
+            client: client, key: autoTagDeliveryTestKey, enabled: true, writeNFO: false
+        )
+        defer { settings.remove() }
+        let job = toolchain.job()
+
+        let (_, events) = try await Self.withEngine(toolchain, settings: settings.source) { engine in
+            try await Self.encodeAndRecord(engine, job, toolchain)
+        }
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: toolchain.nfoURL.path),
+            "writeNFO is off: nothing should be saved even though the film was identified"
+        )
+        // `assertLookedUp` requires EXACTLY [.lookingUp, .lookup] — so this
+        // also proves no `.nfo` event was published.
+        Self.assertLookedUp(events, on: .tmdb, outcome: .applied, for: job)
+    }
+
+    func test_writeNFO_on_aBelowThresholdMatch_writesNoSidecar() async throws {
+        let toolchain = try AutoTagFakeToolchain()
+        defer { toolchain.remove() }
+        // Same shape as `test_theWrongRunningTime_isBelowThreshold_…` above:
+        // title and year match but the running time doesn't, so nothing is
+        // ever confidently identified.
+        try toolchain.writeProbe(minutes: 90, tags: ["title": "Inception"])
+        let client = AutoTagDeliveryStubHTTPClient(route: Self.inceptionRoute)
+        let settings = try AutoTagDeliverySettings(
+            client: client, key: autoTagDeliveryTestKey, enabled: true, writeNFO: true
+        )
+        defer { settings.remove() }
+        let job = toolchain.job()
+
+        let (_, events) = try await Self.withEngine(toolchain, settings: settings.source) { engine in
+            try await Self.encodeAndRecord(engine, job, toolchain)
+        }
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: toolchain.nfoURL.path),
+            "nothing was confidently identified, so there is nothing to write an NFO from"
+        )
+        guard events.count == 2, case .lookup(let report) = events[1].kind,
+              case .belowThreshold = report.outcome else {
+            return XCTFail("expected [.lookingUp, .lookup(.belowThreshold)], got:\n\(Self.describe(events))")
+        }
+        XCTAssertNil(report.identifiedFilm)
+    }
+
+    func test_writeNFO_on_music_writesNoSidecar() async throws {
+        // "Artist - Title" so the shared filename parser gives an artist —
+        // MusicBrainz refuses a lookup with none, exactly as
+        // `AutoTagRunnerTests` pins at the unit level.
+        let toolchain = try AutoTagFakeToolchain(inputName: "Queen - Bohemian Rhapsody.mp3")
+        defer { toolchain.remove() }
+        try toolchain.writeMusicProbe(seconds: 354)
+        let client = AutoTagDeliveryStubHTTPClient(route: Self.bohemianRhapsodyRoute)
+        let settings = try AutoTagDeliverySettings(
+            client: client, key: autoTagDeliveryTestKey, enabled: true, writeNFO: true
+        )
+        defer { settings.remove() }
+        let job = toolchain.job()
+
+        let (_, events) = try await Self.withEngine(toolchain, settings: settings.source) { engine in
+            try await Self.encodeAndRecord(engine, job, toolchain)
+        }
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: toolchain.nfoURL.path),
+            "music must never get an NFO, even on a fully confident match"
+        )
+        guard events.count == 2, case .lookingUp(let provider) = events[0].kind,
+              case .lookup(let report) = events[1].kind else {
+            return XCTFail("expected [.lookingUp, .lookup], got:\n\(Self.describe(events))")
+        }
+        XCTAssertEqual(provider, .musicBrainz)
+        // Both preconditions matter: the match really was accepted (so this
+        // is genuinely "music that WOULD have qualified", not a lookup that
+        // merely failed), and yet `identifiedFilm` — the one thing step 11
+        // checks — is still nil.
+        XCTAssertEqual(report.outcome, .applied, "precondition: the match really was accepted")
+        XCTAssertNil(report.identifiedFilm, "identifiedFilm is always nil on the music path")
+    }
+
+    func test_writeNFO_on_anExistingNFO_isLeftAlone_andTheEncodeStillSucceeds() async throws {
+        let toolchain = try AutoTagFakeToolchain()
+        defer { toolchain.remove() }
+        let client = AutoTagDeliveryStubHTTPClient(route: Self.inceptionRoute)
+        let settings = try AutoTagDeliverySettings(
+            client: client, key: autoTagDeliveryTestKey, enabled: true, writeNFO: true
+        )
+        defer { settings.remove() }
+        let job = toolchain.job()
+
+        // Written BEFORE the encode runs, so the writer's ONLY way of ever
+        // seeing it is the `.withoutOverwriting` refusal, not a check this
+        // test's own setup could race against.
+        let preExisting = "a hand-edited .nfo a real user made"
+        try preExisting.write(to: toolchain.nfoURL, atomically: true, encoding: .utf8)
+
+        let (_, events) = try await Self.withEngine(toolchain, settings: settings.source) { engine in
+            // Must not throw: an existing NFO is not an encode failure.
+            try await Self.encodeAndRecord(engine, job, toolchain)
+        }
+
+        let afterEncode = try String(contentsOf: toolchain.nfoURL, encoding: .utf8)
+        XCTAssertEqual(afterEncode, preExisting, "the existing .nfo's bytes must be completely untouched")
+
+        guard events.count == 3, case .nfo(let outcome) = events[2].kind else {
+            return XCTFail("expected a third .nfo event, got:\n\(Self.describe(events))")
+        }
+        XCTAssertEqual(outcome, .leftExisting(path: toolchain.nfoURL.path))
     }
 }
