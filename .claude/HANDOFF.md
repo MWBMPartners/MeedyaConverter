@@ -5,16 +5,56 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-24 · VERSION 0.1.0
+**Last updated:** 2026-09-25 13:40 · VERSION 0.1.0
 
-## 📍 CURRENT STATE — 2026-09-23 (read this first)
+## 📍 CURRENT STATE — 2026-09-23, updated through 25 Sept (read this first)
 
-This is the resume point for a **fresh session with no chat history**. The owner
-may restart to update Claude Code before the Codex review at about 00:09. Everything
+This is the resume point for a **fresh session with no chat history**. Everything
 needed to carry on is in this block, `.claude/standing_tasks.md`, and the sections
 below it.
 
-### Where things stand
+### ▶ Newest position — 25 Sept 13:40 (read before anything else in this block)
+
+| # | Task | Issue | Status | Notes |
+|---|------|-------|--------|-------|
+| 1 | Codex round 1 (17–21 Sept work): 11 findings | #502 #503 #504 #205 | Done: all fixed, CI green | details in "FIRST JOB" below |
+| 1b | Codex round 2 (checks the round-1 fixes) | same | In progress: run in small chunks | chunk 1 (privacy) at 14:47, once Codex's allowance comes back (it said 2:43 PM) |
+| 2 | Half-set-up MeedyaDB said "wasn't requested" | #507 | Done | in F1's fix, `9d47730` and after |
+| 3 | AutoTagger actually runs during an encode | #508 | Done: on the branch, CI green | Codex review still owed |
+| 4 | Settings export/import | #506 | Done: on the branch, CI green on `4203c35` | Codex review still owed |
+| 5 | Saved list of contributions to send later | #505 | In progress: plan done, build starting in a worktree | plan: `.claude/plans/submission-queue-plan.md` |
+| 6 | Full documentation sweep (W6) | — | Queued | after #505; the list of known items is below |
+| 7 | Hardware checks | #504 #503 | Blocked: needs a person with hardware | |
+| 8 | MeedyaDB hosting + API key | — | Blocked: owner | |
+
+- **Branch:** `wip/alpha-consolidation` at `b0de681` (CI run 36133242439 green).
+  Nothing is waiting to be pushed.
+- **#505 build rules for this session.** Build in a WORKTREE, and cherry-pick onto the
+  branch only while NO Codex chunk is running. A chunk takes a few minutes, and Codex
+  reads whole files from the main working tree for context. Plan section 10 says
+  which commits touch the same files as chunk 1 (commits 1, 4 and 6).
+- **#505 owner questions: carrying on with the recommended answers.** All 12 are in
+  plan section 9. In short:
+  - the list is capped at 200 and refuses new ones when full;
+  - nothing is saved when MeedyaDB isn't fully set up;
+  - narrowing to anonymous removes the label permanently before sending;
+  - a changed server holds items and never sends them elsewhere;
+  - a changed key keeps them;
+  - switching off deletes everything at once;
+  - export is off by default, and stopped items never export;
+  - the command line never saves or sends, but can export and import the list;
+  - retries wait from 1 minute up to 24 hours, and stop after 10 tries;
+  - it retries when the network comes back;
+  - importing onto a Mac where contributing is off is refused.
+  The owner can override any of these.
+- **Found by the #505 planner, on the MeedyaDB server (read-only sibling repo):**
+  the API description promises an `Idempotency-Key` header (a per-request label, so
+  the server can spot and skip a repeat), but `api.php` doesn't implement it. Busy
+  replies do carry `Retry-After` (503: 5 s; 429: 60 s). The server spots repeat
+  discs by their table-of-contents fingerprint. → A MeedyaDB issue is owed to honour
+  the header.
+
+### Where things stand (23 Sept; history, superseded by the table above)
 
 - **Branch:** `wip/alpha-consolidation`. **No code has changed since 21 Sept 08:26 UTC**
   (`1d56d37`, CI run `35577889183` green). The only commit after that is this
