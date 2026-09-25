@@ -56,9 +56,34 @@ below it.
 >   cherry-pick them onto the working branch until round 2 has finished**, because
 >   Codex also reads whole files from the main working tree for context.
 >
-> **#508 build status:** commits 1-3 (AutoTagger made honest; probe keys + merge;
-> settings) are in progress in a worktree. The #508 plan's commits 4 (film runner)
-> and 6 (engine wiring) are Opus work.
+> **#508 build status (all in worktree `.claude/worktrees/agent-aecc2da233ac2a105`,
+> branch `worktree-agent-aecc2da233ac2a105`, on top of `d3553cc`; NOT yet on the
+> working branch):**
+> - `0d7359d` 1/10: AutoTagger made honest; the dead `buildMetadataArguments`
+>   removed; `embedArtwork` defaults to false.
+> - `0df0071` 2/10: `FFmpegProbe.formatTagKeys` widened (checked against a real
+>   ffprobe 9.0.1), plus `AutoTagMerge`.
+> - `ac1859a` 3/10: `AutoTagSettings` (store, gate, request, source).
+> - `4891dd0`: orchestrator review fix. `AutoTagMerge` used
+>   `Dictionary(uniqueKeysWithValues:)`, which crashes on a duplicate tag id; it
+>   now uses `uniquingKeysWith`, with a test.
+> - `ddca8ab` 4/10: the film runner (`AutoTagRunner`: plan, provider choice, a real
+>   rank score, threshold, ambiguity, and a deadline/stop race in a task group).
+>   Built by Opus, and the race was reviewed by the orchestrator. **Its 35 tests
+>   were RUN locally in a harness** (all pass, and 8 in parallel pass). A
+>   planted-fault check failed 11 tests, as it should.
+> - **⚠️ The commit 6 plan needs a fixture change:** the planned delivery test's
+>   fake ffprobe title "My own title" scores 0.65 (< 0.7), so nothing would apply.
+>   Use a title tag such as "Inception", or no title tag.
+> - Other notes from the commit 4 builder: a junk title tag lowers the hit rate
+>   (it is searched as-is); the runner sends language "en", not "en-US"
+>   (unverified live); the director is never added (no credits are requested);
+>   `FilenameParser`'s comment promises "1x02", which isn't implemented.
+> - **NEW: engine tests can now be RUN locally**. The recipe is in
+>   `.claude/local-test-harness.md` (a how-to, not a second handoff). Use it for
+>   every engine test change. App tests are still type-check only.
+> - All of these compile, with test files type-checked for real. CI hasn't seen
+>   them yet. They'll be cherry-picked onto the working branch AFTER Codex round 2.
 >
 > **24 Sept, 23:43 — ROUND 1 FINISHED: 11 findings (1 blocker, 7 major, 3 minor).**
 > Saved word for word in `.claude/reviews/codex-2026-09-24-r1.md` (brief beside it).
