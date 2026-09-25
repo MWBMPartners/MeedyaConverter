@@ -1436,6 +1436,151 @@ paths:
         "422": { description: "Exit 6 — refused: the disc is DRM-protected and a working copy cannot be made without circumvention." }
         "500": { description: "Exit 4 — cdrdao failed or verification mismatch." }
 
+  # --------------------------------------------------------------------------
+  # settings export / settings import — #506
+  # --------------------------------------------------------------------------
+  /settings-export:
+    post:
+      operationId: settingsExport
+      summary: Save this Mac's settings to a file.
+      description: |
+        `meedya-convert settings export <file> [--categories general,encoding,
+        encodingProfiles,connections[,thisMac]] [--include this-mac]
+        [--format text|json]`.
+
+        Writes preferences, connection details and the person's own encoding
+        profiles to a JSON file that `settings import` can read on another
+        Mac. Default groups: every group except `thisMac` ("This Mac only" —
+        where FFmpeg and other tools are installed, and the CD drive's model
+        and read offset — off by default on both export and import, per the
+        #506 plan's owner decision 3). Naming `thisMac` (via `--categories` or
+        `--include this-mac`) prints its warning to stderr before writing.
+
+        NEVER writes a password, API key, token, webhook address or hook: the
+        allow-list (`SettingsKeyRegistry`) decides this per key, and secrets
+        are never read from the Keychain in the first place — only whether
+        one exists, via an attributes-only lookup, so the importing Mac can
+        be told what still needs entering (`notIncluded` / `leftOut` in
+        `--format json`; see the `SettingsCLIReport` schema below).
+
+        THE SETTINGS DOMAIN: this reads the Direct build's own settings
+        (`UserDefaults(suiteName: "Ltd.MWBMpartners.MeedyaConverter")`),
+        never `.standard` — inside a command-line tool `.standard` is that
+        tool's OWN, empty, settings, not the app's (`SettingsDomain.swift`'s
+        file overview). The Mac App Store build's settings live inside its
+        own sandbox, invisible to this command-line tool: exporting from it
+        is only possible from inside that app itself.
+
+        `--format json`'s shape is the `SettingsCLIReport` schema (below);
+        the full, generated JSON Schema is committed at
+        docs/schemas/settings-cli-report-v1.schema.json.
+      tags:
+        - Settings
+      parameters:
+        - name: file
+          in: query
+          required: true
+          description: "Where to write the settings file. A positional argument on the real command line (`settings export <file>`), not a flag — modelled as a query parameter here like every other option in this document, since meedya-convert is a CLI, not a real HTTP API."
+          schema: { type: string }
+        - name: --categories
+          in: query
+          required: false
+          description: "Comma-separated groups to export: general, encoding, encodingProfiles, connections, thisMac. Default: every group except thisMac."
+          schema: { type: string }
+        - name: --include
+          in: query
+          required: false
+          description: "Also include a group that's off by default. Only accepted value today: this-mac."
+          schema: { type: string, enum: [this-mac] }
+        - name: --format
+          in: query
+          required: false
+          schema: { type: string, enum: [text, json], default: text }
+      responses:
+        "200": { description: "Exit 0 — the file was written." }
+        "400": { description: "Exit 2 — an unknown --categories name, or none given (bad arguments)." }
+        "500": { description: "Exit 5 — the file could not be written (permissions, disk full, invalid path), or the exporter's own self-check refused its own output (should not happen; reported rather than silently written)." }
+
+  /settings-import:
+    post:
+      operationId: settingsImport
+      summary: Preview, or apply, a settings file made by "settings export".
+      description: |
+        `meedya-convert settings import <file> [--apply] [--mode merge|replace]
+        [--categories …] [--include this-mac] [--format text|json]`.
+
+        WITHOUT `--apply` this only shows a preview and writes NOTHING (the
+        #506 plan's owner decision 2: CLI import previews by default, with no
+        interactive prompt). WITH `--apply` the change is written, and the
+        text/JSON output additionally reports what was imported, what still
+        needs entering on this Mac, and what only takes effect the next time
+        MeedyaConverter opens.
+
+        `--mode merge` (the default) only changes what the file mentions;
+        anything the file doesn't mention stays as it is. `--mode replace`
+        makes the TICKED groups match the file exactly: settings, profiles,
+        SFTP servers, cloud destinations and other list items in those groups
+        that the file doesn't have are removed — passwords and keys already
+        saved on this Mac are never touched by either mode, and a "never"
+        setting (a password, a hook, a consent, a cached licence level) can
+        never be planted by the file, whatever it contains. There is no
+        separate `--yes` confirmation gate for `--mode replace`: `--apply`
+        itself is the one deliberate step the plan chose (to avoid an
+        interactive prompt), and the removal counts are always printed as
+        part of the SAME report `--apply` prints, before the "Imported …"
+        lines.
+
+        One bad value anywhere in the file refuses the WHOLE file — nothing
+        is ever half-imported. Refuses `--apply` while MeedyaConverter is open
+        (it keeps some settings in memory and would overwrite the import the
+        next time it saves).
+
+        NEVER reads a password, key or token from the Keychain — only
+        whether one exists (attributes-only), so "still needed" can be said
+        honestly without ever seeing a secret.
+
+        THE SETTINGS DOMAIN and THE APP STORE LIMIT: identical to `settings
+        export` above — the Direct build's own settings only, never
+        `.standard`, and never the Mac App Store build's sandboxed settings
+        or saved keys (which this command-line tool cannot see at all, so it
+        will list them as still needed even when the app already has them).
+      tags:
+        - Settings
+      parameters:
+        - name: file
+          in: query
+          required: true
+          description: "The settings file to read. A positional argument on the real command line (`settings import <file>`), not a flag — modelled as a query parameter here like every other option in this document, since meedya-convert is a CLI, not a real HTTP API."
+          schema: { type: string }
+        - name: --apply
+          in: query
+          required: false
+          description: "Write the change. Without this, only a preview is shown and nothing is written."
+          schema: { type: boolean, default: false }
+        - name: --mode
+          in: query
+          required: false
+          schema: { type: string, enum: [merge, replace], default: merge }
+        - name: --categories
+          in: query
+          required: false
+          description: "Comma-separated groups to import: general, encoding, encodingProfiles, connections, thisMac. Default: every group in the file except thisMac."
+          schema: { type: string }
+        - name: --include
+          in: query
+          required: false
+          schema: { type: string, enum: [this-mac] }
+        - name: --format
+          in: query
+          required: false
+          schema: { type: string, enum: [text, json], default: text }
+      responses:
+        "200": { description: "Exit 0 — previewed, or applied, successfully." }
+        "400": { description: "Exit 2 — an unknown --categories name, or none given (bad arguments)." }
+        "404": { description: "Exit 3 — the file could not be obtained at all: missing, unreadable, or over the 10 MB size limit. Nothing about its CONTENTS was ever examined." }
+        "422": { description: "Exit 6 — the file's CONTENTS were refused: not JSON, not a settings file, a newer format than this version reads, or a bad value. The whole file, always." }
+        "500": { description: "Exit 1 — MeedyaConverter is open (--apply only), or an unexpected apply-time failure (a full disk saving profiles; an internal safety check that should never fire)." }
+
 # ============================================================================
 # Schemas — JSON output formats and job file structures
 # ============================================================================
@@ -2297,3 +2442,100 @@ components:
           description: Completion percentage (0-100).
           minimum: 0
           maximum: 100
+
+    # -- settings export / settings import --format json output (#506) --
+    SettingsCLIReport:
+      type: object
+      description: |
+        The `--format json` output of `meedya-convert settings export` and
+        `meedya-convert settings import`. This entry is a plain-English
+        summary, deliberately loose (`additionalProperties` is not set to
+        `false` here) — the REAL, authoritative JSON Schema is generated
+        from the settings registry and committed at
+        docs/schemas/settings-cli-report-v1.schema.json (built by
+        `SettingsCLIReportSchema.generate()`, checked byte-for-byte against
+        that file by `SettingsSchemaTests` in `ConverterEngineTests`, and
+        proven to match what the CLI actually prints by
+        `SettingsCLIReportTests`, also in `ConverterEngineTests` — see that
+        test file's header for why the schema check lives there and not in
+        `MeedyaConvertTests`). Duplicating the strict shape by hand a second
+        time here would only give it a chance to drift from the generated
+        file; this entry exists so a reader of this document does not have
+        to already know that a second file exists.
+      required: [command, appVersion, generatedAt, categories]
+      properties:
+        command:
+          type: string
+          enum: [export, import]
+          description: Which subcommand produced this report.
+        appVersion:
+          type: string
+          description: The version of MeedyaConverter that ran the command.
+        generatedAt:
+          type: string
+          format: date-time
+          description: When this report was produced.
+        file:
+          type: string
+          description: The settings file path that was read (import) or written (export).
+        mode:
+          type: string
+          enum: [merge, replace]
+          description: "Import only: how the file was, or would be, combined with this Mac's settings."
+        applied:
+          type: boolean
+          description: "Import only: true once --apply has written the change; false for a preview."
+        categories:
+          type: array
+          description: |
+            One entry per settings group the command touched, in the usual
+            order (general, encoding, encodingProfiles, connections,
+            thisMac). Each entry has at least `category`, `displayName`,
+            `selected`, `count` and `summary`; an IMPORT entry also has
+            `added`, `updated` and `removed` (never present on an EXPORT
+            entry, which has nothing to compare against). See
+            `$defs.categoryReport` in the committed schema for the exact,
+            checked shape.
+          items:
+            type: object
+        warnings:
+          type: array
+          items: { type: string }
+          description: Cautions for risky settings selected for import (for example, a switched-on "delete source after encode").
+        crossChecks:
+          type: array
+          items: { type: string }
+          description: "Import only: statements about things that will not work exactly as the other Mac had them (for example, a default profile this Mac does not have)."
+        replaceConfirmation:
+          type: string
+          description: "Import, replace mode only: one sentence naming what Replace removes, printed BEFORE the result of applying it."
+        ignored:
+          type: array
+          description: |
+            Import only: things in the file that were not imported, and why.
+            Each entry's `reason` is one of unknownGroup, unknownSetting,
+            neverImported, wrongGroup, unknownLeftOutName, unknownField
+            (`belongsIn` is only present for wrongGroup). See
+            `$defs.ignoredItem` in the committed schema.
+          items:
+            type: object
+        stillNeeded:
+          type: array
+          description: |
+            Import only, after applying: passwords, keys and consents that
+            still need entering on this Mac. Each entry's `status` is
+            "missing" or "couldNotCheck" (never treated as the same thing —
+            "couldNotCheck" never implies the item is actually missing). See
+            `$defs.stillNeededItem` in the committed schema.
+          items:
+            type: object
+        leftOut:
+          type: array
+          items:
+            type: string
+            enum: [tmdbKey, meedyaDBKey, mediaServerKey, smtpPassword, webhookAddress, webhookHeaders, hooks, makeMKVConsent, renderFarmInsecureTransport]
+          description: "Export only: the names of things set up on this Mac that the file never carries (never a value — see SettingsLeftOutItem)."
+        takesEffectNextLaunch:
+          type: array
+          items: { type: string }
+          description: "Plain-English labels of settings that only take effect the next time MeedyaConverter opens. Populated at preview time too, not only after --apply, since the engine already knows this before anything is written."

@@ -27,6 +27,7 @@ struct MeedyaConvert: AsyncParsableCommand {
             ValidateCommand.self,
             ServeCommand.self,
             DiscCommand.self,
+            SettingsCommand.self,
         ]
     )
 }
