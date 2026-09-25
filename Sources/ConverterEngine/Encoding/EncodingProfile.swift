@@ -894,6 +894,53 @@ extension EncodingProfile {
     )
 }
 
+// MARK: - EncodingProfileBulkImportError
+
+/// What can go wrong when several user profiles are imported at once
+/// (`EncodingProfileStore.upsertUserProfiles` / `.replaceUserProfiles`,
+/// added for #506's settings export/import).
+///
+/// Every case here means the WHOLE batch was refused: none of the profiles
+/// in the call were applied, and the store's in-memory state and on-disk
+/// file are exactly as they were before the call. That "all or nothing"
+/// behaviour is why both bulk-import methods validate every profile in the
+/// batch before writing anything (see the doc comments on those methods).
+public enum EncodingProfileBulkImportError: Error, LocalizedError, Equatable, Sendable {
+
+    /// A profile in the batch has `isBuiltIn == true`. Built-in profiles are
+    /// shipped with the app, not imported from a file: accepting one here
+    /// would let a settings file plant a fake "built-in" that the UI treats
+    /// as non-deletable and that never goes through the app's own vetted
+    /// built-in list.
+    case builtInProfileRejected(id: UUID, name: String)
+
+    /// Two profiles in the same batch share an `id`. Silently keeping only
+    /// one of them would be a surprising, order-dependent data loss, so this
+    /// is refused instead.
+    case duplicateID(UUID)
+
+    /// Writing the merged user-profiles file to disk failed (full disk, a
+    /// permissions problem, or similar). `reason` is the underlying error's
+    /// own message. Nothing was written, and the in-memory `profiles` array
+    /// was never touched — see the "validate everything, then write" comment
+    /// on `upsertUserProfiles` for why the write happens after validation
+    /// but the in-memory update happens only after the write succeeds.
+    case writeFailed(reason: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .builtInProfileRejected(id, name):
+            return "The profile \u{201C}\(name)\u{201D} (\(id)) claims to be a built-in profile. "
+                + "Built-in profiles can't be added or replaced this way — nothing was imported."
+        case let .duplicateID(id):
+            return "Two profiles in this import share the same ID (\(id)). "
+                + "Each profile needs a unique ID — nothing was imported."
+        case let .writeFailed(reason):
+            return "Could not save the profile file: \(reason). Nothing was imported."
+        }
+    }
+}
+
 // MARK: - EncodingProfileStore
 
 /// Manages the collection of encoding profiles (built-in + user-created).
@@ -1059,6 +1106,138 @@ public final class EncodingProfileStore: @unchecked Sendable {
         return profile
     }
 
+    // MARK: - Bulk User-Profile Import (#506: settings export/import)
+
+    /// Checks a batch of profiles bound for `upsertUserProfiles` or
+    /// `replaceUserProfiles` before anything is written: no profile may
+    /// claim to be built-in, and no two profiles may share an `id`.
+    ///
+    /// This runs BEFORE the store's lock is taken and before any disk I/O,
+    /// so a bad batch is rejected as cheaply as possible and never gets a
+    /// chance to touch the file. Both bulk-import methods below call this
+    /// once, up front, and never need to check again inside the lock:
+    /// nothing about `incoming` can change between this call and the write,
+    /// because the caller passed an immutable `[EncodingProfile]` value, not
+    /// something another thread can mutate underneath us.
+    private static func validateBulkImportBatch(_ incoming: [EncodingProfile]) throws {
+        var seenIDs = Set<UUID>()
+        for profile in incoming {
+            if profile.isBuiltIn {
+                throw EncodingProfileBulkImportError.builtInProfileRejected(id: profile.id, name: profile.name)
+            }
+            guard seenIDs.insert(profile.id).inserted else {
+                throw EncodingProfileBulkImportError.duplicateID(profile.id)
+            }
+        }
+    }
+
+    /// Merges `incoming` into the user profiles by `id`: a profile whose
+    /// `id` already exists among the current user profiles REPLACES it in
+    /// place (so its position in the saved file is stable); a profile whose
+    /// `id` is new is appended. Every other existing user profile, and every
+    /// built-in profile, is left exactly as it was.
+    ///
+    /// **Why IDs are kept, not regenerated.** The one-profile
+    /// `importProfile(from:)` above deliberately mints a fresh UUID for
+    /// every import, because a person importing a single shared profile
+    /// file has no expectation that its ID means anything on this Mac.
+    /// A BULK import is different: it exists so that #506's settings
+    /// export/import can move a whole settings file — including
+    /// `conditionalRules`, which refer to a profile by `id`
+    /// (`ConditionalRule.swift`) — from one Mac to another. If this method
+    /// reassigned IDs the way `importProfile` does, every conditional rule
+    /// in the imported file would silently stop matching its profile the
+    /// moment it landed, which is exactly the kind of silent breakage #506
+    /// exists to avoid. So the caller's IDs are kept exactly.
+    ///
+    /// **Built-in profiles are identified by the `isBuiltIn` flag on each
+    /// incoming profile, never by comparing IDs against today's built-in
+    /// profile list.** Issue #510 (not fixed here — see that issue and the
+    /// plan's §9) means a built-in profile's `id` is a fresh random UUID on
+    /// every launch, so an ID-based check against "today's built-ins" would
+    /// only ever be correct for the run that happened to mint it, and would
+    /// let a stale ID from a previous launch collide by coincidence with a
+    /// legitimate imported profile. Checking the flag on the DATA being
+    /// imported, and separately re-deriving "today's built-ins" from the
+    /// store's own live `profiles` array (`profiles.filter { $0.isBuiltIn }`,
+    /// below) rather than from any hard-coded ID, means this method's
+    /// correctness never depends on built-in IDs being stable across
+    /// launches.
+    ///
+    /// **Validate everything, then write, then update memory — in that
+    /// order.** Every profile in `incoming` is checked (via
+    /// `validateBulkImportBatch`) before the merge is computed, the merge
+    /// is computed and written to disk before `self.profiles` is touched,
+    /// and `self.profiles` is only updated once the write has actually
+    /// succeeded. That means a bad batch, or a disk write that fails
+    /// halfway, can never leave the store showing profiles that don't match
+    /// what's on disk, and can never apply only some of the batch.
+    ///
+    /// - Throws: `EncodingProfileBulkImportError` if any profile claims
+    ///   `isBuiltIn`, if two profiles share an `id`, or if the write to disk
+    ///   fails. On any error, nothing changes: not the in-memory profiles,
+    ///   not the file on disk.
+    public func upsertUserProfiles(_ incoming: [EncodingProfile]) throws {
+        try Self.validateBulkImportBatch(incoming)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        var userProfiles = profiles.filter { !$0.isBuiltIn }
+        var indexByID: [UUID: Int] = [:]
+        indexByID.reserveCapacity(userProfiles.count)
+        for (index, profile) in userProfiles.enumerated() {
+            indexByID[profile.id] = index
+        }
+
+        for profile in incoming {
+            if let index = indexByID[profile.id] {
+                userProfiles[index] = profile
+            } else {
+                indexByID[profile.id] = userProfiles.count
+                userProfiles.append(profile)
+            }
+        }
+
+        // Write BEFORE touching `profiles`: if this throws, the function
+        // exits here and `profiles` is untouched — see the doc comment above.
+        try writeUserProfilesToDisk(userProfiles)
+
+        let builtIns = profiles.filter { $0.isBuiltIn }
+        profiles = builtIns + userProfiles
+    }
+
+    /// Makes the user profiles become EXACTLY `incoming`: any current user
+    /// profile whose `id` is not in `incoming` is removed, and every profile
+    /// in `incoming` is present afterwards with its own `id` kept. Built-in
+    /// profiles are read from the store's own live `profiles` array and
+    /// carried across untouched — this is a full "replace my user profiles"
+    /// operation, never a replace of built-ins.
+    ///
+    /// See `upsertUserProfiles` above for why IDs are kept rather than
+    /// regenerated, why built-ins are identified by the `isBuiltIn` flag on
+    /// the incoming data rather than by ID, and why validation happens
+    /// before the write and the in-memory update happens only after the
+    /// write succeeds. All three reasons apply here unchanged.
+    ///
+    /// - Throws: `EncodingProfileBulkImportError` if any profile claims
+    ///   `isBuiltIn`, if two profiles share an `id`, or if the write to disk
+    ///   fails. On any error, nothing changes: not the in-memory profiles,
+    ///   not the file on disk.
+    public func replaceUserProfiles(with incoming: [EncodingProfile]) throws {
+        try Self.validateBulkImportBatch(incoming)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        // Write BEFORE touching `profiles`: if this throws, the function
+        // exits here and `profiles` is untouched — see `upsertUserProfiles`.
+        try writeUserProfilesToDisk(incoming)
+
+        let builtIns = profiles.filter { $0.isBuiltIn }
+        profiles = builtIns + incoming
+    }
+
     // MARK: - Persistence
 
     /// Load user-created profiles from disk.
@@ -1077,9 +1256,44 @@ public final class EncodingProfileStore: @unchecked Sendable {
     }
 
     /// Save user-created profiles to disk.
+    ///
+    /// **This still only prints on failure — deliberately unchanged in this
+    /// commit.** `addProfile`, `updateProfile` and `deleteProfile` all call
+    /// this as a fire-and-forget "best effort" save: none of their callers
+    /// (across the app and CLI) currently expect a thrown error from a
+    /// single-profile edit, so changing this method's signature here would
+    /// mean either breaking their call sites or silently swallowing the
+    /// error one level up, which is worse than today's behaviour, not
+    /// better. `writeUserProfilesToDisk` below is the throwing save this
+    /// method and the two #506 bulk-import methods both now share, so the
+    /// actual encode-and-atomic-write logic exists in exactly one place.
+    /// Whether `addProfile`/`updateProfile`/`deleteProfile` should also
+    /// switch to the throwing path — so a full disk or a permissions
+    /// problem reaches the user instead of only a console print — is a
+    /// reasonable follow-up, but it is a behaviour change for three
+    /// existing public methods and is out of scope for this commit.
     private func saveUserProfiles() {
         let userProfiles = profiles.filter { !$0.isBuiltIn }
+        do {
+            try writeUserProfilesToDisk(userProfiles)
+        } catch {
+            print("Warning: Could not save user profiles: \(error.localizedDescription)")
+        }
+    }
 
+    /// Encodes `userProfiles` and writes them to `storageURL` atomically,
+    /// throwing `EncodingProfileBulkImportError.writeFailed` on any failure
+    /// (a full disk, a permissions problem, or similar) instead of only
+    /// printing. This is the one place the actual encode-and-write happens;
+    /// both the best-effort `saveUserProfiles()` above and the #506
+    /// bulk-import methods (`upsertUserProfiles`, `replaceUserProfiles`)
+    /// call it rather than duplicating the encode/write logic.
+    ///
+    /// Callers that need "never half-applied" (the bulk-import methods) rely
+    /// on this throwing BEFORE they update `self.profiles`, and on
+    /// `.atomic` meaning the file on disk is either the old complete
+    /// contents or the new complete contents, never a half-written file.
+    private func writeUserProfilesToDisk(_ userProfiles: [EncodingProfile]) throws {
         do {
             // Ensure directory exists
             let dir = storageURL.deletingLastPathComponent()
@@ -1090,7 +1304,7 @@ public final class EncodingProfileStore: @unchecked Sendable {
             let data = try encoder.encode(userProfiles)
             try data.write(to: storageURL, options: .atomic)
         } catch {
-            print("Warning: Could not save user profiles: \(error.localizedDescription)")
+            throw EncodingProfileBulkImportError.writeFailed(reason: error.localizedDescription)
         }
     }
 }
