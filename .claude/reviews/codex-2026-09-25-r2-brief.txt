@@ -2,6 +2,8 @@ You are reviewing code changes in this git repository. You are read-only: do not
 
 This is ROUND 2. Every one of your 11 round-1 findings was confirmed real and has been fixed by Claude. No other system has checked the fixes. Review them as one body of work. Report only real defects, meaning things that are wrong or would go wrong. Do not report style. For each finding give the file:line, what goes wrong, and a concrete scenario that triggers it. Also say plainly for each round-1 finding whether its fix is COMPLETE, INCOMPLETE, or introduced a NEW problem.
 
+UPDATE (25 Sept, before you ran): because you were out of allowance at 04:40, a FALLBACK round-2 review was done by a different model (Claude Fable). It is in `.claude/reviews/fallback-2026-09-25-r2-fable.md`. Its 5 findings were fixed in commits a3ddf1f, 4269b36, 371b7ae, cbb293c and 1ceec8c, which are now INSIDE your range (codex-r2-end moved to 21d2ad4). Review those fixes too, and do not simply repeat the fallback's findings: say whether each of its fixes is complete, and look for anything it missed. Your independent view is the point.
+
 Look hardest at these (each is a place a fix could itself be wrong):
 
 1. F1 privacy recheck (MeedyaDBContributor.contribute `recheck`, MeedyaDBSubmissionMode.narrower, the two view models' closures).
