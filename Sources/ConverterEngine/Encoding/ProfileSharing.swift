@@ -129,7 +129,8 @@ public struct ProfileSharing: Sendable {
             perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,
-            videoBufferSize: profile.videoBufferSize
+            videoBufferSize: profile.videoBufferSize,
+            orderTracksCanonically: profile.orderTracksCanonically
         )
 
         return profile

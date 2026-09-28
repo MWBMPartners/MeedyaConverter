@@ -117,6 +117,16 @@ struct EncodeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("map-all"), help: "Map all streams from source.")
     var mapAllStreams = false
 
+    // Track order (language policy MWBM-MEDIA-LANG, TRACK-050/060). By
+    // default every new output puts its tracks in the policy's order —
+    // including "Remux to MKV/MP4", which used to keep the source's order.
+    // This flag keeps the source's order for one run.
+    @Flag(
+        name: .customLong("keep-track-order"),
+        help: "Keep each kind of track in the source's order. By default tracks are put in the standard order: video, audio, subtitles; the original language first, then by role and language."
+    )
+    var keepTrackOrder = false
+
     // MARK: - Hardware Encoding
 
     @Flag(name: .customLong("hardware"), help: "Use hardware encoder if available.")
@@ -198,6 +208,9 @@ struct EncodeCommand: AsyncParsableCommand {
             throw ExitCode(ExitCodes.invalidArguments.rawValue)
         }
 
+        if keepTrackOrder {
+            config.orderTracksCanonically = false
+        }
         if noCopyMetadata {
             config.extraArguments += ["-map_metadata", "-1"]
         }

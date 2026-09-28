@@ -190,6 +190,24 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
     /// #324 decode cleanly.
     public var deinterlace: DeinterlaceConfig?
 
+    // MARK: - Track order (language policy, TRACK-050/060)
+
+    /// Whether outputs made with this profile put their tracks in the
+    /// language policy's stored order (MWBM-MEDIA-LANG TRACK-050/060): video,
+    /// then audio, then subtitles, then anything else; within each, the
+    /// original language first, then by role, then by language code. `false`
+    /// keeps the source's order: each kind of track in the order the file
+    /// has them (kinds are still grouped as the stream selection maps them,
+    /// video then audio then subtitles, unless every stream is mapped).
+    ///
+    /// `nil` means ON — it is what every profile saved before this setting
+    /// existed decodes as (this type's `Codable` is synthesised, so a new
+    /// non-optional field would make older saved profiles fail to load).
+    /// Read it as `orderTracksCanonically ?? true`; `toArgumentBuilder` does.
+    /// An `EncodingJobConfig` can override it for one job (the command-line
+    /// tool's `--keep-track-order`).
+    public var orderTracksCanonically: Bool?
+
     // MARK: - Initialiser
 
     public init(
@@ -235,7 +253,8 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         keyframeIntervalSeconds: Double? = nil,
         videoBufferSize: Int? = nil,
         watermark: OverlayWatermarkConfig? = nil,
-        deinterlace: DeinterlaceConfig? = nil
+        deinterlace: DeinterlaceConfig? = nil,
+        orderTracksCanonically: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -280,6 +299,7 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
         self.videoBufferSize = videoBufferSize
         self.watermark = watermark
         self.deinterlace = deinterlace
+        self.orderTracksCanonically = orderTracksCanonically
     }
 
     // MARK: - Computed Properties
@@ -407,6 +427,9 @@ public struct EncodingProfile: Identifiable, Codable, Sendable, Hashable {
 
         // Container
         builder.containerFormat = containerFormat
+
+        // Track order (language policy): on unless this profile says off.
+        builder.orderTracksCanonically = orderTracksCanonically ?? true
 
         return builder
     }
@@ -1100,7 +1123,8 @@ public final class EncodingProfileStore: @unchecked Sendable {
             perStreamSettings: profile.perStreamSettings,
             containerFormat: profile.containerFormat,
             keyframeIntervalSeconds: profile.keyframeIntervalSeconds,
-            videoBufferSize: profile.videoBufferSize
+            videoBufferSize: profile.videoBufferSize,
+            orderTracksCanonically: profile.orderTracksCanonically
         )
         addProfile(profile)
         return profile

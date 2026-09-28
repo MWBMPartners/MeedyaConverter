@@ -183,6 +183,7 @@ struct OutputSettingsView: View {
                 outputDirectoryPicker
                 outputModePicker
                 containerInfo
+                trackOrderToggle
                 filenameTemplateField
             }
 
@@ -828,6 +829,28 @@ struct OutputSettingsView: View {
 
     private var containerInfo: some View {
         LabeledContent("Container", value: viewModel.selectedProfile.containerFormat.displayName)
+    }
+
+    // MARK: - Track Order (language policy MWBM-MEDIA-LANG, TRACK-050/060)
+
+    /// Whether the output puts its tracks in the language policy's standard
+    /// order — video, audio, subtitles; the original language first, then by
+    /// role and language — or keeps the source's order. A setting of the
+    /// selected profile (`EncodingProfile.orderTracksCanonically`, where
+    /// `nil` means on), so it travels with the profile like the passthrough
+    /// switches do.
+    private var trackOrderToggle: some View {
+        @Bindable var vm = viewModel
+        return VStack(alignment: .leading, spacing: 2) {
+            Toggle("Put tracks in the standard order", isOn: Binding(
+                get: { vm.selectedProfile.orderTracksCanonically ?? true },
+                set: { vm.selectedProfile.orderTracksCanonically = $0 }
+            ))
+            .accessibilityHint("When off, the output keeps the source file's track order")
+            Text("Video, then audio, then subtitles; the original language first, then main tracks before description and commentary. Turn off to keep each kind of track in the order the source file has them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Output Mode (Issue #275)

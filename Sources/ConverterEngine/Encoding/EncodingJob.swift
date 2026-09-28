@@ -178,6 +178,14 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// reason as `sourceStreamEdits`.
     public var attachedPictureFiles: [Int: URL]?
 
+    /// Whether this job's output puts its tracks in the language policy's
+    /// stored order, overriding the profile's own setting
+    /// (`EncodingProfile.orderTracksCanonically`) for this one job: `false`
+    /// keeps the source's order (the command-line tool's
+    /// `--keep-track-order`), `true` orders them, `nil` — the default, and
+    /// what jobs saved before this existed decode as — follows the profile.
+    public var orderTracksCanonically: Bool?
+
     public init(
         id: UUID = UUID(),
         inputURL: URL,
@@ -242,6 +250,11 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         builder.sourceStreams = sourceStreams
         builder.sourceStreamEdits = sourceStreamEdits ?? [:]
         builder.attachedPictureFiles = attachedPictureFiles ?? [:]
+        // This job's own track-order choice, if it made one; otherwise the
+        // profile's (already applied by `toArgumentBuilder`).
+        if let orderTracksCanonically {
+            builder.orderTracksCanonically = orderTracksCanonically
+        }
 
         // Apply metadata
         builder.metadata = outputMetadata
