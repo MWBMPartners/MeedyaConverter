@@ -44,6 +44,7 @@
 // ============================================================================
 
 import Foundation
+import MediaLanguagePolicy
 
 // MARK: - StreamSpecifier
 
@@ -167,6 +168,22 @@ public struct OutputStreamPlan: Sendable, Equatable {
         // Count the earlier output streams of the same type: that count is the
         // type-counted position ffmpeg expects.
         return entries[..<position].filter { $0.streamType == target.streamType }.count
+    }
+
+    /// Every output stream with its full output specifier (`v:0`, `a:1`,
+    /// `s:0` …), in output order — worked out in one pass. Streams of a type
+    /// with no ffmpeg letter are left out.
+    public var entriesWithSpecifiers: [(entry: Entry, specifier: String)] {
+        var counts: [StreamType: Int] = [:]
+        var result: [(entry: Entry, specifier: String)] = []
+        for entry in entries {
+            let position = counts[entry.streamType, default: 0]
+            counts[entry.streamType] = position + 1
+            if let letter = StreamSpecifier.typeLetter(for: entry.streamType) {
+                result.append((entry, "\(letter):\(position)"))
+            }
+        }
+        return result
     }
 
     /// The full output specifier for source stream `index`, such as `a:1`,
@@ -328,7 +345,51 @@ extension FFmpegArgumentBuilder {
                 && perStreamSubtitleInclude[entry.sourceStreamIndex] == false
         }
 
-        return OutputStreamPlan(entries: entries)
+        return OutputStreamPlan(entries: orderedCanonically(entries, sources: byIndex))
+    }
+
+    /// Puts the output streams in the language policy's STORED order
+    /// (TRACK-060, TRACK-050, LANG-010 to LANG-027): video, then audio, then
+    /// subtitles, then anything else — each type on its own, the original
+    /// language's tracks first, then by role, then by language code
+    /// (general before specific), ties keeping their order.
+    ///
+    /// It orders by what each output track will SAY — the stream editor's
+    /// language and roles where the person changed them — so the order and
+    /// the written tags agree. This is only ever used for a file being
+    /// created (COMPAT-020: existing files are never rewritten just to
+    /// reorder them). It is skipped when `orderTracksCanonically` is off, or
+    /// when the policy's data is missing (then the selection order stands).
+    func orderedCanonically(_ entries: [OutputStreamPlan.Entry], sources: [Int: MediaStream]) -> [OutputStreamPlan.Entry] {
+        guard orderTracksCanonically, let policy = TrackLanguage.policy else { return entries }
+        let items = entries.map { entry -> CanonicalOrderItem in
+            let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+            return CanonicalOrderItem(
+                // A track with no language at all sorts with "not known"
+                // (LANG-003), never as a real language.
+                tag: facts.language ?? "und",
+                isOriginal: facts.disposition?.isOriginal ?? false,
+                type: entry.streamType.policyTrackType,
+                roles: facts.disposition?.policyRoles(for: entry.streamType) ?? []
+            )
+        }
+        return policy.canonicalOrder.trackOrder(items).map { entries[$0] }
+    }
+
+    /// What the output stream carrying source stream `index` will say: the
+    /// source's language, roles and title with any stream-editor change
+    /// applied. `disposition` is `nil` when neither the source (data saved
+    /// before roles were kept) nor the editor says anything about roles.
+    func outputFacts(
+        for index: Int,
+        type: StreamType,
+        sources: [Int: MediaStream]
+    ) -> (language: String?, disposition: StreamDisposition?, sourceTitle: String?) {
+        let source = sources[index]
+        let edit = sourceStreamEdits[index]
+        let language = edit?.language ?? source?.language
+        let disposition = edit?.disposition ?? source?.disposition
+        return (language, disposition, source?.title)
     }
 
     // MARK: - Problems the builder could not honour

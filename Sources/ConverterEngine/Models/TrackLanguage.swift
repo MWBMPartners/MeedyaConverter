@@ -103,17 +103,24 @@ extension StreamDisposition {
     }
 }
 
-extension MediaStream {
+extension StreamType {
 
-    /// The policy's track type for this stream (TRACK-060).
+    /// The policy's track type for this kind of stream (TRACK-060): data,
+    /// attachments and unknown streams are all "anything else".
     public var policyTrackType: TrackType {
-        switch streamType {
+        switch self {
         case .video: return .video
         case .audio: return .audio
         case .subtitle: return .subtitle
         case .data, .attachment, .unknown: return .other
         }
     }
+}
+
+extension MediaStream {
+
+    /// The policy's track type for this stream (TRACK-060).
+    public var policyTrackType: TrackType { streamType.policyTrackType }
 
     /// The stream's roles in the policy's terms (TRACK-010), from its full
     /// dispositions — or, for a stream described before those were kept,
@@ -127,5 +134,106 @@ extension MediaStream {
     /// (LANG-010; ffmpeg's `original`, Matroska's FlagOriginal).
     public var isOriginalLanguage: Bool {
         disposition?.isOriginal ?? false
+    }
+}
+
+// MARK: - Writing (TRACK-070, NAME-010)
+
+extension TrackLanguage {
+
+    /// Which form a container's language field takes when ffmpeg writes it.
+    ///
+    /// WHAT WAS CHECKED, AND WITH WHAT (TRACK-070 says: test the tool you
+    /// actually run, do not trust a table). On 28 Sept 2026, with ffmpeg /
+    /// ffprobe 9.0.1 (Homebrew) and MKVToolNix 101.0 on the developer's Mac:
+    ///
+    /// * Matroska / WebM: ffmpeg writes the `language` metadata string, as
+    ///   given, into the OLD `Language` element — even `en-GB` or `zh-Hant`,
+    ///   which that element (ISO 639-2 bibliographic, RFC 9559 §12) cannot
+    ///   hold. It never writes `LanguageBCP47`. When READING, ffmpeg ignores
+    ///   `LanguageBCP47` (a file made by mkvmerge with `en-GB` probes as
+    ///   `eng`), and a `-c copy` remux drops it. So the only field ffmpeg can
+    ///   write is the old one, and it is written in the bibliographic form
+    ///   the policy requires (`ger`, `fre`, `chi`). Region and script CANNOT
+    ///   be stored in a Matroska file made by ffmpeg — the autonym title
+    ///   (NAME-010) still says them in words. Writing LanguageBCP47 would
+    ///   need a post-pass (mkvpropedit, or our own EBML writer).
+    /// * MP4 / MOV: ffmpeg writes the `mdhd` language from the metadata
+    ///   string AS GIVEN if it is three letters (`ger` stays `ger` — the
+    ///   wrong form for MP4) and silently drops anything else (`en-GB`,
+    ///   `de`). It writes no `elng` box. So the terminology form (`deu`,
+    ///   `fra`, `zho`) must be passed explicitly. Whether ffprobe would read
+    ///   an `elng` box could not be checked: no tool here writes one.
+    /// * Roles: ffmpeg writes FlagOriginal, FlagCommentary,
+    ///   FlagHearingImpaired, FlagVisualImpaired, FlagForced and (on subtitle
+    ///   tracks) FlagTextDescriptions to Matroska and reads them back; MP4
+    ///   keeps forced/commentary/SDH/captions/description through `kind`
+    ///   boxes but has no "original" flag at all.
+    ///
+    /// ContainerLanguageToolTests re-checks the facts this code relies on
+    /// against whatever ffmpeg the test machine has (skipped without one).
+    public enum LanguageFieldForm: Sendable, Equatable {
+        /// ISO 639-2 bibliographic (`ger`) — Matroska's old `Language`.
+        case bibliographic
+        /// ISO 639-2 terminology (`deu`) — MP4/MOV `mdhd`; also used for
+        /// containers the policy's table does not name, whose ffmpeg writers
+        /// take a three-letter code (MPEG-TS keeps only the first three
+        /// characters of whatever it is given).
+        case terminology
+        /// The canonical BCP 47 tag — free-text fields (Ogg's Vorbis
+        /// comment `LANGUAGE`).
+        case fullTag
+    }
+
+    /// The form `container`'s language field needs (see `LanguageFieldForm`).
+    public static func languageFieldForm(for container: ContainerFormat?) -> LanguageFieldForm {
+        switch container {
+        case .mkv, .mka, .mks, .mk3d, .webm:
+            return .bibliographic
+        case .ogg, .ogm:
+            return .fullTag
+        default:
+            return .terminology
+        }
+    }
+
+    /// The value to give ffmpeg's `language` metadata for a track in
+    /// `tag`'s language, in `container` (TRACK-070): the old three-letter
+    /// code in the form the container needs (a language with no ISO 639-2
+    /// code, `und`, or a malformed value → `und`), or the canonical tag for a
+    /// free-text field.
+    ///
+    /// Without the policy's data the tag is returned as given (nothing is
+    /// guessed; see the file header).
+    public static func containerValue(for tag: String, in container: ContainerFormat?) -> String {
+        guard let policy else { return tag }
+        switch languageFieldForm(for: container) {
+        case .bibliographic: return policy.iso6392.codes(for: tag).b
+        case .terminology: return policy.iso6392.codes(for: tag).t
+        case .fullTag: return policy.canonicaliser.canonicalise(tag).canonical ?? "und"
+        }
+    }
+
+    /// The title to write for a track in `tag`'s language when it has no
+    /// meaningful title of its own (NAME-010): the language's own name,
+    /// "Deutsch", "English (United Kingdom)", "日本語". `nil` for special
+    /// codes (`und`, `mul`, `mis`, `zxx`, local use), for a value that is
+    /// not a well-formed tag, and when the policy's data is missing.
+    public static func autonymTitle(for tag: String) -> String? {
+        guard let policy, let canonical = policy.canonicaliser.canonicalise(tag).canonical else { return nil }
+        return LanguageNames.autonym(of: canonical)
+    }
+
+    /// Whether `title` says something a person chose — and so must never be
+    /// replaced (NAME-010: never overwrite a real title). An absent or blank
+    /// title, or a bare placeholder such as "Track 2", "Audio", "Stream #3"
+    /// or "Subtitle 1", is not meaningful. Everything else — however odd —
+    /// is kept.
+    public static func isMeaningfulTitle(_ title: String?) -> Bool {
+        guard let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return false
+        }
+        let placeholder = #"^(track|audio|video|sound|stream|subtitles?|subs?)\s*#?\s*\d*$"#
+        return trimmed.range(of: placeholder, options: [.regularExpression, .caseInsensitive]) == nil
     }
 }

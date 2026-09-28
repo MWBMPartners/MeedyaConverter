@@ -234,15 +234,21 @@ final class StreamIndexSpaceTests: XCTestCase {
     // MARK: - Stream editor changes
 
     /// Editor changes land on the output stream their source stream became —
-    /// `s:a:1` for source #2 here. The old editor wrote `s:a:2`.
+    /// `s:a:1` for source #2 here. The old editor wrote `s:a:2`. (The output
+    /// is Matroska, whose language field takes the three-letter bibliographic
+    /// code, so the edit's `en` is written `eng` — TRACK-070.)
     func test_plan_editorChangesUseOutputPositions() {
         var builder = makeBuilder()
         builder.sourceStreams = film
         builder.sourceStreamEdits = [2: SourceStreamEdit(title: "Commentary", language: "en")]
+        // This test is about numbering only. With the policy's track order on,
+        // #2 (now English) would move ahead of #1 (no language) — correct, and
+        // covered by TrackWritingTests — so keep the source order here.
+        builder.orderTracksCanonically = false
 
         let args = builder.build()
         XCTAssertTrue(hasPair(args, "-metadata:s:a:1", "title=Commentary"), "\(args)")
-        XCTAssertTrue(hasPair(args, "-metadata:s:a:1", "language=en"), "\(args)")
+        XCTAssertTrue(hasPair(args, "-metadata:s:a:1", "language=eng"), "\(args)")
         XCTAssertFalse(args.contains("-metadata:s:a:2"))
     }
 

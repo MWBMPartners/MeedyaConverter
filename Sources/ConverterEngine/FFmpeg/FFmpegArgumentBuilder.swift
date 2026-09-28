@@ -331,6 +331,14 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// source stream becomes; needs `sourceStreams`.
     public var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
 
+    /// Whether the output's tracks are put in the language policy's stored
+    /// order (TRACK-050/060: video, audio, subtitles, other; the original
+    /// language first; then role; then language code). On by default: every
+    /// output this builder describes is a NEW file, which is exactly where
+    /// the policy's order applies (COMPAT-020 only forbids rewriting an
+    /// existing file just to reorder it). Needs `sourceStreams`.
+    public var orderTracksCanonically: Bool = true
+
     // MARK: - Container / Output
 
     /// Output container format. Inferred from output extension if nil.
@@ -1084,21 +1092,28 @@ public struct FFmpegArgumentBuilder: Sendable {
     ///
     /// Two sources, in this order (a later `-disposition` for the same output
     /// stream wins in ffmpeg):
-    /// 1. roles a person set in the stream editor (`sourceStreamEdits`),
-    ///    placed on the output stream their source stream became (#530 —
-    ///    the editor's Default/Forced toggles used to be dropped entirely);
+    /// 1. every output track's roles (language policy TRACK-010/030/040):
+    ///    the source's full dispositions — original, forced, commentary,
+    ///    SDH/captions, audio description, text descriptions, default — or
+    ///    the ones a person set in the stream editor. Written explicitly, so
+    ///    they survive a tone-mapped subtitle REPLACEMENT (which comes from a
+    ///    separate file with no roles) and so the editor's toggles reach the
+    ///    output (#530 — they used to be dropped entirely). A track whose
+    ///    roles are unknown (data saved before they were kept) gets nothing,
+    ///    so ffmpeg copies whatever the file has;
     /// 2. `streamDispositions`, keyed by OUTPUT specifier (e.g. TrueHD in MP4
     ///    must not be default), written verbatim.
     ///
-    /// Both are written in a fixed order (sorted), so the same settings always
-    /// give the same command line.
+    /// Both are written in a fixed order, so the same settings always give
+    /// the same command line.
     private func buildDispositionArguments(plan: OutputStreamPlan?) -> [String] {
         var args: [String] = []
-        if let plan {
-            for (sourceIndex, edit) in sourceStreamEdits.sorted(by: { $0.key < $1.key }) {
-                guard let disposition = edit.disposition,
-                      let specifier = plan.outputSpecifier(forSourceStream: sourceIndex) else { continue }
-                args.append(contentsOf: ["-disposition:\(specifier)", disposition.ffmpegValue])
+        if let plan, let sources = sourceStreamsByIndex {
+            for (entry, specifier) in plan.entriesWithSpecifiers {
+                let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+                if let disposition = facts.disposition {
+                    args.append(contentsOf: ["-disposition:\(specifier)", disposition.ffmpegValue])
+                }
             }
         }
         for (streamSpec, disposition) in streamDispositions.sorted(by: { $0.key < $1.key }) {
@@ -1121,16 +1136,41 @@ public struct FFmpegArgumentBuilder: Sendable {
             args.append(contentsOf: ["-metadata", "\(key)=\(value)"])
         }
 
-        // Changes made in the stream editor, placed on the output stream each
-        // source stream became (#530).
-        if let plan {
-            for (sourceIndex, edit) in sourceStreamEdits.sorted(by: { $0.key < $1.key }) {
-                guard let specifier = plan.outputSpecifier(forSourceStream: sourceIndex) else { continue }
-                if let title = edit.title {
-                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
+        // Every output track's language and title (language policy
+        // TRACK-070, NAME-010), placed on the output stream each source stream
+        // became (#530). The stream editor's changes win over the source.
+        if let plan, let sources = sourceStreamsByIndex {
+            let container = resolveContainerFormat()
+            let fromSource = writesSourceDerivedStreamMetadata
+            for (entry, specifier) in plan.entriesWithSpecifiers {
+                let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+                let edit = sourceStreamEdits[entry.sourceStreamIndex]
+
+                // Language: in the form the container's field needs — the
+                // bibliographic three-letter code for Matroska, terminology
+                // for MP4/MOV, the full tag for Ogg (see
+                // TrackLanguage.LanguageFieldForm for what ffmpeg can and
+                // cannot write). A track with no language gets none.
+                if let language = facts.language, edit?.language != nil || fromSource {
+                    let value = TrackLanguage.containerValue(for: language, in: container)
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "language=\(value)"])
                 }
-                if let language = edit.language {
-                    args.append(contentsOf: ["-metadata:s:\(specifier)", "language=\(language)"])
+
+                // Title: the editor's title if one was set (an empty one
+                // clears it). Otherwise, for an audio or subtitle track with
+                // no meaningful title, the language's own name (NAME-010) —
+                // a real title is never overwritten. A tone-mapped
+                // REPLACEMENT comes from a separate file with no title, so
+                // its source's real title is written back onto it.
+                if let title = edit?.title {
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
+                } else if fromSource, TrackLanguage.isMeaningfulTitle(facts.sourceTitle) {
+                    if entry.isReplacement, let title = facts.sourceTitle {
+                        args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
+                    }
+                } else if fromSource, entry.streamType == .audio || entry.streamType == .subtitle,
+                          let language = facts.language, let autonym = TrackLanguage.autonymTitle(for: language) {
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(autonym)"])
                 }
             }
         }
@@ -1143,6 +1183,25 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         return args
+    }
+
+    /// The source's streams keyed by whole-file number, or `nil` when unknown.
+    private var sourceStreamsByIndex: [Int: MediaStream]? {
+        orderedSourceStreams.map { streams in
+            Dictionary(uniqueKeysWithValues: streams.map { ($0.streamIndex, $0) })
+        }
+    }
+
+    /// Whether languages and titles taken from the SOURCE are written. Off
+    /// when the caller asked for the source's metadata to be dropped —
+    /// `copySourceMetadata == false`, or `-map_metadata -1` among the extra
+    /// arguments (how the CLI's `--no-copy-metadata` asks for it). Changes a
+    /// person made in the stream editor are written either way.
+    private var writesSourceDerivedStreamMetadata: Bool {
+        let dropsMetadata = zip(extraArguments, extraArguments.dropFirst()).contains {
+            $0.0 == "-map_metadata" && $0.1 == "-1"
+        }
+        return copySourceMetadata && !dropsMetadata
     }
 
     /// Per-stream settings keyed by SOURCE stream number, turned into the
