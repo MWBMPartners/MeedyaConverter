@@ -44,6 +44,22 @@ attachment route); MOV, 3GP, 3G2, AIFF drop it silently; MPEG-TS makes a
 `bin_data` stream; MPEG-PS an "unknown" video stream; AVI an MJPEG track;
 WebM, Ogg, FLV, CAF, W64, WAV, ADTS refuse the whole job.
 
+| # | Task (brief item) | Issue | Status | Notes |
+|---|---|---|---|---|
+| R3-1 | Cover art: left out where the file type cannot hold it; Matroska name + description (1, 2, 6, minor) | #531 | Done locally — `1ff75ac` | 1017 engine tests, 0 failures; 4 planted faults caught |
+| R3-2 | Conformance runner: one reading of the file (7) | #531 | Done locally — `6a73f04` | 15 policy tests; U+FEFF case fails; planted fault caught |
+| R3-3 | One table of what each file type stores; MOV QuickTime codes; `und-GB` (3, minor) | #531, #541 | Done locally — `976119d` | table tool test 13 file types × 10 values, 0 mismatches |
+| R3-4 | Matroska full tags (`MatroskaTrackList`) (4) | #531, #532 | Done locally — `78fb77b` | 1035 engine tests, 0 failures; real mkvmerge test |
+| R3-5 | Pipeline, Shortcuts, preview: same picture step + notes (5) | #531 | In progress | shared `AttachedPictures.copyPictures` |
+| R3-6 | Minors: editor clearing a title; docs (CHANGELOG, Architecture) | #531 | In progress | |
+| R3-7 | Issues: #540 fonts, #541 MOV roles opened; #539 already covers `nan` | — | Done | |
+
+New facts this round: MOV keeps NO track role but "default" (ffmpeg 9.0.1) —
+raised as #541, recorded in `ContainerLanguageToolTests`. The platform titles
+Mandarin (`cmn`) "中文" (its own autonym for it); Cantonese is "廣東話".
+Harness trap: `SettingsKeyCoverageTests` looks for `Sources/` from the CURRENT
+folder, so run the harness binary from the repo root, not from its own folder.
+
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
 `5d2223c`. **Rounds 1 and 2 are pushed** (head `a5abc22`, CI green). **The
 copy-update sweep** (see "COPY-UPDATE SWEEP" below) is LOCAL commits on top
