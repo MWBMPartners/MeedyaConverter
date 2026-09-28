@@ -209,6 +209,55 @@ final class TrackPreservationToolTests: XCTestCase {
         if checked == 0 { throw XCTSkip("this ffmpeg has neither libvorbis nor libopus") }
     }
 
+    // MARK: - Languages (review items 3 and 4)
+
+    /// Four audio tracks tagged `yue`, `cmn`, `nan` (valid languages with no
+    /// three-letter code) and `deu`, in `name`'s container.
+    private func makeFourLanguages(_ name: String) throws -> URL {
+        var arguments = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4"]
+        for frequency in [440, 550, 660, 770] {
+            arguments += ["-f", "lavfi", "-i", "sine=frequency=\(frequency):duration=0.4"]
+        }
+        arguments += ["-map", "0", "-map", "1", "-map", "2", "-map", "3", "-map", "4", "-c:v", "mpeg4", "-c:a", "aac"]
+        for (index, code) in ["yue", "cmn", "nan", "deu"].enumerated() {
+            arguments += ["-metadata:s:a:\(index)", "language=\(code)"]
+        }
+        return try make(name, arguments)
+    }
+
+    /// The audio languages ffprobe reads from `file`, sorted.
+    private func audioLanguages(_ file: URL) throws -> [String] {
+        try streams(file).filter { $0.type == "audio" }.map { $0.language ?? "(none)" }.sorted()
+    }
+
+    /// `yue`, `cmn` and `nan` survive a remux to MKV and to MP4, from MKV
+    /// and from MP4; `deu` still becomes `ger` in Matroska (a correction —
+    /// nothing is lost). The first build wrote `und` over the other three.
+    func test_languagesWithNoThreeLetterCodeSurvive() async throws {
+        for sourceName in ["langs.mkv", "langs.mp4"] {
+            let source = try makeFourLanguages(sourceName)
+            let (mkv, mkvJob) = try await convert(source, to: "from-\(sourceName).mkv", profile: .remuxToMKV)
+            XCTAssertEqual(try audioLanguages(mkv), ["cmn", "ger", "nan", "yue"], "\(sourceName) → MKV")
+            XCTAssertEqual(mkvJob.trackWritingNotes().count, 3, "each kept value is reported")
+            let (mp4, _) = try await convert(source, to: "from-\(sourceName).mp4", profile: .remuxToMP4)
+            XCTAssertEqual(try audioLanguages(mp4), ["cmn", "deu", "nan", "yue"], "\(sourceName) → MP4")
+        }
+    }
+
+    /// Values nothing can read (`english`, `xx-bogus`) are kept as they were,
+    /// not replaced with `und`.
+    func test_unrecognisedLanguageTextSurvives() async throws {
+        let source = try make("unrec.mkv", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3",
+            "-f", "lavfi", "-i", "sine=frequency=550:duration=0.3",
+            "-map", "0", "-map", "1", "-c:a", "aac",
+            "-metadata:s:a:0", "language=english", "-metadata:s:a:1", "language=xx-bogus"
+        ])
+        let (output, job) = try await convert(source, to: "out.mkv", profile: .remuxToMKV)
+        XCTAssertEqual(try audioLanguages(output), ["english", "xx-bogus"])
+        XCTAssertEqual(job.trackWritingNotes().count, 2)
+    }
+
     /// Two untitled audio tracks in Matroska get their languages' own names.
     func test_untitledTracksInMatroskaGetAutomaticTitles() async throws {
         let source = try make("two.mka", [

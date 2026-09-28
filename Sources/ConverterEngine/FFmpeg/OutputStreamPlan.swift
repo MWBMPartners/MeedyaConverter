@@ -508,13 +508,23 @@ extension FFmpegArgumentBuilder {
         guard let plan = makeOutputStreamPlan(), let sources = sourceStreamsByIndex else { return [] }
         var notes: [String] = []
 
+        // Language fields that cannot hold exactly what the track says, or
+        // that are left as the source had them (`languageWrite`). Pictures
+        // attached as Matroska attachments carry no language field.
+        let attachments = Set(pictureAttachments(in: plan).map(\.sourceStreamIndex))
+        let container = resolveContainerFormat()
+        for entry in plan.entries where !(entry.inputIndex == 0 && attachments.contains(entry.sourceStreamIndex)) {
+            if let note = languageWrite(for: entry, sources: sources, container: container).note {
+                notes.append(note)
+            }
+        }
+
         // Cover art a Matroska output can only keep as an attachment, but
         // with no copy of the picture to attach (see `AttachedPictures`).
-        if AttachedPictures.needsAttachment(in: resolveContainerFormat()) {
-            let attached = Set(pictureAttachments(in: plan).map(\.sourceStreamIndex))
+        if AttachedPictures.needsAttachment(in: container) {
             for entry in plan.entries where entry.inputIndex == 0
                 && isAttachedPicture(entry, sources: sources)
-                && !attached.contains(entry.sourceStreamIndex) {
+                && !attachments.contains(entry.sourceStreamIndex) {
                 notes.append(
                     "Stream #\(entry.sourceStreamIndex) is a picture attached to the file (cover art). "
                         + "It could not be kept as an attachment, so ffmpeg writes it into this "

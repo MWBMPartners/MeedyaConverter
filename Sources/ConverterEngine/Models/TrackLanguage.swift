@@ -197,21 +197,183 @@ extension TrackLanguage {
         }
     }
 
-    /// The value to give ffmpeg's `language` metadata for a track in
-    /// `tag`'s language, in `container` (TRACK-070): the old three-letter
-    /// code in the form the container needs (a language with no ISO 639-2
-    /// code, `und`, or a malformed value → `und`), or the canonical tag for a
-    /// free-text field.
-    ///
-    /// Without the policy's data the tag is returned as given (nothing is
-    /// guessed; see the file header).
-    public static func containerValue(for tag: String, in container: ContainerFormat?) -> String {
-        guard let policy else { return tag }
-        switch languageFieldForm(for: container) {
-        case .bibliographic: return policy.iso6392.codes(for: tag).b
-        case .terminology: return policy.iso6392.codes(for: tag).t
-        case .fullTag: return policy.canonicaliser.canonicalise(tag).canonical ?? "und"
+    /// Whether ffmpeg writes a copied `language` value into `container`'s
+    /// field AS GIVEN, whatever it is — true for Matroska and WebM (ffmpeg
+    /// 9.0.1 puts the text straight into the old `Language` element; see
+    /// `LanguageFieldForm`). MP4/MOV keep only exactly three letters and
+    /// drop anything else; other containers were not checked, so are
+    /// treated like MP4.
+    static func keepsCopiedLanguageText(_ container: ContainerFormat?) -> Bool {
+        switch container {
+        case .mkv, .mka, .mks, .mk3d, .webm: return true
+        default: return false
         }
+    }
+
+    /// What one output stream's `language` field gets, and what to tell the
+    /// person about it.
+    public struct LanguageWrite: Sendable, Equatable {
+        /// The value to give ffmpeg, or `nil` to give none — ffmpeg then
+        /// copies the source's own value unchanged (or there is none).
+        public let value: String?
+        /// A plain-English line for the job's log when the output cannot
+        /// hold exactly what the track says, else `nil`.
+        public let note: String?
+    }
+
+    /// Decides one output stream's `language` field (TRACK-070), under the
+    /// rule for the whole of this work: a copy or conversion must never lose
+    /// or damage anything the source had that the person did not ask to
+    /// change (COMPAT-030). Where the policy's preferred form cannot be
+    /// written, what the source had is kept and the job's log says so.
+    ///
+    /// A stream the person did NOT edit:
+    /// * a value the probe could not recognise (`english`, `xx-bogus`) is
+    ///   left for ffmpeg to copy as it is, with a note — it used to be
+    ///   overwritten with `und`, erasing it (COMPAT-040: report doubt);
+    /// * in a free-text field (Ogg) the canonical tag is written;
+    /// * in a three-letter field the policy's code is written when it is a
+    ///   real code and nothing is lost (`deu` → `ger` in Matroska: a
+    ///   correction), or when the source itself said "not known" (`und`);
+    /// * a real language with NO three-letter code (`yue`, `cmn`, `nan`) is
+    ///   left for ffmpeg to copy, with a note — the policy's form would be
+    ///   `und`, which is what the first build wrote, erasing the language;
+    /// * a tag with a region or script (`fr-CA`): Matroska is left to copy
+    ///   the source's own text (which keeps it); MP4 and the rest can hold
+    ///   only three letters, so the code is written (`fra`) with a note.
+    /// A stream the person DID edit gets the policy's form of their tag,
+    /// with a note when the field cannot hold all of it (`en-GB` → `eng`).
+    ///
+    /// Without the policy's data nothing is converted: an edit is written as
+    /// typed, and an unedited value as the file gave it.
+    ///
+    /// - Parameters:
+    ///   - streamNumber: The source stream's whole-file number (for notes).
+    ///   - edited: The stream editor's tag, or `nil` if not edited.
+    ///   - sourceLanguage: The probe's canonical tag (`und` when it could not
+    ///     read the value), or `nil` when the file states none.
+    ///   - sourceUnrecognised: The file's own text when unrecognised.
+    ///   - container: The output container.
+    ///   - isReplacement: The output stream comes from a separate file
+    ///     (a tone-mapped subtitle), so ffmpeg has nothing to copy from:
+    ///     what would be "left to copy" is written instead.
+    ///   - keepsSourceMetadata: Whether the source's metadata is kept at
+    ///     all (`-map_metadata -1` drops it; then only edits are written).
+    public static func languageWrite(
+        streamNumber: Int,
+        edited: String?,
+        sourceLanguage: String?,
+        sourceUnrecognised: String?,
+        container: ContainerFormat?,
+        isReplacement: Bool,
+        keepsSourceMetadata: Bool
+    ) -> LanguageWrite {
+        let stream = "Stream #\(streamNumber)"
+        guard let policy else {
+            if let edited { return LanguageWrite(value: edited, note: nil) }
+            return LanguageWrite(value: keepsSourceMetadata ? sourceLanguage : nil, note: nil)
+        }
+        let form = languageFieldForm(for: container)
+
+        // The code for an old three-letter field, in this container's form.
+        func threeLetter(_ tag: String) -> String {
+            let codes = policy.iso6392.codes(for: tag)
+            return form == .bibliographic ? codes.b : codes.t
+        }
+        // What a three-letter field loses of `tag`: everything after the
+        // primary language (`GB` of `en-GB`, `Hant-TW` of `zh-Hant-TW`).
+        func partsBeyondLanguage(_ tag: LanguageTag) -> String? {
+            guard tag.kind == .ordinary, let language = tag.language, tag.text.count > language.count else { return nil }
+            return String(tag.text.dropFirst(language.count + 1))
+        }
+
+        // --- An edit: the person asked for this language. ---
+        if let edited {
+            let tag = policy.canonicaliser.canonicalise(edited)
+            guard let canonical = tag.canonical else {
+                return LanguageWrite(
+                    value: "und",
+                    note: "\(stream): “\(edited)”, set in the stream editor, is not a language tag, "
+                        + "so the language is written as “und” (not known)."
+                )
+            }
+            if form == .fullTag { return LanguageWrite(value: canonical, note: nil) }
+            let code = threeLetter(canonical)
+            if code == "und", canonical != "und" {
+                return LanguageWrite(
+                    value: code,
+                    note: "\(stream): this file type can only store three-letter language codes, and "
+                        + "“\(canonical)” has none, so the language is written as “und” (not known)."
+                )
+            }
+            if let lost = partsBeyondLanguage(tag) {
+                return LanguageWrite(
+                    value: code,
+                    note: "\(stream): this file type can only store the language, so “\(lost)” in "
+                        + "“\(canonical)” is not saved (written as “\(code)”)."
+                )
+            }
+            return LanguageWrite(value: code, note: nil)
+        }
+
+        // --- No edit: keep what the source had. ---
+        guard keepsSourceMetadata else { return LanguageWrite(value: nil, note: nil) }
+        if let raw = sourceUnrecognised {
+            return LanguageWrite(
+                value: isReplacement ? raw : nil,
+                note: "\(stream): the file's language “\(raw)” is not a language code; kept as the "
+                    + "source had it. Set the right language in the stream editor if you know it."
+            )
+        }
+        guard let source = sourceLanguage else { return LanguageWrite(value: nil, note: nil) }
+        let tag = policy.canonicaliser.canonicalise(source)
+        guard let canonical = tag.canonical else {
+            // Not from the probe (it stores `und` plus the text); kept as is.
+            return LanguageWrite(
+                value: isReplacement ? source : nil,
+                note: "\(stream): the language “\(source)” is not a language tag; kept as the source had it."
+            )
+        }
+        if form == .fullTag { return LanguageWrite(value: canonical, note: nil) }
+        let code = threeLetter(canonical)
+        let lost = partsBeyondLanguage(tag)
+        if code == "und", canonical != "und" {
+            if lost == nil || keepsCopiedLanguageText(container) {
+                // A well-formed tag whose language is not in the registry
+                // (`xx-bogus`) is reported as that, so the person can fix it
+                // (LANG-001 says such a tag SHOULD be reported).
+                let registered = tag.language.map(policy.isRegisteredLanguage) ?? true
+                return LanguageWrite(
+                    value: isReplacement ? canonical : nil,
+                    note: registered
+                        ? "\(stream): language “\(canonical)” has no three-letter code; kept as the source had it."
+                        : "\(stream): the file's language “\(canonical)” is not a registered language code; kept as "
+                            + "the source had it. Set the right language in the stream editor if you know it."
+                )
+            }
+            // MP4 and the rest keep only three letters, so neither the
+            // source's text nor a code can be stored: say so plainly.
+            return LanguageWrite(
+                value: code,
+                note: "\(stream): language “\(canonical)” has no three-letter code, and this file type can "
+                    + "store nothing else, so it is written as “und” (not known)."
+            )
+        }
+        if let lost {
+            if keepsCopiedLanguageText(container) {
+                return LanguageWrite(
+                    value: isReplacement ? canonical : nil,
+                    note: "\(stream): language “\(canonical)” cannot be written to this file type's three-letter "
+                        + "language field without losing “\(lost)”; kept as the source had it."
+                )
+            }
+            return LanguageWrite(
+                value: code,
+                note: "\(stream): this file type can only store the language, so “\(lost)” in "
+                    + "“\(canonical)” is not saved (written as “\(code)”)."
+            )
+        }
+        return LanguageWrite(value: code, note: nil)
     }
 
     /// The title to write for a track in `tag`'s language when it has no
