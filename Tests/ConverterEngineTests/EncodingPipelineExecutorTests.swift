@@ -204,6 +204,88 @@ final class EncodingPipelineExecutorTests: XCTestCase {
         XCTAssertEqual(recorded, [resolved[0].arguments])
     }
 
+    // MARK: - Cover art and notes (second review, should-fix 5)
+
+    /// A runner that "copies" a picture by writing a few bytes where the
+    /// extraction step's output goes (its last argument), and records every
+    /// command it was given.
+    private actor CopyingRunner: PipelineStepRunning {
+        private(set) var arguments: [[String]] = []
+        func run(_ step: ResolvedPipelineStep) async throws {
+            arguments.append(step.arguments)
+            if step.arguments.contains("image2"), let output = step.arguments.last {
+                try Data([0xFF, 0xD8, 0xFF]).write(to: URL(fileURLWithPath: output))
+            }
+        }
+        func recorded() -> [[String]] { arguments }
+    }
+
+    /// Collects notes from `onNote` (called from any thread).
+    private final class NoteBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [String] = []
+        func add(_ note: String) { lock.lock(); items.append(note); lock.unlock() }
+        var notes: [String] { lock.lock(); defer { lock.unlock() }; return items }
+    }
+
+    /// A cover picture as ffprobe describes it.
+    private func cover(_ index: Int) -> MediaStream {
+        MediaStream(streamIndex: index, streamType: .video, codecName: "mjpeg",
+                    disposition: StreamDisposition(isAttachedPicture: true),
+                    attachmentFileName: "cover.jpg", attachmentMimeType: "image/jpeg")
+    }
+
+    /// An encode step to MKV takes the same picture step as the full encode:
+    /// the cover is copied out first (by the step runner), then ATTACHED —
+    /// the second review found a pipeline mapped it as a stream, which ffmpeg
+    /// makes an MJPEG video track in Matroska.
+    func test_execute_encodeStepCopiesAndAttachesCoverArt() async throws {
+        let runner = CopyingRunner()
+        let streams = [
+            MediaStream(streamIndex: 0, streamType: .video, codecName: "h264", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            cover(2)
+        ]
+        let executor = EncodingPipelineExecutor(stepRunner: runner, streamProber: { _ in streams })
+        let notes = NoteBox()
+        let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: .remuxToMKV)])
+        _ = try await executor.execute(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out",
+                                       onNote: { _, note in notes.add(note) })
+        let recorded = await runner.recorded()
+        XCTAssertEqual(recorded.count, 2, "the copy, then the encode")
+        XCTAssertTrue(recorded[0].contains("image2"), "the first command copies the picture out")
+        XCTAssertEqual(maps(recorded[1]), ["0:0", "0:1"], "the picture is not mapped")
+        XCTAssertTrue(recorded[1].contains("-attach"), "it is attached")
+        XCTAssertTrue(recorded[1].contains("-metadata:s:t:0") && recorded[1].contains("filename=cover.jpg"))
+        XCTAssertEqual(notes.notes, [])
+        // The copy's folder is removed after the step.
+        let copy = try XCTUnwrap(recorded[0].last)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy))
+    }
+
+    /// The step's notes reach `onNote`: here a WebM output, which cannot
+    /// hold cover art at all — left out, and said.
+    func test_execute_encodeStepReportsItsNotes() async throws {
+        let runner = RecordingRunner()
+        let streams = [
+            MediaStream(streamIndex: 0, streamType: .video, codecName: "vp9", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            cover(2)
+        ]
+        let executor = EncodingPipelineExecutor(stepRunner: runner, streamProber: { _ in streams })
+        let notes = NoteBox()
+        let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: .webNextGen)])
+        _ = try await executor.execute(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out",
+                                       onNote: { _, note in notes.add(note) })
+        let recorded = await runner.recorded()
+        XCTAssertEqual(recorded.count, 1, "no copy for a file type that cannot hold pictures")
+        XCTAssertEqual(maps(recorded[0]), ["0:0", "0:1"])
+        XCTAssertEqual(notes.notes, [
+            "Stream #2 is a picture attached to the file (cover art). ffmpeg cannot write pictures into this "
+                + "file type (WebM), so it is left out."
+        ])
+    }
+
     func test_execute_emptyPipelineIsNoOpSuccess() async throws {
         let executor = EncodingPipelineExecutor(stepRunner: MockRunner())
         let result = try await executor.execute(

@@ -59,10 +59,14 @@ struct ConvertMediaIntent: AppIntent {
 
     /// Execute the media conversion.
     ///
-    /// - Returns: A result containing the path to the converted file.
+    /// - Returns: A result containing the path to the converted file (the
+    ///   value later Shortcuts steps use), and a dialog saying what the
+    ///   output keeps differently from the source — the same notes the app's
+    ///   own encode writes in its job log (cover art left out, a language the
+    ///   file type cannot hold …), or just where the file went.
     /// - Throws: If the profile is not found, the input file cannot be read,
     ///   or the encoding fails.
-    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         // Resolve the input file to a local URL.
         let inputData = inputFile.data
 
@@ -131,16 +135,45 @@ struct ConvertMediaIntent: AppIntent {
         } else {
             sourceStreams = nil
         }
-        var builder = profile.toArgumentBuilder(inputURL: tempInputURL, outputURL: outputURL)
-        builder.sourceStreams = sourceStreams
-        let problems = builder.streamSelectionProblems()
+        var job = EncodingJobConfig(inputURL: tempInputURL, outputURL: outputURL, profile: profile)
+        job.sourceStreams = sourceStreams
+        let problems = job.streamSelectionProblems()
         guard problems.isEmpty else {
             throw EncodingEngineError.streamSelectionInvalid(problems)
         }
-        let arguments = builder.build()
 
-        // Locate the FFmpeg binary and execute the encode.
+        // Locate the FFmpeg binary.
         let ffmpegInfo = try bundleManager.locateFFmpeg()
+
+        // The same picture step as the app's own encode: cover art a
+        // Matroska output can only keep as an attachment is copied out of the
+        // source first (`AttachedPictures.copyPictures`), into a folder of
+        // its own that is removed when this action ends. Until the language
+        // policy's third review round this action mapped the cover as a
+        // stream, and ffmpeg turned it into an MJPEG video track.
+        let pictureFolder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meedya-intent-pictures-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: pictureFolder) }
+        let needed = job.attachedPicturesNeedingCopies()
+        if !needed.isEmpty {
+            try? FileManager.default.createDirectory(at: pictureFolder, withIntermediateDirectories: true)
+            job.attachedPictureFiles = await AttachedPictures.copyPictures(
+                needed, from: tempInputURL, into: pictureFolder
+            ) { arguments in
+                let copier = FFmpegProcessController(binaryPath: ffmpegInfo.path)
+                for await _ in try copier.startEncoding(arguments: arguments) {}
+                if let code = copier.exitCode, code != 0 {
+                    throw ConvertMediaIntentError.encodingFailed(details: "Could not copy the cover art.")
+                }
+            }
+        }
+
+        // What the output will keep differently from the source, in plain
+        // English — returned below, as the app's own encode logs them.
+        let notes = job.skippedStreamSettings().map { "Not applied — \($0)" } + job.trackWritingNotes()
+        let arguments = job.buildArguments()
+
+        // Execute the encode.
         let controller = FFmpegProcessController(binaryPath: ffmpegInfo.path)
 
         let progressStream = try controller.startEncoding(arguments: arguments)
@@ -152,7 +185,10 @@ struct ConvertMediaIntent: AppIntent {
             throw ConvertMediaIntentError.encodingFailed(details: "Output file was not created.")
         }
 
-        return .result(value: outputURL.path)
+        let summary = notes.isEmpty
+            ? "Converted to \(outputComponent)."
+            : "Converted to \(outputComponent). " + notes.joined(separator: " ")
+        return .result(value: outputURL.path, dialog: IntentDialog(stringLiteral: summary))
     }
 
     // MARK: - Profile Loading

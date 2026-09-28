@@ -66,6 +66,18 @@ public struct PreviewGenerator: Sendable {
     ///     stream choices, per-stream settings, track order and languages on
     ///     the right output tracks, exactly as the full encode does. `nil`
     ///     when they could not be read.
+    ///   - attachedPictureFiles: Copies of the cover art a Matroska output
+    ///     attaches (`picturesNeedingCopies`, made with
+    ///     `AttachedPictures.copyPictures`) — the same picture step as the
+    ///     full encode, so the preview has the same streams as a real run.
+    ///     Without them a Matroska preview leaves the cover out, where a real
+    ///     run attaches it.
+    ///
+    /// The job's notes (what the output keeps differently from the source)
+    /// are NOT produced here: a preview is a throwaway clip for judging
+    /// quality, and the full encode reports them when it runs. What the
+    /// preview must not do is produce a different set of streams from a real
+    /// run — which is why it takes the picture copies.
     /// - Returns: An array of FFmpeg CLI arguments (not including the binary path).
     /// - Throws: `EncodingEngineError.streamSelectionInvalid` — the same
     ///   error the full encode refuses with — when the profile's stream
@@ -80,7 +92,8 @@ public struct PreviewGenerator: Sendable {
         profile: EncodingProfile,
         startTime: TimeInterval,
         duration: TimeInterval,
-        sourceStreams: [MediaStream]?
+        sourceStreams: [MediaStream]?,
+        attachedPictureFiles: [Int: URL] = [:]
     ) throws -> [String] {
         // Clamp duration to allowed range.
         let clampedDuration = min(max(duration, minimumDuration), maximumDuration)
@@ -91,6 +104,7 @@ public struct PreviewGenerator: Sendable {
         let outputURL = URL(fileURLWithPath: outputPath)
         var builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
         builder.sourceStreams = sourceStreams
+        builder.attachedPictureFiles = attachedPictureFiles
         let problems = builder.streamSelectionProblems()
         guard problems.isEmpty else {
             throw EncodingEngineError.streamSelectionInvalid(problems)
@@ -132,6 +146,23 @@ public struct PreviewGenerator: Sendable {
         }
 
         return args
+    }
+
+    /// The cover art a preview with these settings must copy out of the
+    /// source before `buildPreviewArguments` (a Matroska output keeps a
+    /// picture only as an attachment — see `AttachedPictures`), with the
+    /// file extension each copy should have. Empty for every other output.
+    public static func picturesNeedingCopies(
+        inputPath: String,
+        outputPath: String,
+        profile: EncodingProfile,
+        sourceStreams: [MediaStream]?
+    ) -> [(streamIndex: Int, fileExtension: String)] {
+        var builder = profile.toArgumentBuilder(
+            inputURL: URL(fileURLWithPath: inputPath), outputURL: URL(fileURLWithPath: outputPath)
+        )
+        builder.sourceStreams = sourceStreams
+        return builder.attachedPicturesNeedingCopies()
     }
 
     // MARK: - Output Path

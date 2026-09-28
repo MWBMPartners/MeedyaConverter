@@ -706,29 +706,22 @@ public final class EncodingEngine: @unchecked Sendable {
         // the copy under the picture's own name and description. A picture
         // that cannot be copied is left out, and the notes below say so. The
         // copies are removed with the temporary folder when the job ends.
-        var pictureCopies: [Int: URL] = [:]
-        for picture in enrichedJob.attachedPicturesNeedingCopies() {
-            let copy = tempDir.appendingPathComponent(
-                "attached-picture-\(picture.streamIndex).\(picture.fileExtension)"
+        // The copying is `AttachedPictures.copyPictures`, which pipelines,
+        // the Shortcuts action and the quality preview use too, so the paths
+        // cannot drift apart. A copy that fails is not fatal: the picture is
+        // left out, and `trackWritingNotes()` reports that.
+        let pictureCopies = await AttachedPictures.copyPictures(
+            enrichedJob.attachedPicturesNeedingCopies(), from: job.inputURL, into: tempDir
+        ) { arguments in
+            try await runFFmpegPass(
+                ffmpegPath: ffmpegPath,
+                arguments: arguments,
+                pass: nil,
+                multipassLogPath: nil,
+                sourceDuration: nil,
+                jobID: job.id,
+                onProgress: { _ in }
             )
-            do {
-                try await runFFmpegPass(
-                    ffmpegPath: ffmpegPath,
-                    arguments: AttachedPictures.extractionArguments(
-                        input: job.inputURL, streamIndex: picture.streamIndex, output: copy
-                    ),
-                    pass: nil,
-                    multipassLogPath: nil,
-                    sourceDuration: nil,
-                    jobID: job.id,
-                    onProgress: { _ in }
-                )
-                let size = (try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                if size > 0 { pictureCopies[picture.streamIndex] = copy }
-            } catch {
-                // Not fatal: the picture is left out, and
-                // `trackWritingNotes()` reports that.
-            }
         }
         // ALWAYS replaced, even with nothing: `attachedPictureFiles` is saved
         // with a job, so a job file could carry paths from an earlier run (or

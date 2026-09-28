@@ -379,31 +379,53 @@ struct QualityPreviewView: View {
         let inputPath = sourceFile.fileURL.path
         let outputPath = outputURL.path
 
-        // Built from the imported file's streams, as the full encode is, so
-        // the preview places stream settings on the same tracks — and is
-        // refused, with the encode's own message, when they cannot be.
-        let args: [String]
-        do {
-            args = try PreviewGenerator.buildPreviewArguments(
-                inputPath: inputPath,
-                outputPath: outputPath,
-                profile: profile,
-                startTime: previewStartTime,
-                duration: previewDuration,
-                sourceStreams: sourceFile.streams.isEmpty ? nil : sourceFile.streams
-            )
-        } catch {
-            isGenerating = false
-            errorMessage = "Preview generation failed: \(error.localizedDescription)"
-            return
-        }
+        let sourceStreams = sourceFile.streams.isEmpty ? nil : sourceFile.streams
+        let needed = PreviewGenerator.picturesNeedingCopies(
+            inputPath: inputPath, outputPath: outputPath, profile: profile, sourceStreams: sourceStreams
+        )
 
         // Execute the preview encode in a background task.
         Task {
+            // Cover art a Matroska output attaches is copied out first — the
+            // same picture step as the full encode — so the preview has the
+            // same streams as a real run. The copies' folder is removed when
+            // the preview has been made (or has failed).
+            let pictureFolder = FileManager.default.temporaryDirectory
+                .appendingPathComponent("meedya-preview-pictures-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: pictureFolder) }
             do {
                 // Locate the FFmpeg binary via the bundle manager.
                 let bundleManager = FFmpegBundleManager()
                 let ffmpegInfo = try bundleManager.locateFFmpeg()
+
+                var pictureCopies: [Int: URL] = [:]
+                if !needed.isEmpty {
+                    try? FileManager.default.createDirectory(at: pictureFolder, withIntermediateDirectories: true)
+                    pictureCopies = await AttachedPictures.copyPictures(needed, from: URL(fileURLWithPath: inputPath),
+                                                                        into: pictureFolder) { arguments in
+                        let copier = FFmpegProcessController(binaryPath: ffmpegInfo.path)
+                        for await _ in try copier.startEncoding(arguments: arguments) {}
+                        if let code = copier.exitCode, code != 0 {
+                            throw EncodingEngineError.encodingFailed(exitCode: code, stderr: copier.errorOutput)
+                        }
+                    }
+                }
+
+                // Built from the imported file's streams, as the full encode
+                // is, so the preview places stream settings on the same
+                // tracks — and is refused, with the encode's own message,
+                // when they cannot be. Its notes are not shown (see
+                // `PreviewGenerator.buildPreviewArguments`).
+                let args = try PreviewGenerator.buildPreviewArguments(
+                    inputPath: inputPath,
+                    outputPath: outputPath,
+                    profile: profile,
+                    startTime: previewStartTime,
+                    duration: previewDuration,
+                    sourceStreams: sourceStreams,
+                    attachedPictureFiles: pictureCopies
+                )
+
                 let controller = FFmpegProcessController(binaryPath: ffmpegInfo.path)
                 controller.sourceDuration = previewDuration
 

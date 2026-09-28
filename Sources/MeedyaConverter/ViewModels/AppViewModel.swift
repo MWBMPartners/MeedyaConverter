@@ -1469,6 +1469,17 @@ final class AppViewModel {
                                 category: .encoding
                             )
                         }
+                    },
+                    // What an encode step's output keeps differently from its
+                    // source (cover art left out, a language its file type
+                    // cannot hold …) — logged as the full encode's job notes
+                    // are (a warning, in the stream category). Until the
+                    // language policy's third review round a pipeline said
+                    // none of this.
+                    onNote: { index, note in
+                        Task { @MainActor in
+                            vm.appendLog(.warning, "Pipeline step \(index + 1): \(note)", category: .stream)
+                        }
                     }
                 )
                 await MainActor.run {

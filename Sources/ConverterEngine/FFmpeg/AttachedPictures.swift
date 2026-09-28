@@ -28,14 +28,16 @@
 //     video stream. AVI: a plain MJPEG video track.
 //   * WebM, Ogg, FLV, CAF, W64, WAV/RF64, ADTS: ffmpeg refuses the whole
 //     job ("Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and WebVTT
-//     subtitles are supported for WebM" and the like).
+//     subtitles are supported for WebM" and the like). MXF refuses it too
+//     (it allows exactly one video stream). HLS writes MPEG-TS segments.
+//     DASH and DCP were not checked; neither has a place for cover art.
 //
 // So, per file type (`pictureSupport`):
 //
 //   * MP4 family: the picture is mapped, with its flag, and stays cover art.
 //   * Matroska: the engine first copies each picture, byte for byte, out of
-//     the source into its temporary folder (`extractionArguments`), and the
-//     argument builder ATTACHES that file with
+//     the source into its temporary folder (`extractionArguments`,
+//     `copyPictures`), and the argument builder ATTACHES that file with
 //     `-attach`, under the picture's own name, MIME type and description,
 //     instead of mapping the stream. Reading the result back gives exactly
 //     what the source had.
@@ -56,9 +58,11 @@
 // WHAT IT CANNOT DO
 // -----------------
 // * A Matroska output can only keep a picture if a copy of it was made. The
-//   full encode (`EncodingEngine.encode`) makes the copies; a caller that
-//   builds a command without them gets the picture LEFT OUT, with a note —
-//   never a one-frame picture track (which the round-2 build produced).
+//   full encode, a pipeline's encode step, the Shortcuts action and the
+//   quality preview all make the copies, with ONE function
+//   (`copyPictures`); a caller that builds a command without them gets the
+//   picture LEFT OUT, with a note — never a one-frame picture track (which
+//   the round-2 build produced on those three paths).
 // * A picture in a format with no known MIME type (see `imageFormat`) cannot
 //   be attached; it is left out of a Matroska output, with a note.
 // * With no file type given (`ContainerFormat` nil — only possible when the
@@ -138,10 +142,11 @@ public enum AttachedPictures {
         case .mov, .webm, .mpegTS, .mpegPS, .mxf, .avi, .flv, .threeGP, .threeG2,
              .ogg, .ogm, .hls, .dash, .aiff, .caf, .w64, .rf64, .dcp:
             // Checked with ffmpeg 9.0.1: refused (WebM, Ogg, FLV, CAF, W64,
-            // WAV/RF64), dropped silently (MOV, 3GP, 3G2, AIFF) or turned
-            // into another kind of stream (MPEG-TS `bin_data`, MPEG-PS
-            // "unknown" video, AVI an MJPEG track). MXF, HLS, DASH and DCP
-            // cannot carry cover art either; none of them has a place for it.
+            // WAV/RF64, MXF), dropped silently (MOV, 3GP, 3G2, AIFF) or
+            // turned into another kind of stream (MPEG-TS and HLS's MPEG-TS
+            // segments `bin_data`, MPEG-PS "unknown" video, AVI an MJPEG
+            // track). DASH and DCP were not checked; neither has a place for
+            // cover art, so leaving it out cannot make a job fail.
             return .none
         }
     }
@@ -311,7 +316,7 @@ extension FFmpegArgumentBuilder {
     /// The attached pictures this output can only keep by attaching a copy
     /// (a Matroska output), with the file extension each copy should have.
     /// The engine copies these out of the source before building the command
-    /// (`attachedPictureFiles`). A picture in
+    /// (`attachedPictureFiles`, `AttachedPictures.copyPictures`). A picture in
     /// a format with no known file type is not listed; it is left out.
     public func attachedPicturesNeedingCopies() -> [(streamIndex: Int, fileExtension: String)] {
         guard AttachedPictures.needsAttachment(in: resolveContainerFormat()),
@@ -389,5 +394,48 @@ extension FFmpegArgumentBuilder {
             }
         }
         return args
+    }
+}
+// MARK: - The copying step
+
+extension AttachedPictures {
+
+    /// Copies each picture in `needed` out of `input` into `folder`, byte
+    /// for byte (`extractionArguments`), running ffmpeg through `run` — the
+    /// step every path that writes a Matroska output takes before it builds
+    /// its command, so the cover art is attached rather than left out: the
+    /// full encode (`EncodingEngine.encode`), a pipeline's encode step
+    /// (`EncodingPipelineExecutor`), the Shortcuts action and the quality
+    /// preview. One function, so they cannot drift apart.
+    ///
+    /// Returns the copies that were made, keyed by the picture's stream
+    /// number. A picture whose copy failed, or came out empty, is simply not
+    /// in the result: the argument builder then leaves it out and the job's
+    /// notes say so. Never throws — a missing cover is reported, not fatal.
+    ///
+    /// - Parameters:
+    ///   - needed: What `attachedPicturesNeedingCopies()` listed.
+    ///   - input: The source file.
+    ///   - folder: An existing folder of the caller's; the caller removes it
+    ///     (and so the copies) when the job ends.
+    ///   - run: Runs ffmpeg with the given arguments; throws on failure.
+    public static func copyPictures(
+        _ needed: [(streamIndex: Int, fileExtension: String)],
+        from input: URL,
+        into folder: URL,
+        run: (_ arguments: [String]) async throws -> Void
+    ) async -> [Int: URL] {
+        var copies: [Int: URL] = [:]
+        for picture in needed {
+            let copy = folder.appendingPathComponent("attached-picture-\(picture.streamIndex).\(picture.fileExtension)")
+            do {
+                try await run(extractionArguments(input: input, streamIndex: picture.streamIndex, output: copy))
+                let size = (try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if size > 0 { copies[picture.streamIndex] = copy }
+            } catch {
+                // Not fatal: the picture is left out, and the notes say so.
+            }
+        }
+        return copies
     }
 }

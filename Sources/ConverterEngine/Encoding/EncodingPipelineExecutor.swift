@@ -195,13 +195,28 @@ public final class EncodingPipelineExecutor: Sendable {
         output: URL,
         sourceStreams: [MediaStream]?
     ) throws -> [String] {
+        try encodeJob(profile: profile, input: input, output: output, sourceStreams: sourceStreams).buildArguments()
+    }
+
+    /// The job one encode step runs — what `encodeArguments` builds from —
+    /// checked the same way (refused with
+    /// `EncodingEngineError.streamSelectionInvalid` when its stream settings
+    /// cannot be applied to this file). `execute` adds the copies of any
+    /// cover art a Matroska output attaches (`attachedPictureFiles`) before
+    /// building the arguments, and reports the job's notes.
+    public static func encodeJob(
+        profile: EncodingProfile,
+        input: URL,
+        output: URL,
+        sourceStreams: [MediaStream]?
+    ) throws -> EncodingJobConfig {
         var job = EncodingJobConfig(inputURL: input, outputURL: output, profile: profile)
         job.sourceStreams = sourceStreams
         let problems = job.streamSelectionProblems()
         guard problems.isEmpty else {
             throw EncodingEngineError.streamSelectionInvalid(problems)
         }
-        return job.buildArguments()
+        return job
     }
 
     /// Resolve a pipeline into ordered concrete invocations, threading the
@@ -293,6 +308,14 @@ public final class EncodingPipelineExecutor: Sendable {
     ///   - outputDir: Directory for step outputs.
     ///   - onProgress: Invoked immediately before each step runs, with its
     ///     0-based index and resolved descriptor.
+    ///   - onNote: Invoked, before an encode step runs, with each thing its
+    ///     output will keep differently from the source, in plain English —
+    ///     the same notes the full encode puts in its job log
+    ///     (`EncodingJobConfig.trackWritingNotes()`, and per-stream settings
+    ///     that cannot apply, prefixed "Not applied — "): cover art left out,
+    ///     a language the file type cannot hold … With the step's 0-based
+    ///     index. Until the language policy's third review round a pipeline
+    ///     said none of this.
     /// - Returns: The produced deliverables and the intermediates cleaned up.
     /// - Throws: `CancellationError` if the calling `Task` is cancelled
     ///   between steps; `EncodingEngineError.streamSelectionInvalid` when an
@@ -305,7 +328,8 @@ public final class EncodingPipelineExecutor: Sendable {
         pipeline: EncodingPipeline,
         sourcePath: String,
         outputDir: String,
-        onProgress: (@Sendable (Int, ResolvedPipelineStep) -> Void)? = nil
+        onProgress: (@Sendable (Int, ResolvedPipelineStep) -> Void)? = nil,
+        onNote: (@Sendable (Int, String) -> Void)? = nil
     ) async throws -> PipelineRunResult {
         let steps = Self.resolve(
             pipeline: pipeline,
@@ -327,26 +351,67 @@ public final class EncodingPipelineExecutor: Sendable {
             // policy's second review round this path never told the builder
             // the source's streams, so per-stream settings were silently left
             // out and nothing was ordered, tagged or kept as the policy says.
+            //
+            // The encode step also takes the SAME picture step as the full
+            // encode (`AttachedPictures.copyPictures`): cover art a Matroska
+            // output can only keep as an attachment is copied out first, by
+            // the step runner, into a folder of its own that is removed
+            // straight after the step. And its notes are reported through
+            // `onNote`, as the full encode reports them in its job log. Until
+            // the third review round a pipeline mapped the cover as a stream
+            // (so ffmpeg made it an MJPEG video track in MKV) and said
+            // nothing about what could not be kept.
             var step = resolvedStep
+            var pictureFolder: URL?
             if step.step.type == .encode, let profile = step.step.profile {
-                let streams = try? await streamProber(URL(fileURLWithPath: step.inputPath))
+                let input = URL(fileURLWithPath: step.inputPath)
+                let streams = try? await streamProber(input)
+                var job = try Self.encodeJob(
+                    profile: profile, input: input, output: URL(fileURLWithPath: step.outputPath), sourceStreams: streams
+                )
+                let needed = job.attachedPicturesNeedingCopies()
+                if !needed.isEmpty {
+                    let folder = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("meedya-pipeline-pictures-\(UUID().uuidString)", isDirectory: true)
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    pictureFolder = folder
+                    let owner = step
+                    job.attachedPictureFiles = await AttachedPictures.copyPictures(needed, from: input, into: folder) { arguments in
+                        try await stepRunner.run(ResolvedPipelineStep(
+                            step: owner.step,
+                            stepNumber: owner.stepNumber,
+                            executable: "ffmpeg",
+                            arguments: arguments,
+                            inputPath: owner.inputPath,
+                            outputPath: arguments.last ?? folder.path,
+                            isTransform: false
+                        ))
+                    }
+                }
+                for skipped in job.skippedStreamSettings() {
+                    onNote?(index, "Not applied — \(skipped)")
+                }
+                for note in job.trackWritingNotes() {
+                    onNote?(index, note)
+                }
                 step = ResolvedPipelineStep(
                     step: step.step,
                     stepNumber: step.stepNumber,
                     executable: step.executable,
-                    arguments: try Self.encodeArguments(
-                        profile: profile,
-                        input: URL(fileURLWithPath: step.inputPath),
-                        output: URL(fileURLWithPath: step.outputPath),
-                        sourceStreams: streams
-                    ),
+                    arguments: job.buildArguments(),
                     inputPath: step.inputPath,
                     outputPath: step.outputPath,
                     isTransform: step.isTransform
                 )
             }
             onProgress?(index, step)
-            try await stepRunner.run(step)
+            do {
+                try await stepRunner.run(step)
+            } catch {
+                if let pictureFolder { try? FileManager.default.removeItem(at: pictureFolder) }
+                throw error
+            }
+            if let pictureFolder { try? FileManager.default.removeItem(at: pictureFolder) }
             produced.append(step.outputPath)
         }
 
