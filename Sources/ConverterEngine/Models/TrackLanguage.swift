@@ -224,16 +224,82 @@ extension TrackLanguage {
         return LanguageNames.autonym(of: canonical)
     }
 
-    /// Whether `title` says something a person chose — and so must never be
-    /// replaced (NAME-010: never overwrite a real title). An absent or blank
-    /// title, or a bare placeholder such as "Track 2", "Audio", "Stream #3"
-    /// or "Subtitle 1", is not meaningful. Everything else — however odd —
-    /// is kept.
-    public static func isMeaningfulTitle(_ title: String?) -> Bool {
-        guard let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-            return false
+    /// Whether ffmpeg keeps each stream's title apart from the file's own
+    /// title in `container` — the ONLY containers an automatic title
+    /// (NAME-010) is written to.
+    ///
+    /// Checked with ffmpeg 9.0.1 (28 Sept 2026), writing a file title and a
+    /// title on each of two audio streams, then reading them back:
+    /// * Matroska, Matroska audio and WebM keep each track's name and the
+    ///   file's title separately. Allowed.
+    /// * Ogg (Vorbis, Opus, FLAC in Ogg) does NOT: ffmpeg puts the file's tags
+    ///   into every stream's comments, and a stream `TITLE` replaces the
+    ///   song's title there — the independent review's case, where a song
+    ///   called "My Song" came out called "English". Not allowed.
+    /// * MP4, MOV and M4A keep the file's title, but ffmpeg writes no track
+    ///   title at all (it is simply dropped). Not allowed: writing one would
+    ///   do nothing.
+    /// * Anything else was not checked, so gets none. This is an allow-list
+    ///   on purpose: a container nobody checked can never lose a title.
+    public static func keepsStreamTitlesSeparately(_ container: ContainerFormat?) -> Bool {
+        switch container {
+        case .mkv, .mka, .mks, .mk3d, .webm: return true
+        default: return false
         }
-        let placeholder = #"^(track|audio|video|sound|stream|subtitles?|subs?)\s*#?\s*\d*$"#
-        return trimmed.range(of: placeholder, options: [.regularExpression, .caseInsensitive]) == nil
+    }
+
+    /// The automatic title (NAME-010) for a track in `tag`'s language with
+    /// the roles `disposition` records: the language's own name, then the
+    /// track's roles in words, joined as the policy's menu labels are
+    /// (UI-070, " — "): "English", "English — SDH", "English — Forced",
+    /// "Deutsch — Commentary". Built from the same structured data as the
+    /// label, so two tracks of one language with DIFFERENT roles never get
+    /// the same title (the first build wrote "English" on all of them).
+    /// Roles stay in words in English, as the policy's own examples are;
+    /// the flags themselves are always written too (TRACK-010).
+    ///
+    /// `nil` when the language has no autonym (see `autonymTitle`).
+    public static func automaticTitle(for tag: String, disposition: StreamDisposition?, type: StreamType) -> String? {
+        guard let autonym = autonymTitle(for: tag) else { return nil }
+        let words = disposition.map { titleRoleWords(for: $0, type: type) } ?? []
+        return TrackMenuLabel.label(
+            languageName: autonym,
+            roles: words.map(\.role),
+            type: type.policyTrackType,
+            roleNames: Dictionary(words.map { ($0.role, $0.word) }, uniquingKeysWith: { first, _ in first }),
+            channels: nil
+        )
+    }
+
+    /// The roles of a track in words, for an automatic title. The policy's
+    /// own roles come first in its order (`TrackMenuLabel` sorts them); the
+    /// flags the policy files under "anything else" are named one by one
+    /// (as `TrackRole.unrecognised`, which ranks as "anything else"), so a
+    /// karaoke track and a lyrics track do not share a title either.
+    /// `default`, `original` and `dub` are not roles and are not named.
+    static func titleRoleWords(for disposition: StreamDisposition, type: StreamType) -> [(role: TrackRole, word: String)] {
+        var words: [(role: TrackRole, word: String)] = []
+        switch type {
+        case .audio:
+            if disposition.isComment { words.append((.commentary, "Commentary")) }
+            if disposition.isVisualImpaired || disposition.isDescriptions {
+                words.append((.audioDescription, "Audio Description"))
+            }
+            if disposition.isCleanEffects { words.append((.unrecognised("clean_effects"), "Music and Effects")) }
+            if disposition.isKaraoke { words.append((.unrecognised("karaoke"), "Karaoke")) }
+            if disposition.isLyrics { words.append((.unrecognised("lyrics"), "Lyrics")) }
+            if disposition.isHearingImpaired { words.append((.unrecognised("hearing_impaired"), "Hearing Impaired")) }
+        case .subtitle:
+            if disposition.isHearingImpaired || disposition.isCaptions { words.append((.sdh, "SDH")) }
+            if disposition.isForced { words.append((.forced, "Forced")) }
+            if disposition.isComment { words.append((.commentary, "Commentary")) }
+            if disposition.isDescriptions { words.append((.unrecognised("descriptions"), "Text Descriptions")) }
+            if disposition.isLyrics { words.append((.unrecognised("lyrics"), "Lyrics")) }
+            if disposition.isKaraoke { words.append((.unrecognised("karaoke"), "Karaoke")) }
+            if disposition.isVisualImpaired { words.append((.unrecognised("visual_impaired"), "Visually Impaired")) }
+        case .video, .data, .attachment, .unknown:
+            break
+        }
+        return words
     }
 }

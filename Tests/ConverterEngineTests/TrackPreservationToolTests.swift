@@ -179,4 +179,45 @@ final class TrackPreservationToolTests: XCTestCase {
         let (mp4, _) = try await convert(source, to: "out.mp4", profile: .remuxToMP4)
         XCTAssertEqual(try streams(mp4).map(\.attachedPicture), [false, false, true])
     }
+
+    // MARK: - Titles (review items 2 and 15)
+
+    /// Whether this ffmpeg has the named encoder.
+    private func hasEncoder(_ name: String) throws -> Bool {
+        let listed = try run(ffmpeg, ["-hide_banner", "-encoders"])
+        return String(bytes: listed.output, encoding: .utf8)?.contains(" \(name) ") ?? false
+    }
+
+    /// A song converted to Ogg keeps its title. In Ogg ffmpeg merges the
+    /// file's title into the stream's comments, and the first build's
+    /// automatic stream title ("English") replaced "My Song" there.
+    func test_songTitleSurvivesConversionToOgg() async throws {
+        let source = try make("music.m4a", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:a", "aac",
+            "-metadata:s:a:0", "language=eng", "-metadata", "title=My Song", "-metadata", "artist=Band"
+        ])
+        var checked = 0
+        for (codec, name) in [(AudioCodec.vorbis, "out.ogg"), (AudioCodec.opus, "out.opus")] {
+            guard let encoder = codec.ffmpegEncoder, try hasEncoder(encoder) else { continue }
+            var profile = EncodingProfile.audioExtract
+            profile.audioCodec = codec
+            profile.containerFormat = .ogg
+            let (output, _) = try await convert(source, to: name, profile: profile)
+            XCTAssertEqual(try streams(output).map(\.title), ["My Song"], "\(name): the song keeps its title")
+            checked += 1
+        }
+        if checked == 0 { throw XCTSkip("this ffmpeg has neither libvorbis nor libopus") }
+    }
+
+    /// Two untitled audio tracks in Matroska get their languages' own names.
+    func test_untitledTracksInMatroskaGetAutomaticTitles() async throws {
+        let source = try make("two.mka", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3",
+            "-f", "lavfi", "-i", "sine=frequency=550:duration=0.3",
+            "-map", "0", "-map", "1", "-c:a", "aac",
+            "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=jpn"
+        ])
+        let (output, _) = try await convert(source, to: "out.mka", profile: .remuxToMKV)
+        XCTAssertEqual(try streams(output).map(\.title), ["English", "日本語"])
+    }
 }

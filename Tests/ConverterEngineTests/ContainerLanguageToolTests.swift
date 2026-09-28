@@ -116,7 +116,9 @@ final class ContainerLanguageToolTests: XCTestCase {
 
             if name == "out.mkv" {
                 let titles = streams.map { ($0["tags"] as? [String: Any])?["title"] as? String }
-                XCTAssertEqual(titles, ["日本語", "Deutsch"], "autonym titles (NAME-010)")
+                // Automatic titles (NAME-010) say the language AND the
+                // roles, so the German commentary is not just "Deutsch".
+                XCTAssertEqual(titles, ["日本語", "Deutsch — Commentary"], "automatic titles (NAME-010, UI-070)")
                 let original = streams.map { ($0["disposition"] as? [String: Any])?["original"] as? Int }
                 XCTAssertEqual(original, [1, 0], "Matroska keeps FlagOriginal")
                 // Informational: does this ffmpeg write LanguageBCP47

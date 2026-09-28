@@ -138,17 +138,70 @@ final class TrackWritingTests: XCTestCase {
 
     // MARK: - Titles (NAME-010)
 
-    /// No title, or a placeholder ("Track 5"): the autonym. A real title is
-    /// never overwritten.
-    func test_autonymTitlesOnlyWhereThereIsNoRealTitle() {
+    /// Only a track with NO title gets an automatic one, saying its language
+    /// and its roles. A title the source has is never replaced — not even a
+    /// placeholder such as "Track 5" (the first build replaced those, which
+    /// lost them; the independent review's decision is that anything the
+    /// source had is kept).
+    func test_automaticTitlesOnlyWhereThereIsNoTitle() {
         let titles = pairs(builder().build(), "-metadata:s:").filter { $0.contains("title=") }
         XCTAssertEqual(titles, [
             "-metadata:s:a:0 title=日本語",
             "-metadata:s:a:1 title=Deutsch",
-            "-metadata:s:a:2 title=English",
-            "-metadata:s:s:1 title=English",
-            "-metadata:s:s:2 title=English"
-        ], "The commentary (a:3) and the titled full subtitles (s:0) keep their own titles")
+            "-metadata:s:s:1 title=English — SDH",
+            "-metadata:s:s:2 title=English — Forced"
+        ], "a:2 keeps \"Track 5\", a:3 its commentary title, s:0 \"English (full)\" — ffmpeg copies them")
+    }
+
+    /// Two tracks of one language with different roles never share a title
+    /// (UI-070's label rule: language, then roles, joined with " — ").
+    func test_automaticTitlesNameTheRoles() {
+        var builder = builder()
+        builder.sourceStreams = [
+            MediaStream(streamIndex: 0, streamType: .video),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 2, streamType: .audio, language: "en", disposition: StreamDisposition(isComment: true)),
+            MediaStream(streamIndex: 3, streamType: .audio, language: "en",
+                        disposition: StreamDisposition(isVisualImpaired: true)),
+            MediaStream(streamIndex: 4, streamType: .subtitle, language: "en", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 5, streamType: .subtitle, language: "en",
+                        disposition: StreamDisposition(isForced: true, isHearingImpaired: true)),
+            MediaStream(streamIndex: 6, streamType: .subtitle, language: "en", disposition: StreamDisposition(isLyrics: true)),
+            MediaStream(streamIndex: 7, streamType: .subtitle, language: "en", disposition: StreamDisposition(isKaraoke: true))
+        ]
+        let titles = pairs(builder.build(), "-metadata:s:").filter { $0.contains("title=") }.map { $0.components(separatedBy: "title=")[1] }
+        XCTAssertEqual(titles, [
+            "English", "English — Audio Description", "English — Commentary",
+            "English", "English — SDH — Forced", "English — Lyrics", "English — Karaoke"
+        ])
+    }
+
+    /// Ogg: ffmpeg puts the file's tags into each stream's comments, and a
+    /// stream title replaces the song's own title — so never an automatic
+    /// title there (the review's "My Song" → "English"). MP4 drops stream
+    /// titles, so none there either.
+    func test_noAutomaticTitlesWhereTheContainerMergesOrDropsThem() {
+        for output in ["/tmp/out.ogg", "/tmp/out.mp4", "/tmp/out.ts"] {
+            let titles = pairs(builder(output: output).build(), "-metadata:s:").filter { $0.contains("title=") }
+            XCTAssertEqual(titles, [], output)
+        }
+    }
+
+    /// A single-track audio-only output (a song) never gets one; two audio
+    /// tracks, or any real video, allow it. Cover art is not video.
+    func test_automaticTitlesNeedMoreThanOneTrackOrVideo() {
+        func titles(_ streams: [MediaStream]) -> [String] {
+            var builder = builder(output: "/tmp/out.mka")
+            builder.sourceStreams = streams
+            return pairs(builder.build(), "-metadata:s:").filter { $0.contains("title=") }
+        }
+        let song = MediaStream(streamIndex: 0, streamType: .audio, language: "en", disposition: StreamDisposition())
+        let cover = MediaStream(streamIndex: 1, streamType: .video, codecName: "mjpeg",
+                                disposition: StreamDisposition(isAttachedPicture: true))
+        XCTAssertEqual(titles([song]), [])
+        XCTAssertEqual(titles([song, cover]), [], "cover art is not video")
+        let second = MediaStream(streamIndex: 2, streamType: .audio, language: "ja", disposition: StreamDisposition())
+        XCTAssertEqual(titles([song, second]), ["-metadata:s:a:0 title=English", "-metadata:s:a:1 title=日本語"])
     }
 
     /// The editor's title wins, and an empty one clears.
@@ -221,13 +274,15 @@ final class TrackWritingTests: XCTestCase {
 
     // MARK: - Helpers
 
-    func test_placeholderTitles() {
-        for placeholder in ["", "  ", "Track 2", "track", "Audio", "Stream #3", "Subtitle 1", "SUBS"] {
-            XCTAssertFalse(TrackLanguage.isMeaningfulTitle(placeholder), placeholder)
-        }
-        for real in ["Director's commentary", "English", "ENG DUB", "Track 2 (remastered)"] {
-            XCTAssertTrue(TrackLanguage.isMeaningfulTitle(real), real)
-        }
-        XCTAssertFalse(TrackLanguage.isMeaningfulTitle(nil))
+    /// Blank titles count as none; anything else, even "Track 2", is kept.
+    func test_blankTitlesCountAsNone() {
+        var builder = builder()
+        builder.sourceStreams = [
+            MediaStream(streamIndex: 0, streamType: .video),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "de", title: "  ", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 2, streamType: .audio, language: "fr", title: "Track 2", disposition: StreamDisposition())
+        ]
+        let titles = pairs(builder.build(), "-metadata:s:").filter { $0.contains("title=") }
+        XCTAssertEqual(titles, ["-metadata:s:a:0 title=Deutsch"])
     }
 }

@@ -1171,6 +1171,7 @@ public struct FFmpegArgumentBuilder: Sendable {
         if let plan, let sources = sourceStreamsByIndex {
             let container = resolveContainerFormat()
             let fromSource = writesSourceDerivedStreamMetadata
+            let titleContext = AutomaticTitleContext(plan: plan, sources: sources, builder: self)
             for (entry, specifier) in plan.entriesWithSpecifiers {
                 let facts = outputFacts(for: entry.sourceStreamIndex, sources: sources)
                 let edit = sourceStreamEdits[entry.sourceStreamIndex]
@@ -1186,20 +1187,19 @@ public struct FFmpegArgumentBuilder: Sendable {
                 }
 
                 // Title: the editor's title if one was set (an empty one
-                // clears it). Otherwise, for an audio or subtitle track with
-                // no meaningful title, the language's own name (NAME-010) —
-                // a real title is never overwritten. A tone-mapped
-                // REPLACEMENT comes from a separate file with no title, so
-                // its source's real title is written back onto it.
+                // clears it). Otherwise the source's own title stands —
+                // ffmpeg copies it; a tone-mapped REPLACEMENT comes from a
+                // separate file with no title, so its source's title is
+                // written back onto it. Only a track with NO title at all
+                // may get an automatic one (see `automaticTitle`).
                 if let title = edit?.title {
                     args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
-                } else if fromSource, TrackLanguage.isMeaningfulTitle(facts.sourceTitle) {
-                    if entry.isReplacement, let title = facts.sourceTitle {
+                } else if fromSource, let title = facts.sourceTitle, !Self.isBlank(title) {
+                    if entry.isReplacement {
                         args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
                     }
-                } else if fromSource, entry.streamType == .audio || entry.streamType == .subtitle,
-                          let language = facts.language, let autonym = TrackLanguage.autonymTitle(for: language) {
-                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(autonym)"])
+                } else if let title = automaticTitle(for: entry, facts: facts, context: titleContext) {
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
                 }
             }
         }
@@ -1212,6 +1212,67 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         return args
+    }
+
+    // MARK: - Automatic titles (NAME-010)
+
+    /// What the automatic-title rule needs to know about the whole output,
+    /// worked out once per command rather than once per stream.
+    struct AutomaticTitleContext {
+        /// Whether ffmpeg keeps stream titles apart from the file's title in
+        /// this output's container.
+        let containerKeepsTitles: Bool
+        /// Real tracks (attached pictures excluded) of each type in the output.
+        let trackCounts: [StreamType: Int]
+        /// Whether the output carries real video (not just cover art).
+        var carriesVideo: Bool { (trackCounts[.video] ?? 0) > 0 }
+
+        init(plan: OutputStreamPlan, sources: [Int: MediaStream], builder: FFmpegArgumentBuilder) {
+            containerKeepsTitles = TrackLanguage.keepsStreamTitlesSeparately(builder.resolveContainerFormat())
+            var counts: [StreamType: Int] = [:]
+            for entry in plan.entries where !builder.isAttachedPicture(entry, sources: sources) {
+                counts[entry.streamType, default: 0] += 1
+            }
+            trackCounts = counts
+        }
+    }
+
+    /// The automatic title for one output stream (NAME-010), or `nil`.
+    ///
+    /// Written ONLY when all of these hold (decided after the independent
+    /// review, which found a song's title replaced with "English"):
+    /// 1. the stream is audio or subtitles, and has NO title in the source —
+    ///    any title the source has, even "Track 2", is what the source had
+    ///    and is kept (COMPAT-030); the first build replaced "placeholder"
+    ///    titles, which lost them;
+    /// 2. the person did not set one (the caller has already checked);
+    /// 3. the output container keeps stream titles apart from the file's
+    ///    own title (`TrackLanguage.keepsStreamTitlesSeparately`) — not Ogg,
+    ///    where a stream title replaces the song's title;
+    /// 4. the output has more than one track of that type, or carries video
+    ///    — a single-track audio-only output (a song) never gets one;
+    /// 5. the source's metadata is being kept at all.
+    /// The title itself says the language and the roles
+    /// (`TrackLanguage.automaticTitle`).
+    func automaticTitle(
+        for entry: OutputStreamPlan.Entry,
+        facts: (language: String?, disposition: StreamDisposition?, sourceTitle: String?),
+        context: AutomaticTitleContext
+    ) -> String? {
+        guard writesSourceDerivedStreamMetadata,
+              entry.streamType == .audio || entry.streamType == .subtitle,
+              facts.sourceTitle.map(Self.isBlank) ?? true,
+              context.containerKeepsTitles,
+              (context.trackCounts[entry.streamType] ?? 0) > 1 || context.carriesVideo,
+              let language = facts.language else {
+            return nil
+        }
+        return TrackLanguage.automaticTitle(for: language, disposition: facts.disposition, type: entry.streamType)
+    }
+
+    /// Whether `text` is empty or only spaces and line breaks.
+    static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The source's streams keyed by whole-file number, or `nil` when unknown.
