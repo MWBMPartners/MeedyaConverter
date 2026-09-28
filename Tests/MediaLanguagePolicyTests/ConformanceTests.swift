@@ -21,6 +21,14 @@
 //     a section is missing or empty, or a case lacks a field the schema
 //     requires (policy §8.1, revision 3): a runner that quietly runs fewer
 //     checks than the file holds is how a broken implementation passes;
+//   * before running anything, checks the WHOLE file against the schema copy
+//     (`FixtureShapeCheck`): every field's type — an object is never taken
+//     for a list (`{}` for `[]`) nor a number for true/false, and null only
+//     where the schema allows it — no field the schema does not list, the
+//     allowed words, `error` only ever `true` and only on a case expecting
+//     null. Any problem fails the run and NO case is run. (Added when the
+//     copies moved to core aaaa585: until then only field PRESENCE was
+//     checked, so `roles: {}` or `input: 5` would have passed);
 //   * checks the number of cases run equals the number in the file.
 //
 // Presentation cases name groups with the case's display_names and sort
@@ -90,6 +98,16 @@ final class ConformanceTests: XCTestCase {
         return object
     }
 
+    /// The case file's raw bytes.
+    static func loadData(_ name: String) throws -> Data {
+        try Data(contentsOf: fixturesFolder.appendingPathComponent(name))
+    }
+
+    /// The schema copy, read so objects stay objects (for `FixtureShapeCheck`).
+    static func loadSchema() throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: loadData("bcp47-language-policy-v1.schema.json"))
+    }
+
     /// The policy on the BUNDLED data — so the tests also prove the resource
     /// bundle is found where the code looks for it.
     static func policyUnderTest() throws -> MediaLanguagePolicy {
@@ -100,8 +118,8 @@ final class ConformanceTests: XCTestCase {
 
     func test_everyCaseInEverySectionPasses() throws {
         let policy = try Self.policyUnderTest()
-        let fixture = try Self.loadJSON("bcp47-language-policy-v1.json")
-        var run = ConformanceRun(policy: policy)
+        let fixture = try Self.loadData("bcp47-language-policy-v1.json")
+        var run = ConformanceRun(policy: policy, schema: try Self.loadSchema())
         let totalCases = run.runFile(fixture, dataVersion: try LanguageReferenceData.bundled.get().dataVersion)
 
         let summary = "MWBM-MEDIA-LANG conformance: \(run.casesRun) of \(totalCases) cases run, "
@@ -154,20 +172,26 @@ final class ConformanceTests: XCTestCase {
     /// copies of the real one, in memory.
     func test_runnerFailsOnUnknownMissingEmptyOrIncompleteSections() throws {
         let policy = try Self.policyUnderTest()
+        let schema = try Self.loadSchema()
         let fixture = try Self.loadJSON("bcp47-language-policy-v1.json")
         let dataVersion = try LanguageReferenceData.bundled.get().dataVersion
 
         // The real file passes, so each doctored copy below fails only
         // because of what was done to it.
-        var clean = ConformanceRun(policy: policy)
-        _ = clean.runFile(fixture, dataVersion: dataVersion)
+        var clean = ConformanceRun(policy: policy, schema: schema)
+        _ = clean.runFile(try Self.loadData("bcp47-language-policy-v1.json"), dataVersion: dataVersion)
         XCTAssertTrue(clean.failures.isEmpty, clean.failures.joined(separator: "\n"))
 
+        // A doctored copy is written back out as JSON and run like the real
+        // file, so the shape check reads it exactly as it would a file.
         func failures(after change: (inout [String: Any]) -> Void) -> [String] {
             var doctored = fixture
             change(&doctored)
-            var run = ConformanceRun(policy: policy)
-            _ = run.runFile(doctored, dataVersion: dataVersion)
+            guard let data = try? JSONSerialization.data(withJSONObject: doctored) else {
+                return ["(could not write the doctored copy)"]
+            }
+            var run = ConformanceRun(policy: policy, schema: schema)
+            _ = run.runFile(data, dataVersion: dataVersion)
             return run.failures
         }
 
@@ -182,21 +206,92 @@ final class ConformanceTests: XCTestCase {
             var cases = file["match"] as? [[String: Any]] ?? []
             cases[0].removeValue(forKey: "expected")
             file["match"] = cases
-        }.contains { $0.contains("lacks required field(s) expected") })
+        }.contains { $0.contains("missing required field 'expected'") })
         // A refusal case the implementation answered instead of refusing
-        // would fail: here the refusal flag is added to an ordinary case.
+        // would fail: here the refusal flag is added to an ordinary case,
+        // with the null answer the schema requires alongside it, so the file
+        // is well formed and the case really runs.
         XCTAssertTrue(failures { file in
             var cases = file["sidecar_name"] as? [[String: Any]] ?? []
             if let index = cases.firstIndex(where: { ($0["mode"] as? String) == "build" && !($0["error"] as? Bool ?? false) }) {
                 cases[index]["error"] = true
+                cases[index]["expected"] = NSNull()
             }
             file["sidecar_name"] = cases
         }.contains { $0.contains("must be refused") })
+
+        // The shape check: wrong types, {} for [] and [] for {}, null where
+        // the schema allows none, fields the schema does not list, words it
+        // does not allow, and `error` anywhere but on a refusal expecting
+        // null. Each fails the run, and then NO case is run.
+        func shapeFailure(_ section: String, _ index: Int = 0, _ change: (inout [String: Any]) -> Void) -> [String] {
+            failures { file in
+                var cases = file[section] as? [[String: Any]] ?? []
+                change(&cases[index])
+                file[section] = cases
+            }
+        }
+        func track(_ change: @escaping (inout [String: Any]) -> Void) -> (inout [String: Any]) -> Void {
+            { selectionCase in
+                var tracks = selectionCase["tracks"] as? [[String: Any]] ?? []
+                change(&tracks[0])
+                selectionCase["tracks"] = tracks
+            }
+        }
+        let shapeProblems: [(String, [String])] = [
+            ("roles: {}", shapeFailure("auto_select_audio", 0, track { $0["roles"] = [String: Any]() })),
+            ("roles: null", shapeFailure("auto_select_audio", 0, track { $0["roles"] = NSNull() })),
+            ("accessibility: []", shapeFailure("auto_select_audio") { $0["accessibility"] = [Any]() }),
+            ("display_names: []", shapeFailure("presentation_order") { $0["display_names"] = [Any]() }),
+            ("input: 5", shapeFailure("canonicalise") { $0["input"] = 5 }),
+            ("channels: 5", shapeFailure("label") { $0["channels"] = 5 }),
+            ("default: 1", shapeFailure("auto_select_audio", 0, track { $0["default"] = 1 })),
+            ("description: null", shapeFailure("match") { $0["description"] = NSNull() }),
+            ("an unknown field", shapeFailure("match") { $0["surprise"] = "x" }),
+            ("error: true where refusals are not allowed", shapeFailure("match") { $0["error"] = true }),
+            ("error: false", shapeFailure("auto_select_audio") { $0["error"] = false; $0["expected"] = NSNull() }),
+            ("error with an answer", shapeFailure("auto_select_audio") { $0["error"] = true }),
+            ("an unknown role", shapeFailure("auto_select_audio", 0, track { $0["roles"] = ["narrator"] })),
+            ("a bad case id", shapeFailure("match") { $0["id"] = "match-1" }),
+            ("a bad rule id", shapeFailure("match") { $0["rules"] = ["MATCH-10"] }),
+            ("a case id ending in a line break", shapeFailure("match") { $0["id"] = "match-01\n" }),
+            ("a number out of range", shapeFailure("sidecar_name", 0) { $0["number"] = 1_000_000_000 })
+        ]
+        for (what, found) in shapeProblems {
+            XCTAssertFalse(found.isEmpty, "\(what) must fail the run")
+            XCTAssertTrue(found.contains { $0.contains("shape:") }, "\(what) must fail the SHAPE check: \(found)")
+            XCTAssertFalse(found.contains { $0.contains("got ") }, "\(what): no case may run: \(found)")
+        }
+        // The top level too.
+        XCTAssertTrue(failures { $0["policy_version"] = 1 }.contains { $0.contains("shape:") })
+        XCTAssertTrue(failures { $0["fixtures_version"] = "1.0" }.contains { $0.contains("shape:") })
 
         // A case with an explicit null where a value is required still runs
         // (null is a real answer for many cases); a missing key does not.
         XCTAssertTrue(ConformanceRun.has(["expected": NSNull()], "expected"))
         XCTAssertFalse(ConformanceRun.has([:], "expected"))
+    }
+
+    /// The shape check's reader keeps every kind of value apart — the point
+    /// of reading the file a second time — and its pattern check does not
+    /// let a final line break through.
+    func test_shapeReaderKeepsKindsApart() throws {
+        let decoded = try JSONDecoder().decode(
+            JSONValue.self, from: Data(#"{"a":{},"b":[],"c":true,"d":1,"e":1.5,"f":null,"g":"x"}"#.utf8)
+        )
+        guard case .object(let object) = decoded else { return XCTFail("not an object") }
+        XCTAssertEqual(object["a"]?.kind, "an object")
+        XCTAssertEqual(object["b"]?.kind, "a list")
+        XCTAssertEqual(object["c"]?.kind, "true/false")
+        XCTAssertEqual(object["d"]?.kind, "a whole number")
+        XCTAssertEqual(object["e"]?.kind, "a number")
+        XCTAssertEqual(object["f"]?.kind, "null")
+        XCTAssertEqual(object["g"]?.kind, "a string")
+        XCTAssertTrue(FixtureShapeCheck.matches("match-01", "^[a-z]+-[0-9]{2}$"))
+        XCTAssertFalse(FixtureShapeCheck.matches("match-01\n", "^[a-z]+-[0-9]{2}$"))
+        // A schema keyword the checker does not know is a problem, not a pass.
+        let unknown = FixtureShapeCheck(schema: .object(["format": .string("date")]))
+        XCTAssertEqual(unknown.problems(in: .string("x")).count, 1)
     }
 
     // MARK: - Behaviour the shared cases cannot express
@@ -259,22 +354,46 @@ struct HarnessError: Error, CustomStringConvertible {
 /// Runs cases and collects every failure (so they are reported together).
 struct ConformanceRun {
     let policy: MediaLanguagePolicy
+    /// The case file's schema, for the shape check (`FixtureShapeCheck`).
+    let shapeCheck: FixtureShapeCheck
     var failures: [String] = []
     var casesRun = 0
     var checks = 0
     var reversedRuns = 0
     var stabilityChecks = 0
 
-    init(policy: MediaLanguagePolicy) {
+    init(policy: MediaLanguagePolicy, schema: JSONValue) {
         self.policy = policy
+        self.shapeCheck = FixtureShapeCheck(schema: schema)
     }
 
     // MARK: The whole file
 
-    /// Checks the file's header, refuses unknown, missing and empty sections
-    /// (policy §8.1), and runs every case. Returns the number of cases in the
-    /// file (for the "every case was run" check).
-    mutating func runFile(_ fixture: [String: Any], dataVersion: String) -> Int {
+    /// Checks the whole file against its schema, checks the header, refuses
+    /// unknown, missing and empty sections (policy §8.1), and — only when
+    /// the file is well formed — runs every case. Returns the number of cases
+    /// in the file (for the "every case was run" check).
+    mutating func runFile(_ data: Data, dataVersion: String) -> Int {
+        // Read twice: once to check its shape exactly (objects stay objects),
+        // once as plain dictionaries to run the cases from.
+        let shaped: JSONValue
+        let fixture: [String: Any]
+        do {
+            shaped = try JSONDecoder().decode(JSONValue.self, from: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                fail("file", "is not a JSON object")
+                return 0
+            }
+            fixture = object
+        } catch {
+            fail("file", "is not readable JSON: \(error)")
+            return 0
+        }
+        let shapeProblems = shapeCheck.problems(in: shaped)
+        for problem in shapeProblems {
+            fail("shape", problem)
+        }
+
         expect("header policy", fixture["policy"] as? String, "MWBM-MEDIA-LANG")
         expect("header policy_version", fixture["policy_version"] as? String, "1.0.0")
         expect("header data_version", fixture["data_version"] as? String, dataVersion)
@@ -293,6 +412,10 @@ struct ConformanceRun {
                 fail("file", "section '\(section)' is empty")
             }
             totalCases += cases.count
+            // A file that breaks its schema is not run at all: a case read
+            // with a wrong-typed field could pass or fail for the wrong
+            // reason. The count check then fails too.
+            guard shapeProblems.isEmpty else { continue }
             for testCase in cases {
                 runCase(section: section, testCase)
             }
