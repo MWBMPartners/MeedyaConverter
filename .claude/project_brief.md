@@ -115,6 +115,11 @@ All view-layer wirings (#433/#434/#435) are engine-tested and end-to-end-proven 
 ## Architecture
 
 - **ConverterEngine** — Cross-platform core library (SPM)
+- **MediaLanguagePolicy** — Foundation-only Swift module (`Sources/MediaLanguagePolicy`)
+  implementing the shared language policy MWBM-MEDIA-LANG 1.0.0
+  (`docs/standards/media-language-bcp47-policy.md`, an exact copy of the master in
+  MeedyaSuite-core, checked in CI). The engine reads and writes every track's
+  language, roles and order through it (`TrackLanguage.swift`).
 - **meedya-convert** — CLI tool (ArgumentParser)
 - **MeedyaConverter** — macOS SwiftUI app
 - **MeedyaSuite-core** — Optional Rust workspace with Swift/C FFI (feature-flagged via SUITE_CORE env)

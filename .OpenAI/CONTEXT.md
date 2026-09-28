@@ -2,7 +2,19 @@
 
 > How we work on this repo. Mirror of the `.claude/` operating rules, written for
 > Codex/OpenAI continuity. Canonical detail lives in `.claude/standing_tasks.md`.
-> Last updated: 2026-09-23.
+> Last updated: 2026-09-28 (language policy pointer added).
+
+## Languages, tracks, subtitles and lyrics — mandatory (MWBM-MEDIA-LANG)
+
+**Languages, tracks, subtitles and lyrics — mandatory:** any work touching BCP 47
+language tags, languages, translations, audio or subtitle tracks, lyrics, track
+order or naming, language preferences, or accessibility roles (SDH, audio
+description, forced, commentary) MUST read and follow
+`docs/standards/media-language-bcp47-policy.md` (policy `MWBM-MEDIA-LANG`). It is
+normative and is not repeated here. Its conformance cases
+(`Tests/Fixtures/MediaLanguage/`, run by `Tests/MediaLanguagePolicyTests`) must
+pass. The copy is checked against the master in MWBMPartners/MeedyaSuite-core by
+`scripts/media-lang/check_copies.py`; never edit the copies — change the master.
 
 ## The one-line summary
 
@@ -88,5 +100,7 @@ created later (no stacked PRs).
 
 - `.claude/HANDOFF.md` — live status / resume point.
 - `.claude/standing_tasks.md` — full rules.
+- `docs/standards/media-language-bcp47-policy.md` — the shared language policy
+  (normative for anything about languages, tracks, roles or their order).
 - `.claude/project_brief.md` — durable overview.
 - `PROJECT_STATUS.md`, `Project_Plan.md`, `README.md` — public project state.

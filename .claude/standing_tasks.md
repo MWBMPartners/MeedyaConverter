@@ -4,7 +4,9 @@
 > Saved for Claude AI context continuity.
 > They are **project- and repo-wide**: they apply to ALL contributors, across ANY
 > dev environment (macOS/Xcode, VS Code, Linux container, CI), not just one session.
-> Last updated: 2026-09-24 (owner directive of 2026-09-24: new **W16** — a watchdog on
+> Last updated: 2026-09-28 (the shared language policy MWBM-MEDIA-LANG arrived: the
+> mandatory pointer just below. A pointer only — the rules stay in the policy.)
+> Previous: 2026-09-24 (owner directive of 2026-09-24: new **W16** — a watchdog on
 > every asynchronous step, so nothing is missed and the queue never moves on blind.)
 > Previous: 2026-09-23 (owner directive of 2026-09-23: planning moved from Fable to
 > **Opus** in W3/W12; W2 handoff timing tightened; W4 suggestions + cross-system checking;
@@ -12,6 +14,18 @@
 > W15 progress tables. Nothing was removed.)
 > Previous: 2026-09-17 (added §16 plain-English communication, W12 cross-LLM fallback,
 > W13 review loop, W14 `.OpenAI/` mirror; reconciled §9 push policy with W5)
+
+## Languages, tracks, subtitles and lyrics — mandatory (MWBM-MEDIA-LANG)
+
+**Languages, tracks, subtitles and lyrics — mandatory:** any work touching BCP 47
+language tags, languages, translations, audio or subtitle tracks, lyrics, track
+order or naming, language preferences, or accessibility roles (SDH, audio
+description, forced, commentary) MUST read and follow
+`docs/standards/media-language-bcp47-policy.md` (policy `MWBM-MEDIA-LANG`). It is
+normative and is not repeated here. Its conformance cases
+(`Tests/Fixtures/MediaLanguage/`, run by `Tests/MediaLanguagePolicyTests`) must
+pass. The copy is checked against the master in MWBMPartners/MeedyaSuite-core by
+`scripts/media-lang/check_copies.py`; never edit the copies — change the master.
 
 ## Mandatory Post-Action Tasks
 

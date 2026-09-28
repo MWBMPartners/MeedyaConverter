@@ -1,7 +1,7 @@
 # MeedyaConverter — Durable Memory (OpenAI / Codex)
 
 > Durable, slow-changing facts. Live status lives in `.claude/HANDOFF.md`.
-> Last updated: 2026-09-23.
+> Last updated: 2026-09-28.
 
 ## Identity
 
@@ -16,6 +16,11 @@
 
 - **ConverterEngine** — cross-platform Swift core library (all encoding,
   analysis, disc, metadata logic).
+- **MediaLanguagePolicy** — Foundation-only Swift module (`Sources/MediaLanguagePolicy`)
+  implementing the shared language policy MWBM-MEDIA-LANG 1.0.0
+  (`docs/standards/media-language-bcp47-policy.md`, an exact copy of the master in
+  MeedyaSuite-core, checked in CI). The engine reads and writes every track's
+  language, roles and order through it (`TrackLanguage.swift`).
 - **meedya-convert** — command-line tool (Swift ArgumentParser) built on the
   engine. Subcommands: `encode`, `probe`, `profiles`, `batch`, `manifest`,
   `validate`, `serve`.
