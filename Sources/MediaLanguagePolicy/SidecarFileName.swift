@@ -11,9 +11,11 @@
 //     {media file stem}.{tag}[.{role}…][.{n}].{extension}
 //
 // The tag always comes first, so a role word is never mistaken for a
-// language (`sdh` is also Southern Kurdish, `hi` Hindi). A malformed value
-// never goes into a file name (it could hold characters unsafe in a path):
-// it is written as `und`. Reading one back takes the stem from the media file
+// language (`sdh` is also Southern Kurdish, `hi` Hindi). A builder reads
+// its language with LANG-002's reader, as a reader of the name will, so what
+// is written is what is read back (`fre` → `fr`). A malformed or unrecognised
+// value never goes into a file name (it could hold characters unsafe in a
+// path): it is written as `und`. Reading one back takes the stem from the media file
 // it belongs to — never guessing where the stem ends.
 // ============================================================================
 
@@ -67,7 +69,10 @@ public struct SidecarFileName: Sendable {
     ///
     /// - Parameters:
     ///   - stem: The media file's name without its extension.
-    ///   - tag: The language (raw; canonicalised; malformed becomes `und`).
+    ///   - tag: The language, read with LANG-002's reader exactly as a
+    ///     reader of the name will read it back (TEXT-030): `fre` is written
+    ///     `fr`, and a value the reader does not recognise — malformed, or an
+    ///     unknown three-letter code such as `zzz` — is written `und`.
     ///   - roles: The track's roles; only `sdh`, `forced` and `commentary`
     ///     produce a role word (each once, in TRACK-050 order).
     ///   - fileExtension: Without the dot.
@@ -77,8 +82,11 @@ public struct SidecarFileName: Sendable {
         if let number, !(2...Self.largestNumber).contains(number) {
             throw SidecarFileNameError.invalidNumber(number)
         }
-        let canonical = reader.canonicaliser.canonicalise(tag)
-        let language = canonical.canonical ?? "und"
+        // Read, not just canonicalised (core revision 6, cases sidecar-27
+        // and -28): canonicalising alone wrote `Film.fre.srt` for `fre` and
+        // `Film.zzz.srt` for `zzz`, which a reader then read back as `fr`
+        // and `und` — so what was written was not what is read.
+        let language = reader.read(tag) ?? "und"
         let present = Set(roles)
         let words = Self.writtenRoles.filter { present.contains($0) }.map(\.word)
         var parts = [stem, language] + words

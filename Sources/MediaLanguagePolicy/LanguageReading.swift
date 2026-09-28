@@ -162,7 +162,13 @@ public struct POSIXLocaleConverter: Sendable {
 
     /// Converts `raw`, also reporting a dropped modifier.
     public func conversion(_ raw: String) -> Conversion {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Trim ONLY LANG-001 step 1's four characters (space, tab, line
+        // feed, carriage return). Foundation's `.whitespacesAndNewlines`,
+        // used here before core revision 6, also removes a no-break space
+        // (U+00A0) and other Unicode spaces, so ` en_US` (a leading
+        // no-break space) became `en-US` instead of staying malformed
+        // (policy case posix-11).
+        var value = LanguageTagCanonicaliser.trimPolicyWhitespace(raw)
         // 1. `C` and `POSIX` mean "no language".
         if value.isEmpty || value == "C" || value == "POSIX" {
             return Conversion(tag: nil, droppedModifier: nil)

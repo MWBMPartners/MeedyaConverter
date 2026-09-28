@@ -48,7 +48,9 @@ public struct LanguageTag: Sendable, Hashable {
     public let kind: LanguageTagKind
 
     /// The canonical tag text — or, for a malformed value, the value as given
-    /// with the four whitespace characters trimmed (LANG-026 keeps it).
+    /// with LANG-001's four whitespace characters trimmed (LANG-026 keeps
+    /// it): `" en_US "` keeps `en_US`, and a value of only those characters
+    /// keeps the empty text.
     public let text: String
 
     /// The primary language subtag, lower case (`zh` in `zh-Hant-TW`).
@@ -129,8 +131,11 @@ public struct LanguageTagCanonicaliser: Sendable {
         // no-break space (or anything else) is part of the value and makes it
         // malformed — trimming more would let two implementations disagree.
         let trimmed = Self.trimPolicyWhitespace(raw)
+        // A value of nothing but the four trimmed characters is malformed and
+        // keeps the EMPTY text (LANG-026, core revision 6: the kept text is
+        // the value after the trim). It used to keep the untrimmed text.
         guard !trimmed.isEmpty else {
-            return LanguageTag(kind: .malformed, text: raw)
+            return LanguageTag(kind: .malformed, text: trimmed)
         }
         // A tag is ASCII only (RFC 5646). Anything else is malformed HERE,
         // before any comparison — and case is folded with ASCII rules only.

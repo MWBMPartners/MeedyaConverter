@@ -260,8 +260,11 @@ public enum TrackMenuLabel {
     ///   - type: The track type (decides which role order applies).
     ///   - roleNames: The localised word for each role.
     ///   - channels: Channel layout text for audio (`5.1`), or `nil`.
-    /// - Returns: The parts joined with " — " (space, em dash, space); empty
-    ///   parts are left out. An embedded track title is never used here.
+    /// - Returns: The parts joined with " — " (space, em dash, space). Each
+    ///   role appears once (a role given twice is named once — core revision
+    ///   6, case label-05), and an empty part — no name, an empty role name,
+    ///   an empty channel layout — is left out with its separator. An
+    ///   embedded track title is never used here.
     public static func label(
         languageName: String,
         roles: [TrackRole],
@@ -269,8 +272,10 @@ public enum TrackMenuLabel {
         roleNames: [TrackRole: String],
         channels: String?
     ) -> String {
+        var seen = Set<TrackRole>()
+        let distinct = roles.filter { seen.insert($0).inserted }
         var parts = [languageName]
-        parts += TrackRoleOrder.sorted(roles, for: type).compactMap { roleNames[$0] }
+        parts += TrackRoleOrder.sorted(distinct, for: type).compactMap { roleNames[$0] }
         if let channels { parts.append(channels) }
         return parts.filter { !$0.isEmpty }.joined(separator: " \u{2014} ")
     }

@@ -21,11 +21,14 @@
 //
 // A NOTE ON "canonical order" AS A TIE-BREAK
 // ------------------------------------------
-// The rules below end with "canonical order (TRACK-050), identifier". This
-// file computes canonical positions with each track's REAL role rank
-// (TRACK-050), as the policy text says. The throwaway Python reference used
-// while writing the cases ignored roles there; the two agree on every case,
-// because role is always compared earlier. (PHP also uses the role rank.)
+// The rules below end with "canonical order (TRACK-050), identifier".
+// Canonical order means the position each track would have in STORED order
+// among ALL tracks of its type (AUTO-020, as settled in core revision 6) —
+// including tracks that can never be chosen, so an original commentary track
+// still brings its language group forward, as it does in stored order. This
+// file used to rank only the tracks still in the running, which put the
+// English default before the Japanese one in case audio-22. Positions use
+// each track's REAL role rank (TRACK-050), as the policy text says.
 // ============================================================================
 
 import Foundation
@@ -140,9 +143,15 @@ public struct AutomaticTrackSelector: Sendable {
         var eligible = tracks.filter { TrackRoleOrder.placingRank(of: $0.roles, for: .audio) < special }
         if eligible.isEmpty { eligible = tracks }
 
-        let position = canonicalPositions(eligible, type: .audio)
+        // Canonical order among ALL audio tracks, not just the eligible ones
+        // (see the file header).
+        let position = canonicalPositions(tracks, type: .audio)
         // Role rank by the placing role: main, alternate, audio description —
         // or, when the user asked for audio description, AD, main, alternate.
+        // Commentary and other (chosen only when every track is one) keep
+        // TRACK-050's order in both cases: commentary before other. With
+        // audio description asked for, both used to rank the same, so the
+        // default flag or identifier picked "other" (case audio-23).
         func roleRank(_ track: SelectableTrack) -> Int {
             let placing = TrackRoleOrder.placingRank(of: track.roles, for: .audio)
             guard accessibility.audioDescription else { return placing }
@@ -150,7 +159,8 @@ public struct AutomaticTrackSelector: Sendable {
             case TrackRoleOrder.rank(of: .audioDescription, for: .audio): return 0
             case 0: return 1
             case TrackRoleOrder.rank(of: .alternate, for: .audio): return 2
-            default: return 3
+            case TrackRoleOrder.rank(of: .commentary, for: .audio): return 3
+            default: return 4
             }
         }
 
@@ -215,10 +225,21 @@ public struct AutomaticTrackSelector: Sendable {
         func forcedOnly() -> String? {
             guard let audioTag else { return nil }
             let audio = matcher.canonicaliser.canonicalise(audioTag)
-            // Nothing to match against when the audio's language is unknown,
-            // several, or none (with or without more subtags).
-            guard audio.kind == .ordinary, let language = audio.language,
-                  !["und", "mul", "zxx"].contains(language) else { return nil }
+            switch audio.kind {
+            case .malformed:
+                return nil
+            case .ordinary:
+                // Nothing to match against when the audio's language is
+                // unknown, several, or none (with or without more subtags).
+                guard let language = audio.language, !["und", "mul", "zxx"].contains(language) else { return nil }
+            case .privateUse, .grandfathered:
+                // A private-use (`x-foo`) or grandfathered (`i-default`)
+                // audio tag DOES have something to match: a forced track with
+                // exactly that tag (AUTO-030, MATCH-040; core revision 6,
+                // cases subs-22 and -23). The matcher gives such tags an
+                // exact match only. They used to be treated as "not known".
+                break
+            }
             let candidates = tracks.compactMap { track -> (SelectableTrack, LanguageMatch)? in
                 guard TrackRoleOrder.placingRank(of: track.roles, for: .subtitle) == forcedRank else { return nil }
                 let result = matcher.match(audio, matcher.canonicaliser.canonicalise(track.tag))
@@ -290,11 +311,12 @@ public struct AutomaticTrackSelector: Sendable {
         }
     }
 
-    /// Preferences without the malformed ones, which are ignored (UI-020 and
-    /// the test cases' definition of preferences). Matching already treats a
-    /// malformed preference as matching nothing; dropping it here also means
-    /// a user whose ONLY preference is malformed counts as having none in
-    /// the automatic subtitle mode.
+    /// Preferences without the malformed ones, which are ignored (UI-020,
+    /// AUTO-010). A malformed preference matches nothing (MATCH-010), and a
+    /// user whose preferences are ALL malformed counts as having none — so
+    /// the automatic subtitle mode acts as forced only for them. This file
+    /// did this before the policy said so; core revision 6 made it the rule
+    /// (cases audio-21 and subs-21).
     private func usablePreferences(_ preferences: [String]) -> [String] {
         preferences.filter { !matcher.canonicaliser.canonicalise($0).isMalformed }
     }
