@@ -250,7 +250,8 @@ extension TrackLanguage {
                 // ffmpeg writes `und` for an empty value.
                 if bytes.isEmpty { return "und" }
                 guard bytes.count >= 3, bytes[0..<3].allSatisfy({ $0 >= 0x60 && $0 <= 0x7F }) else { return nil }
-                return String(decoding: bytes[0..<3], as: UTF8.self)
+                // Three ASCII bytes, so this always succeeds.
+                return String(bytes: bytes[0..<3], encoding: .utf8)
             case .quickTimeList:
                 return TrackLanguage.quickTimeListEntries.contains(value) ? value : nil
             case .threeCharacterPieces:

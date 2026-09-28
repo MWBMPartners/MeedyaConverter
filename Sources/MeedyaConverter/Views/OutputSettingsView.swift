@@ -1113,7 +1113,8 @@ struct StreamMetadataEditorView: View {
 
             // Editable fields
             HStack {
-                TextField("Title", text: entry.title, prompt: Text(titlePrompt(for: stream)))
+                TextField("Title", text: entry.title,
+                          prompt: Text(titlePrompt(for: stream, entryTitle: entry.wrappedValue.title)))
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
                     .accessibilityLabel("Title for \(label)")
@@ -1150,14 +1151,23 @@ struct StreamMetadataEditorView: View {
 
             // The automatic title can be switched off for this stream.
             // Shown only where one could be written: audio or subtitles with
-            // no title of their own.
+            // an empty title. A track whose OWN title was cleared here stays
+            // untitled — an automatic title is only ever written for a track
+            // the file gives no title — so for it the switch shows off and
+            // cannot be turned on. (The round-2 editor showed it on, which
+            // was not what the encode would do: found in the second review.)
             if stream.streamType == .audio || stream.streamType == .subtitle,
                entry.wrappedValue.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Toggle("Name it after its language", isOn: entry.automaticTitle)
+                let clearedOwnTitle = hasOwnTitle(stream)
+                Toggle("Name it after its language", isOn: clearedOwnTitle ? .constant(false) : entry.automaticTitle)
                     .toggleStyle(.checkbox)
                     .font(.caption)
-                    .help("Where the file type keeps track titles, a track with no title of its own is named after its language and roles, such as “English — SDH”.")
+                    .disabled(clearedOwnTitle)
+                    .help(clearedOwnTitle
+                        ? "This track had a title of its own. Clearing it leaves it with no title; an automatic title is only written for a track the file gives none."
+                        : "Where the file type keeps track titles, a track with no title of its own is named after its language and roles, such as “English — SDH”.")
                     .accessibilityLabel("Automatic title for \(label)")
+                    .accessibilityValue(clearedOwnTitle ? "Off: the track's own title was cleared" : "")
             }
 
             roleToggles(for: stream, disposition: entry.disposition, label: label)
@@ -1241,10 +1251,19 @@ struct StreamMetadataEditorView: View {
     /// own name and the roles). Whether it is actually written also depends
     /// on the tracks chosen (a lone audio track in an audio-only file gets
     /// none), which this sheet does not know, hence "may".
-    private func titlePrompt(for stream: MediaStream) -> String {
-        if let title = stream.title, !title.isEmpty { return title }
+    ///
+    /// A track whose own title the person has cleared shows "No title": the
+    /// old title is going (the round-2 editor still showed it as the
+    /// placeholder). A Matroska track whose language may be a stand-in for a
+    /// fuller one that could not be read gets no automatic title, so none is
+    /// suggested (`MediaStream.languageFullTagUnknown`).
+    private func titlePrompt(for stream: MediaStream, entryTitle: String) -> String {
+        if hasOwnTitle(stream) {
+            return entryTitle.isEmpty ? "No title (cleared)" : (stream.title ?? "")
+        }
         if stream.streamType == .audio || stream.streamType == .subtitle,
            TrackLanguage.keepsStreamTitlesSeparately(outputContainer),
+           stream.languageFullTagUnknown != true,
            let language = stream.language,
            let automatic = TrackLanguage.automaticTitle(
                for: language, disposition: sourceDisposition(stream), type: stream.streamType
@@ -1252,6 +1271,12 @@ struct StreamMetadataEditorView: View {
             return "\(automatic) (automatic)"
         }
         return "Untitled"
+    }
+
+    /// Whether the file gives `stream` a title of its own (not empty, not
+    /// just spaces).
+    private func hasOwnTitle(_ stream: MediaStream) -> Bool {
+        !(stream.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func binding(for index: Int) -> Binding<StreamMetadataEntry> {
@@ -1306,8 +1331,11 @@ struct StreamMetadataEditorView: View {
             if entry.disposition != sourceDisposition(stream) {
                 edit.disposition = entry.disposition
             }
-            // Recorded only when switched OFF; on is the default rule.
-            if !entry.automaticTitle {
+            // Recorded only when switched OFF; on is the default rule. A
+            // track whose own title was cleared is recorded as off too: its
+            // empty title is what gets written, never an automatic one, and
+            // the record now says so.
+            if !entry.automaticTitle || (hasOwnTitle(stream) && entry.title.isEmpty) {
                 edit.writesAutomaticTitle = false
             }
             if !edit.isEmpty {

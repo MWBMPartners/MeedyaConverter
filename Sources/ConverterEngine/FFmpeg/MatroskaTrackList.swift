@@ -144,7 +144,7 @@ public struct MatroskaTrackList: Sendable, Equatable {
             guard let size = element.size, element.dataStart + size <= segmentEnd else { break }
             if element.id == ID.info, size <= infoLimit,
                let body = source.bytes(at: element.dataStart, count: Int(size)) {
-                writingApp = children(of: body).first { $0.id == ID.writingApp }.map { text($0.data) }
+                writingApp = children(of: body).first { $0.id == ID.writingApp }.flatMap { text($0.data) }
             } else if element.id == ID.tracks, size <= tracksLimit,
                       let body = source.bytes(at: element.dataStart, count: Int(size)) {
                 tracks = trackEntries(in: body)
@@ -166,8 +166,8 @@ public struct MatroskaTrackList: Sendable, Equatable {
             result.append(Track(
                 number: field(ID.trackNumber).flatMap(unsigned),
                 type: field(ID.trackType).flatMap(unsigned),
-                language: field(ID.language).map(text),
-                languageBCP47: field(ID.languageBCP47).map(text)
+                language: field(ID.language).flatMap(text),
+                languageBCP47: field(ID.languageBCP47).flatMap(text)
             ))
         }
         return result
@@ -297,11 +297,15 @@ public struct MatroskaTrackList: Sendable, Equatable {
         return data.reduce(0) { ($0 << 8) | UInt64($1) }
     }
 
-    /// A string element's text: the bytes up to the first NUL, as UTF-8
-    /// (with any invalid bytes replaced), spaces trimmed, at most 256 bytes.
-    private static func text(_ data: [UInt8]) -> String {
+    /// A string element's text: the bytes up to the first NUL, as UTF-8,
+    /// spaces trimmed, at most 256 bytes — or `nil` when that is empty or
+    /// not valid UTF-8 (a language tag or a program's name never is), so
+    /// damaged text is treated as absent rather than read as something else.
+    private static func text(_ data: [UInt8]) -> String? {
         let used = data.prefix { $0 != 0 }.prefix(256)
-        return String(decoding: used, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let decoded = String(bytes: used, encoding: .utf8) else { return nil }
+        let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
