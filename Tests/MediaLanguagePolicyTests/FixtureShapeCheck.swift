@@ -103,6 +103,33 @@ indirect enum JSONValue: Decodable, Equatable, CustomStringConvertible {
         }
     }
 
+    /// The value as the plain Foundation values the case runner reads —
+    /// `[String: Any]`, `[Any]`, `String`, `Bool`, `Int`, `Double`, `NSNull`
+    /// — built from THIS reading of the file.
+    ///
+    /// Why it exists: the runner used to read the file a second time with
+    /// `JSONSerialization` to run the cases from, and on macOS that reader
+    /// silently drops a U+FEFF (an invisible "byte order mark" character) at
+    /// the start of a string, while `JSONDecoder` — the shape check's reader
+    /// — and Linux keep it. So a case whose input begins with U+FEFF was run
+    /// on a DIFFERENT input from the one the file holds (the second
+    /// independent review planted `"\u{FEFF}en"` expecting `en`: the PHP
+    /// runner failed it, this runner passed it). Running the cases from the
+    /// shape check's own reading means one reading of the file, checked and
+    /// run alike. Swift's own `Bool` and `Int` are used, so a number can
+    /// never pass for true/false here either.
+    var plainValue: Any {
+        switch self {
+        case .null: return NSNull()
+        case .bool(let value): return value
+        case .integer(let value): return value
+        case .number(let value): return value
+        case .string(let value): return value
+        case .array(let values): return values.map(\.plainValue)
+        case .object(let members): return members.mapValues(\.plainValue)
+        }
+    }
+
     /// The value as a number, if it is one.
     var numberValue: Double? {
         switch self {

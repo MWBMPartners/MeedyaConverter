@@ -29,7 +29,12 @@
 //     null. Any problem fails the run and NO case is run. (Added when the
 //     copies moved to core aaaa585: until then only field PRESENCE was
 //     checked, so `roles: {}` or `input: 5` would have passed);
-//   * checks the number of cases run equals the number in the file.
+//   * checks the number of cases run equals the number in the file;
+//   * runs the cases from the SAME reading of the file the shape check
+//     checked (`JSONValue.plainValue`) — one reading, so a case can never
+//     run on a different input from the one checked. (Until the second
+//     independent review the cases came from a second reading with
+//     `JSONSerialization`, which on macOS drops a leading U+FEFF.)
 //
 // Presentation cases name groups with the case's display_names and sort
 // them by comparing its collation_keys as plain strings, then by subtag
@@ -90,9 +95,13 @@ final class ConformanceTests: XCTestCase {
         .deletingLastPathComponent()
         .appendingPathComponent("Fixtures/MediaLanguage")
 
+    /// A file as plain dictionaries — read with `JSONDecoder` (`JSONValue`),
+    /// the same reader the shape check and the runner use, never with
+    /// `JSONSerialization`, which on macOS drops a leading U+FEFF from a
+    /// string (see `JSONValue.plainValue`).
     static func loadJSON(_ name: String) throws -> [String: Any] {
         let data = try Data(contentsOf: fixturesFolder.appendingPathComponent(name))
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let object = try JSONDecoder().decode(JSONValue.self, from: data).plainValue as? [String: Any] else {
             throw HarnessError("\(name) is not a JSON object")
         }
         return object
@@ -272,9 +281,35 @@ final class ConformanceTests: XCTestCase {
         XCTAssertFalse(ConformanceRun.has([:], "expected"))
     }
 
-    /// The shape check's reader keeps every kind of value apart — the point
-    /// of reading the file a second time — and its pattern check does not
-    /// let a final line break through.
+    /// The cases are run from the file AS WRITTEN. A doctored copy of the
+    /// real file with one extra case whose input starts with U+FEFF (an
+    /// invisible character) and which expects plain `en` must FAIL: the
+    /// canonicaliser refuses a tag with a character outside ASCII. With the
+    /// runner's old second reading (`JSONSerialization`, which on macOS drops
+    /// that character) the case passed — the second independent review
+    /// planted exactly this. Both ways of writing the character are tried:
+    /// the JSON escape `\ufeff` and the character itself.
+    func test_runnerRunsTheFileAsWritten() throws {
+        let policy = try Self.policyUnderTest()
+        let dataVersion = try LanguageReferenceData.bundled.get().dataVersion
+        let original = try XCTUnwrap(String(data: try Self.loadData("bcp47-language-policy-v1.json"), encoding: .utf8))
+        let marker = "\"canonicalise\": ["
+        XCTAssertTrue(original.contains(marker), "the case file's canonicalise section")
+        for (label, input) in [("escaped", "\\ufeffen"), ("raw", "\u{FEFF}en")] {
+            let planted = #"{"id": "canon-99", "rules": ["LANG-001"], "input": ""# + input
+                + #"", "expected": "en", "kind": "ordinary"},"#
+            let doctored = original.replacingOccurrences(of: marker, with: marker + planted)
+            var run = ConformanceRun(policy: policy, schema: try Self.loadSchema())
+            _ = run.runFile(Data(doctored.utf8), dataVersion: dataVersion)
+            XCTAssertFalse(run.failures.contains { $0.contains("shape:") }, "\(label): the doctored copy is well formed")
+            XCTAssertTrue(run.failures.contains { $0.contains("canon-99") }, "\(label): the planted case must fail")
+            XCTAssertEqual(run.failures.count, 1, "\(label): only the planted case fails: \(run.failures)")
+        }
+    }
+
+    /// The shape check's reader keeps every kind of value apart — the reason
+    /// the file is read into `JSONValue` rather than plain dictionaries —
+    /// and its pattern check does not let a final line break through.
     func test_shapeReaderKeepsKindsApart() throws {
         let decoded = try JSONDecoder().decode(
             JSONValue.self, from: Data(#"{"a":{},"b":[],"c":true,"d":1,"e":1.5,"f":null,"g":"x"}"#.utf8)
@@ -374,13 +409,18 @@ struct ConformanceRun {
     /// the file is well formed — runs every case. Returns the number of cases
     /// in the file (for the "every case was run" check).
     mutating func runFile(_ data: Data, dataVersion: String) -> Int {
-        // Read twice: once to check its shape exactly (objects stay objects),
-        // once as plain dictionaries to run the cases from.
+        // Read ONCE: the shape check and the cases both work from this one
+        // reading (`JSONValue`, kept exact; the cases get it as plain
+        // dictionaries through `plainValue`). The file used to be read a
+        // second time with `JSONSerialization` to run the cases from — and on
+        // macOS that reader drops a leading U+FEFF from a string, so a case
+        // could run on a different input from the one checked (the second
+        // independent review's finding; `test_runnerRunsTheFileAsWritten`).
         let shaped: JSONValue
         let fixture: [String: Any]
         do {
             shaped = try JSONDecoder().decode(JSONValue.self, from: data)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let object = shaped.plainValue as? [String: Any] else {
                 fail("file", "is not a JSON object")
                 return 0
             }
