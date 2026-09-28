@@ -197,6 +197,15 @@ let package = Package(
             targets: ["ConverterEngine"]
         ),
 
+        // The Swift implementation of the shared language policy
+        // (MWBM-MEDIA-LANG, docs/standards/media-language-bcp47-policy.md).
+        // Vended on its own so a future MeedyaPlayer / MeedyaSubtitler can use
+        // it before it moves to a shared package (policy §9).
+        .library(
+            name: "MediaLanguagePolicy",
+            targets: ["MediaLanguagePolicy"]
+        ),
+
         // Command-line tool for headless / CI-driven transcoding.
         .executable(
             name: "meedya-convert",
@@ -299,6 +308,35 @@ let package = Package(
     // and any special build settings (e.g., Swift language mode).
     // ---------------------------------------------------------------------
     targets: [
+
+        // =================================================================
+        // MediaLanguagePolicy (Library)
+        // =================================================================
+        // The shared language policy MWBM-MEDIA-LANG 1.0.0 in Swift: canonical
+        // BCP 47 tags, reading old three-letter codes, stored (canonical) and
+        // menu (presentation) order, matching, automatic selection, sidecar
+        // names and localised names. The policy text is
+        // docs/standards/media-language-bcp47-policy.md (an exact copy of the
+        // master in MWBMPartners/MeedyaSuite-core).
+        //
+        // DEPENDS ON NOTHING BUT FOUNDATION — on purpose, so it builds and its
+        // tests run on Linux as well, and can move to a shared package later.
+        //
+        // Its one resource is the policy's reference data, an exact copy
+        // checked in CI by scripts/media-lang/check_copies.py. SwiftPM puts it
+        // in `MeedyaConverter_MediaLanguagePolicy.bundle`, which the release
+        // workflows copy into the .app and next to the command-line tool. The
+        // data's JSON Schema sits beside it and is excluded from the bundle.
+        // =================================================================
+        .target(
+            name: "MediaLanguagePolicy",
+            path: "Sources/MediaLanguagePolicy",
+            exclude: ["Resources/bcp47-language-data-v1.schema.json"],
+            resources: [
+                .copy("Resources/bcp47-language-data-v1.json"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
 
         // =================================================================
         // ConverterEngine (Library)

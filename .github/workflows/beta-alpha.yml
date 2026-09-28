@@ -246,6 +246,14 @@ jobs:
           if [ -f .build/release/meedya-convert ]; then
             cp .build/release/meedya-convert release-artifacts/
             echo "Copied meedya-convert CLI binary to release-artifacts/"
+            # The language policy's data bundle must sit NEXT TO the binary
+            # (the tool looks in its own folder). Fail closed if it is missing.
+            if [ -d .build/release/MeedyaConverter_MediaLanguagePolicy.bundle ]; then
+              cp -R .build/release/MeedyaConverter_MediaLanguagePolicy.bundle release-artifacts/
+            else
+              echo "::error::SwiftPM resource bundle missing at .build/release/MeedyaConverter_MediaLanguagePolicy.bundle"
+              exit 1
+            fi
           else
             echo "No CLI binary found -- creating placeholder artifact"
             echo "MeedyaConverter ${VERSION} (${CHANNEL})" > release-artifacts/VERSION.txt

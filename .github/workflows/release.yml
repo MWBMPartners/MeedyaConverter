@@ -378,6 +378,19 @@ jobs:
             exit 1
           fi
 
+          # The language policy's reference data (MWBM-MEDIA-LANG) is a SECOND
+          # SwiftPM resource bundle, MeedyaConverter_MediaLanguagePolicy.bundle,
+          # read whenever the engine reads or writes a track's language.
+          # Without it languages are kept as raw text and the app reports that
+          # the data is missing. Fail closed if it is missing.
+          POLICY_BUNDLE="${SWIFT_BIN}/${APP_NAME}_MediaLanguagePolicy.bundle"
+          if [ -d "${POLICY_BUNDLE}" ]; then
+            cp -R "${POLICY_BUNDLE}" "${APP_BUNDLE}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${POLICY_BUNDLE}"
+            exit 1
+          fi
+
           # Stage the AppleScript scripting definition at the top level of
           # Contents/Resources so the OSAScriptingDefinition Info.plist key
           # (#302) resolves it — inside the SwiftPM resource bundle it is nested
@@ -545,6 +558,16 @@ jobs:
           if [ -f "${SWIFT_BIN}/meedya-convert" ]; then
             mkdir -p cli-staging
             cp "${SWIFT_BIN}/meedya-convert" cli-staging/
+            # The language policy's data bundle must sit NEXT TO the binary:
+            # the tool looks for MeedyaConverter_MediaLanguagePolicy.bundle in
+            # its own folder. Fail closed if it is missing.
+            POLICY_BUNDLE="${SWIFT_BIN}/MeedyaConverter_MediaLanguagePolicy.bundle"
+            if [ -d "${POLICY_BUNDLE}" ]; then
+              cp -R "${POLICY_BUNDLE}" cli-staging/
+            else
+              echo "::error::SwiftPM resource bundle missing at ${POLICY_BUNDLE}"
+              exit 1
+            fi
             tar -czf "meedya-convert-${VERSION}-macOS.tar.gz" -C cli-staging .
             rm -rf cli-staging
             echo "CLI package created: meedya-convert-${VERSION}-macOS.tar.gz"

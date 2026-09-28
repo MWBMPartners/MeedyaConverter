@@ -181,6 +181,19 @@ jobs:
             exit 1
           fi
 
+          # The language policy's reference data (MWBM-MEDIA-LANG) is a SECOND
+          # SwiftPM resource bundle, MeedyaConverter_MediaLanguagePolicy.bundle,
+          # read whenever the engine reads or writes a track's language.
+          # Without it languages are kept as raw text and the app reports that
+          # the data is missing. Fail closed if it is missing.
+          POLICY_BUNDLE=".build/release/MeedyaConverter_MediaLanguagePolicy.bundle"
+          if [ -d "${POLICY_BUNDLE}" ]; then
+            cp -R "${POLICY_BUNDLE}" "${APP}/Contents/Resources/"
+          else
+            echo "::error::SwiftPM resource bundle missing at ${POLICY_BUNDLE}"
+            exit 1
+          fi
+
           # Info.plist: copy template verbatim, then drive version keys
           # with PlistBuddy. The previous sed-based CFBundleShortVersionString
           # substitution silently no-op'd whenever the template's placeholder
@@ -320,6 +333,14 @@ jobs:
 
             mkdir -p cli-staging
             cp .build/release/meedya-convert cli-staging/
+            # The language policy's data bundle must sit NEXT TO the binary
+            # (the tool looks in its own folder). Fail closed if it is missing.
+            if [ -d .build/release/MeedyaConverter_MediaLanguagePolicy.bundle ]; then
+              cp -R .build/release/MeedyaConverter_MediaLanguagePolicy.bundle cli-staging/
+            else
+              echo "::error::SwiftPM resource bundle missing at .build/release/MeedyaConverter_MediaLanguagePolicy.bundle"
+              exit 1
+            fi
             tar -czf "meedya-convert-${VERSION}-${SHORT_SHA}-macOS.tar.gz" -C cli-staging .
             rm -rf cli-staging
             echo "CLI packaged."
