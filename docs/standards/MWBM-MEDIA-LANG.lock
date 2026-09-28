@@ -1,0 +1,10 @@
+# MWBM-MEDIA-LANG copy lock. Written by scripts/media-lang/check_copies.py
+# --init / --update; do not edit by hand. Master: MWBMPartners/MeedyaSuite-core.
+policy MWBM-MEDIA-LANG 1.0.0
+source MWBMPartners/MeedyaSuite-core 968d820715ff24cb60559bed7fb3640bde13a1b5
+file bf1ce8da005d583165aa4a2f352a968888f2a210c4d4c84d86baa2bbe866f6f0 docs/standards/media-language-bcp47-policy.md docs/standards/media-language-bcp47-policy.md
+file 8cd9eb142828389bc7d9f725758f6c6baed27edb4006546ce149c9424fb601d4 Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.json tests/fixtures/bcp47-language-policy-v1.json
+file dbb9f6f9e8d9b040a0b9a337d148f57cae917815933b81c41d39bd7e29ce999a Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.schema.json tests/fixtures/bcp47-language-policy-v1.schema.json
+file 3eaaaf0935d5d90536dbcc809f39867f1b570cc1b1d29a3b77d0554e9e9c0c07 Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.json docs/standards/data/bcp47-language-data-v1.json
+file 34f652ba0738a748f88036b749a54de05270ced6e43543c3640af6af1bce7173 Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.schema.json docs/standards/data/bcp47-language-data-v1.schema.json
+file 7980c65c2ce7eebabfec5051e0605904e752240a2e773009f7255a867367f083 scripts/media-lang/check_copies.py scripts/media-lang/check_copies.py

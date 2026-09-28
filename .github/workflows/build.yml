@@ -102,6 +102,25 @@ jobs:
         run: swift --version
 
       # ---------------------------------------------------------------------
+      # Step 3: Check the language policy copies (MWBM-MEDIA-LANG)
+      # ---------------------------------------------------------------------
+      # This repository keeps exact copies of the shared language policy
+      # (docs/standards/media-language-bcp47-policy.md), its test cases
+      # (Tests/Fixtures/MediaLanguage/) and its reference data (bundled by the
+      # MediaLanguagePolicy target). The checker fails if a copy was edited
+      # here, if the lock leaves a file out, or if the pinned commit is not
+      # part of MeedyaSuite-core's own history or its files differ from the
+      # copies (it downloads them — the core repository is public). A lookup
+      # that cannot be made FAILS the step; it never passes silently. The
+      # token only raises GitHub's hourly limit for that lookup. Runs early
+      # because it is quick and needs nothing built.
+      # ---------------------------------------------------------------------
+      - name: Check language policy copies (MWBM-MEDIA-LANG)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/media-lang/check_copies.py
+
+      # ---------------------------------------------------------------------
       # Step 4: Cache Swift Package Manager dependencies
       # ---------------------------------------------------------------------
       # SPM downloads and builds resolved dependencies into .build/.

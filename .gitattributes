@@ -1,0 +1,13 @@
+# MWBM-MEDIA-LANG policy copies (docs/standards/MWBM-MEDIA-LANG.lock).
+# They must stay byte for byte identical to the masters in
+# MWBMPartners/MeedyaSuite-core — scripts/media-lang/check_copies.py compares
+# checksums in CI — so git must never convert their line endings (a Windows
+# checkout with core.autocrlf would otherwise fail the check). Never edit
+# these files here; change the master and run check_copies.py --update.
+docs/standards/media-language-bcp47-policy.md -text
+docs/standards/MWBM-MEDIA-LANG.lock -text
+Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.json -text
+Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.schema.json -text
+Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.json -text
+Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.schema.json -text
+scripts/media-lang/check_copies.py -text
