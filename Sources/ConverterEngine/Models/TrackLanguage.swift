@@ -16,8 +16,9 @@
 //
 // If the policy's reference data cannot be loaded (its resource bundle was
 // not shipped — a packaging mistake) the engine does NOT guess: language
-// values are kept exactly as the file gives them, and a warning is printed
-// once. The release workflows fail the build before that can ship.
+// values are kept exactly as the file gives them, and a warning is written
+// once to standard error (and shown in the app's Activity Log). The release
+// workflows fail the build before that can ship.
 // ============================================================================
 
 import Foundation
@@ -27,15 +28,30 @@ import MediaLanguagePolicy
 public enum TrackLanguage {
 
     /// The policy on its bundled data, or `nil` if the data is missing (see
-    /// the file header). Loaded once; the warning is printed once.
+    /// the file header). Loaded once; the warning (`dataProblem`) is written
+    /// once, to standard ERROR.
+    ///
+    /// It used to be `print`ed to standard OUTPUT, where it broke anything
+    /// reading that as data — `meedya-convert probe --format json` among
+    /// them — and the app never showed it (found in the independent review).
+    /// The app now shows `dataProblem` in its Activity Log at start.
     public static let policy: MediaLanguagePolicy? = {
         switch MediaLanguagePolicy.shared {
         case .success(let policy):
             return policy
-        case .failure(let error):
-            print("Warning: \(error) Track languages are kept exactly as each file gives them.")
+        case .failure:
+            FileHandle.standardError.write(Data("Warning: \(dataProblem ?? "")\n".utf8))
             return nil
         }
+    }()
+
+    /// What is wrong with the policy's data, in plain English, or `nil` when
+    /// it loaded. For a place a person will see it (the app's Activity Log);
+    /// `policy` also writes it once to standard error.
+    public static let dataProblem: String? = {
+        guard case .failure(let error) = MediaLanguagePolicy.shared else { return nil }
+        return "\(error) Track languages are kept exactly as each file gives them, and are not checked "
+            + "or put in the standard order. Reinstalling MeedyaConverter should fix this."
     }()
 
     /// A language value read from a file.

@@ -128,6 +128,17 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("fr", edited: "de", to: .mkv), .init(value: "ger", note: nil))
     }
 
+    // MARK: - The policy's data
+
+    /// With the data bundled (as in every test run and every shipped build),
+    /// there is no problem to report. When it is missing, `dataProblem` is
+    /// what the app shows and what goes to standard error — never standard
+    /// output, where it broke `probe --format json` (review item 13).
+    func test_noDataProblemWhenTheDataIsThere() {
+        XCTAssertNotNil(TrackLanguage.policy)
+        XCTAssertNil(TrackLanguage.dataProblem)
+    }
+
     // MARK: - Through the argument builder
 
     /// The whole path: an MKV with `yue`, `cmn`, `nan`, `deu` and an

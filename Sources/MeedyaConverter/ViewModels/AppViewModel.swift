@@ -762,6 +762,16 @@ final class AppViewModel {
             }
         }
 
+        // The language policy's reference data (MWBM-MEDIA-LANG) ships as a
+        // separate resource bundle. If it is missing — a packaging mistake —
+        // languages are kept as each file gives them and not checked or
+        // ordered. Say so where people look, not only on standard error
+        // (where `TrackLanguage.policy` also writes it), which the app never
+        // shows (independent review of the language policy work, item 13).
+        if let problem = TrackLanguage.dataProblem {
+            appendLog(.warning, problem, category: .stream)
+        }
+
         // Drain `engine.autoTagEvents` for the lifetime of this view model
         // and turn each one into an Activity Log line (#508 commit 8). This
         // is the ONLY reader of that stream — `AsyncStream` delivers each
