@@ -644,6 +644,14 @@ enum SettingsKeyScanMap {
         // SFTPProfileStore.userDefaultsKey`.
         "SFTPSettingsView.swift|Self.userDefaultsKey": .key("sftpProfiles"),
 
+        // Language policy work: `StreamDisposition.init(from:)` reads saved
+        // role flags leniently (a flag older data does not mention counts as
+        // off), through a small helper whose parameter is named `key`.
+        "StreamMetadataEditor.swift|key": .notUserDefaults(
+            reason: "A `Codable` coding key: `container.decodeIfPresent(Bool.self, forKey: key)` "
+                + "in `StreamDisposition.init(from:)` decodes a saved role flag, not a setting."
+        ),
+
         "ThumbnailCache.swift|key": .notUserDefaults(
             reason: "An `NSCache` of thumbnails (`object(forKey:)`, `setObject(_:forKey:cost:)`)."
         ),
