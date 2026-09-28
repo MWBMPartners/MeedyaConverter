@@ -297,4 +297,23 @@ final class StreamIndexSpaceTests: XCTestCase {
         config.audioStreamIndex = 0
         XCTAssertFalse(config.streamSelectionProblems().isEmpty, "#0 is video, not audio")
     }
+
+    /// A job saved before `sourceStreams` / `sourceStreamEdits` existed (the
+    /// queue, a batch file) still loads: both are optional, because
+    /// synthesised decoding requires every non-optional key.
+    func test_jobConfig_savedWithoutTheNewFieldsStillDecodes() throws {
+        var config = EncodingJobConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/in.mkv"),
+            outputURL: URL(fileURLWithPath: "/tmp/out.mkv"),
+            profile: EncodingProfile(name: "t", containerFormat: .mkv)
+        )
+        config.sourceStreams = film
+        config.sourceStreamEdits = [1: SourceStreamEdit(title: "x")]
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+        object.removeValue(forKey: "sourceStreams")
+        object.removeValue(forKey: "sourceStreamEdits")
+        let older = try JSONDecoder().decode(EncodingJobConfig.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(older.sourceStreams)
+        XCTAssertNil(older.sourceStreamEdits)
+    }
 }

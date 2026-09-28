@@ -1261,7 +1261,7 @@ final class AppViewModel {
         config.sourceStreams = file.streams
         // The stream editor's changes — only if they were made for this file.
         config.sourceStreamEdits = sourceStreamEdits(for: file)
-        if config.sourceStreamEdits.isEmpty, !sourceStreamEdits.isEmpty {
+        if (config.sourceStreamEdits ?? [:]).isEmpty, !sourceStreamEdits.isEmpty {
             appendLog(.warning, "Stream editor changes were made for another file and were not applied to \(file.fileName)", category: .metadata)
         }
         // Feed the queue optimiser's duration-based strategies (#326). The

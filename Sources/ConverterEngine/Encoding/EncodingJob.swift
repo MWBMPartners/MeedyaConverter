@@ -162,8 +162,13 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
 
     /// Changes made in the stream editor, keyed by the source stream's
     /// whole-file number (#530). Placed on the output stream each source
-    /// stream becomes; needs `sourceStreams`.
-    public var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
+    /// stream becomes; needs `sourceStreams`. `nil` means none.
+    ///
+    /// Optional ON PURPOSE: this type's `Codable` is synthesised, and a
+    /// synthesised decoder REQUIRES every non-optional stored property's key,
+    /// default value or not. An optional is decoded "if present", so jobs
+    /// saved — or batch files written — before this field existed still load.
+    public var sourceStreamEdits: [Int: SourceStreamEdit]? = nil
 
     public init(
         id: UUID = UUID(),
@@ -227,7 +232,7 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         // these the builder writes an explicit output stream plan and places
         // every per-stream setting on the output track it belongs to.
         builder.sourceStreams = sourceStreams
-        builder.sourceStreamEdits = sourceStreamEdits
+        builder.sourceStreamEdits = sourceStreamEdits ?? [:]
 
         // Apply metadata
         builder.metadata = outputMetadata
