@@ -1110,7 +1110,7 @@ public struct FFmpegArgumentBuilder: Sendable {
         var args: [String] = []
         if let plan, let sources = sourceStreamsByIndex {
             for (entry, specifier) in plan.entriesWithSpecifiers {
-                let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+                let facts = outputFacts(for: entry.sourceStreamIndex, sources: sources)
                 if let disposition = facts.disposition {
                     args.append(contentsOf: ["-disposition:\(specifier)", disposition.ffmpegValue])
                 }
@@ -1143,7 +1143,7 @@ public struct FFmpegArgumentBuilder: Sendable {
             let container = resolveContainerFormat()
             let fromSource = writesSourceDerivedStreamMetadata
             for (entry, specifier) in plan.entriesWithSpecifiers {
-                let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+                let facts = outputFacts(for: entry.sourceStreamIndex, sources: sources)
                 let edit = sourceStreamEdits[entry.sourceStreamIndex]
 
                 // Language: in the form the container's field needs — the

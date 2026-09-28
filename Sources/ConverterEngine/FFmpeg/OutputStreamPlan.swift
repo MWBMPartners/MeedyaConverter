@@ -363,7 +363,7 @@ extension FFmpegArgumentBuilder {
     func orderedCanonically(_ entries: [OutputStreamPlan.Entry], sources: [Int: MediaStream]) -> [OutputStreamPlan.Entry] {
         guard orderTracksCanonically, let policy = TrackLanguage.policy else { return entries }
         let items = entries.map { entry -> CanonicalOrderItem in
-            let facts = outputFacts(for: entry.sourceStreamIndex, type: entry.streamType, sources: sources)
+            let facts = outputFacts(for: entry.sourceStreamIndex, sources: sources)
             return CanonicalOrderItem(
                 // A track with no language at all sorts with "not known"
                 // (LANG-003), never as a real language.
@@ -382,7 +382,6 @@ extension FFmpegArgumentBuilder {
     /// before roles were kept) nor the editor says anything about roles.
     func outputFacts(
         for index: Int,
-        type: StreamType,
         sources: [Int: MediaStream]
     ) -> (language: String?, disposition: StreamDisposition?, sourceTitle: String?) {
         let source = sources[index]
