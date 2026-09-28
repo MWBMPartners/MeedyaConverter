@@ -884,7 +884,10 @@ build). A test harness MUST also fail, rather than report success, when
 the case file has a section it does not know, a section it needs is
 missing or empty, or a case lacks a field the schema requires — a harness
 that quietly runs fewer checks than the file holds is how a broken
-implementation passes.
+implementation passes. A case marked `"error": true` checks a refusal the
+rules require (a sidecar number the builder must refuse, duplicate track
+identifiers): the implementation passes only if it refuses with an error;
+returning any value fails the case.
 
 ### 8.2 The reference data
 

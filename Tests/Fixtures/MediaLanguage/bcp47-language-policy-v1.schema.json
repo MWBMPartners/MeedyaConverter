@@ -265,15 +265,55 @@
                   "integer",
                   "null"
                 ],
-                "minimum": 2,
-                "description": "The clash-avoiding number (2 to 999999999), or null. A builder refuses anything else.",
-                "maximum": 999999999
+                "description": "The clash-avoiding number, or null. Valid numbers are 2 to 999999999; any other number must be refused (such cases carry error: true)."
               },
               "expected": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The file name, or null when the case carries error: true."
+              },
+              "error": {
+                "const": true,
+                "description": "The implementation MUST refuse this input with an error (an exception, a Rust Err, a Swift throw). Returning any value — even the one in 'expected' — fails the case. When present, 'expected' is null."
+              },
+              "description": {
                 "type": "string",
-                "description": "The file name."
+                "description": "What the case shows, in plain words."
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "error"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "expected": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 2,
+                      "maximum": 999999999
+                    }
+                  }
+                }
+              }
+            ]
           },
           {
             "type": "object",
@@ -640,10 +680,33 @@
             "description": "Audio tracks, in file order."
           },
           "expected": {
-            "type": "string",
-            "description": "Identifier of the track chosen."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identifier of the track chosen, or null when the case carries error: true."
+          },
+          "error": {
+            "const": true,
+            "description": "The implementation MUST refuse this input with an error (an exception, a Rust Err, a Swift throw). Returning any value — even the one in 'expected' — fails the case. When present, 'expected' is null."
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "expected": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
       },
       "minItems": 1
     },
@@ -710,8 +773,28 @@
               "null"
             ],
             "description": "Identifier of the subtitle track chosen, or null for none."
+          },
+          "error": {
+            "const": true,
+            "description": "The implementation MUST refuse this input with an error (an exception, a Rust Err, a Swift throw). Returning any value — even the one in 'expected' — fails the case. When present, 'expected' is null."
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "error"
+              ]
+            },
+            "then": {
+              "properties": {
+                "expected": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
       },
       "minItems": 1
     }
@@ -822,7 +905,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Track identifier; the final tie-break (AUTO-010): identifiers of ASCII digits only come first, ordered as numbers and then as plain text; all others follow in plain-text order. Identifiers are unique within a case."
+          "description": "Track identifier; the final tie-break (AUTO-010): identifiers of ASCII digits only come first, ordered as numbers and then as plain text; all others follow in plain-text order. Identifiers are unique within a case, except in cases that carry error: true to check that duplicates are refused."
         },
         "tag": {
           "type": "string",

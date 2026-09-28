@@ -1420,6 +1420,66 @@
         "number": 999999999,
         "extension": "srt"
       }
+    },
+    {
+      "id": "sidecar-23",
+      "rules": [
+        "TEXT-030"
+      ],
+      "mode": "build",
+      "stem": "Film",
+      "tag": "en",
+      "roles": [],
+      "extension": "srt",
+      "number": 1,
+      "expected": null,
+      "error": true,
+      "description": "A builder refuses 1: numbering starts at the second file"
+    },
+    {
+      "id": "sidecar-24",
+      "rules": [
+        "TEXT-030"
+      ],
+      "mode": "build",
+      "stem": "Film",
+      "tag": "en",
+      "roles": [],
+      "extension": "srt",
+      "number": 0,
+      "expected": null,
+      "error": true,
+      "description": "A builder refuses 0"
+    },
+    {
+      "id": "sidecar-25",
+      "rules": [
+        "TEXT-030"
+      ],
+      "mode": "build",
+      "stem": "Film",
+      "tag": "en",
+      "roles": [],
+      "extension": "srt",
+      "number": -1,
+      "expected": null,
+      "error": true,
+      "description": "A builder refuses a negative number"
+    },
+    {
+      "id": "sidecar-26",
+      "rules": [
+        "TEXT-030"
+      ],
+      "mode": "build",
+      "stem": "Film",
+      "tag": "en",
+      "roles": [],
+      "extension": "srt",
+      "number": 1000000000,
+      "expected": null,
+      "error": true,
+      "description": "A builder refuses more than nine digits, which a reader could not read back"
     }
   ],
   "canonical_order": [
@@ -4423,6 +4483,31 @@
         }
       ],
       "expected": "01"
+    },
+    {
+      "id": "audio-20",
+      "rules": [
+        "AUTO-010"
+      ],
+      "description": "Two tracks with the same identifier: refuse rather than guess",
+      "preferences": [
+        "en"
+      ],
+      "accessibility": {},
+      "tracks": [
+        {
+          "id": "t1",
+          "tag": "en",
+          "roles": []
+        },
+        {
+          "id": "t1",
+          "tag": "fr",
+          "roles": []
+        }
+      ],
+      "expected": null,
+      "error": true
     }
   ],
   "auto_select_subtitle": [
@@ -4945,6 +5030,33 @@
         }
       ],
       "expected": "s2"
+    },
+    {
+      "id": "subs-20",
+      "rules": [
+        "AUTO-010"
+      ],
+      "description": "Two tracks with the same identifier: refuse rather than guess",
+      "mode": "always",
+      "preferences": [
+        "en"
+      ],
+      "accessibility": {},
+      "audio": "ja",
+      "tracks": [
+        {
+          "id": "s1",
+          "tag": "en",
+          "roles": []
+        },
+        {
+          "id": "s1",
+          "tag": "fr",
+          "roles": []
+        }
+      ],
+      "expected": null,
+      "error": true
     }
   ]
 }
