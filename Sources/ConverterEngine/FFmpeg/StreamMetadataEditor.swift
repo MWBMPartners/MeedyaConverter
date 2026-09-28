@@ -517,8 +517,12 @@ public struct StreamMetadataEditor: Sendable {
     /// English for the stream editor to show before Apply, or `nil` when it
     /// keeps all of it. Old three-letter fields (Matroska, MP4 …) hold only
     /// the language: "This file type can only store the language, so “GB”
-    /// will not be saved." The same answer as the job's log gives
-    /// (`TrackLanguage.editedLanguageField`).
+    /// will not be saved." — and that is what `und-GB` gets too (the round-2
+    /// build said `und-GB` "has no three-letter code"; it is the REGION that
+    /// cannot be stored). MOV stores only the languages on its old QuickTime
+    /// list, and some file types store no language at all. The same answer
+    /// as the job's log gives (`TrackLanguage.editedLanguageField`, which
+    /// reads the one table of what each file type stores).
     public static func storageNote(for tag: String, in container: ContainerFormat?) -> String? {
         guard let field = TrackLanguage.editedLanguageField(tag, in: container) else { return nil }
         switch field.limit {
@@ -529,6 +533,12 @@ public struct StreamMetadataEditor: Sendable {
                 + "so it will be saved as “und” (not known)."
         case .losesParts(let lost, _):
             return "This file type can only store the language, so “\(lost)” will not be saved."
+        case .cannotStore(let canonical):
+            if TrackLanguage.languageFieldStorage(for: container) == .nothing {
+                return "This file type has no place for a track's language, so it will not be saved."
+            }
+            return "This file type (QuickTime) can only store the languages on its old list, and “\(canonical)” "
+                + "is not on it, so no language will be saved."
         }
     }
 

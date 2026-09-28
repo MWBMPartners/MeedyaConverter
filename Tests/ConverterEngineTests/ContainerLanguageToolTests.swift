@@ -9,12 +9,24 @@
 // over time. Each project MUST check them against the tool it actually runs,
 // with a test, rather than rely on this table." This is that test.
 //
-// It makes a tiny two-track source with the ffmpeg on this machine, probes
-// it with FFmpegProbe, builds MeedyaConverter's own arguments for a Matroska
-// and an MP4 output, runs ffmpeg with them, and reads the results back with
-// ffprobe. It checks exactly the facts `TrackLanguage.LanguageFieldForm`
-// relies on. Skipped (not failed) when no ffmpeg/ffprobe is installed, per
-// CONTRIBUTING's rule for tests that need FFmpeg.
+// Two checks, both with the ffmpeg on this machine:
+//
+//   * `test_eachFileTypeStoresWhatTheTableSays`: for every file type in
+//     `TrackLanguage.LanguageFieldStorage` that ffmpeg can write from a plain
+//     audio track, it writes a set of language values (`ger`, `deu`, `fr-CA`,
+//     `romanian`, `yue`, `ENG`, `und`, `hr `, `e_g`, `eng,fre`) and reads each
+//     back with ffprobe, and requires exactly what the table says is stored.
+//     The second independent review found the round-2 notes saying "kept as
+//     the source had it" where MP4 had cut the value, and MPEG-TS and MOV had
+//     dropped it — the table did not exist, so nothing checked it.
+//   * `test_ffmpegWritesTheLanguageFieldsWeRelyOn`: a tiny two-track source,
+//     probed with FFmpegProbe, converted with MeedyaConverter's own arguments
+//     to Matroska, MP4 and MOV, and read back.
+//
+// Skipped (not failed) when no ffmpeg/ffprobe is installed, per CONTRIBUTING's
+// rule for tests that need FFmpeg. DASH, HLS and MXF were checked by hand
+// (28 Sept 2026, ffmpeg 9.0.1), not here: they need a folder of segments or a
+// video track.
 //
 // First run 28 Sept 2026 with ffmpeg 9.0.1 (Homebrew): passed. It also
 // prints whether the Matroska output holds a `LanguageBCP47` element — ffmpeg
@@ -65,6 +77,71 @@ final class ContainerLanguageToolTests: XCTestCase {
         return object?["streams"] as? [[String: Any]] ?? []
     }
 
+    // MARK: - The table of what each file type stores
+
+    /// Whether this ffmpeg has the named encoder.
+    private func hasEncoder(_ ffmpeg: String, _ name: String) throws -> Bool {
+        let listed = try run(ffmpeg, ["-hide_banner", "-encoders"])
+        return String(bytes: listed.output, encoding: .utf8)?.contains(" \(name) ") ?? false
+    }
+
+    func test_eachFileTypeStoresWhatTheTableSays() throws {
+        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
+            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meedya-lang-table-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        // Each file type: its ffmpeg writer, a file extension, and an audio
+        // encoder that writer takes (all built into ffmpeg, except WebM's).
+        var rows: [(ContainerFormat, String, String, [String])] = [
+            (.mkv, "matroska", "mkv", ["-c:a", "aac"]),
+            (.mp4, "mp4", "mp4", ["-c:a", "aac"]),
+            (.threeGP, "3gp", "3gp", ["-c:a", "aac"]),
+            (.mov, "mov", "mov", ["-c:a", "aac"]),
+            (.mpegTS, "mpegts", "ts", ["-c:a", "aac"]),
+            (.ogg, "ogg", "ogg", ["-c:a", "flac"]),
+            (.avi, "avi", "avi", ["-c:a", "pcm_s16le"]),
+            (.flv, "flv", "flv", ["-c:a", "aac"]),
+            (.mpegPS, "mpeg", "mpg", ["-c:a", "mp2"]),
+            (.aiff, "aiff", "aiff", ["-c:a", "pcm_s16be"]),
+            (.caf, "caf", "caf", ["-c:a", "pcm_s16le"]),
+            (.w64, "w64", "w64", ["-c:a", "pcm_s16le"])
+        ]
+        if try hasEncoder(ffmpeg, "libopus") {
+            rows.append((.webm, "webm", "webm", ["-c:a", "libopus"]))
+        }
+        let values = ["ger", "deu", "fr-CA", "romanian", "yue", "ENG", "und", "hr ", "e_g", "eng,fre"]
+        var mismatches: [String] = []
+        for (container, muxer, fileExtension, codec) in rows {
+            let storage = TrackLanguage.languageFieldStorage(for: container)
+            for (index, value) in values.enumerated() {
+                let output = folder.appendingPathComponent("v\(index).\(fileExtension)")
+                let made = try run(ffmpeg, [
+                    "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2"
+                ] + codec + ["-metadata:s:a:0", "language=\(value)", "-f", muxer, output.path])
+                guard made.status == 0 else {
+                    mismatches.append("\(container): ffmpeg could not write “\(value)”")
+                    continue
+                }
+                let streams = try rawStreams(ffprobe, output)
+                let read = (streams.first?["tags"] as? [String: Any])?["language"] as? String
+                var expected = storage.stored(value)
+                // ffmpeg's Matroska reader reports a stored `und` as no
+                // language at all (it is also RFC 9559's "not known").
+                if storage == .anyText, container != .ogg, expected == "und" { expected = nil }
+                if read != expected {
+                    mismatches.append("\(container): “\(value)” read back as \(read.map { "“\($0)”" } ?? "nothing"), "
+                        + "the table says \(expected.map { "“\($0)”" } ?? "nothing")")
+                }
+            }
+        }
+        XCTAssertEqual(mismatches, [], "what ffmpeg stores differs from TrackLanguage.LanguageFieldStorage")
+        print("TRACK-070 table check: \(rows.count) file types × \(values.count) values, \(mismatches.count) mismatches")
+    }
+
     // MARK: - The check
 
     func test_ffmpegWritesTheLanguageFieldsWeRelyOn() async throws {
@@ -95,7 +172,9 @@ final class ContainerLanguageToolTests: XCTestCase {
         XCTAssertEqual(probed.streams.map(\.language), ["de", "ja"])
         XCTAssertEqual(probed.streams.map(\.isOriginalLanguage), [false, true])
 
-        for (name, expectedCodes) in [("out.mkv", ["jpn", "ger"]), ("out.mp4", ["jpn", "deu"])] {
+        // MOV gets the QuickTime list's entries — `ger`, not `deu`, which
+        // MOV's writer drops (the second review's finding).
+        for (name, expectedCodes) in [("out.mkv", ["jpn", "ger"]), ("out.mp4", ["jpn", "deu"]), ("out.mov", ["jpn", "ger"])] {
             let output = folder.appendingPathComponent(name)
             var builder = FFmpegArgumentBuilder()
             builder.inputURL = source
@@ -112,7 +191,14 @@ final class ContainerLanguageToolTests: XCTestCase {
             // three-letter code in the form this container needs.
             XCTAssertEqual(codes, expectedCodes, "\(name): language fields as ffprobe reads them")
             let comment = streams.map { ($0["disposition"] as? [String: Any])?["comment"] as? Int }
-            XCTAssertEqual(comment, [0, 1], "\(name): the commentary role survives")
+            if name == "out.mov" {
+                // ffmpeg's MOV writer keeps no role but "default" (checked
+                // with 9.0.1). Recorded here so a change in ffmpeg shows up;
+                // reporting the loss in the job's notes is issue #541.
+                XCTAssertEqual(comment, [0, 0], "\(name): MOV cannot keep the commentary role (#541)")
+            } else {
+                XCTAssertEqual(comment, [0, 1], "\(name): the commentary role survives")
+            }
 
             if name == "out.mkv" {
                 let titles = streams.map { ($0["tags"] as? [String: Any])?["title"] as? String }

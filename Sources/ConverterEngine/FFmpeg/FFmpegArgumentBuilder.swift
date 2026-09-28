@@ -1188,11 +1188,14 @@ public struct FFmpegArgumentBuilder: Sendable {
 
                 // Language: in the form the container's field needs — the
                 // bibliographic three-letter code for Matroska, terminology
-                // for MP4/MOV, the full tag for Ogg — EXCEPT where that form
-                // would lose what the source had (a language with no
-                // three-letter code, an unrecognised value, a region in
-                // Matroska): then nothing is written and ffmpeg copies the
-                // source's own value. See `languageWrite(for:…)`.
+                // for MP4, the QuickTime list's entry for MOV, the full tag
+                // for Ogg — EXCEPT where that would lose what the source had
+                // (a language with no three-letter code, an unrecognised
+                // value, a region in Matroska): then the source's own text is
+                // kept, but only where this file type's writer really stores
+                // it; otherwise `und`, with a note saying why. Nothing is
+                // written when `value` is nil. See `languageWrite(for:…)` and
+                // `TrackLanguage.LanguageFieldStorage`.
                 if let value = languageWrite(for: entry, sources: sources, container: container).value {
                     args.append(contentsOf: ["-metadata:s:\(specifier)", "language=\(value)"])
                 }
@@ -1242,6 +1245,7 @@ public struct FFmpegArgumentBuilder: Sendable {
             edited: sourceStreamEdits[entry.sourceStreamIndex]?.language,
             sourceLanguage: source?.language,
             sourceUnrecognised: source?.unrecognisedLanguage,
+            sourceStoredText: source?.languageAsStored,
             container: container,
             isReplacement: entry.isReplacement,
             keepsSourceMetadata: writesSourceDerivedStreamMetadata

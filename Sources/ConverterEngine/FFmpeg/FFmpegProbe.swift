@@ -714,9 +714,8 @@ public final class FFmpegProbe: Sendable {
         // `ger`/`deu` → `de`, `fre-ca` → `fr-CA`. A value it cannot recognise
         // is stored as `und` with the text kept, never guessed (COMPAT-040).
         // Sanitised first, so the kept text is safe to show.
-        let languageReading = (tags["language"] as? String)
-            .map(MetadataSanitizer.sanitize)
-            .map { TrackLanguage.read(fileValue: $0) }
+        let languageText = (tags["language"] as? String).map(MetadataSanitizer.sanitize)
+        let languageReading = languageText.map { TrackLanguage.read(fileValue: $0) }
 
         // Every disposition, not just default/forced (TRACK-010/040): the
         // original-language marker, commentary, SDH/captions, audio
@@ -837,6 +836,9 @@ public final class FFmpegProbe: Sendable {
             duration: duration,
             language: languageReading?.language,
             unrecognisedLanguage: languageReading?.unrecognised,
+            // The text itself, which is what ffmpeg copies (see
+            // `MediaStream.languageAsStored`).
+            languageAsStored: languageText,
             title: title,
             isDefault: isDefault,
             isForced: isForced,

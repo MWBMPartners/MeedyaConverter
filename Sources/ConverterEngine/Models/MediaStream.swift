@@ -293,6 +293,17 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// fix it (COMPAT-040). `nil` when the language was read, or absent.
     public var unrecognisedLanguage: String?
 
+    /// The text the file's language field holds, exactly as ffprobe read it
+    /// (`ger`, `fre-ca`, `romanian`) — which is what ffmpeg COPIES into an
+    /// output when it is given no language of its own. `language` is what
+    /// that text (or, for Matroska, the full-tag field) MEANS; this is what
+    /// it SAYS. The argument builder uses it to tell whether leaving a value
+    /// for ffmpeg to copy really keeps the language (`TrackLanguage
+    /// .languageWrite`). `nil` when the file states none, and for streams
+    /// described before this was kept (saved jobs) — then `language` stands
+    /// in for it. Sanitised by the probe, like the title.
+    public var languageAsStored: String?
+
     /// User-facing title/label for this stream (e.g., "Director's Commentary").
     public var title: String?
 
@@ -405,6 +416,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         duration: TimeInterval? = nil,
         language: String? = nil,
         unrecognisedLanguage: String? = nil,
+        languageAsStored: String? = nil,
         title: String? = nil,
         isDefault: Bool = false,
         isForced: Bool = false,
@@ -439,6 +451,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.duration = duration
         self.language = language
         self.unrecognisedLanguage = unrecognisedLanguage
+        self.languageAsStored = languageAsStored
         self.title = title
         self.isDefault = isDefault
         self.isForced = isForced

@@ -234,7 +234,9 @@ final class AttachedPictureTests: XCTestCase {
             XCTAssertEqual(maps(args), ["0:0", "0:1"], "\(output): the picture is not mapped")
             XCTAssertFalse(args.contains("-attach"), output)
             XCTAssertFalse(pairs(args, "-disposition").contains { $0.contains("attached_pic") }, output)
-            XCTAssertEqual(builder.trackWritingNotes(), [
+            // (AVI and MPEG-PS also say the English track's language cannot
+            // be kept — they have no place for one; LanguageFieldTests.)
+            XCTAssertEqual(builder.trackWritingNotes().filter { $0.contains("picture attached") }, [
                 "Stream #2 is a picture attached to the file (cover art). ffmpeg cannot write pictures into this "
                     + "file type (\(name)), so it is left out."
             ], output)
