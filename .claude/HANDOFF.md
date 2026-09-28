@@ -86,6 +86,16 @@ writes one).
   the first): canonical tie-breaks in automatic selection use real TRACK-050 role
   ranks; malformed preferences are ignored in automatic selection too.
 
+**Next step once MeedyaSuite-core merges the policy:** the lock is pinned to
+`f2e106a…`, which today is ONLY on core's `feature/bcp47-language-policy` branch
+(the checker approves that branch for now). After core merges it, run
+`python3 scripts/media-lang/check_copies.py --update <the commit on core main>`
+and commit the lock. If core SQUASH-merges and then deletes the feature branch,
+`f2e106a…` stops being part of an approved branch's history and this repository's
+CI copy check will FAIL until that update is made — so do it promptly.
+(The CI step already passes `GITHUB_TOKEN` and the workflow declares
+`permissions: contents: read`; `actions/checkout` stays at the repo's `v7.0.1`.)
+
 **Follow-ups to raise (not built — W4):**
 1. Matroska `LanguageBCP47`: a post-pass (mkvpropedit, or our own EBML writer) to
    write it, and reading it on probe (ffprobe ignores it).
