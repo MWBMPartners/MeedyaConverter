@@ -12,8 +12,8 @@ Previous: 2026-09-28 (language policy round 1) · 2026-09-25 14:55
 
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
 `5d2223c`. **Round 1 is pushed** (head `28efa6f`, CI green). **Round 2** — the fixes
-for what the independent review found (see "ROUND 2" below) — is 11 LOCAL commits
-on top (`23165c9` … the docs commit), **not pushed**; the orchestrator pushes after
+for what the independent review found (see "ROUND 2" below) — is 13 LOCAL commits
+on top (`23165c9` … `2b64022` docs, plus this correction), **not pushed**; the orchestrator pushes after
 reviewing them (a push to `wip/**` triggers CI, the only place `swift test` runs).
 Everything in the "CURRENT STATE" block further down is about
 `wip/alpha-consolidation` and is unchanged by this work.
@@ -53,7 +53,7 @@ tracks and roles"; packaging note in `DEV_NOTES.md` → CI/CD Workflows.
 | R2-9 | ASCII-only grandfathered lookup | #531 | Done locally — `df63f41` | item 11 |
 | R2-10 | Every stale per-stream setting reported | #531 | Done locally — `e29e9a2` | item 12 |
 | R2-11 | "Data missing" warning to stderr and the app | #531 | Done locally — `87cdf7d` | item 13 |
-| R2-12 | Docs (CHANGELOG, Architecture, CLI docs, API yaml, DEV_NOTES) + this handoff | #531 | Done locally — the round's `docs:` commit | items 6, 7, 17 |
+| R2-12 | Docs (CHANGELOG, Architecture, CLI docs, API yaml, DEV_NOTES) + this handoff | #531 | Done locally — `2b64022` | items 6, 7, 17 |
 | R2-13 | Push + CI to green; review of round 2 (W13) | — | Queued — orchestrator | round 2 is not independently reviewed yet |
 
 **Verified here (28 Sept), and how:**
