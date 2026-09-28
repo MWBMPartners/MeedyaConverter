@@ -170,6 +170,14 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// saved — or batch files written — before this field existed still load.
     public var sourceStreamEdits: [Int: SourceStreamEdit]?
 
+    /// Copies of the source's attached pictures (cover art), keyed by source
+    /// stream number, made by `EncodingEngine.encode` in its temporary
+    /// folder just before it builds the command — so a Matroska output can
+    /// keep each picture as an attachment (see `AttachedPictures`). Not
+    /// something to fill in by hand; `nil` means none. Optional for the same
+    /// reason as `sourceStreamEdits`.
+    public var attachedPictureFiles: [Int: URL]?
+
     public init(
         id: UUID = UUID(),
         inputURL: URL,
@@ -233,6 +241,7 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         // every per-stream setting on the output track it belongs to.
         builder.sourceStreams = sourceStreams
         builder.sourceStreamEdits = sourceStreamEdits ?? [:]
+        builder.attachedPictureFiles = attachedPictureFiles ?? [:]
 
         // Apply metadata
         builder.metadata = outputMetadata
@@ -283,6 +292,21 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// not of the right type) — skipped, and worth telling the user about.
     public func skippedStreamSettings() -> [String] {
         configuredBuilder().skippedStreamSettings()
+    }
+
+    /// What this job's output will keep differently from the source, and
+    /// why, in plain English (see `FFmpegArgumentBuilder.trackWritingNotes()`).
+    /// `EncodingEngine.encode` publishes each on `jobNotices`.
+    public func trackWritingNotes() -> [String] {
+        configuredBuilder().trackWritingNotes()
+    }
+
+    /// The attached pictures (cover art) this job's output can only keep as
+    /// attachments — a Matroska output — with the file extension each copy
+    /// should have. `EncodingEngine.encode` copies them out of the source
+    /// into `attachedPictureFiles` before building the command.
+    public func attachedPicturesNeedingCopies() -> [(streamIndex: Int, fileExtension: String)] {
+        configuredBuilder().attachedPicturesNeedingCopies()
     }
 }
 

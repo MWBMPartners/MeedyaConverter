@@ -309,6 +309,20 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// existed (saved data) — then only those two are known.
     public var disposition: StreamDisposition?
 
+    /// For a picture attached to the file (cover art —
+    /// `disposition?.isAttachedPicture`): the file name the file gives it.
+    /// Matroska attachments carry one (`cover.jpg`); MP4 cover art has none.
+    /// Kept so a Matroska output can attach the picture again under the SAME
+    /// name — which matters, because Matroska's cover-art convention reads
+    /// meaning from the name (`cover.jpg`, `small_cover.jpg`,
+    /// `cover_land.jpg`). `nil` when the file gives none. Sanitised by the
+    /// probe, like the title.
+    public var attachmentFileName: String?
+
+    /// For an attached picture: the MIME type the file gives it
+    /// (`image/jpeg`), or `nil` when it gives none. See `attachmentFileName`.
+    public var attachmentMimeType: String?
+
     /// Whether this stream is enabled (some containers support disabled streams).
     public var isEnabled: Bool
 
@@ -395,6 +409,8 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         isDefault: Bool = false,
         isForced: Bool = false,
         disposition: StreamDisposition? = nil,
+        attachmentFileName: String? = nil,
+        attachmentMimeType: String? = nil,
         isEnabled: Bool = true,
         width: Int? = nil,
         height: Int? = nil,
@@ -427,6 +443,8 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.isDefault = isDefault
         self.isForced = isForced
         self.disposition = disposition
+        self.attachmentFileName = attachmentFileName
+        self.attachmentMimeType = attachmentMimeType
         self.isEnabled = isEnabled
         self.width = width
         self.height = height

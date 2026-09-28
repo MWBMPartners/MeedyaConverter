@@ -50,6 +50,17 @@ public struct DispositionEdit: Codable, Sendable {
 /// words in a title). ffmpeg maps them to Matroska's flags (FlagOriginal,
 /// FlagCommentary, FlagHearingImpaired, FlagVisualImpaired,
 /// FlagTextDescriptions …) and to MP4's `kind` boxes where those exist.
+///
+/// NOTHING A FILE SAYS IS DROPPED HERE. Besides the role flags a person can
+/// change in the stream editor, this keeps `attached_pic` (cover art) and,
+/// by name, every other flag ffprobe reports as set (`still_image`,
+/// `timed_thumbnails`, `dependent`, `non_diegetic`, `metadata`,
+/// `multilayer`, and any a later ffmpeg adds). `ffmpegValue` writes all of
+/// them back. Until the second review round of the language policy work it
+/// kept only the twelve role flags, so the `-disposition` the argument
+/// builder wrote for every output stream CLEARED everything else: an M4A's
+/// cover art came out of "Remux to MP4" as a plain, default video track
+/// placed before the audio (policy COMPAT-030: keep valid metadata).
 public struct StreamDisposition: Codable, Sendable, Equatable {
     public var isDefault: Bool
     public var isDub: Bool
@@ -65,6 +76,19 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
     /// ffmpeg's `captions` flag (closed captions — an SDH role, TRACK-010).
     /// Added with the language policy work; older saved data has none.
     public var isCaptions: Bool
+    /// ffmpeg's `attached_pic`: this "video stream" is a picture attached to
+    /// the file — an album's cover art, a film's poster — not a track.
+    /// Matroska stores such a picture as an attachment and MP4 as the `covr`
+    /// item; ffmpeg only treats it that way while the flag is set. Added in
+    /// the second review round; older saved data has none.
+    public var isAttachedPicture: Bool
+    /// Every OTHER flag the file sets, by ffmpeg's own name (`still_image`,
+    /// `timed_thumbnails`, `dependent`, `non_diegetic`, `metadata`,
+    /// `multilayer`, and any a later ffmpeg adds) — carried through so a
+    /// copy or conversion writes them back. Sorted and without duplicates,
+    /// so the same flags always give the same command line. Nothing in the
+    /// app lets a person change these. Older saved data has none.
+    public private(set) var otherFlags: [String]
 
     public init(
         isDefault: Bool = false,
@@ -78,7 +102,9 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         isVisualImpaired: Bool = false,
         isCleanEffects: Bool = false,
         isDescriptions: Bool = false,
-        isCaptions: Bool = false
+        isCaptions: Bool = false,
+        isAttachedPicture: Bool = false,
+        otherFlags: [String] = []
     ) {
         self.isDefault = isDefault
         self.isDub = isDub
@@ -92,14 +118,43 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         self.isCleanEffects = isCleanEffects
         self.isDescriptions = isDescriptions
         self.isCaptions = isCaptions
+        self.isAttachedPicture = isAttachedPicture
+        self.otherFlags = Self.normalisedOtherFlags(otherFlags)
+    }
+
+    /// The names of the flags this type has a property for, in the order
+    /// `ffmpegValue` writes them. Every other set flag goes to `otherFlags`.
+    static let modelledFlagNames: [String] = [
+        "default", "dub", "original", "comment", "lyrics", "karaoke", "forced",
+        "hearing_impaired", "visual_impaired", "clean_effects", "descriptions",
+        "captions", "attached_pic"
+    ]
+
+    /// `otherFlags` as stored: only names that look like ffmpeg's own flag
+    /// names (lower-case letters, digits, underscores — so a hand-edited
+    /// saved job cannot slip anything else into a `-disposition` value), none
+    /// of the modelled ones, sorted, without duplicates.
+    private static func normalisedOtherFlags(_ flags: [String]) -> [String] {
+        let modelled = Set(modelledFlagNames)
+        let valid = flags.filter { name in
+            !name.isEmpty && !modelled.contains(name)
+                && name.unicodeScalars.allSatisfy { scalar in
+                    (0x61...0x7A).contains(scalar.value) || (0x30...0x39).contains(scalar.value) || scalar.value == 0x5F
+                }
+        }
+        return Array(Set(valid)).sorted()
     }
 
     /// Reads ffprobe's per-stream `disposition` object (`"default": 1,
-    /// "forced": 0, …`). A flag ffprobe did not report counts as off.
+    /// "forced": 0, …`). A flag ffprobe did not report counts as off; a flag
+    /// it reports as set that this type has no property for is kept by name
+    /// in `otherFlags`.
     ///
     /// Until the language policy work the probe read only `default` and
     /// `forced`, so original, commentary, SDH, captions, audio description
     /// and text descriptions were dropped on every re-encode (TRACK-040).
+    /// Until its second review round `attached_pic` and the rest were still
+    /// dropped (see the type's comment).
     public init(ffprobe disposition: [String: Any]) {
         func flag(_ key: String) -> Bool { (disposition[key] as? Int) == 1 }
         self.init(
@@ -114,12 +169,15 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
             isVisualImpaired: flag("visual_impaired"),
             isCleanEffects: flag("clean_effects"),
             isDescriptions: flag("descriptions"),
-            isCaptions: flag("captions")
+            isCaptions: flag("captions"),
+            isAttachedPicture: flag("attached_pic"),
+            otherFlags: disposition.keys.filter { flag($0) }
         )
     }
 
     /// Decodes saved data, treating any flag the data does not mention as
-    /// off — so data saved before a flag existed (`isCaptions`) still loads.
+    /// off — so data saved before a flag existed (`isCaptions`,
+    /// `isAttachedPicture`, `otherFlags`) still loads.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         func flag(_ key: CodingKeys) throws -> Bool { try container.decodeIfPresent(Bool.self, forKey: key) ?? false }
@@ -135,11 +193,16 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
             isVisualImpaired: try flag(.isVisualImpaired),
             isCleanEffects: try flag(.isCleanEffects),
             isDescriptions: try flag(.isDescriptions),
-            isCaptions: try flag(.isCaptions)
+            isCaptions: try flag(.isCaptions),
+            isAttachedPicture: try flag(.isAttachedPicture),
+            otherFlags: try container.decodeIfPresent([String].self, forKey: .otherFlags) ?? []
         )
     }
 
-    /// FFmpeg disposition string (e.g., "default+forced").
+    /// FFmpeg disposition string (e.g., "default+forced") — EVERY flag this
+    /// holds, the modelled ones in a fixed order and then `otherFlags`, or
+    /// "0" when there are none. Writing it for an output stream therefore
+    /// gives that stream exactly these flags and clears the rest.
     public var ffmpegValue: String {
         var flags: [String] = []
         if isDefault { flags.append("default") }
@@ -154,26 +217,53 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         if isCleanEffects { flags.append("clean_effects") }
         if isDescriptions { flags.append("descriptions") }
         if isCaptions { flags.append("captions") }
+        if isAttachedPicture { flags.append("attached_pic") }
+        flags += otherFlags
         return flags.isEmpty ? "0" : flags.joined(separator: "+")
     }
 
-    /// Parse from FFmpeg disposition string.
+    /// Parse from FFmpeg disposition string (`default+forced`, or `0`).
+    ///
+    /// Splits on `+` and matches whole names. It used to test whether the
+    /// whole string CONTAINED each name, which is only safe while no flag's
+    /// name is part of another's; unknown names now go to `otherFlags`.
     public static func parse(_ value: String) -> StreamDisposition {
-        let lower = value.lowercased()
+        let names = Set(value.lowercased().split(separator: "+").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        })
         return StreamDisposition(
-            isDefault: lower.contains("default"),
-            isDub: lower.contains("dub"),
-            isOriginal: lower.contains("original"),
-            isComment: lower.contains("comment"),
-            isLyrics: lower.contains("lyrics"),
-            isKaraoke: lower.contains("karaoke"),
-            isForced: lower.contains("forced"),
-            isHearingImpaired: lower.contains("hearing_impaired"),
-            isVisualImpaired: lower.contains("visual_impaired"),
-            isCleanEffects: lower.contains("clean_effects"),
-            isDescriptions: lower.contains("descriptions"),
-            isCaptions: lower.contains("captions")
+            isDefault: names.contains("default"),
+            isDub: names.contains("dub"),
+            isOriginal: names.contains("original"),
+            isComment: names.contains("comment"),
+            isLyrics: names.contains("lyrics"),
+            isKaraoke: names.contains("karaoke"),
+            isForced: names.contains("forced"),
+            isHearingImpaired: names.contains("hearing_impaired"),
+            isVisualImpaired: names.contains("visual_impaired"),
+            isCleanEffects: names.contains("clean_effects"),
+            isDescriptions: names.contains("descriptions"),
+            isCaptions: names.contains("captions"),
+            isAttachedPicture: names.contains("attached_pic"),
+            otherFlags: names.filter { $0 != "0" }.map { $0 }
         )
+    }
+
+    /// These flags as a person changed them, with the flags a person CANNOT
+    /// change taken from `source` — the file's own flags.
+    ///
+    /// The stream editor shows role toggles only; it has no switch for
+    /// `attached_pic` or `otherFlags`. A saved edit carries whatever those
+    /// were when the editor opened, so the file's CURRENT flags (a fresh
+    /// probe) are the authority for them. That is what "the source's flags
+    /// with only the person's edits applied" means in practice. With no
+    /// `source` (data saved before flags were kept), the edit stands as is.
+    public func keepingUneditableFlags(of source: StreamDisposition?) -> StreamDisposition {
+        guard let source else { return self }
+        var result = self
+        result.isAttachedPicture = source.isAttachedPicture
+        result.otherFlags = source.otherFlags
+        return result
     }
 }
 

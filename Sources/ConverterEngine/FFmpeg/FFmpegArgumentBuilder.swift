@@ -331,6 +331,14 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// source stream becomes; needs `sourceStreams`.
     public var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
 
+    /// Copies of the source's attached pictures (cover art), keyed by the
+    /// picture's source stream number — made by `EncodingEngine.encode`
+    /// before it builds the command (see `AttachedPictures`). In a Matroska
+    /// output each picture with a copy here is ATTACHED (`-attach`, under its
+    /// own name) instead of mapped, because ffmpeg's Matroska muxer would
+    /// otherwise turn it into a video track. Empty elsewhere.
+    public var attachedPictureFiles: [Int: URL] = [:]
+
     /// Whether the output's tracks are put in the language policy's stored
     /// order (TRACK-050/060: video, audio, subtitles, other; the original
     /// language first; then role; then language code). On by default: every
@@ -440,7 +448,18 @@ public struct FFmpegArgumentBuilder: Sendable {
         // maps streams or aims an option at an output stream, so the `-map`
         // list and the per-stream options can never disagree. Nil when the
         // source's streams are unknown (see `sourceStreams`).
-        let plan = makeOutputStreamPlan()
+        //
+        // Attached pictures that are written as Matroska attachments
+        // (`-attach`, see `AttachedPictures`) are taken OUT of the plan here,
+        // so they are neither mapped nor given stream options; they are
+        // always last in the plan, so no other stream's position changes.
+        let fullPlan = makeOutputStreamPlan()
+        let attachedPictures = fullPlan.map { pictureAttachments(in: $0) } ?? []
+        let plan = fullPlan.map { full in
+            OutputStreamPlan(entries: full.entries.filter { entry in
+                !(entry.inputIndex == 0 && attachedPictures.contains { $0.sourceStreamIndex == entry.sourceStreamIndex })
+            })
+        }
 
         // --- Global options ---
         if overwriteOutput {
@@ -477,6 +496,11 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // --- Stream mapping ---
         args.append(contentsOf: buildStreamMapping(plan: plan))
+
+        // --- Attached pictures kept as Matroska attachments ---
+        if let plan, !attachedPictures.isEmpty {
+            args.append(contentsOf: attachArguments(attachedPictures, after: plan))
+        }
 
         // --- Source metadata passthrough ---
         // Copy all metadata (track names, language, title, etc.) and chapters
@@ -1092,15 +1116,20 @@ public struct FFmpegArgumentBuilder: Sendable {
     ///
     /// Two sources, in this order (a later `-disposition` for the same output
     /// stream wins in ffmpeg):
-    /// 1. every output track's roles (language policy TRACK-010/030/040):
-    ///    the source's full dispositions — original, forced, commentary,
-    ///    SDH/captions, audio description, text descriptions, default — or
-    ///    the ones a person set in the stream editor. Written explicitly, so
-    ///    they survive a tone-mapped subtitle REPLACEMENT (which comes from a
-    ///    separate file with no roles) and so the editor's toggles reach the
-    ///    output (#530 — they used to be dropped entirely). A track whose
-    ///    roles are unknown (data saved before they were kept) gets nothing,
-    ///    so ffmpeg copies whatever the file has;
+    /// 1. every output stream's flags (language policy TRACK-010/030/040):
+    ///    ALL of the source's dispositions — original, forced, commentary,
+    ///    SDH/captions, audio description, text descriptions, default, and
+    ///    also `attached_pic` and every other flag ffprobe reported — with
+    ///    only the changes a person made in the stream editor applied
+    ///    (`outputFacts`). Written explicitly, so they survive a tone-mapped
+    ///    subtitle REPLACEMENT (which comes from a separate file with no
+    ///    flags) and so the editor's toggles reach the output (#530 — they
+    ///    used to be dropped entirely). A `-disposition` value REPLACES every
+    ///    flag of that stream, which is why nothing the source had may be
+    ///    left out of it: in the first build of this, only the role flags
+    ///    were written, and cover art lost `attached_pic` and became a video
+    ///    track. A stream whose flags are unknown (data saved before they
+    ///    were kept) gets nothing, so ffmpeg copies whatever the file has;
     /// 2. `streamDispositions`, keyed by OUTPUT specifier (e.g. TrueHD in MP4
     ///    must not be default), written verbatim.
     ///
@@ -1186,7 +1215,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// The source's streams keyed by whole-file number, or `nil` when unknown.
-    private var sourceStreamsByIndex: [Int: MediaStream]? {
+    var sourceStreamsByIndex: [Int: MediaStream]? {
         orderedSourceStreams.map { streams in
             Dictionary(uniqueKeysWithValues: streams.map { ($0.streamIndex, $0) })
         }
@@ -1271,7 +1300,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// Resolve the effective container format from explicit setting or output extension.
-    private func resolveContainerFormat() -> ContainerFormat? {
+    func resolveContainerFormat() -> ContainerFormat? {
         if let format = containerFormat { return format }
         guard let ext = outputURL?.pathExtension else { return nil }
         return ContainerFormat.from(fileExtension: ext)

@@ -599,6 +599,16 @@ final class AppViewModel {
     @ObservationIgnored
     nonisolated(unsafe) private var autoTagEventTask: Task<Void, Never>?
 
+    /// Background task that drains `engine.jobNotices` — the engine's
+    /// plain-English warnings about a job it carried on with but could not do
+    /// exactly as asked (a per-stream setting that did not apply, a track
+    /// language kept as the source had it, cover art that could not stay an
+    /// attachment) — into Activity Log warnings for that job. The engine used
+    /// to `print` these, which the app never showed. Held and cancelled in
+    /// `deinit` for the same reasons as `autoTagEventTask`.
+    @ObservationIgnored
+    nonisolated(unsafe) private var jobNoticeTask: Task<Void, Never>?
+
     // MARK: - Initialiser
 
     init() {
@@ -805,10 +815,21 @@ final class AppViewModel {
                 )
             }
         }
+
+        // The engine's job notices, the same way (see `jobNoticeTask`):
+        // the ONLY reader of `engine.jobNotices`, `self` checked fresh for
+        // each notice so it is never held while waiting for the next.
+        jobNoticeTask = Task { [weak self, engine] in
+            for await notice in engine.jobNotices {
+                guard let self else { return }
+                self.appendLog(.warning, notice.message, category: .stream, jobID: notice.jobID)
+            }
+        }
     }
 
     deinit {
-        // Stops the auto-tag event-consumer loop (#508 commit 8) rather than
+        // Stops the auto-tag event-consumer loop (#508 commit 8) — and the
+        // job-notice loop beside it, for the same reason — rather than
         // leaving it to notice the engine's `AsyncStream` finishing on its
         // own — see `autoTagEventTask`'s own doc comment for why that
         // ordering isn't guaranteed. `Task.cancel()` is documented safe to
@@ -817,6 +838,7 @@ final class AppViewModel {
         // directly. Every other property here is `let`/value state that
         // needs no explicit teardown.
         autoTagEventTask?.cancel()
+        jobNoticeTask?.cancel()
     }
 
     /// Wires the three decoupled notification-action posts to real behaviour

@@ -7,6 +7,21 @@
 
 import Foundation
 
+// MARK: - EncodingJobNotice
+
+/// One plain-English warning about a job (see `EncodingEngine.jobNotices`).
+public struct EncodingJobNotice: Sendable, Equatable {
+    /// The job it is about.
+    public let jobID: UUID
+    /// The warning, ready to show.
+    public let message: String
+
+    public init(jobID: UUID, message: String) {
+        self.jobID = jobID
+        self.message = message
+    }
+}
+
 // MARK: - EncodingEngineError
 
 /// Errors from the encoding engine.
@@ -193,6 +208,28 @@ public final class EncodingEngine: @unchecked Sendable {
     /// safe to use from any thread, so it needs no lock.
     private let autoTagEventContinuation: AsyncStream<AutoTagJobEvent>.Continuation
 
+    // MARK: - Job notices
+
+    /// Plain-English warnings about a job that the engine carried on with
+    /// but could not do exactly as asked — a per-stream setting that did not
+    /// apply, a track language kept as the source had it because the output
+    /// cannot hold it, cover art that could not be kept as a Matroska
+    /// attachment. Published as each job starts, before ffmpeg runs.
+    ///
+    /// Every notice is ALSO written to standard error as `Warning: …`, so the
+    /// command-line tool shows it (and a `--format json` report on standard
+    /// output stays clean). The app reads this stream into its Activity Log
+    /// (`AppViewModel`'s `jobNoticeTask`). Until the language policy's second
+    /// review round these were `print`ed to standard OUTPUT, which the app
+    /// never showed.
+    ///
+    /// Same rules as `autoTagEvents`: one reader, only the newest 64 kept
+    /// while nobody reads, finished when the engine is released.
+    public let jobNotices: AsyncStream<EncodingJobNotice>
+
+    /// The writing end of `jobNotices` (safe from any thread).
+    private let jobNoticeContinuation: AsyncStream<EncodingJobNotice>.Continuation
+
     // MARK: - Initialiser
 
     /// Create a new encoding engine with default configuration.
@@ -228,13 +265,26 @@ public final class EncodingEngine: @unchecked Sendable {
         )
         self.autoTagEvents = events
         self.autoTagEventContinuation = continuation
+        let (notices, noticeContinuation) = AsyncStream<EncodingJobNotice>.makeStream(
+            bufferingPolicy: .bufferingNewest(64)
+        )
+        self.jobNotices = notices
+        self.jobNoticeContinuation = noticeContinuation
     }
 
     deinit {
-        // Ends any reader's `for await` loop over `autoTagEvents`. Events
-        // still in the buffer are delivered first; `finish()` only stops
-        // new ones.
+        // Ends any reader's `for await` loop over `autoTagEvents` and
+        // `jobNotices`. Items still in the buffer are delivered first;
+        // `finish()` only stops new ones.
         autoTagEventContinuation.finish()
+        jobNoticeContinuation.finish()
+    }
+
+    /// Publishes one job notice: on standard error (for the command-line
+    /// tool and any log that captures it) and on `jobNotices` (for the app).
+    private func publishNotice(_ message: String, jobID: UUID) {
+        FileHandle.standardError.write(Data("Warning: \(message)\n".utf8))
+        jobNoticeContinuation.yield(EncodingJobNotice(jobID: jobID, message: message))
     }
 
     // MARK: - Configuration
@@ -646,7 +696,48 @@ public final class EncodingEngine: @unchecked Sendable {
         // output (a profile made on a different file, say) cannot apply; say
         // so in the log rather than drop them without a word.
         for skipped in enrichedJob.skippedStreamSettings() {
-            print("Warning: not applied — \(skipped)")
+            publishNotice("Not applied — \(skipped)", jobID: job.id)
+        }
+
+        // Cover art in a Matroska output (see `AttachedPictures`): ffmpeg's
+        // Matroska muxer turns an attached picture into a one-frame video
+        // TRACK, so each picture is first copied, byte for byte, out of the
+        // source into this job's temporary folder, and the command attaches
+        // the copy under the picture's own name. A picture that cannot be
+        // copied is mapped as before, and the notes below say so. The copies
+        // are removed with the temporary folder when the job ends.
+        var pictureCopies: [Int: URL] = [:]
+        for picture in enrichedJob.attachedPicturesNeedingCopies() {
+            let copy = tempDir.appendingPathComponent(
+                "attached-picture-\(picture.streamIndex).\(picture.fileExtension)"
+            )
+            do {
+                try await runFFmpegPass(
+                    ffmpegPath: ffmpegPath,
+                    arguments: AttachedPictures.extractionArguments(
+                        input: job.inputURL, streamIndex: picture.streamIndex, output: copy
+                    ),
+                    pass: nil,
+                    multipassLogPath: nil,
+                    sourceDuration: nil,
+                    jobID: job.id,
+                    onProgress: { _ in }
+                )
+                let size = (try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if size > 0 { pictureCopies[picture.streamIndex] = copy }
+            } catch {
+                // Not fatal: the picture is mapped as a stream instead, and
+                // `trackWritingNotes()` reports that.
+            }
+        }
+        if !pictureCopies.isEmpty {
+            enrichedJob.attachedPictureFiles = pictureCopies
+        }
+
+        // What the output will keep differently from the source, and why
+        // (see `FFmpegArgumentBuilder.trackWritingNotes()`).
+        for note in enrichedJob.trackWritingNotes() {
+            publishNotice(note, jobID: job.id)
         }
 
         // Build FFmpeg arguments

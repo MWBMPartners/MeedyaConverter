@@ -718,6 +718,13 @@ public final class FFmpegProbe: Sendable {
         // re-encode lost them.
         let disposition = StreamDisposition(ffprobe: dict["disposition"] as? [String: Any] ?? [:])
         let isDefault = disposition.isDefault
+
+        // An attached picture's own file name and MIME type (Matroska
+        // attachments carry both), kept so a Matroska output can attach it
+        // again under the same name — see `AttachedPictures`. Sanitised like
+        // the title: both come straight from the file.
+        let attachmentFileName = (tags["filename"] as? String).map(MetadataSanitizer.sanitize)
+        let attachmentMimeType = (tags["mimetype"] as? String).map(MetadataSanitizer.sanitize)
         let isForced = disposition.isForced
 
         // Video-specific parsing
@@ -828,6 +835,8 @@ public final class FFmpegProbe: Sendable {
             isDefault: isDefault,
             isForced: isForced,
             disposition: disposition,
+            attachmentFileName: attachmentFileName,
+            attachmentMimeType: attachmentMimeType,
             width: width,
             height: height,
             frameRate: frameRate,

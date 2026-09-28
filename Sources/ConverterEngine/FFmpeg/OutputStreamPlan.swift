@@ -360,9 +360,17 @@ extension FFmpegArgumentBuilder {
     /// created (COMPAT-020: existing files are never rewritten just to
     /// reorder them). It is skipped when `orderTracksCanonically` is off, or
     /// when the policy's data is missing (then the selection order stands).
+    ///
+    /// Attached pictures (cover art — `StreamDisposition.isAttachedPicture`)
+    /// are NOT tracks, so they are not ordered as tracks: they go after every
+    /// real track, in their source order, keeping their flags. ffmpeg reports
+    /// them as video streams, and they used to be sorted in with the real
+    /// video — which put an M4A's cover art BEFORE its only audio track.
     func orderedCanonically(_ entries: [OutputStreamPlan.Entry], sources: [Int: MediaStream]) -> [OutputStreamPlan.Entry] {
         guard orderTracksCanonically, let policy = TrackLanguage.policy else { return entries }
-        let items = entries.map { entry -> CanonicalOrderItem in
+        let pictures = entries.filter { isAttachedPicture($0, sources: sources) }
+        let tracks = entries.filter { !isAttachedPicture($0, sources: sources) }
+        let items = tracks.map { entry -> CanonicalOrderItem in
             let facts = outputFacts(for: entry.sourceStreamIndex, sources: sources)
             return CanonicalOrderItem(
                 // A track with no language at all sorts with "not known"
@@ -373,13 +381,26 @@ extension FFmpegArgumentBuilder {
                 roles: facts.disposition?.policyRoles(for: entry.streamType) ?? []
             )
         }
-        return policy.canonicalOrder.trackOrder(items).map { entries[$0] }
+        return policy.canonicalOrder.trackOrder(items).map { tracks[$0] } + pictures
+    }
+
+    /// Whether `entry` is an attached picture (cover art) rather than a
+    /// track: a video stream whose flags — as the output will have them —
+    /// include `attached_pic`. Unknown flags (data saved before they were
+    /// kept) count as a real track, as they always did.
+    func isAttachedPicture(_ entry: OutputStreamPlan.Entry, sources: [Int: MediaStream]) -> Bool {
+        entry.streamType == .video
+            && outputFacts(for: entry.sourceStreamIndex, sources: sources).disposition?.isAttachedPicture == true
     }
 
     /// What the output stream carrying source stream `index` will say: the
     /// source's language, roles and title with any stream-editor change
     /// applied. `disposition` is `nil` when neither the source (data saved
     /// before roles were kept) nor the editor says anything about roles.
+    ///
+    /// An edited disposition keeps the flags the editor has no switch for
+    /// (`attached_pic` and the rest) from the source: the source's flags with
+    /// only the person's edits applied, so an edit can never clear them.
     func outputFacts(
         for index: Int,
         sources: [Int: MediaStream]
@@ -387,7 +408,8 @@ extension FFmpegArgumentBuilder {
         let source = sources[index]
         let edit = sourceStreamEdits[index]
         let language = edit?.language ?? source?.language
-        let disposition = edit?.disposition ?? source?.disposition
+        let disposition = edit?.disposition.map { $0.keepingUneditableFlags(of: source?.disposition) }
+            ?? source?.disposition
         return (language, disposition, source?.title)
     }
 
@@ -475,6 +497,32 @@ extension FFmpegArgumentBuilder {
             skipped.append("Stream editor changes for stream #\(key) (not in this output)")
         }
         return skipped
+    }
+
+    /// What this output will keep differently from the source, and why, in
+    /// plain English — one line per stream, for the job's log
+    /// (`EncodingEngine.jobNotices`, and standard error for the command-line
+    /// tool). Empty when every stream is written as the source has it or as
+    /// the person asked. Informational: the job still runs.
+    public func trackWritingNotes() -> [String] {
+        guard let plan = makeOutputStreamPlan(), let sources = sourceStreamsByIndex else { return [] }
+        var notes: [String] = []
+
+        // Cover art a Matroska output can only keep as an attachment, but
+        // with no copy of the picture to attach (see `AttachedPictures`).
+        if AttachedPictures.needsAttachment(in: resolveContainerFormat()) {
+            let attached = Set(pictureAttachments(in: plan).map(\.sourceStreamIndex))
+            for entry in plan.entries where entry.inputIndex == 0
+                && isAttachedPicture(entry, sources: sources)
+                && !attached.contains(entry.sourceStreamIndex) {
+                notes.append(
+                    "Stream #\(entry.sourceStreamIndex) is a picture attached to the file (cover art). "
+                        + "It could not be kept as an attachment, so ffmpeg writes it into this "
+                        + "Matroska file as a one-frame picture track."
+                )
+            }
+        }
+        return notes
     }
 
     /// Short descriptions of every per-stream setting aimed at an output
