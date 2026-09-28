@@ -50,24 +50,24 @@ final class ConformanceTests: XCTestCase {
         "track_order": ["id", "rules", "description", "tracks", "expected"],
         "presentation_order": [
             "id", "rules", "description", "preferences", "accessibility",
-            "display_names", "collation_keys", "items", "expected",
+            "display_names", "collation_keys", "items", "expected"
         ],
         "subtitle_menu": [
             "id", "rules", "description", "preferences", "accessibility",
-            "display_names", "collation_keys", "items", "expected",
+            "display_names", "collation_keys", "items", "expected"
         ],
         "label": ["id", "rules", "type", "language_name", "roles", "role_names", "channels", "expected"],
         "match": ["id", "rules", "preference", "candidate", "expected"],
         "auto_select_audio": ["id", "rules", "description", "preferences", "accessibility", "tracks", "expected"],
         "auto_select_subtitle": [
-            "id", "rules", "description", "mode", "preferences", "accessibility", "audio", "tracks", "expected",
-        ],
+            "id", "rules", "description", "mode", "preferences", "accessibility", "audio", "tracks", "expected"
+        ]
     ]
 
     /// Extra fields a sidecar case needs, by its mode.
     static let sidecarModeFields: [String: [String]] = [
         "build": ["tag", "roles", "extension", "number"],
-        "parse": ["filename"],
+        "parse": ["filename"]
     ]
 
     /// Top-level keys that are not sections.

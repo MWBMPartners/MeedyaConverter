@@ -359,7 +359,7 @@ public struct StreamMetadataEditor: Sendable {
     /// menu order — see `orderedLanguageSuggestions(interfaceLocale:preferences:)`.
     public static let commonLanguageTags: [String] = [
         "ar", "da", "de", "en", "es", "fi", "fr", "hi", "it", "ja", "ko", "nl",
-        "no", "pl", "pt", "ru", "sv", "th", "tr", "vi", "zh", "zh-Hans", "zh-Hant", "und",
+        "no", "pl", "pt", "ru", "sv", "th", "tr", "vi", "zh", "zh-Hans", "zh-Hant", "und"
     ]
 
     /// Whether `code` is a well-formed BCP 47 language tag (LANG-001) —

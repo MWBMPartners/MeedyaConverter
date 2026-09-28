@@ -58,7 +58,7 @@ final class ContainerLanguageToolTests: XCTestCase {
         let (status, data) = try run(ffprobe, [
             "-v", "error", "-print_format", "json", "-show_entries",
             "stream=index,codec_type:stream_tags=language,title:stream_disposition=default,original,comment",
-            file.path,
+            file.path
         ])
         XCTAssertEqual(status, 0)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -86,7 +86,7 @@ final class ContainerLanguageToolTests: XCTestCase {
             "-map", "0", "-map", "1", "-c:a", "aac",
             "-metadata:s:a:0", "language=ger", "-disposition:a:0", "comment",
             "-metadata:s:a:1", "language=jpn", "-disposition:a:1", "default+original",
-            source.path,
+            source.path
         ])
         XCTAssertEqual(made.status, 0, "making the source")
 

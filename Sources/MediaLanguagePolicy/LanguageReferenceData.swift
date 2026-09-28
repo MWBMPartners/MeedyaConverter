@@ -221,7 +221,7 @@ public struct LanguageReferenceData: Sendable {
                 // build systems and under Contents/Resources on others.
                 for candidate in [
                     bundleURL.appendingPathComponent(fileName),
-                    bundleURL.appendingPathComponent("Contents/Resources/\(fileName)"),
+                    bundleURL.appendingPathComponent("Contents/Resources/\(fileName)")
                 ] where FileManager.default.fileExists(atPath: candidate.path) {
                     return candidate
                 }

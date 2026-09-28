@@ -42,7 +42,7 @@ final class TrackWritingTests: XCTestCase {
         MediaStream(streamIndex: 6, streamType: .subtitle, language: "en",
                     disposition: StreamDisposition(isHearingImpaired: true)),
         MediaStream(streamIndex: 7, streamType: .subtitle, language: "en", title: "English (full)",
-                    disposition: StreamDisposition()),
+                    disposition: StreamDisposition())
     ]
 
     private func builder(output: String = "/tmp/out.mkv") -> FFmpegArgumentBuilder {
@@ -102,7 +102,7 @@ final class TrackWritingTests: XCTestCase {
             "-metadata:s:v:0 language=und",
             "-metadata:s:a:0 language=jpn", "-metadata:s:a:1 language=ger",
             "-metadata:s:a:2 language=eng", "-metadata:s:a:3 language=eng",
-            "-metadata:s:s:0 language=eng", "-metadata:s:s:1 language=eng", "-metadata:s:s:2 language=eng",
+            "-metadata:s:s:0 language=eng", "-metadata:s:s:1 language=eng", "-metadata:s:s:2 language=eng"
         ])
     }
 
@@ -132,7 +132,7 @@ final class TrackWritingTests: XCTestCase {
         // the malformed value is written `und` too.
         XCTAssertEqual(languages, [
             "-metadata:s:a:0 language=jpn", "-metadata:s:a:1 language=eng",
-            "-metadata:s:a:2 language=und", "-metadata:s:a:3 language=und",
+            "-metadata:s:a:2 language=und", "-metadata:s:a:3 language=und"
         ])
     }
 
@@ -147,7 +147,7 @@ final class TrackWritingTests: XCTestCase {
             "-metadata:s:a:1 title=Deutsch",
             "-metadata:s:a:2 title=English",
             "-metadata:s:s:1 title=English",
-            "-metadata:s:s:2 title=English",
+            "-metadata:s:s:2 title=English"
         ], "The commentary (a:3) and the titled full subtitles (s:0) keep their own titles")
     }
 
@@ -181,7 +181,7 @@ final class TrackWritingTests: XCTestCase {
             "-disposition:a:3 comment",
             "-disposition:s:0 0",
             "-disposition:s:1 hearing_impaired",
-            "-disposition:s:2 forced",
+            "-disposition:s:2 forced"
         ], "The video has no known roles (no disposition recorded), so it gets none")
     }
 
@@ -200,7 +200,7 @@ final class TrackWritingTests: XCTestCase {
         builder.subtitleStreamActions = [
             .init(streamIndex: 5, action: .passthrough),
             .init(streamIndex: 6, action: .passthrough),
-            .init(streamIndex: 7, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub7.sup"))),
+            .init(streamIndex: 7, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub7.sup")))
         ]
         let args = builder.build()
         XCTAssertEqual(maps(args).suffix(3), ["1:s:0", "0:6", "0:5"], "full (replaced) → SDH → forced")

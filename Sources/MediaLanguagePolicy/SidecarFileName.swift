@@ -57,7 +57,7 @@ public struct SidecarFileName: Sendable {
     /// Words read as roles (case-insensitive). `cc` and `hi` are read as
     /// `sdh` because other tools write them.
     private static let readRoles: [String: TrackRole] = [
-        "sdh": .sdh, "cc": .sdh, "hi": .sdh, "forced": .forced, "commentary": .commentary,
+        "sdh": .sdh, "cc": .sdh, "hi": .sdh, "forced": .forced, "commentary": .commentary
     ]
 
     /// The largest clash-avoiding number (nine digits).

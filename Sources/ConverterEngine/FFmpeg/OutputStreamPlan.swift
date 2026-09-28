@@ -412,7 +412,7 @@ extension FFmpegArgumentBuilder {
                 "The source file's streams could not be read, so these per-stream settings "
                     + "cannot be matched to the right output tracks: "
                     + perStreamSettingDescriptions().joined(separator: "; ")
-                    + ". Nothing was guessed; re-open the file and try again.",
+                    + ". Nothing was guessed; re-open the file and try again."
             ]
         }
 

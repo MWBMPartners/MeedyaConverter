@@ -69,7 +69,7 @@ final class StreamIndexSpaceTests: XCTestCase {
             .init(inputIndex: 0, sourceStreamIndex: 0, streamType: .video, mapSpecifier: "0:0"),
             .init(inputIndex: 0, sourceStreamIndex: 2, streamType: .audio, mapSpecifier: "0:2"),
             .init(inputIndex: 0, sourceStreamIndex: 1, streamType: .audio, mapSpecifier: "0:1"),
-            .init(inputIndex: 1, sourceStreamIndex: 4, streamType: .subtitle, mapSpecifier: "1:s:0"),
+            .init(inputIndex: 1, sourceStreamIndex: 4, streamType: .subtitle, mapSpecifier: "1:s:0")
         ])
         XCTAssertEqual(plan.outputPosition(forSourceStream: 2), 0)
         XCTAssertEqual(plan.outputPosition(forSourceStream: 1), 1)
@@ -202,11 +202,11 @@ final class StreamIndexSpaceTests: XCTestCase {
         builder.sourceStreams = film
         builder.subtitleStreamActions = [
             .init(streamIndex: 3, action: .replaceWith(URL(fileURLWithPath: "/tmp/sub3.sup"))),
-            .init(streamIndex: 4, action: .passthrough),
+            .init(streamIndex: 4, action: .passthrough)
         ]
         builder.sourceStreamEdits = [
             3: SourceStreamEdit(title: "English"),
-            4: SourceStreamEdit(title: "Français"),
+            4: SourceStreamEdit(title: "Français")
         ]
 
         let args = builder.build()
@@ -266,7 +266,7 @@ final class StreamIndexSpaceTests: XCTestCase {
         let metadataValues = zip(args, args.dropFirst()).filter { $0.0.hasPrefix("-metadata") }.map { "\($0.0) \($0.1)" }
         XCTAssertEqual(metadataValues, [
             "-metadata album=B", "-metadata artist=A", "-metadata comment=C", "-metadata title=T",
-            "-metadata:s:a:0 title=z", "-metadata:s:a:1 handler_name=y", "-metadata:s:a:1 title=x",
+            "-metadata:s:a:0 title=z", "-metadata:s:a:1 handler_name=y", "-metadata:s:a:1 title=x"
         ])
         let dispositions = zip(args, args.dropFirst()).filter { $0.0.hasPrefix("-disposition") }.map { "\($0.0) \($0.1)" }
         XCTAssertEqual(dispositions, ["-disposition:a:0 default", "-disposition:a:1 0"])

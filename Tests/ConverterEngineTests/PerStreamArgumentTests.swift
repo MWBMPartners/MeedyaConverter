@@ -191,11 +191,11 @@ final class PerStreamArgumentTests: XCTestCase {
             ],
             audioOverrides: [
                 2: AudioStreamOverride(codec: .aacLC, bitrate: 192_000),
-                3: AudioStreamOverride(codec: .flac),
+                3: AudioStreamOverride(codec: .flac)
             ],
             subtitleOverrides: [
                 4: SubtitleStreamOverride(include: true, passthrough: true),
-                5: SubtitleStreamOverride(include: false, passthrough: true),
+                5: SubtitleStreamOverride(include: false, passthrough: true)
             ]
         )
 

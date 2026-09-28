@@ -158,7 +158,7 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// probe of the source just before running. A post-construction default
     /// (like `estimatedSourceDuration`), so it is optional in Codable and
     /// jobs saved before it existed still load.
-    public var sourceStreams: [MediaStream]? = nil
+    public var sourceStreams: [MediaStream]?
 
     /// Changes made in the stream editor, keyed by the source stream's
     /// whole-file number (#530). Placed on the output stream each source
@@ -168,7 +168,7 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// synthesised decoder REQUIRES every non-optional stored property's key,
     /// default value or not. An optional is decoded "if present", so jobs
     /// saved — or batch files written — before this field existed still load.
-    public var sourceStreamEdits: [Int: SourceStreamEdit]? = nil
+    public var sourceStreamEdits: [Int: SourceStreamEdit]?
 
     public init(
         id: UUID = UUID(),
