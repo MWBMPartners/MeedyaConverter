@@ -252,7 +252,7 @@ The argument builder is the critical translation layer. It processes an `Encodin
 4. **HDR policy** — Preserves HDR10/PQ/HLG signalling, or inserts a `tonemap` filter chain, based on the builder's own `toneMap` / `convertPQToHLG` / `preserveHDRMetadata` flags.
 5. **Audio encoding** — Per-stream codec, bitrate, sample rate, channel layout, normalization.
 6. **Subtitle handling** — Copy, convert, or burn-in based on format and container compatibility.
-7. **Metadata** — Title, tags, chapter markers, cover art; per output track the language field, autonym title and roles (language policy). When auto-tagging
+7. **Metadata** — Title, tags, chapter markers, cover art; per output track the language field, automatic title and roles (language policy). When auto-tagging
    (below) found tags the file was missing, they are already sitting in
    `outputMetadata` by this point, so this stage needs no auto-tag-specific
    code of its own.
@@ -289,8 +289,9 @@ section only says where things live and why they are shaped as they are.
 | The policy in Swift | `Sources/MediaLanguagePolicy/` | Foundation only (so it builds and tests on Linux). One job per file: canonical tags, reading old codes, names, roles, stored order, menu order, matching, automatic selection, sidecar names. |
 | The engine's doorway | `Sources/ConverterEngine/Models/TrackLanguage.swift` | Connects the policy to `MediaStream` / `StreamDisposition`; says which language form each container needs, and what ffmpeg can and cannot write. |
 | Reading a file | `FFmpegProbe` | Each stream's language goes through the policy's reader (`eng` → `en`); an unreadable value becomes `und` with the text kept in `unrecognisedLanguage`; every disposition is kept. |
-| Writing a file | `FFmpegArgumentBuilder` + `OutputStreamPlan` | Track order, language fields, autonym titles and roles for every output track. |
-| Editing | `StreamMetadataEditorView` (app) + `StreamMetadataEditor.checkLanguageEntry` | Typed tags checked and shown in canonical form, names in the interface language, roles as toggles. |
+| Writing a file | `FFmpegArgumentBuilder` + `OutputStreamPlan` + `TrackLanguage.languageWrite` | Track order, language fields, automatic titles and every stream flag for every output track; notes for the job's log (`trackWritingNotes`). |
+| Cover art | `AttachedPictures.swift` | Keeps attached pictures as pictures: never ordered as tracks, copied (not re-encoded) when the video is, and attached again as files in Matroska. |
+| Editing | `StreamMetadataEditorView` (app) + `StreamMetadataEditor.checkLanguageEntry` / `storageNote` | Typed values read like a file's (`eng` → `en`), shown in canonical form with names in the interface language; what the output cannot store said before Apply; roles as toggles; a language or automatic title can be left alone. |
 
 ### Two orders, never mixed
 
@@ -312,8 +313,44 @@ A language is always a canonical BCP 47 tag (`en`, `en-GB`, `zh-Hant`,
 `es-419`), never a name. Names come from the platform's locale data, never a
 hand-typed list: in menus, the name in the interface language ("German" in
 English, "allemand" in French); **in files, the language's own name** — its
-autonym ("Deutsch", "日本語") — written as the track title only when the track
-has no real title of its own. A title is never read back as the language.
+autonym ("Deutsch", "日本語"). A title is never read back as the language.
+
+An automatic title is written only when ALL of these hold
+(`FFmpegArgumentBuilder.automaticTitle`): the track is audio or subtitles and
+has **no title at all** in the source (any title it has, even "Track 2", is
+kept); the person did not set one or switch it off; the file type keeps track
+titles apart from the file's own title (Matroska and WebM — **not** Ogg, where
+ffmpeg merges the file's tags into each stream and a track title would replace
+the song's title, and not MP4, which drops track titles); and the output has
+more than one track of that kind or carries real video (a single song never
+gets one; cover art is not video). The title says the language and the roles,
+joined as the policy's labels are: "English", "English — SDH", "English —
+Forced", "Deutsch — Commentary".
+
+### Nothing the source had is lost
+
+The rule for all of this: a copy or conversion never loses or damages
+anything the source had that the person did not ask to change (COMPAT-030).
+Where the policy's preferred form cannot be written because of what ffmpeg can
+store, what the source had is kept and the job's log says so
+(`TrackLanguage.languageWrite`, `trackWritingNotes`):
+
+- a track's language is written in the container's three-letter form only
+  when that is a real code and nothing is lost (`deu` → `ger` in Matroska is a
+  correction); a real language with no three-letter code (`yue`, `cmn`, `nan`)
+  and a value nobody can read (`english`, `xx-bogus`) get **no** language
+  option, so ffmpeg copies the source's own value; a region or script
+  (`fr-CA`) is left for Matroska to copy (which keeps it) and written as the
+  language only in MP4 (which cannot hold more);
+- every stream flag is kept — the roles and also `attached_pic` and any other
+  flag ffprobe reports — and an edit changes only the flags it can;
+- cover art (`attached_pic`) is not a track: it goes after every real track,
+  is copied rather than re-encoded, and in Matroska is attached again as a
+  file under its own name (ffmpeg's Matroska muxer would otherwise make it a
+  video track; see `AttachedPictures.swift`).
+
+The job's notes reach the app's Activity Log through `EncodingEngine
+.jobNotices`, and the command-line tool's standard error.
 
 ### Roles are structured
 
@@ -324,13 +361,36 @@ from the file and written to every output — never only words in a title.
 ### What ffmpeg can and cannot write (checked, not assumed)
 
 Checked with ffmpeg 9.0.1 (details in `TrackLanguage.LanguageFieldForm`, and
-re-checked on every machine with ffmpeg by `ContainerLanguageToolTests`):
-Matroska gets only its old three-letter `Language` field, so the
-**bibliographic** code is written (`ger`); ffmpeg cannot write, read or keep
-`LanguageBCP47`. MP4 gets its `mdhd` field, so the **terminology** code is
-written (`deu`); no `elng` box. So a region or script (`en-GB`, `zh-Hant`) can
-only survive in the autonym title, not in a structured field — a known limit
-of the tool, tracked as a follow-up.
+re-checked on every machine with ffmpeg by `ContainerLanguageToolTests` and
+`TrackPreservationToolTests`): Matroska gets only its old three-letter
+`Language` field, so the **bibliographic** code is written (`ger`); ffmpeg
+cannot write, read or keep `LanguageBCP47`. MP4 gets its `mdhd` field, so the
+**terminology** code is written (`deu`); no `elng` box. So a region or script
+(`en-GB`, `zh-Hant`) that a person SETS cannot be stored in a structured field
+(the editor says so before Apply). It appears in words only in an automatic
+title, and only where one is written (above) — a track that already has a
+title keeps it and the region is not stored anywhere. An UNEDITED Matroska
+track keeps the source's own text (above). Writing the full tag needs a
+post-pass: #532.
+
+### Track order can be switched off
+
+The stored order is the default for every output, including the "Remux to
+MKV/MP4" profiles. It can be switched off per profile
+(`EncodingProfile.orderTracksCanonically`; the app's "Put tracks in the
+standard order" in Output settings), per job
+(`EncodingJobConfig.orderTracksCanonically`), and from the command line
+(`meedya-convert encode --keep-track-order`). Profiles and jobs saved before
+the setting existed read it as on.
+
+### Every encode path reads the source's streams
+
+`EncodingEngine.encode`, pipeline encode steps (`EncodingPipelineExecutor`,
+just before each step runs), the Shortcuts "Convert Media" action and the
+quality preview all give the argument builder the source's streams, and all
+refuse — with `EncodingEngineError.streamSelectionInvalid` — stream settings
+that cannot be applied to the file, including per-stream settings when the
+streams could not be read.
 
 ### Stream numbers
 

@@ -69,6 +69,7 @@ If `--output` is omitted, the output file is placed in the same directory as the
 | `--audio-stream <number>` | | Integer | Audio stream to encode, by the number `probe` shows | All audio streams |
 | `--subtitle-stream <number>` | | Integer | Subtitle stream to include, by the number `probe` shows | -- |
 | `--map-all` | | Flag | Map all streams from source | false |
+| `--keep-track-order` | | Flag | Keep each kind of track in the source's order. By default tracks are put in the standard order (language policy): video, audio, subtitles; the original language first, then main tracks before description and commentary, then by language code. This applies to every profile, including "Remux to MKV/MP4". | false |
 | `--hardware` | | Flag | Use hardware encoder if available | false |
 | `--quiet` | | Flag | Suppress progress output | false |
 | `--json` | | Flag | Output progress and result as JSON | false |

@@ -533,6 +533,19 @@ paths:
             type: boolean
             default: false
 
+        - name: --keep-track-order
+          in: query
+          required: false
+          description: >-
+            Keep each kind of track in the source's order. By default every output (including
+            the "Remux to MKV" and "Remux to MP4" profiles) puts its tracks in the shared language
+            policy's standard order: video, audio, subtitles; within each, the original language
+            first, then main tracks before description and commentary, then by language code.
+            Cover art always goes after the real tracks.
+          schema:
+            type: boolean
+            default: false
+
         # -- Hardware Encoding --
         - name: --hardware
           in: query
@@ -1841,6 +1854,27 @@ components:
             isCleanEffects: { type: boolean, description: Music and effects only. }
             isDescriptions: { type: boolean, description: Text descriptions of the picture. }
             isCaptions: { type: boolean, description: Closed captions. }
+            isAttachedPicture:
+              type: boolean
+              description: >-
+                ffmpeg's `attached_pic`: the stream is a picture attached to the file (cover art),
+                not a track. Kept through every copy or conversion; in a Matroska output the picture
+                is attached again as a file under its own name.
+            otherFlags:
+              type: array
+              items: { type: string, pattern: "^[a-z0-9_]+$" }
+              description: >-
+                Every other flag the file sets, by ffmpeg's own name (`still_image`,
+                `timed_thumbnails`, `dependent`, `non_diegetic`, `metadata`, `multilayer`, and any a
+                later ffmpeg adds), sorted. Kept so a copy or conversion writes them back.
+        attachmentFileName:
+          type: string
+          description: >-
+            For an attached picture: the file name the file gives it (Matroska attachments carry
+            one, such as `cover.jpg`). Absent when the file gives none.
+        attachmentMimeType:
+          type: string
+          description: For an attached picture, the MIME type the file gives it (`image/jpeg`). Absent when none.
         isEnabled:
           type: boolean
         width:
@@ -2182,6 +2216,13 @@ components:
           format: double
         videoBufferSize:
           type: integer
+        orderTracksCanonically:
+          type: boolean
+          description: >-
+            Whether outputs made with this profile put their tracks in the shared language
+            policy's standard order (MWBM-MEDIA-LANG TRACK-050/060). Absent means on — every profile
+            saved before this setting existed decodes that way. `false` keeps each kind of track in
+            the source's order.
 
     # -- Batch job file schema --
     EncodingJobConfig:
@@ -2276,6 +2317,22 @@ components:
         priority:
           type: integer
           description: Queue ordering priority (higher = processed first). Only meaningful for GUI-driven `EncodingQueue`; `batch --job-file` processes jobs strictly in array order and ignores this field.
+        orderTracksCanonically:
+          type: boolean
+          description: >-
+            This job's own track-order choice, overriding the profile's `orderTracksCanonically`:
+            `false` keeps the source's order (what `encode --keep-track-order` sets), `true` uses
+            the standard order. Absent follows the profile.
+        sourceStreamEdits:
+          type: object
+          description: >-
+            Changes made in the stream editor, keyed by the source stream's whole-file number
+            (as a string, the way JSON keys are). Each value may hold `title` (an empty string
+            clears it), `language` (a BCP 47 tag), `disposition` (the role flags, as in
+            MediaStream) and `writesAutomaticTitle` (`false` switches off the automatic title for
+            that stream). A field that is absent leaves the source as it is.
+          additionalProperties:
+            type: object
 
     # -- Reusable enums, verified against ConverterEngine source --
     VideoCodec:

@@ -81,6 +81,7 @@ If `--output` is omitted, the output is written next to the input with a
 | `--audio-stream` | Audio stream to encode, by the number `probe` shows (default: all audio streams). |
 | `--subtitle-stream` | Subtitle stream to include, by the number `probe` shows. A number that is not a stream of that type in the file is refused with a message. |
 | `--map-all` | Map all streams from the source. |
+| `--keep-track-order` | Keep each kind of track in the source's order. By default tracks are put in a standard order — video, audio, subtitles; the original language first, then main tracks before description and commentary — for every profile, including "Remux to MKV" and "Remux to MP4". |
 | `--hardware` | Use a hardware encoder (VideoToolbox) if available. |
 | `--quiet` | Suppress progress output. |
 | `--json` | Emit progress and the final result as JSON. |

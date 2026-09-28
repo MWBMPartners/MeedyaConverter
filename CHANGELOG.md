@@ -25,18 +25,28 @@
 
 - **Track languages follow the shared language policy (MWBM-MEDIA-LANG).**
   Every track's language is read as a proper language tag (`eng` → `en`,
-  `ger` → `de`; a value that can't be read is kept and shown, and treated as
-  "not known" rather than guessed). New files get their tracks in one fixed,
+  `ger` → `de`; a value that can't be read is shown and treated as "not
+  known" rather than guessed). New files get their tracks in one fixed,
   predictable order — video, audio, subtitles; the original language first,
   then main before description and commentary tracks — with the language
-  written in the form each container expects, every role kept (original,
-  forced, commentary, SDH, audio description), and a readable title in the
-  language's own name ("Deutsch", "日本語") where a track had none. The stream
-  editor now accepts full tags such as `en-GB`, `zh-Hant` and `es-419`, shows
-  each language's name in your language, and its role switches actually
-  reach the output. (Matroska files made with ffmpeg can't store a region or
-  script such as "United Kingdom" in their language field — ffmpeg doesn't
-  support the newer field — so that part is kept in the track title.)
+  written in the form each container expects and every role kept (original,
+  forced, commentary, SDH, audio description). A copy or conversion never
+  loses anything the file had that you didn't ask to change: a language the
+  output's three-letter field can't hold (such as Cantonese, `yue`) or a
+  value nobody can read is kept exactly as the file had it, cover art stays
+  cover art, and each case is noted in the job's log. Where a track has no
+  title at all, the file type keeps track titles (Matroska, WebM) and the
+  file has more than one such track or has video, the track is named after
+  its language and roles in that language ("Deutsch", "English — SDH",
+  "日本語"); a title the file already has is never replaced. The stream
+  editor accepts full tags such as `en-GB`, `zh-Hant` and `es-419` (and the
+  old codes: `eng` is saved as `en`), shows each language's name in your
+  language, can leave a language or an automatic title alone, and its role
+  switches actually reach the output. (Files made with ffmpeg can only store
+  a three-letter language: a region or script such as "United Kingdom" that
+  you set is not kept in the language field — the editor tells you before you
+  apply it. It appears in words only in an automatic title, and only where
+  one is written. #532 tracks writing the full tag.)
 
 - **Settings export and import**, in both the app (Settings › Import &
   Export) and the command line (`meedya-convert settings export`/`import`):
@@ -120,6 +130,28 @@
 
 ### Changed
 
+- **Tracks in new files are now put in a standard order** (language policy,
+  above) — including "Remux to MKV" and "Remux to MP4", which used to keep
+  the source's order. To keep the source's order, turn off "Put tracks in the
+  standard order" in the Output settings (it is saved with the profile), or
+  use `meedya-convert encode --keep-track-order`.
+- **`meedya-convert encode --audio-stream N`** (and `--video-stream`,
+  `--subtitle-stream`) now means stream **number N in the whole file** — the
+  `#N` that `meedya-convert probe` shows — not "the Nth audio stream" (#530).
+  A script that passed `--audio-stream 1` for the second audio track of a
+  film whose video is stream 0 now gets the FIRST audio track (stream #1);
+  run `probe` to find the right number. A number that isn't a stream of that
+  kind is refused with a message.
+- **`meedya-convert probe --format json`** now shows each stream's
+  `language` as a language tag — `en`, `de`, `ja` — instead of the file's
+  three-letter code (`eng`, `ger`, `jpn`). Anything reading that output must
+  expect the tags. A value that isn't a language code is shown as `und`, with
+  the original text in `unrecognisedLanguage`.
+- The engine's warnings about a job (a per-stream setting that couldn't
+  apply, a language kept as the file had it) now appear in the app's Activity
+  Log and on the command line's standard error, instead of on standard
+  output, where the app never showed them and they could break
+  `--format json` output.
 - The app module was split into a thin `MeedyaConverter` executable plus a
   testable `MeedyaConverterCore` library (#499), giving app-module code unit
   tests for the first time.
@@ -134,6 +166,16 @@
   refused with a plain message instead of quietly picking something else.
 - **Tone-mapped subtitles lost their language, title and flags**, and the
   stream editor's Default/Forced switches were never written — both fixed.
+- **Pipeline encode steps, the Shortcuts "Convert Media" action and the
+  quality preview ignored per-stream settings**: they built the ffmpeg
+  command without reading the file's streams. They now read them first, as a
+  normal encode does, and refuse — with the same plain message — settings
+  that can't be matched to this file's tracks.
+- Per-stream video quality (CRF) and preset settings, and subtitle choices
+  for a stream that isn't a subtitle stream of the file, are now reported
+  when they can't apply, like every other per-stream setting.
+- The TestFlight (App Store) build now includes the app's resource bundles
+  (assets, AppleScript definition, in-app Help, language data).
 
 - A staged or auto-detected crop is now dropped (with a warning) when the
   profile copies the video stream, instead of emitting `-vf crop=…` next to

@@ -20,7 +20,15 @@
   implementing the shared language policy MWBM-MEDIA-LANG 1.0.0
   (`docs/standards/media-language-bcp47-policy.md`, an exact copy of the master in
   MeedyaSuite-core, checked in CI). The engine reads and writes every track's
-  language, roles and order through it (`TrackLanguage.swift`).
+  language, roles and order through it (`TrackLanguage.swift`). Rule for every
+  copy or conversion (round 2, 28 Sept): never lose what the source had that the
+  person did not ask to change — a language the output's field cannot hold, or
+  unreadable text, is left for ffmpeg to copy and noted in the job's log
+  (`EncodingEngine.jobNotices` → Activity Log / stderr); every stream flag
+  (including cover art's `attached_pic`) is kept; automatic titles only for
+  untitled tracks in Matroska/WebM with more than one track or with video. ffmpeg
+  9.0.1 writes an `attached_pic` stream into Matroska as a video TRACK, so the
+  engine attaches a copy of the picture instead (`AttachedPictures.swift`).
 - **meedya-convert** — command-line tool (Swift ArgumentParser) built on the
   engine. Subcommands: `encode`, `probe`, `profiles`, `batch`, `manifest`,
   `validate`, `serve`.

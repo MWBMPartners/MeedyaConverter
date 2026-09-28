@@ -5,16 +5,18 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-28 (language policy block below) · VERSION 0.1.0
-Previous: 2026-09-25 14:55
+**Last updated:** 2026-09-28 (language policy block below — round 2) · VERSION 0.1.0
+Previous: 2026-09-28 (language policy round 1) · 2026-09-25 14:55
 
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
 
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
-`5d2223c`. **Nothing here is pushed yet** — the orchestrator pushes after review
-(a push to `wip/**` triggers CI, the only place `swift test` runs). Everything in
-the "CURRENT STATE" block further down is about `wip/alpha-consolidation` and is
-unchanged by this work.
+`5d2223c`. **Round 1 is pushed** (head `28efa6f`, CI green). **Round 2** — the fixes
+for what the independent review found (see "ROUND 2" below) — is 11 LOCAL commits
+on top (`23165c9` … the docs commit), **not pushed**; the orchestrator pushes after
+reviewing them (a push to `wip/**` triggers CI, the only place `swift test` runs).
+Everything in the "CURRENT STATE" block further down is about
+`wip/alpha-consolidation` and is unchanged by this work.
 
 **What it is:** MeedyaConverter's share of the shared language policy
 `MWBM-MEDIA-LANG` 1.0.0 (master in MWBMPartners/MeedyaSuite-core; local copy
@@ -38,8 +40,21 @@ tracks and roles"; packaging note in `DEV_NOTES.md` → CI/CD Workflows.
 | 7c | Drop an unused parameter | — | Done locally — `2dc2351` | no behaviour change; 204 engine tests ran, 0 failures |
 | 8 | Agent instructions (AGENTS.md + pointers) | — | Done locally — `3fd1430` | committed before 7; order does not matter |
 | 9 | Docs (Architecture, DEV_NOTES, CHANGELOG) + this handoff | — | Done locally — the last `docs:` commit | |
-| 10 | Push + CI to green | — | Queued — orchestrator | |
-| 11 | Independent review (Codex per W13) | — | Queued — orchestrator | nothing here has been independently reviewed yet |
+| 10 | Push + CI to green | — | Done — pushed `28efa6f`, CI green | |
+| 11 | Independent review (W13) | — | Done — round 1 reviewed | by a fresh Opus agent standing in for Codex (out of allowance); its findings are round 2 |
+| R2-1 | Cover art kept as cover art; every stream flag kept | #531 | Done locally — `23165c9`, `9f25ad7` | Matroska: attached again from a copy |
+| R2-2 | Automatic titles only where nothing is lost; roles in titles | #531 | Done locally — `b8c509b` | items 2 and 15 |
+| R2-3 | Languages the field cannot hold are kept and reported | #531 | Done locally — `a30f73c` | items 3 and 4 |
+| R2-4 | Editor: reads `eng` as `en`; warns before Apply; can leave a language/title alone | #531 | Done locally — `fae4252` | items 5, 6, 16 |
+| R2-5 | Track order can be switched off (profile, job, app, `--keep-track-order`) | #531 | Done locally — `a770c9a` | item 7 |
+| R2-6 | Pipeline, Shortcuts action and preview read the source's streams | #531 | Done locally — `95c2386` | item 8 |
+| R2-7 | TestFlight bundles; pre-release bundle check before tagging | #531 | Done locally — `4147274` | item 9 |
+| R2-8 | Follow-up issues | #532–#539 | Done — opened, linked from #531 | item 10 (and 14 → #533) |
+| R2-9 | ASCII-only grandfathered lookup | #531 | Done locally — `df63f41` | item 11 |
+| R2-10 | Every stale per-stream setting reported | #531 | Done locally — `e29e9a2` | item 12 |
+| R2-11 | "Data missing" warning to stderr and the app | #531 | Done locally — `87cdf7d` | item 13 |
+| R2-12 | Docs (CHANGELOG, Architecture, CLI docs, API yaml, DEV_NOTES) + this handoff | #531 | Done locally — the round's `docs:` commit | items 6, 7, 17 |
+| R2-13 | Push + CI to green; review of round 2 (W13) | — | Queued — orchestrator | round 2 is not independently reviewed yet |
 
 **Verified here (28 Sept), and how:**
 - `swift build --target ConverterEngine`, `--target MediaLanguagePolicy` and
@@ -71,9 +86,12 @@ writes one).
   the raw metadata string into the OLD `Language` field, and a copy remux drops
   `LanguageBCP47`), and MP4 gets only `mdhd` (no `elng`; non-three-letter values
   are silently dropped). So Matroska outputs get the bibliographic code (`ger`),
-  MP4 the terminology code (`deu`); a region/script survives only in the autonym
-  title. Decided NOT to invent the RFC 9559 `xxx-cc` legacy form — the policy's
-  writing rule names the three-letter code only; raised as a question instead.
+  MP4 the terminology code (`deu`). A region/script a person SETS is not stored
+  in any field (the editor warns before Apply); it appears in words only in an
+  automatic title, which is written only where round 2's title rules allow. An
+  UNEDITED Matroska track keeps the source's own text (round 2). Decided NOT to
+  invent the RFC 9559 `xxx-cc` legacy form — the policy's writing rule names the
+  three-letter code only; raised as a question instead. Full tag: #532.
 - **`Bundle.module` is never used for the policy data**: this toolchain's
   generated accessor has no build-path fallback and stops the program if the
   bundle is missing, which would have crashed a shipped CLI. The library looks
@@ -96,7 +114,11 @@ CI copy check will FAIL until that update is made — so do it promptly.
 (The CI step already passes `GITHUB_TOKEN` and the workflow declares
 `permissions: contents: read`; `actions/checkout` stays at the repo's `v7.0.1`.)
 
-**Follow-ups to raise (not built — W4):**
+**Follow-ups to raise (not built — W4).** Raised as issues in round 2: 1 + 2 →
+#532; 4 → #535; 5 → #536; 9 → #537; plus #533 (DASH/HLS manifest languages),
+#534 (per-stream audio override re-encodes the others), #538 (profile import drops
+watermark/deinterlace), #539 (English "autonym" for `nan`). 6's `testflight.yml`
+half is FIXED in round 2 (`make bundle` still is not).
 1. Matroska `LanguageBCP47`: a post-pass (mkvpropedit, or our own EBML writer) to
    write it, and reading it on probe (ffprobe ignores it).
 2. MP4 `elng`: write and read.
@@ -123,6 +145,95 @@ CI copy check will FAIL until that update is made — so do it promptly.
     `subtitleStreamActions`), so it cannot load — pre-existing, not caused here
     (the new fields were made optional so as not to add to it).
 13. The in-app Help has no page on the stream editor or track languages.
+
+### ROUND 2 — fixes from the independent review (28 Sept)
+
+The review was done by a fresh Opus agent standing in for Codex (out of
+allowance). The lead's decisions for it are in the orchestrator's brief
+(`brief-converter-r2.md`, scratch); the guiding rule: **a remux or conversion
+never loses or damages anything the source had that the person did not ask to
+change** (COMPAT-030) — where ffmpeg cannot store the policy's form, keep what the
+source had and report it. What landed (commits in the table above):
+
+- **Cover art** (`AttachedPictures.swift`): `StreamDisposition` keeps
+  `attached_pic` and every other ffprobe flag (`otherFlags`), writes them all
+  back, and an edit changes only the flags the editor has. Pictures go after all
+  real tracks. In MP4 a mapped picture stays `covr`. **Trap:** ffmpeg's MATROSKA
+  muxer writes an `attached_pic` stream as a video TRACK (even `-map 0 -c copy`;
+  `matroskaenc.c` only attaches `AVMEDIA_TYPE_ATTACHMENT` streams), so
+  `EncodingEngine.encode` copies each picture out of the source first
+  (`-map 0:N -c copy -f image2`, byte-identical) and the builder `-attach`es it
+  under its own name/MIME type. Pipeline/Shortcuts/preview paths cannot do that
+  pre-pass; they map the picture and say so in the notes. When the video is
+  RE-ENCODED, a mapped picture gets `-c:v:N copy` and filters go to the real
+  video via `-filter:v:N` (otherwise ffmpeg refuses: MP4 cover art must stay
+  JPEG/PNG/BMP, and a filter on a copied stream is an error).
+- **Job notes**: `EncodingEngine.jobNotices` (new AsyncStream, one reader, the
+  app's `jobNoticeTask` → Activity Log) and stderr (`Warning: …`). Skipped
+  per-stream settings and `trackWritingNotes()` go through it.
+- **Automatic titles** only when: audio/subtitles with NO title at all in the
+  source (placeholders like "Track 5" are now KEPT — decision, reverses round 1);
+  not set or switched off by the person; container keeps track titles apart
+  (allow-list: Matroska family + WebM; Ogg merges them, MP4 drops them —
+  verified with ffmpeg 9.0.1); more than one track of that type, or real video.
+  Titles carry roles: "English — SDH" (UI-070 label rule; "other" flags named
+  one by one). `isMeaningfulTitle` removed.
+- **Language fields** (`TrackLanguage.languageWrite`, shared by the command and
+  the notes): unedited → three-letter code only when real and nothing lost
+  (`deu`→`ger`), or the source said `und`; a real language with no code
+  (`yue`/`cmn`/`nan`) and unrecognised text (`english`, `xx-bogus`) get NO option
+  so ffmpeg copies the source's value, with a note. **Went slightly beyond the
+  brief's literal rule, on its guiding rule:** an unedited region/script tag
+  (`fr-CA`, from Matroska's `fre-ca`) is also left for Matroska to copy (writing
+  `fre` would lose `CA`); MP4 writes `fra` and notes the loss (a copy would drop
+  the value entirely there). Replacement (tone-mapped) subtitles have nothing to
+  copy from, so the source's value is written onto them.
+- **Editor**: typed text read with the LANG-002 reader (`eng`→`en`), unreadable
+  refused with examples; `storageNote` warns before Apply what the output's
+  field cannot keep; ✕ empties a language ("not set"); "Name it after its
+  language" switch (`SourceStreamEdit.writesAutomaticTitle`).
+- **Track order switch**: `EncodingProfile.orderTracksCanonically` (`nil` = on),
+  `EncodingJobConfig.orderTracksCanonically` (overrides), app toggle in Output
+  settings, `encode --keep-track-order`.
+- **Encode paths**: `EncodingPipelineExecutor` probes each encode step's input
+  just before it runs (injectable `streamProber`); Shortcuts action probes;
+  preview uses the imported streams (`buildPreviewArguments` now throws). All
+  refuse with `EncodingEngineError.streamSelectionInvalid`.
+- Also: ASCII-only grandfathered lookup; CRF/preset/stale subtitle-include
+  reported; "data missing" warning to stderr + app (`TrackLanguage.dataProblem`);
+  TestFlight copies both bundles; beta-alpha checks the bundle before tagging.
+- **Item 14 (DASH/HLS manifest `ja`) NOT fixed**, left to #533: ffmpeg writes the
+  same `language` value into the MPD and each segment's `mdhd`, so `ja` would fix
+  the manifest but drop the language from every segment.
+
+**Verified (round 2), and how:**
+- The reviewer's reproductions re-run with ffmpeg 9.0.1 before and after
+  (items 1–4: M4A cover → MP4, MKV attached cover → MKV, song → Ogg Vorbis/Opus,
+  two untitled tracks → MKA, `yue`/`cmn`/`nan`/`deu` MKV→MKV, MP4→MP4, MKV→MP4,
+  `english`/`xx-bogus` MKV→MKV): every "before" fault reproduced, every "after"
+  correct.
+- `swift build --target ConverterEngine`, `--target MediaLanguagePolicy`,
+  `--target meedya-convert`: exit 0 (only the known harmless linker search-path
+  warning); the app module type-checks (stub recipe).
+- Local harness on the final tree: 13 engine suites (ConverterEngineTests,
+  TrackWritingTests, LanguageFieldTests, AttachedPictureTests,
+  EncodingPipelineExecutorTests, TrackPreservationToolTests,
+  ContainerLanguageToolTests, FFmpegProbeLanguageTests, StreamIndexSpaceTests,
+  PerStreamArgumentTests, ProfileTrackOrderTests, AutoTagEncodeDeliveryTests,
+  SettingsKeyCoverageTests): 1005 tests, 0 failures, none skipped. Conformance +
+  LanguageTagASCIITests: 10 tests, 268 of 268 cases, 0 failures. Linux
+  (`docker run --rm --name converter-r2-linuxpolicy swift:6.1 swift test`, the
+  policy target alone): 10 tests, 0 failures, no warnings; container and scratch
+  package removed, 0 containers, 0 dangling volumes.
+- A planted fault for each fix was caught, then the file was restored by
+  checksum.
+- SwiftLint (Xcode's SourceKit by path) over the 29 Swift files round 2 touched:
+  0 findings on lines round 2 added (31 older ones left). `actionlint` with CI's
+  setting over every workflow: exit 0. `check_copies.py`: 6 copies match.
+
+**NOT verified:** `swift test` itself; the SwiftUI changes (editor, Output
+toggle, preview) were type-checked, not run; the packaging workflows have not
+run; whether CI has ffmpeg/libvorbis/libopus (the tool tests skip without).
 
 ---
 
