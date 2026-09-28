@@ -67,6 +67,14 @@ public struct MediaLanguagePolicy: Sendable {
         sidecarNames = SidecarFileName(reader: reader)
     }
 
+    /// Whether `subtag` is a registered primary language subtag (the IANA
+    /// registry, including the local-use range `qaa`–`qtz`). A well-formed
+    /// tag whose language is not registered is kept, but SHOULD be reported
+    /// (LANG-001) — an editor uses this to say so.
+    public func isRegisteredLanguage(_ subtag: String) -> Bool {
+        canonicaliser.data.isRegisteredLanguage(subtag.lowercased())
+    }
+
     /// The policy on the bundled reference data, loaded once per process.
     /// A failure (the resource bundle missing — a packaging mistake) is
     /// returned, never a crash, so a caller can keep raw text rather than

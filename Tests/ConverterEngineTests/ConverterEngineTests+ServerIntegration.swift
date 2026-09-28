@@ -448,13 +448,54 @@ extension ConverterEngineTests {
     }
 
     /// Verifies language code validation.
+    ///
+    /// This used to pin a 2-or-3-letters-only rule, which refused real BCP 47
+    /// tags such as `en-GB`, `zh-Hant` and `es-419`. The editor now checks
+    /// typed values with the shared language policy (LANG-001): any
+    /// well-formed tag is accepted (and canonicalised); a name or garbage is
+    /// refused with a plain message.
     func test_streamMetadataEditor_languageValidation() {
         XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("eng"))
         XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("en"))
         XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("fra"))
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("en-GB"))
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("zh-Hant"))
+        XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("es-419"))
         XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode(""))
         XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("1234"))
         XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("toolong"))
+        XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("English"))
+        XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("en_GB"))
+    }
+
+    /// What the editor shows for a typed language: the canonical form, a
+    /// plain refusal, or a note for an unregistered code — never a silent
+    /// change of language.
+    func test_streamMetadataEditor_checkLanguageEntry() {
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("EN-gb"), .valid(tag: "en-GB", note: nil))
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("zh-hant-tw"), .valid(tag: "zh-Hant-TW", note: nil))
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("  "), .empty)
+        guard case .invalid(let message) = StreamMetadataEditor.checkLanguageEntry("English") else {
+            return XCTFail("a language NAME is not a tag")
+        }
+        XCTAssertTrue(message.contains("not a language tag"), message)
+        XCTAssertEqual(
+            StreamMetadataEditor.checkLanguageEntry("eng"),
+            .valid(tag: "eng", note: "“eng” is not a registered language code. Did you mean “en”?")
+        )
+    }
+
+    /// The quick-pick list is in menu order: the person's languages first,
+    /// then alphabetical by name in the interface language, `und` last.
+    func test_streamMetadataEditor_suggestionsInMenuOrder() {
+        let english = StreamMetadataEditor.orderedLanguageSuggestions(
+            interfaceLocale: Locale(identifier: "en"), preferences: ["fr_FR"]
+        )
+        XCTAssertEqual(english.first, "fr", "the preference's group first")
+        XCTAssertEqual(english.last, "und", "special codes last")
+        // Alphabetical by English name: Arabic, Chinese…, Danish, Dutch …
+        XCTAssertEqual(Array(english.dropFirst().prefix(3)), ["ar", "zh", "zh-Hans"])
+        XCTAssertEqual(Set(english), Set(StreamMetadataEditor.commonLanguageTags))
     }
 
     /// Verifies edit set has edits detection.

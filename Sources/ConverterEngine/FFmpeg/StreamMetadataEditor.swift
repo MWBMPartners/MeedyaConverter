@@ -6,6 +6,7 @@
 // ============================================================================
 
 import Foundation
+import MediaLanguagePolicy
 
 // MARK: - StreamMetadataEdit
 
@@ -342,40 +343,86 @@ public struct StreamMetadataEditor: Sendable {
     }
 
     // MARK: - Language Codes
+    //
+    // Languages follow the shared language policy (MWBM-MEDIA-LANG,
+    // docs/standards/media-language-bcp47-policy.md): a language is a
+    // canonical BCP 47 TAG (`en`, `en-GB`, `zh-Hant`, `es-419`), never a name.
+    // This used to be a hand-typed list of 21 three-letter codes labelled
+    // "ISO 639-2/B" (they were actually the /T forms) with English names, and
+    // a check that accepted only two or three letters — so `en-GB`,
+    // `zh-Hant` and `es-419` were refused. Names now come from the platform
+    // (UI-010), never from a typed list.
 
-    /// Common ISO 639-2/B language codes used in media files.
-    public static let commonLanguages: [(code: String, name: String)] = [
-        ("eng", "English"),
-        ("fra", "French"),
-        ("deu", "German"),
-        ("spa", "Spanish"),
-        ("ita", "Italian"),
-        ("por", "Portuguese"),
-        ("rus", "Russian"),
-        ("jpn", "Japanese"),
-        ("kor", "Korean"),
-        ("zho", "Chinese"),
-        ("ara", "Arabic"),
-        ("hin", "Hindi"),
-        ("nld", "Dutch"),
-        ("swe", "Swedish"),
-        ("nor", "Norwegian"),
-        ("dan", "Danish"),
-        ("fin", "Finnish"),
-        ("pol", "Polish"),
-        ("tur", "Turkish"),
-        ("tha", "Thai"),
-        ("vie", "Vietnamese"),
-        ("und", "Undetermined"),
+    /// Languages offered as quick picks in the stream editor, as canonical
+    /// BCP 47 tags (the same set the old list had, `und` included, plus the
+    /// two Chinese scripts). Shown with names in the interface language and in
+    /// menu order — see `orderedLanguageSuggestions(interfaceLocale:preferences:)`.
+    public static let commonLanguageTags: [String] = [
+        "ar", "da", "de", "en", "es", "fi", "fr", "hi", "it", "ja", "ko", "nl",
+        "no", "pl", "pt", "ru", "sv", "th", "tr", "vi", "zh", "zh-Hans", "zh-Hant", "und",
     ]
 
-    /// Validate an ISO 639 language code.
-    ///
-    /// - Parameter code: Language code to validate.
-    /// - Returns: `true` if the code is 2 or 3 lowercase letters.
+    /// Whether `code` is a well-formed BCP 47 language tag (LANG-001) —
+    /// `en`, `en-GB`, `zh-Hant`, `es-419`, `sr-Latn-RS` … — rather than
+    /// something else (a name such as `English`, digits, stray punctuation).
     public static func isValidLanguageCode(_ code: String) -> Bool {
-        let trimmed = code.trimmingCharacters(in: .whitespaces).lowercased()
-        return (trimmed.count == 2 || trimmed.count == 3) &&
-               trimmed.allSatisfy(\.isLetter)
+        if case .valid = checkLanguageEntry(code) { return true }
+        return false
+    }
+
+    /// What a person typed into a language field, checked by the policy.
+    public enum LanguageEntryCheck: Sendable, Equatable {
+        /// Nothing typed (the stream keeps the file's language).
+        case empty
+        /// A well-formed tag, in canonical form (`EN-gb` → `en-GB`), with an
+        /// optional plain-English note worth showing (an unregistered code).
+        case valid(tag: String, note: String?)
+        /// Not a language tag; `message` says so in plain English.
+        case invalid(message: String)
+    }
+
+    /// Checks what a person typed into a stream's language field.
+    ///
+    /// A typed value is treated as a TAG (policy LANG-001, which is for
+    /// "a tag a person types into a tag field"), so `eng` is not silently
+    /// turned into `en`: it is kept, with a note that it is not a registered
+    /// code and a suggestion ("Did you mean “en”?") — reporting doubt, never
+    /// resolving it by guessing (COMPAT-040).
+    public static func checkLanguageEntry(_ text: String) -> LanguageEntryCheck {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .empty }
+        guard let policy = TrackLanguage.policy else {
+            // Without the policy's data nothing can be checked: accept what
+            // was typed, and say so.
+            return .valid(tag: trimmed, note: "Language data unavailable — not checked.")
+        }
+        let tag = policy.canonicaliser.canonicalise(text)
+        if tag.isMalformed {
+            return .invalid(message: "“\(tag.text)” is not a language tag. Type a code such as en, en-GB, zh-Hant or es-419.")
+        }
+        guard let language = tag.language, !policy.isRegisteredLanguage(language) else {
+            return .valid(tag: tag.text, note: nil)
+        }
+        var note = "“\(language)” is not a registered language code."
+        if let suggestion = policy.reader.read(tag.text), suggestion != tag.text {
+            note += " Did you mean “\(suggestion)”?"
+        }
+        return .valid(tag: tag.text, note: note)
+    }
+
+    /// `commonLanguageTags` in MENU order (policy Part B, UI-020 to UI-040):
+    /// the person's own languages first (`preferences`, e.g.
+    /// `Locale.preferredLanguages`), then the rest alphabetically by name in
+    /// the interface language, sorted by that language's rules; special
+    /// codes such as `und` last. Without the policy's data, the list as is.
+    public static func orderedLanguageSuggestions(interfaceLocale: Locale, preferences: [String]) -> [String] {
+        guard let policy = TrackLanguage.policy else { return commonLanguageTags }
+        let items = commonLanguageTags.map { PresentationItem(tag: $0) }
+        return policy.presentationOrder.order(
+            items,
+            // Accepts both `en-GB` and the operating system's `en_GB` shape (LANG-004).
+            preferences: preferences.map { policy.posixLocales.convert($0) ?? $0 },
+            collation: .localizedNames(in: interfaceLocale)
+        ).map { commonLanguageTags[$0] }
     }
 }

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import ConverterEngine
+import MediaLanguagePolicy
 
 // MARK: - MetadataEditorView
 
@@ -133,8 +134,11 @@ struct MetadataEditorView: View {
                         .frame(width: 80, alignment: .trailing)
                     Picker("", selection: edit.language) {
                         Text("Undetermined").tag("")
-                        ForEach(StreamMetadataEditor.commonLanguages, id: \.code) { lang in
-                            Text("\(lang.name) (\(lang.code))").tag(lang.code)
+                        // BCP 47 tags with names from the platform (the old
+                        // list was hand-typed three-letter codes with English
+                        // names — language policy LANG-001 / UI-010).
+                        ForEach(StreamMetadataEditor.commonLanguageTags, id: \.self) { tag in
+                            Text("\(LanguageNames.localizedName(of: tag, in: .current) ?? tag) (\(tag))").tag(tag)
                         }
                     }
                     .labelsHidden()

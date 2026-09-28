@@ -7,6 +7,7 @@
 
 import SwiftUI
 import ConverterEngine
+import MediaLanguagePolicy
 
 // MARK: - OutputSettingsView
 
@@ -970,13 +971,47 @@ struct OutputSettingsView: View {
 
 // MARK: - StreamMetadataEditorView (Phase 3.6)
 
-/// Editor for per-stream metadata: title, language, default/forced flags.
+/// Editor for per-stream metadata: title, language and roles.
+///
+/// Languages follow the shared language policy (MWBM-MEDIA-LANG,
+/// docs/standards/media-language-bcp47-policy.md):
+/// - the field holds a BCP 47 TAG — `en`, `en-GB`, `zh-Hant`, `es-419` —
+///   checked and shown in canonical form (LANG-001); a name or garbage is
+///   refused with a plain message, and Apply stays off until it is fixed;
+/// - beside it, the language's NAME in the interface language (UI-010), so
+///   the raw tag and the readable name are both visible (the policy expects
+///   raw tags in editor views);
+/// - quick picks come in menu order: the person's own languages first, then
+///   alphabetical by name (UI-020 to UI-040).
+/// Roles (default, forced, original, commentary, SDH, audio description) are
+/// real toggles that reach the output as dispositions (TRACK-010). Before the
+/// policy work the language field accepted only two or three letters and the
+/// Default/Forced toggles were never written at all.
 struct StreamMetadataEditorView: View {
     let mediaFile: MediaFile
     @Environment(\.dismiss) private var dismiss
     @Environment(AppViewModel.self) private var viewModel
 
     @State private var streamMetadata: [Int: StreamMetadataEntry] = [:]
+
+    /// The interface language (names are shown in it — UI-010).
+    private var interfaceLocale: Locale { LocalizationManager.shared.currentLocale }
+
+    /// Quick-pick languages in menu order for this person.
+    private var suggestions: [String] {
+        StreamMetadataEditor.orderedLanguageSuggestions(
+            interfaceLocale: interfaceLocale,
+            preferences: Locale.preferredLanguages
+        )
+    }
+
+    /// Whether any language field holds something that is not a tag.
+    private var hasInvalidLanguage: Bool {
+        streamMetadata.values.contains {
+            if case .invalid = StreamMetadataEditor.checkLanguageEntry($0.language) { return true }
+            return false
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -993,6 +1028,10 @@ struct StreamMetadataEditorView: View {
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
+                .disabled(hasInvalidLanguage)
+                .accessibilityHint(hasInvalidLanguage
+                    ? "Unavailable until every language field holds a language tag"
+                    : "Applies the changes to the next encode of this file")
             }
             .padding()
 
@@ -1006,17 +1045,18 @@ struct StreamMetadataEditorView: View {
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 680, minHeight: 420)
         .onAppear { loadExistingMetadata() }
     }
 
     private func streamMetadataRow(_ stream: MediaStream) -> some View {
         let entry = binding(for: stream.streamIndex)
+        let label = "\(stream.streamType.rawValue.capitalized) #\(stream.streamIndex)"
 
         return VStack(alignment: .leading, spacing: 8) {
             // Stream header
             HStack {
-                Text("\(stream.streamType.rawValue.capitalized) #\(stream.streamIndex)")
+                Text(label)
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Text(stream.summaryString)
@@ -1024,23 +1064,115 @@ struct StreamMetadataEditorView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // The file's own value could not be read as a language: say so,
+            // with the text, rather than hide it (COMPAT-040).
+            if let unreadable = stream.unrecognisedLanguage {
+                Text("The file says “\(unreadable)”, which is not a language code, so it is treated as not known (und). Type the right tag to fix it.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
             // Editable fields
             HStack {
-                TextField("Title", text: entry.title,
-                          prompt: Text(stream.title ?? "Untitled"))
+                TextField("Title", text: entry.title, prompt: Text(titlePrompt(for: stream)))
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
+                    .frame(maxWidth: 220)
+                    .accessibilityLabel("Title for \(label)")
 
                 TextField("Language (BCP 47)", text: entry.language,
                           prompt: Text(stream.language ?? "und"))
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 100)
+                    .frame(maxWidth: 120)
+                    .accessibilityLabel("Language tag for \(label)")
+                    .accessibilityHint("A language tag such as en, en-GB, zh-Hant or es-419")
 
-                Toggle("Default", isOn: entry.isDefault)
-                Toggle("Forced", isOn: entry.isForced)
+                Menu("Common") {
+                    ForEach(suggestions, id: \.self) { tag in
+                        Button("\(languageName(tag)) — \(tag)") { entry.wrappedValue.language = tag }
+                    }
+                }
+                .fixedSize()
+                .accessibilityLabel("Choose a common language for \(label)")
             }
+
+            languageCheck(entry.wrappedValue.language)
+
+            roleToggles(for: stream, disposition: entry.disposition, label: label)
         }
         .padding(.vertical, 4)
+    }
+
+    /// The canonical tag and its name, a note, or a plain refusal.
+    @ViewBuilder
+    private func languageCheck(_ text: String) -> some View {
+        switch StreamMetadataEditor.checkLanguageEntry(text) {
+        case .empty:
+            EmptyView()
+        case .valid(let tag, let note):
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(languageName(tag)) · \(tag)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        case .invalid(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .accessibilityLabel("Problem: \(message)")
+        }
+    }
+
+    /// The role toggles that make sense for this kind of stream.
+    @ViewBuilder
+    private func roleToggles(for stream: MediaStream, disposition: Binding<StreamDisposition>, label: String) -> some View {
+        HStack(spacing: 12) {
+            Toggle("Default", isOn: disposition.isDefault)
+                .accessibilityLabel("Default track: \(label)")
+            switch stream.streamType {
+            case .audio:
+                Toggle("Original language", isOn: disposition.isOriginal)
+                    .accessibilityLabel("Original language: \(label)")
+                Toggle("Commentary", isOn: disposition.isComment)
+                    .accessibilityLabel("Commentary: \(label)")
+                Toggle("Audio description", isOn: disposition.isVisualImpaired)
+                    .accessibilityLabel("Audio description: \(label)")
+            case .subtitle:
+                Toggle("Forced", isOn: disposition.isForced)
+                    .accessibilityLabel("Forced subtitles: \(label)")
+                Toggle("SDH", isOn: disposition.isHearingImpaired)
+                    .accessibilityLabel("Subtitles for the deaf and hard of hearing: \(label)")
+                Toggle("Commentary", isOn: disposition.isComment)
+                    .accessibilityLabel("Commentary: \(label)")
+                Toggle("Original language", isOn: disposition.isOriginal)
+                    .accessibilityLabel("Original language: \(label)")
+            default:
+                EmptyView()
+            }
+        }
+        .toggleStyle(.checkbox)
+    }
+
+    /// The language's name in the interface language, or the tag itself.
+    private func languageName(_ tag: String) -> String {
+        LanguageNames.localizedName(of: tag, in: interfaceLocale) ?? tag
+    }
+
+    /// The title field's placeholder: the file's title, or — for an audio or
+    /// subtitle stream with none — the language's own name that the encode
+    /// will write (NAME-010).
+    private func titlePrompt(for stream: MediaStream) -> String {
+        if let title = stream.title, !title.isEmpty { return title }
+        if stream.streamType == .audio || stream.streamType == .subtitle,
+           let language = stream.language, let autonym = TrackLanguage.autonymTitle(for: language) {
+            return "\(autonym) (automatic)"
+        }
+        return "Untitled"
     }
 
     private func binding(for index: Int) -> Binding<StreamMetadataEntry> {
@@ -1048,6 +1180,12 @@ struct StreamMetadataEditorView: View {
             get: { streamMetadata[index] ?? StreamMetadataEntry() },
             set: { streamMetadata[index] = $0 }
         )
+    }
+
+    /// The roles the file gives a stream (all of them when probed with the
+    /// policy work; just default/forced for older data).
+    private func sourceDisposition(_ stream: MediaStream) -> StreamDisposition {
+        stream.disposition ?? StreamDisposition(isDefault: stream.isDefault, isForced: stream.isForced)
     }
 
     private func loadExistingMetadata() {
@@ -1060,8 +1198,7 @@ struct StreamMetadataEditorView: View {
             streamMetadata[stream.streamIndex] = StreamMetadataEntry(
                 title: edit?.title ?? stream.title ?? "",
                 language: edit?.language ?? stream.language ?? "",
-                isDefault: stream.isDefault,
-                isForced: stream.isForced
+                disposition: edit?.disposition ?? sourceDisposition(stream)
             )
         }
     }
@@ -1072,7 +1209,9 @@ struct StreamMetadataEditorView: View {
     /// here — which ffmpeg reads as "the Nth AUDIO stream of the output" — so
     /// an edit landed on the wrong track, or on none. The argument builder now
     /// works out the output stream for each source stream itself. Only fields
-    /// that differ from the file are recorded ("leave as it is" otherwise).
+    /// that differ from the file are recorded ("leave as it is" otherwise);
+    /// a language is recorded in canonical form; roles are recorded whole
+    /// (the entry started from ALL of the file's roles, so none is lost).
     private func applyMetadata() {
         var edits: [Int: SourceStreamEdit] = [:]
 
@@ -1080,8 +1219,12 @@ struct StreamMetadataEditorView: View {
             guard let entry = streamMetadata[stream.streamIndex] else { continue }
             var edit = SourceStreamEdit()
             if entry.title != (stream.title ?? "") { edit.title = entry.title }
-            if entry.language != (stream.language ?? ""), !entry.language.isEmpty {
-                edit.language = entry.language
+            if case .valid(let tag, _) = StreamMetadataEditor.checkLanguageEntry(entry.language),
+               tag != (stream.language ?? "") {
+                edit.language = tag
+            }
+            if entry.disposition != sourceDisposition(stream) {
+                edit.disposition = entry.disposition
             }
             if !edit.isEmpty {
                 edits[stream.streamIndex] = edit
@@ -1098,7 +1241,8 @@ struct StreamMetadataEditorView: View {
 /// Editable metadata for a single stream.
 struct StreamMetadataEntry {
     var title: String = ""
+    /// The language as typed (checked and canonicalised on Apply).
     var language: String = ""
-    var isDefault: Bool = false
-    var isForced: Bool = false
+    /// Every role flag, starting from the file's own.
+    var disposition = StreamDisposition()
 }
