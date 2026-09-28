@@ -401,14 +401,13 @@ struct QualityPreviewView: View {
                 var pictureCopies: [Int: URL] = [:]
                 if !needed.isEmpty {
                     try? FileManager.default.createDirectory(at: pictureFolder, withIntermediateDirectories: true)
-                    pictureCopies = await AttachedPictures.copyPictures(needed, from: URL(fileURLWithPath: inputPath),
-                                                                        into: pictureFolder) { arguments in
-                        let copier = FFmpegProcessController(binaryPath: ffmpegInfo.path)
-                        for await _ in try copier.startEncoding(arguments: arguments) {}
-                        if let code = copier.exitCode, code != 0 {
-                            throw EncodingEngineError.encodingFailed(exitCode: code, stderr: copier.errorOutput)
-                        }
-                    }
+                    // Done in a helper that is not on the main actor — see
+                    // `copyPreviewPictures` for why it cannot be written
+                    // inline here.
+                    pictureCopies = await Self.copyPreviewPictures(
+                        needed, from: URL(fileURLWithPath: inputPath),
+                        into: pictureFolder, ffmpegPath: ffmpegInfo.path
+                    )
                 }
 
                 // Built from the imported file's streams, as the full encode
@@ -463,6 +462,51 @@ struct QualityPreviewView: View {
                     isGenerating = false
                     errorMessage = "Preview generation failed: \(error.localizedDescription)"
                 }
+            }
+        }
+    }
+
+    /// Copies the cover art a Matroska preview attaches out of the source,
+    /// with the same step (`AttachedPictures.copyPictures`) and the same
+    /// ffmpeg command as a real encode, and returns the copies it made.
+    ///
+    /// Why this is its own function, marked `nonisolated`: the view runs on
+    /// the main actor, and so does the `Task` in `generatePreview()`. A
+    /// closure written inside that task belongs to the main actor too.
+    /// `copyPictures` is not on the main actor, and it calls the closure
+    /// from wherever it happens to be running. Handing it a main-actor
+    /// closure is therefore a possible data race, and Swift 6.1 (the
+    /// compiler on the CI runner) refuses to build it: "sending value of
+    /// non-Sendable type '([String]) async throws -> Void' risks causing
+    /// data races". A newer compiler (Swift 6.4, on the development Mac)
+    /// lets it through, because the closure touches nothing on the main
+    /// actor, which is why a local check missed it. Written here instead,
+    /// the closure is not tied to the main actor, and everything that
+    /// crosses over (the list of pictures, two file locations, the ffmpeg
+    /// path and the result) is plain values that are safe to share. The
+    /// pipeline and the Shortcuts action already call `copyPictures` from
+    /// code that is not on the main actor, which is why the same closure
+    /// builds there.
+    ///
+    /// Rejected: marking the closure or anything it captures
+    /// `@unchecked Sendable` or `nonisolated(unsafe)`, or relaxing the
+    /// concurrency checks. Those would only hide the check, not answer it.
+    ///
+    /// Nothing about what is copied changes. A picture whose copy fails is
+    /// simply missing from the result, as in a real encode, and the preview
+    /// then leaves that picture out. It does not say so: a preview shows no
+    /// notes (see `PreviewGenerator.buildPreviewArguments`).
+    nonisolated private static func copyPreviewPictures(
+        _ needed: [(streamIndex: Int, fileExtension: String)],
+        from input: URL,
+        into folder: URL,
+        ffmpegPath: String
+    ) async -> [Int: URL] {
+        await AttachedPictures.copyPictures(needed, from: input, into: folder) { arguments in
+            let copier = FFmpegProcessController(binaryPath: ffmpegPath)
+            for await _ in try copier.startEncoding(arguments: arguments) {}
+            if let code = copier.exitCode, code != 0 {
+                throw EncodingEngineError.encodingFailed(exitCode: code, stderr: copier.errorOutput)
             }
         }
     }
