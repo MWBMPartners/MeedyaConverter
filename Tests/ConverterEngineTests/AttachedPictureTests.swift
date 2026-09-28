@@ -16,7 +16,13 @@
 //     by name), and an edit changes only the flags it can;
 //   * pictures are not ordered as tracks: they go after every real track;
 //   * in a Matroska output a picture with a copy is ATTACHED (`-attach`),
-//     because ffmpeg's Matroska muxer would make it a video track.
+//     under its own name and with its description, because ffmpeg's
+//     Matroska muxer would make it a video track.
+// The SECOND independent review found WebM jobs with cover art failing
+// outright, cover art turned into a `bin_data` stream (MPEG-TS) or a stray
+// MJPEG track (AVI), dropped without a word (MOV, Ogg, audio-only MP4), and
+// Matroska covers renamed and stripped of their descriptions. Pictures a file
+// type cannot hold are now left out, with a note.
 // TrackPreservationToolTests checks the same with a real ffmpeg.
 // ============================================================================
 
@@ -175,18 +181,152 @@ final class AttachedPictureTests: XCTestCase {
         XCTAssertEqual(builder.trackWritingNotes(), [])
     }
 
-    /// Without a copy (paths that build one command and nothing else) the
-    /// picture is mapped, keeping its flag, and the notes say what ffmpeg
-    /// will make of it.
-    func test_matroskaWithoutACopyMapsThePictureAndSaysSo() {
+    /// Without a copy (the copying step failed, or a caller built the
+    /// command without running it) the picture is LEFT OUT, and the notes
+    /// say so. The round-2 build mapped it, so ffmpeg made it a one-frame
+    /// video track — and its note said so even when the output had no video
+    /// and the picture was simply dropped (the second review's finding).
+    func test_matroskaWithoutACopyLeavesThePictureOutAndSaysSo() {
         let builder = remux([MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition()), cover(1)],
                             to: "/tmp/out.mka")
         let args = builder.build()
-        XCTAssertEqual(maps(args), ["0:0", "0:1"])
+        XCTAssertEqual(maps(args), ["0:0"])
         XCTAssertFalse(args.contains("-attach"))
-        XCTAssertTrue(pairs(args, "-disposition").contains("-disposition:v:0 attached_pic"))
+        XCTAssertFalse(pairs(args, "-disposition").contains { $0.contains("attached_pic") })
+        XCTAssertEqual(builder.trackWritingNotes(), [
+            "Stream #1 is a picture attached to the file (cover art). A Matroska file can only keep it as an "
+                + "attachment, and it could not be copied out of the source to attach, so it is left out."
+        ])
+    }
+
+    /// A picture in a format with no known file type cannot be attached:
+    /// left out of a Matroska output, with a note naming the format.
+    func test_matroskaLeavesOutAPictureItCannotAttach() {
+        let odd = MediaStream(streamIndex: 1, streamType: .video, codecName: "jpegxl",
+                              disposition: StreamDisposition(isAttachedPicture: true))
+        var builder = remux([MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition()), odd],
+                            to: "/tmp/out.mkv")
+        builder.attachedPictureFiles = [1: URL(fileURLWithPath: "/tmp/p1.jxl")]
+        XCTAssertEqual(maps(builder.build()), ["0:0"])
+        XCTAssertTrue(builder.attachedPicturesNeedingCopies().isEmpty)
         XCTAssertEqual(builder.trackWritingNotes().count, 1)
-        XCTAssertTrue(builder.trackWritingNotes()[0].hasPrefix("Stream #1 is a picture attached to the file"))
+        XCTAssertTrue(builder.trackWritingNotes()[0].contains("(jpegxl) is not one MeedyaConverter can attach"))
+    }
+
+    // MARK: - File types that cannot hold pictures (second review, items 1 and 6)
+
+    /// A film with cover art to a file type ffmpeg cannot write pictures
+    /// into. WebM refused the whole job (exit 234 — the second review's
+    /// must-fix 1), MPEG-TS gained a `bin_data` stream, AVI a stray MJPEG
+    /// track, and MOV and Ogg lost it without a word. Now the picture is not
+    /// mapped at all, and the notes say so.
+    func test_fileTypesThatCannotHoldPicturesLeaveThemOutAndSaySo() {
+        let sources = [
+            MediaStream(streamIndex: 0, streamType: .video, codecName: "h264", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            cover(2, name: "cover.jpg")
+        ]
+        for (output, name) in [("/tmp/out.webm", "WebM"), ("/tmp/out.ts", "MPEG-TS (Transport Stream)"),
+                               ("/tmp/out.avi", "AVI"), ("/tmp/out.mov", "MOV (QuickTime)"), ("/tmp/out.ogg", "OGG"),
+                               ("/tmp/out.3gp", "3GP"), ("/tmp/out.mpg", "MPEG-PS (Program Stream)")] {
+            let builder = remux(sources, to: output)
+            let args = builder.build()
+            XCTAssertEqual(maps(args), ["0:0", "0:1"], "\(output): the picture is not mapped")
+            XCTAssertFalse(args.contains("-attach"), output)
+            XCTAssertFalse(pairs(args, "-disposition").contains { $0.contains("attached_pic") }, output)
+            XCTAssertEqual(builder.trackWritingNotes(), [
+                "Stream #2 is a picture attached to the file (cover art). ffmpeg cannot write pictures into this "
+                    + "file type (\(name)), so it is left out."
+            ], output)
+            XCTAssertTrue(builder.attachedPicturesNeedingCopies().isEmpty, output)
+        }
+    }
+
+    /// An audio-only output (`-vn`) to MP4/M4A: ffmpeg drops a mapped picture
+    /// with the video, so it is left out and noted. The same profile to a
+    /// Matroska file keeps it, because it is attached, not mapped.
+    func test_anOutputWithNoVideoLeavesMappedPicturesOutButAttachesInMatroska() {
+        let sources = [
+            MediaStream(streamIndex: 0, streamType: .audio, codecName: "aac", language: "und",
+                        disposition: StreamDisposition(isDefault: true)),
+            cover(1)
+        ]
+        var m4a = remux(sources, to: "/tmp/out.m4a")
+        m4a.videoPassthrough = false
+        m4a.videoCodec = nil
+        let args = m4a.build()
+        XCTAssertTrue(args.contains("-vn"))
+        XCTAssertEqual(maps(args), ["0:0"])
+        XCTAssertEqual(m4a.trackWritingNotes(), [
+            "Stream #1 is a picture attached to the file (cover art). This output has no video, and ffmpeg "
+                + "drops pictures along with the video, so it is left out."
+        ])
+
+        var mka = remux(sources, to: "/tmp/out.mka")
+        mka.videoPassthrough = false
+        mka.videoCodec = nil
+        mka.attachedPictureFiles = [1: URL(fileURLWithPath: "/tmp/p1.jpg")]
+        let mkaArgs = mka.build()
+        XCTAssertEqual(maps(mkaArgs), ["0:0"])
+        XCTAssertEqual(pairs(mkaArgs, "-attach"), ["-attach /tmp/p1.jpg"])
+        XCTAssertEqual(mka.trackWritingNotes(), [])
+    }
+
+    /// With no file type known (only possible when the builder is used
+    /// directly) nothing was checked, so the picture is mapped as it always
+    /// was.
+    func test_anUnknownFileTypeStillMapsThePicture() {
+        let builder = remux([MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition()), cover(1)],
+                            to: "/tmp/out.unknownext")
+        XCTAssertEqual(maps(builder.build()), ["0:0", "0:1"])
+        XCTAssertEqual(builder.trackWritingNotes(), [])
+    }
+
+    /// The table itself.
+    func test_pictureSupportPerFileType() {
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .mp4), .mappedAsCoverArt)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .m4a), .mappedAsCoverArt)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .mkv), .attachment)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .mka), .attachment)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .webm), .none)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: .mov), .none)
+        XCTAssertEqual(AttachedPictures.pictureSupport(in: nil), .unchecked)
+    }
+
+    // MARK: - Names and descriptions (second review, item 2)
+
+    /// A Matroska cover keeps its own description: written as the
+    /// attachment's `title`, which ffmpeg stores as FileDescription.
+    func test_matroskaAttachmentKeepsItsDescription() {
+        var picture = cover(1, name: "small_cover.png")
+        picture.codecName = "png"
+        picture.attachmentMimeType = "image/png"
+        picture.title = "Back of the box"
+        var builder = remux([MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition()), picture],
+                            to: "/tmp/out.mkv")
+        builder.attachedPictureFiles = [1: URL(fileURLWithPath: "/tmp/p1.png")]
+        XCTAssertEqual(pairs(builder.build(), "-metadata:s:t:"), [
+            "-metadata:s:t:0 mimetype=image/png", "-metadata:s:t:0 filename=small_cover.png",
+            "-metadata:s:t:0 title=Back of the box"
+        ])
+
+        // A description set in the stream editor wins; an empty one clears it.
+        builder.sourceStreamEdits = [1: SourceStreamEdit(title: "Rear")]
+        XCTAssertTrue(pairs(builder.build(), "-metadata:s:t:").contains("-metadata:s:t:0 title=Rear"))
+        builder.sourceStreamEdits = [1: SourceStreamEdit(title: "")]
+        XCTAssertFalse(pairs(builder.build(), "-metadata:s:t:").contains { $0.contains("title=") })
+    }
+
+    /// Two named covers keep both names (the second review found `cover-3.jpg`
+    /// and `cover-4.png`, because the probe never asked ffprobe for them).
+    func test_twoNamedCoversKeepTheirNames() {
+        var small = cover(2, name: "small_cover.png")
+        small.codecName = "png"
+        var builder = remux([MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition()),
+                             cover(1, name: "cover.jpg"), small], to: "/tmp/out.mkv")
+        builder.attachedPictureFiles = [1: URL(fileURLWithPath: "/tmp/p1.jpg"), 2: URL(fileURLWithPath: "/tmp/p2.png")]
+        let names = pairs(builder.build(), "-metadata:s:t:").filter { $0.contains("filename=") }
+        XCTAssertEqual(names, ["-metadata:s:t:0 filename=cover.jpg", "-metadata:s:t:1 filename=small_cover.png"])
     }
 
     /// Only a Matroska output needs copies — not MP4, not WebM.

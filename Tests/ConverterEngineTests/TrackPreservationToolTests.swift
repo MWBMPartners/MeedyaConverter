@@ -10,7 +10,9 @@
 // independent review of the language policy work found cases where it did;
 // each test here makes a small file with the ffmpeg on this machine, runs
 // MeedyaConverter's own arguments through that ffmpeg, and reads the result
-// back with ffprobe — the way the review reproduced them.
+// back with ffprobe — the way the review reproduced them. The second
+// independent review's cover-art findings (WebM, MPEG-TS, AVI, audio-only
+// MP4, Matroska names and descriptions) are checked the same way.
 //
 // Skipped (not failed) when ffmpeg/ffprobe are not installed, per
 // CONTRIBUTING's rule for tests that need FFmpeg. First run 28 Sept 2026
@@ -212,6 +214,110 @@ final class TrackPreservationToolTests: XCTestCase {
         let seenFilm = try streams(fromFilm)
         XCTAssertEqual(seenFilm.map(\.codec), ["h264", "aac", "mjpeg"])
         XCTAssertEqual(seenFilm.map(\.attachedPicture), [false, false, true])
+    }
+
+    // MARK: - Cover art, second review (items 1, 2 and 6)
+
+    /// A PNG picture, to use as a second cover.
+    private func makePNG(_ name: String) throws -> URL {
+        try make(name, ["-f", "lavfi", "-i", "color=c=blue:size=16x16:duration=1", "-frames:v", "1"])
+    }
+
+    /// A small film (MPEG-4 video, AAC audio) with `pictures` attached as
+    /// Matroska attachments: (file, MIME type, description).
+    private func makeFilm(_ name: String, pictures: [(URL, String, String?)]) throws -> URL {
+        var arguments = [
+            "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4",
+            "-map", "0", "-map", "1", "-c:v", "mpeg4", "-c:a", "aac"
+        ]
+        for (index, picture) in pictures.enumerated() {
+            arguments += ["-attach", picture.0.path, "-metadata:s:t:\(index)", "mimetype=\(picture.1)",
+                          "-metadata:s:t:\(index)", "filename=\(picture.0.lastPathComponent)"]
+            if let description = picture.2 {
+                arguments += ["-metadata:s:t:\(index)", "title=\(description)"]
+            }
+        }
+        return try make(name, arguments)
+    }
+
+    /// Cover art to WebM: ffmpeg refused the whole job (exit 234) in the
+    /// round-2 build — the second review's must-fix 1. Now the picture is
+    /// left out, the job succeeds, and the notes say so. Needs VP9 and Opus
+    /// encoders (skipped without them).
+    func test_coverArtToWebMIsLeftOutAndTheJobSucceeds() async throws {
+        guard try hasEncoder("libvpx-vp9"), try hasEncoder("libopus") else {
+            throw XCTSkip("this ffmpeg has no libvpx-vp9 or libopus")
+        }
+        let film = try makeFilm("film.mkv", pictures: [(try makePicture(), "image/jpeg", nil)])
+        var profile = EncodingProfile.webNextGen
+        profile.videoCodec = .vp9
+        profile.videoCRF = 40
+        profile.videoPreset = nil
+        let (output, config) = try await convert(film, to: "out.webm", profile: profile)
+        XCTAssertEqual(try streams(output).map(\.type), ["video", "audio"])
+        XCTAssertEqual(config.trackWritingNotes(), [
+            "Stream #2 is a picture attached to the file (cover art). ffmpeg cannot write pictures into this "
+                + "file type (WebM), so it is left out."
+        ])
+    }
+
+    /// A Matroska cover keeps its own name and description. The second
+    /// review found `small_cover.png` described "Back of the box" came out as
+    /// `cover.png` with no description: the probe never asked ffprobe for
+    /// `filename`, and the description was never written.
+    func test_matroskaCoverKeepsItsNameAndDescription() async throws {
+        let film = try makeFilm("film.mkv", pictures: [(try makePNG("small_cover.png"), "image/png", "Back of the box")])
+        let (output, _) = try await convert(film, to: "out.mkv", profile: .remuxToMKV)
+        let picture = try streams(output).last
+        XCTAssertEqual(picture?.attachedPicture, true)
+        XCTAssertEqual(picture?.fileName, "small_cover.png")
+        XCTAssertEqual(picture?.title, "Back of the box")
+    }
+
+    /// Two covers keep both names (no `cover-3.jpg`, `cover-4.png`).
+    func test_twoMatroskaCoversKeepTheirNames() async throws {
+        let film = try makeFilm("film.mkv", pictures: [
+            (try makePicture(), "image/jpeg", nil), (try makePNG("small_cover.png"), "image/png", nil)
+        ])
+        let (output, _) = try await convert(film, to: "out.mkv", profile: .remuxToMKV)
+        XCTAssertEqual(try streams(output).compactMap(\.fileName), ["cover.jpg", "small_cover.png"])
+    }
+
+    /// MPEG-TS turned the cover into a `bin_data` stream and AVI into a stray
+    /// MJPEG video track. Now it is left out of both, with a note.
+    func test_coverArtIsLeftOutOfTransportStreamAndAVI() async throws {
+        let film = try makeFilm("film.mkv", pictures: [(try makePicture(), "image/jpeg", nil)])
+        for (name, container) in [("out.ts", ContainerFormat.mpegTS), ("out.avi", ContainerFormat.avi)] {
+            var profile = EncodingProfile.remuxToMKV
+            profile.containerFormat = container
+            let (output, config) = try await convert(film, to: name, profile: profile)
+            XCTAssertEqual(try streams(output).map(\.type), ["video", "audio"], "\(name): nothing else")
+            XCTAssertEqual(config.trackWritingNotes().count, 1, name)
+            XCTAssertTrue(config.trackWritingNotes().first?.contains("is left out") == true, name)
+        }
+    }
+
+    /// An audio-only output to M4A (`-vn`): ffmpeg drops the cover with the
+    /// video, so it is left out and the notes say so (it was dropped without
+    /// a word). The same to Matroska audio keeps it, as an attachment.
+    func test_audioOnlyOutputsNoteOrKeepTheCover() async throws {
+        let song = try make("song.m4a", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3", "-i", try makePicture().path,
+            "-map", "0", "-map", "1", "-c:a", "aac", "-c:v", "copy", "-disposition:v:0", "attached_pic"
+        ])
+        var toM4A = EncodingProfile.audioExtract
+        toM4A.audioCodec = .aacLC
+        toM4A.audioBitrate = 96_000
+        toM4A.containerFormat = .m4a
+        let (m4a, m4aJob) = try await convert(song, to: "out.m4a", profile: toM4A)
+        XCTAssertEqual(try streams(m4a).map(\.type), ["audio"])
+        XCTAssertEqual(m4aJob.trackWritingNotes().count, 1)
+        XCTAssertTrue(m4aJob.trackWritingNotes().first?.contains("This output has no video") == true)
+
+        let (mka, mkaJob) = try await convert(song, to: "out.mka", profile: .audioExtract)
+        XCTAssertEqual(try streams(mka).map(\.attachedPicture), [false, true], "attached, so kept")
+        XCTAssertEqual(mkaJob.trackWritingNotes(), [])
     }
 
     // MARK: - Titles (review items 2 and 15)

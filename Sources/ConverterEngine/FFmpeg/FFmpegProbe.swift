@@ -199,7 +199,13 @@ public final class FFmpegProbe: Sendable {
             + "pix_fmt,color_range,color_space,color_transfer,color_primaries,"
             + "bits_per_raw_sample,duration,nb_frames,"
             + "disposition",
-            "-show_entries", "stream_tags=language,title,BPS,BPS-eng,NUMBER_OF_FRAMES",
+            // `filename` and `mimetype` are an attached picture's own name and
+            // MIME type (Matroska attachments): without them in this list
+            // ffprobe leaves them out, and a Matroska output renamed every
+            // cover (`cover.png`, `cover-3.jpg` — found in the second
+            // independent review of the language policy work). The
+            // attachment's description arrives as `title`.
+            "-show_entries", "stream_tags=language,title,filename,mimetype,BPS,BPS-eng,NUMBER_OF_FRAMES",
             "-show_entries", "format_tags=\(Self.formatTagKeys.joined(separator: ","))",
             "-show_entries", "stream_side_data=side_data_type",
             url.path

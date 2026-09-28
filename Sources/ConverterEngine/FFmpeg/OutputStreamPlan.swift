@@ -533,32 +533,31 @@ extension FFmpegArgumentBuilder {
     /// tool). Empty when every stream is written as the source has it or as
     /// the person asked. Informational: the job still runs.
     public func trackWritingNotes() -> [String] {
-        guard let plan = makeOutputStreamPlan(), let sources = sourceStreamsByIndex else { return [] }
+        guard let fullPlan = makeOutputStreamPlan(), let sources = sourceStreamsByIndex else { return [] }
         var notes: [String] = []
 
+        // The same picture decisions as `build()`: what is mapped, what is
+        // attached, and what is left out.
+        let pictures = pictureDecisions(for: fullPlan)
+
         // Language fields that cannot hold exactly what the track says, or
-        // that are left as the source had them (`languageWrite`). Pictures
-        // attached as Matroska attachments carry no language field.
-        let attachments = Set(pictureAttachments(in: plan).map(\.sourceStreamIndex))
+        // that are left as the source had them (`languageWrite`) — for the
+        // streams actually mapped. Pictures attached as Matroska attachments
+        // carry no language field, and left-out pictures are not written.
         let container = resolveContainerFormat()
-        for entry in plan.entries where !(entry.inputIndex == 0 && attachments.contains(entry.sourceStreamIndex)) {
+        for entry in pictures.plan.entries {
             if let note = languageWrite(for: entry, sources: sources, container: container).note {
                 notes.append(note)
             }
         }
 
-        // Cover art a Matroska output can only keep as an attachment, but
-        // with no copy of the picture to attach (see `AttachedPictures`).
-        if AttachedPictures.needsAttachment(in: container) {
-            for entry in plan.entries where entry.inputIndex == 0
-                && isAttachedPicture(entry, sources: sources)
-                && !attachments.contains(entry.sourceStreamIndex) {
-                notes.append(
-                    "Stream #\(entry.sourceStreamIndex) is a picture attached to the file (cover art). "
-                        + "It could not be kept as an attachment, so ffmpeg writes it into this "
-                        + "Matroska file as a one-frame picture track."
-                )
-            }
+        // Cover art this output cannot keep: said plainly, never dropped or
+        // turned into another kind of stream without a word (see
+        // `AttachedPictures`). The round-2 build said a Matroska picture
+        // with no copy became "a one-frame picture track" even when the
+        // output had no video and ffmpeg dropped it.
+        for picture in pictures.leftOut {
+            notes.append(AttachedPictures.leftOutNote(streamIndex: picture.sourceStreamIndex, reason: picture.reason))
         }
         return notes
     }

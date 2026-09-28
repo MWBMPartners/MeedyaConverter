@@ -703,9 +703,9 @@ public final class EncodingEngine: @unchecked Sendable {
         // Matroska muxer turns an attached picture into a one-frame video
         // TRACK, so each picture is first copied, byte for byte, out of the
         // source into this job's temporary folder, and the command attaches
-        // the copy under the picture's own name. A picture that cannot be
-        // copied is mapped as before, and the notes below say so. The copies
-        // are removed with the temporary folder when the job ends.
+        // the copy under the picture's own name and description. A picture
+        // that cannot be copied is left out, and the notes below say so. The
+        // copies are removed with the temporary folder when the job ends.
         var pictureCopies: [Int: URL] = [:]
         for picture in enrichedJob.attachedPicturesNeedingCopies() {
             let copy = tempDir.appendingPathComponent(
@@ -726,13 +726,16 @@ public final class EncodingEngine: @unchecked Sendable {
                 let size = (try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 if size > 0 { pictureCopies[picture.streamIndex] = copy }
             } catch {
-                // Not fatal: the picture is mapped as a stream instead, and
+                // Not fatal: the picture is left out, and
                 // `trackWritingNotes()` reports that.
             }
         }
-        if !pictureCopies.isEmpty {
-            enrichedJob.attachedPictureFiles = pictureCopies
-        }
+        // ALWAYS replaced, even with nothing: `attachedPictureFiles` is saved
+        // with a job, so a job file could carry paths from an earlier run (or
+        // written by hand) — only copies made just now, in this job's own
+        // temporary folder, may be attached. It used to be set only when a
+        // copy was made (found in the second independent review).
+        enrichedJob.attachedPictureFiles = pictureCopies
 
         // What the output will keep differently from the source, and why
         // (see `FFmpegArgumentBuilder.trackWritingNotes()`).

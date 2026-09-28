@@ -449,17 +449,16 @@ public struct FFmpegArgumentBuilder: Sendable {
         // list and the per-stream options can never disagree. Nil when the
         // source's streams are unknown (see `sourceStreams`).
         //
-        // Attached pictures that are written as Matroska attachments
-        // (`-attach`, see `AttachedPictures`) are taken OUT of the plan here,
-        // so they are neither mapped nor given stream options; they are
-        // always last in the plan, so no other stream's position changes.
-        let fullPlan = makeOutputStreamPlan()
-        let attachedPictures = fullPlan.map { pictureAttachments(in: $0) } ?? []
-        let plan = fullPlan.map { full in
-            OutputStreamPlan(entries: full.entries.filter { entry in
-                !(entry.inputIndex == 0 && attachedPictures.contains { $0.sourceStreamIndex == entry.sourceStreamIndex })
-            })
-        }
+        // Attached pictures (cover art) that are written as Matroska
+        // attachments (`-attach`), or that this output cannot hold at all,
+        // are taken OUT of the plan here (`pictureDecisions`, see
+        // `AttachedPictures`), so they are neither mapped nor given stream
+        // options. They are always last in the plan, so no other stream's
+        // position changes. The notes (`trackWritingNotes`) use the same
+        // decisions, so what is written and what is reported agree.
+        let pictures = makeOutputStreamPlan().map { pictureDecisions(for: $0) }
+        let plan = pictures?.plan
+        let attachedPictures = pictures?.attachments ?? []
 
         // --- Global options ---
         if overwriteOutput {
@@ -939,6 +938,14 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         return args
+    }
+
+    /// Whether this output carries no video at all — the video arguments
+    /// for `plan` are `-vn` (an audio-only profile). ffmpeg then drops every
+    /// mapped video stream, cover art included, which is why pictures are
+    /// left out of such an output (`pictureDecisions`).
+    func outputHasNoVideo(plan: OutputStreamPlan?) -> Bool {
+        buildVideoArguments(plan: plan).contains("-vn")
     }
 
     /// Build HDR10 static metadata injection arguments.

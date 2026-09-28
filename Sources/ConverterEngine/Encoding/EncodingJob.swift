@@ -174,8 +174,10 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// stream number, made by `EncodingEngine.encode` in its temporary
     /// folder just before it builds the command — so a Matroska output can
     /// keep each picture as an attachment (see `AttachedPictures`). Not
-    /// something to fill in by hand; `nil` means none. Optional for the same
-    /// reason as `sourceStreamEdits`.
+    /// something to fill in by hand; `nil` means none. `EncodingEngine
+    /// .encode` always REPLACES it with the copies it has just made, so a
+    /// value saved with a job is never used. Optional for the same reason as
+    /// `sourceStreamEdits`.
     public var attachedPictureFiles: [Int: URL]?
 
     /// Whether this job's output puts its tracks in the language policy's
