@@ -372,6 +372,9 @@ let package = Package(
         .target(
             name: "ConverterEngine",
             dependencies: [
+                // The shared language policy (reading, writing and ordering
+                // track languages and roles). Foundation-only, in this package.
+                "MediaLanguagePolicy",
                 // Uncomment as dependencies are integrated:
                 // .product(name: "Logging", package: "swift-log"),
                 // .product(name: "Collections", package: "swift-collections"),
@@ -437,6 +440,9 @@ let package = Package(
             name: "MeedyaConverterCore",
             dependencies: [
                 "ConverterEngine",
+                // The stream editor canonicalises typed tags and names
+                // languages with the policy's own functions.
+                "MediaLanguagePolicy",
                 // Uncomment when dependencies are integrated:
                 // .product(name: "Logging", package: "swift-log"),
             ] + meedyaConverterAppDeps,

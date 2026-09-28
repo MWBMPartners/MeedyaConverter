@@ -698,13 +698,27 @@ public final class FFmpegProbe: Sendable {
         // file could embed control codes; the sanitiser is
         // idempotent so the legitimate case is unchanged.
         let tags = dict["tags"] as? [String: Any] ?? [:]
-        let language = (tags["language"] as? String).map(MetadataSanitizer.sanitize)
         let title = (tags["title"] as? String).map(MetadataSanitizer.sanitize)
 
-        // Parse disposition (default, forced, etc.)
-        let disposition = dict["disposition"] as? [String: Any] ?? [:]
-        let isDefault = (disposition["default"] as? Int) == 1
-        let isForced = (disposition["forced"] as? Int) == 1
+        // Language (language policy LANG-002): ffprobe reports the file's own
+        // value — for Matroska the old `Language` field (ffmpeg 9.0.1 does not
+        // read `LanguageBCP47`), for MP4 the `mdhd` code, i.e. usually an old
+        // three-letter code such as `eng` or `ger`. It goes through the
+        // policy's reader, NOT straight into the stream: `eng` → `en`,
+        // `ger`/`deu` → `de`, `fre-ca` → `fr-CA`. A value it cannot recognise
+        // is stored as `und` with the text kept, never guessed (COMPAT-040).
+        // Sanitised first, so the kept text is safe to show.
+        let languageReading = (tags["language"] as? String)
+            .map(MetadataSanitizer.sanitize)
+            .map { TrackLanguage.read(fileValue: $0) }
+
+        // Every disposition, not just default/forced (TRACK-010/040): the
+        // original-language marker, commentary, SDH/captions, audio
+        // description and text descriptions used to be dropped here, so a
+        // re-encode lost them.
+        let disposition = StreamDisposition(ffprobe: dict["disposition"] as? [String: Any] ?? [:])
+        let isDefault = disposition.isDefault
+        let isForced = disposition.isForced
 
         // Video-specific parsing
         var width: Int?
@@ -808,10 +822,12 @@ public final class FFmpegProbe: Sendable {
             codecLongName: codecLongName,
             bitrate: bitrate,
             duration: duration,
-            language: language,
+            language: languageReading?.language,
+            unrecognisedLanguage: languageReading?.unrecognised,
             title: title,
             isDefault: isDefault,
             isForced: isForced,
+            disposition: disposition,
             width: width,
             height: height,
             frameRate: frameRate,

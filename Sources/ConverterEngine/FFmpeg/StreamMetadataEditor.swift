@@ -44,7 +44,11 @@ public struct DispositionEdit: Codable, Sendable {
 
 // MARK: - StreamDisposition
 
-/// Standard FFmpeg stream disposition flags.
+/// Standard FFmpeg stream disposition flags — the structured record of a
+/// track's roles (language policy TRACK-010: roles are structured data, not
+/// words in a title). ffmpeg maps them to Matroska's flags (FlagOriginal,
+/// FlagCommentary, FlagHearingImpaired, FlagVisualImpaired,
+/// FlagTextDescriptions …) and to MP4's `kind` boxes where those exist.
 public struct StreamDisposition: Codable, Sendable, Equatable {
     public var isDefault: Bool
     public var isDub: Bool
@@ -57,6 +61,9 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
     public var isVisualImpaired: Bool
     public var isCleanEffects: Bool
     public var isDescriptions: Bool
+    /// ffmpeg's `captions` flag (closed captions — an SDH role, TRACK-010).
+    /// Added with the language policy work; older saved data has none.
+    public var isCaptions: Bool
 
     public init(
         isDefault: Bool = false,
@@ -69,7 +76,8 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         isHearingImpaired: Bool = false,
         isVisualImpaired: Bool = false,
         isCleanEffects: Bool = false,
-        isDescriptions: Bool = false
+        isDescriptions: Bool = false,
+        isCaptions: Bool = false
     ) {
         self.isDefault = isDefault
         self.isDub = isDub
@@ -82,6 +90,52 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         self.isVisualImpaired = isVisualImpaired
         self.isCleanEffects = isCleanEffects
         self.isDescriptions = isDescriptions
+        self.isCaptions = isCaptions
+    }
+
+    /// Reads ffprobe's per-stream `disposition` object (`"default": 1,
+    /// "forced": 0, …`). A flag ffprobe did not report counts as off.
+    ///
+    /// Until the language policy work the probe read only `default` and
+    /// `forced`, so original, commentary, SDH, captions, audio description
+    /// and text descriptions were dropped on every re-encode (TRACK-040).
+    public init(ffprobe disposition: [String: Any]) {
+        func flag(_ key: String) -> Bool { (disposition[key] as? Int) == 1 }
+        self.init(
+            isDefault: flag("default"),
+            isDub: flag("dub"),
+            isOriginal: flag("original"),
+            isComment: flag("comment"),
+            isLyrics: flag("lyrics"),
+            isKaraoke: flag("karaoke"),
+            isForced: flag("forced"),
+            isHearingImpaired: flag("hearing_impaired"),
+            isVisualImpaired: flag("visual_impaired"),
+            isCleanEffects: flag("clean_effects"),
+            isDescriptions: flag("descriptions"),
+            isCaptions: flag("captions")
+        )
+    }
+
+    /// Decodes saved data, treating any flag the data does not mention as
+    /// off — so data saved before a flag existed (`isCaptions`) still loads.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func flag(_ key: CodingKeys) throws -> Bool { try container.decodeIfPresent(Bool.self, forKey: key) ?? false }
+        self.init(
+            isDefault: try flag(.isDefault),
+            isDub: try flag(.isDub),
+            isOriginal: try flag(.isOriginal),
+            isComment: try flag(.isComment),
+            isLyrics: try flag(.isLyrics),
+            isKaraoke: try flag(.isKaraoke),
+            isForced: try flag(.isForced),
+            isHearingImpaired: try flag(.isHearingImpaired),
+            isVisualImpaired: try flag(.isVisualImpaired),
+            isCleanEffects: try flag(.isCleanEffects),
+            isDescriptions: try flag(.isDescriptions),
+            isCaptions: try flag(.isCaptions)
+        )
     }
 
     /// FFmpeg disposition string (e.g., "default+forced").
@@ -98,6 +152,7 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
         if isVisualImpaired { flags.append("visual_impaired") }
         if isCleanEffects { flags.append("clean_effects") }
         if isDescriptions { flags.append("descriptions") }
+        if isCaptions { flags.append("captions") }
         return flags.isEmpty ? "0" : flags.joined(separator: "+")
     }
 
@@ -115,7 +170,8 @@ public struct StreamDisposition: Codable, Sendable, Equatable {
             isHearingImpaired: lower.contains("hearing_impaired"),
             isVisualImpaired: lower.contains("visual_impaired"),
             isCleanEffects: lower.contains("clean_effects"),
-            isDescriptions: lower.contains("descriptions")
+            isDescriptions: lower.contains("descriptions"),
+            isCaptions: lower.contains("captions")
         )
     }
 }

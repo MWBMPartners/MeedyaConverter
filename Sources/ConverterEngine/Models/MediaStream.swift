@@ -275,8 +275,23 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// Duration of the stream in seconds. May differ from file duration for some streams.
     public var duration: TimeInterval?
 
-    /// BCP 47 language code for this stream (e.g., "en", "en-GB", "fr-FR").
+    /// The stream's language as a CANONICAL BCP 47 tag ("en", "en-GB",
+    /// "zh-Hant"), or `nil` when the file states none.
+    ///
+    /// The probe reads the file's value through the language policy's reader
+    /// (LANG-002, docs/standards/media-language-bcp47-policy.md): old
+    /// three-letter codes become tags (`eng` → `en`, `ger`/`deu` → `de`,
+    /// Matroska's `fre-ca` → `fr-CA`). A value that cannot be recognised is
+    /// stored as `und` — never guessed — with the original text kept in
+    /// `unrecognisedLanguage`. Before the policy work this held ffprobe's
+    /// raw text (usually a three-letter code) although it was documented as
+    /// BCP 47.
     public var language: String?
+
+    /// The file's language text when the policy's reader could not recognise
+    /// it (`language` is then `und`), kept so nothing is lost and a person can
+    /// fix it (COMPAT-040). `nil` when the language was read, or absent.
+    public var unrecognisedLanguage: String?
 
     /// User-facing title/label for this stream (e.g., "Director's Commentary").
     public var title: String?
@@ -286,6 +301,13 @@ public struct MediaStream: Identifiable, Codable, Sendable {
 
     /// Whether this stream is forced (should be displayed regardless of user preference).
     public var isForced: Bool
+
+    /// Every role flag the file records for this stream (ffmpeg's
+    /// dispositions: original, commentary, SDH, captions, audio description,
+    /// text descriptions …). `isDefault` / `isForced` above repeat two of them
+    /// for existing callers. `nil` for streams described before this field
+    /// existed (saved data) — then only those two are known.
+    public var disposition: StreamDisposition?
 
     /// Whether this stream is enabled (some containers support disabled streams).
     public var isEnabled: Bool
@@ -368,9 +390,11 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         bitrate: Int? = nil,
         duration: TimeInterval? = nil,
         language: String? = nil,
+        unrecognisedLanguage: String? = nil,
         title: String? = nil,
         isDefault: Bool = false,
         isForced: Bool = false,
+        disposition: StreamDisposition? = nil,
         isEnabled: Bool = true,
         width: Int? = nil,
         height: Int? = nil,
@@ -398,9 +422,11 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.bitrate = bitrate
         self.duration = duration
         self.language = language
+        self.unrecognisedLanguage = unrecognisedLanguage
         self.title = title
         self.isDefault = isDefault
         self.isForced = isForced
+        self.disposition = disposition
         self.isEnabled = isEnabled
         self.width = width
         self.height = height

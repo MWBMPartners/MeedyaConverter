@@ -1805,7 +1805,17 @@ components:
           description: Stream duration in seconds (may differ from file duration). Absent if unknown.
         language:
           type: string
-          description: BCP 47 language code. Absent if unknown.
+          description: >-
+            The stream's language as a canonical BCP 47 tag (for example `en`, `en-GB`,
+            `zh-Hant`), read through the shared language policy (MWBM-MEDIA-LANG, LANG-002):
+            the file's old three-letter codes are converted (`eng` → `en`, `ger` → `de`).
+            `und` when the file's value could not be recognised (the original text is then in
+            `unrecognisedLanguage`). Absent when the file states no language.
+        unrecognisedLanguage:
+          type: string
+          description: >-
+            The file's language text when it could not be recognised (`language` is then
+            `und`), kept so a person can fix it. Absent otherwise.
         title:
           type: string
           description: User-facing stream label. Absent if unset.
@@ -1813,6 +1823,24 @@ components:
           type: boolean
         isForced:
           type: boolean
+        disposition:
+          type: object
+          description: >-
+            Every role flag the file records for the stream (ffmpeg's dispositions). Absent for
+            data written before this field existed. Roles are structured data (policy TRACK-010).
+          properties:
+            isDefault: { type: boolean }
+            isDub: { type: boolean }
+            isOriginal: { type: boolean, description: The stream is in the original language (LANG-010). }
+            isComment: { type: boolean, description: Commentary. }
+            isLyrics: { type: boolean }
+            isKaraoke: { type: boolean }
+            isForced: { type: boolean, description: Forced subtitles (TRACK-030). }
+            isHearingImpaired: { type: boolean, description: Subtitles for the deaf and hard of hearing (SDH). }
+            isVisualImpaired: { type: boolean, description: Audio description. }
+            isCleanEffects: { type: boolean, description: Music and effects only. }
+            isDescriptions: { type: boolean, description: Text descriptions of the picture. }
+            isCaptions: { type: boolean, description: Closed captions. }
         isEnabled:
           type: boolean
         width:
