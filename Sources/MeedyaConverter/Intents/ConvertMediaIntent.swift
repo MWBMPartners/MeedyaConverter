@@ -116,12 +116,30 @@ struct ConvertMediaIntent: AppIntent {
         )
         let outputURL = outputDir.appendingPathComponent(outputComponent)
 
-        // Build FFmpeg arguments from the profile.
-        let builder = profile.toArgumentBuilder(inputURL: tempInputURL, outputURL: outputURL)
+        // Build FFmpeg arguments from the profile AND the source's own
+        // streams, read with ffprobe, as `EncodingEngine.encode` does — so
+        // stream settings, track order, languages and cover art are placed
+        // on the right output tracks. A file whose streams cannot be read is
+        // still converted, unless the profile has per-stream settings that
+        // could then land on the wrong track: that is refused with the
+        // engine's own error. Until the language policy's second review
+        // round this action never read the source's streams at all.
+        let bundleManager = FFmpegBundleManager()
+        let sourceStreams: [MediaStream]?
+        if let ffprobe = try? bundleManager.locateFFprobe() {
+            sourceStreams = try? await FFmpegProbe(ffprobePath: ffprobe.path).analyze(url: tempInputURL).streams
+        } else {
+            sourceStreams = nil
+        }
+        var builder = profile.toArgumentBuilder(inputURL: tempInputURL, outputURL: outputURL)
+        builder.sourceStreams = sourceStreams
+        let problems = builder.streamSelectionProblems()
+        guard problems.isEmpty else {
+            throw EncodingEngineError.streamSelectionInvalid(problems)
+        }
         let arguments = builder.build()
 
         // Locate the FFmpeg binary and execute the encode.
-        let bundleManager = FFmpegBundleManager()
         let ffmpegInfo = try bundleManager.locateFFmpeg()
         let controller = FFmpegProcessController(binaryPath: ffmpegInfo.path)
 

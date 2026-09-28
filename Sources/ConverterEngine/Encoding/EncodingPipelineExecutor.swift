@@ -152,10 +152,56 @@ public final class EncodingPipelineExecutor: Sendable {
 
     private let stepRunner: PipelineStepRunning
 
-    /// - Parameter stepRunner: Defaults to `FFmpegPipelineStepRunner()` (the
-    ///   real ffmpeg/ffprobe dispatcher). Tests inject a mock.
-    public init(stepRunner: PipelineStepRunning = FFmpegPipelineStepRunner()) {
+    /// Reads a media file's streams (ffprobe), for an encode step's source.
+    /// See `execute` for why each encode step's input is probed.
+    public typealias StreamProber = @Sendable (URL) async throws -> [MediaStream]
+
+    private let streamProber: StreamProber
+
+    /// The real prober: `FFmpegProbe` on the ffprobe `FFmpegBundleManager`
+    /// finds (bundled → Homebrew → PATH), located off the calling context.
+    public static let ffprobeStreams: StreamProber = { url in
+        let ffprobe = try await Task.detached { try FFmpegBundleManager().locateFFprobe().path }.value
+        return try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: url).streams
+    }
+
+    /// - Parameters:
+    ///   - stepRunner: Defaults to `FFmpegPipelineStepRunner()` (the real
+    ///     ffmpeg/ffprobe dispatcher). Tests inject a mock.
+    ///   - streamProber: Reads an encode step's input streams. Defaults to
+    ///     ffprobe (`ffprobeStreams`). Tests inject a fake.
+    public init(
+        stepRunner: PipelineStepRunning = FFmpegPipelineStepRunner(),
+        streamProber: @escaping StreamProber = EncodingPipelineExecutor.ffprobeStreams
+    ) {
         self.stepRunner = stepRunner
+        self.streamProber = streamProber
+    }
+
+    /// The full, profile-aware ffmpeg arguments for one encode step, built
+    /// the way `EncodingEngine.encode` builds a job's: from the source's own
+    /// streams (so stream choices, per-stream settings, track order,
+    /// languages and cover art are placed on the right output tracks, #530
+    /// and the language policy) and REFUSED — with the same error the engine
+    /// uses, `EncodingEngineError.streamSelectionInvalid` — when the job's
+    /// stream settings cannot be applied to this file, including when the
+    /// streams could not be read (`sourceStreams == nil`) and the profile
+    /// has per-stream settings that would otherwise be dropped or misplaced.
+    /// Without streams and without per-stream settings it is exactly what
+    /// `resolve` builds.
+    public static func encodeArguments(
+        profile: EncodingProfile,
+        input: URL,
+        output: URL,
+        sourceStreams: [MediaStream]?
+    ) throws -> [String] {
+        var job = EncodingJobConfig(inputURL: input, outputURL: output, profile: profile)
+        job.sourceStreams = sourceStreams
+        let problems = job.streamSelectionProblems()
+        guard problems.isEmpty else {
+            throw EncodingEngineError.streamSelectionInvalid(problems)
+        }
+        return job.buildArguments()
     }
 
     /// Resolve a pipeline into ordered concrete invocations, threading the
@@ -249,9 +295,11 @@ public final class EncodingPipelineExecutor: Sendable {
     ///     0-based index and resolved descriptor.
     /// - Returns: The produced deliverables and the intermediates cleaned up.
     /// - Throws: `CancellationError` if the calling `Task` is cancelled
-    ///   between steps; otherwise the failing step's error (real callers see
-    ///   `EncodingPipelineExecutorError.stepFailed` carrying the tool's own
-    ///   stderr). On failure nothing is cleaned up.
+    ///   between steps; `EncodingEngineError.streamSelectionInvalid` when an
+    ///   encode step's stream settings cannot be applied to its input (see
+    ///   `encodeArguments`); otherwise the failing step's error (real callers
+    ///   see `EncodingPipelineExecutorError.stepFailed` carrying the tool's
+    ///   own stderr). On failure nothing is cleaned up.
     @discardableResult
     public func execute(
         pipeline: EncodingPipeline,
@@ -269,8 +317,34 @@ public final class EncodingPipelineExecutor: Sendable {
         }
 
         var produced: [String] = []
-        for (index, step) in steps.enumerated() {
+        for (index, resolvedStep) in steps.enumerated() {
             if Task.isCancelled { throw CancellationError() }
+            // An encode step's input is only known to exist now (a later
+            // step reads an earlier one's output), so its streams are read
+            // here, just before it runs, and its arguments rebuilt from them
+            // — as `EncodingEngine.encode` does. `resolve` cannot do this:
+            // it works out every step before any has run. Until the language
+            // policy's second review round this path never told the builder
+            // the source's streams, so per-stream settings were silently left
+            // out and nothing was ordered, tagged or kept as the policy says.
+            var step = resolvedStep
+            if step.step.type == .encode, let profile = step.step.profile {
+                let streams = try? await streamProber(URL(fileURLWithPath: step.inputPath))
+                step = ResolvedPipelineStep(
+                    step: step.step,
+                    stepNumber: step.stepNumber,
+                    executable: step.executable,
+                    arguments: try Self.encodeArguments(
+                        profile: profile,
+                        input: URL(fileURLWithPath: step.inputPath),
+                        output: URL(fileURLWithPath: step.outputPath),
+                        sourceStreams: streams
+                    ),
+                    inputPath: step.inputPath,
+                    outputPath: step.outputPath,
+                    isTransform: step.isTransform
+                )
+            }
             onProgress?(index, step)
             try await stepRunner.run(step)
             produced.append(step.outputPath)

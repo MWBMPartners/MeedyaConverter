@@ -18,12 +18,13 @@ import Foundation
 ///
 /// Usage:
 /// ```swift
-/// let args = PreviewGenerator.buildPreviewArguments(
+/// let args = try PreviewGenerator.buildPreviewArguments(
 ///     inputPath: "/path/to/source.mkv",
 ///     outputPath: PreviewGenerator.previewOutputPath(for: sourceURL).path,
 ///     profile: selectedProfile,
 ///     startTime: 30.0,
-///     duration: 8.0
+///     duration: 8.0,
+///     sourceStreams: sourceFile.streams
 /// )
 /// // Execute args with FFmpegProcessController...
 /// ```
@@ -60,14 +61,27 @@ public struct PreviewGenerator: Sendable {
     ///   - profile: The encoding profile whose settings should be applied.
     ///   - startTime: Start time (in seconds) within the source to begin the preview.
     ///   - duration: Duration (in seconds) of the preview segment.
+    ///   - sourceStreams: The source's streams, as probing found them (the
+    ///     app passes the imported file's). With them the preview places
+    ///     stream choices, per-stream settings, track order and languages on
+    ///     the right output tracks, exactly as the full encode does. `nil`
+    ///     when they could not be read.
     /// - Returns: An array of FFmpeg CLI arguments (not including the binary path).
+    /// - Throws: `EncodingEngineError.streamSelectionInvalid` — the same
+    ///   error the full encode refuses with — when the profile's stream
+    ///   settings cannot be applied to this file, including when
+    ///   `sourceStreams` is `nil` and the profile has per-stream settings
+    ///   (they would be dropped or land on the wrong track). Until the
+    ///   language policy's second review round this was built without the
+    ///   source's streams at all, so a preview could differ from the encode.
     public static func buildPreviewArguments(
         inputPath: String,
         outputPath: String,
         profile: EncodingProfile,
         startTime: TimeInterval,
-        duration: TimeInterval
-    ) -> [String] {
+        duration: TimeInterval,
+        sourceStreams: [MediaStream]?
+    ) throws -> [String] {
         // Clamp duration to allowed range.
         let clampedDuration = min(max(duration, minimumDuration), maximumDuration)
 
@@ -75,7 +89,12 @@ public struct PreviewGenerator: Sendable {
         // of the full encode, then inject seek/duration flags.
         let inputURL = URL(fileURLWithPath: inputPath)
         let outputURL = URL(fileURLWithPath: outputPath)
-        let builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
+        var builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
+        builder.sourceStreams = sourceStreams
+        let problems = builder.streamSelectionProblems()
+        guard problems.isEmpty else {
+            throw EncodingEngineError.streamSelectionInvalid(problems)
+        }
 
         // Inject seek-before-input and duration flags into the extra arguments.
         // FFmpeg processes -ss before -i for fast input seeking and -t limits output duration.

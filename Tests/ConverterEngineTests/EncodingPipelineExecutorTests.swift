@@ -140,6 +140,70 @@ final class EncodingPipelineExecutorTests: XCTestCase {
         }
     }
 
+    // MARK: - execute (the encode step reads its source's streams)
+
+    /// Records every step's arguments as it runs.
+    private actor RecordingRunner: PipelineStepRunning {
+        private(set) var arguments: [[String]] = []
+        func run(_ step: ResolvedPipelineStep) async throws { arguments.append(step.arguments) }
+        func recorded() -> [[String]] { arguments }
+    }
+
+    private func maps(_ args: [String]) -> [String] {
+        zip(args, args.dropFirst()).filter { $0.0 == "-map" }.map(\.1)
+    }
+
+    /// The encode step is built from its input's streams, as
+    /// `EncodingEngine.encode` builds a job: an explicit output plan in the
+    /// language policy's order. (Found in the independent review: this path
+    /// never read the source's streams.)
+    func test_execute_encodeStepUsesTheSourcesStreams() async throws {
+        let runner = RecordingRunner()
+        let executor = EncodingPipelineExecutor(stepRunner: runner, streamProber: { _ in [
+            MediaStream(streamIndex: 0, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .video, disposition: StreamDisposition())
+        ] })
+        let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: .remuxToMKV)])
+        _ = try await executor.execute(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out")
+        let recorded = await runner.recorded()
+        XCTAssertEqual(recorded.count, 1)
+        XCTAssertEqual(maps(recorded[0]), ["0:1", "0:0"], "video first, from the probed streams")
+    }
+
+    /// Streams that cannot be read, with per-stream settings in the
+    /// profile: refused with the engine's own error, and nothing runs.
+    func test_execute_refusesPerStreamSettingsWhenTheStreamsCannotBeRead() async {
+        struct Unreadable: Error {}
+        let runner = RecordingRunner()
+        let executor = EncodingPipelineExecutor(stepRunner: runner, streamProber: { _ in throw Unreadable() })
+        var profile = EncodingProfile.remuxToMKV
+        profile.perStreamSettings = PerStreamSettings(audioOverrides: [1: AudioStreamOverride(codec: .flac)])
+        let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: profile)])
+        do {
+            _ = try await executor.execute(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out")
+            XCTFail("expected a refusal")
+        } catch let error as EncodingEngineError {
+            guard case .streamSelectionInvalid = error else { return XCTFail("wrong error: \(error)") }
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+        let recorded = await runner.recorded()
+        XCTAssertTrue(recorded.isEmpty, "nothing ran")
+    }
+
+    /// Streams that cannot be read, with no per-stream settings: the step
+    /// still runs, exactly as `resolve` built it.
+    func test_execute_runsWithoutStreamsWhenNothingDependsOnThem() async throws {
+        struct Unreadable: Error {}
+        let runner = RecordingRunner()
+        let executor = EncodingPipelineExecutor(stepRunner: runner, streamProber: { _ in throw Unreadable() })
+        let pipeline = EncodingPipeline(name: "P", steps: [step("enc", .encode, profile: .webStandard)])
+        let resolved = EncodingPipelineExecutor.resolve(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out")
+        _ = try await executor.execute(pipeline: pipeline, sourcePath: "/s/m.mkv", outputDir: "/out")
+        let recorded = await runner.recorded()
+        XCTAssertEqual(recorded, [resolved[0].arguments])
+    }
+
     func test_execute_emptyPipelineIsNoOpSuccess() async throws {
         let executor = EncodingPipelineExecutor(stepRunner: MockRunner())
         let result = try await executor.execute(

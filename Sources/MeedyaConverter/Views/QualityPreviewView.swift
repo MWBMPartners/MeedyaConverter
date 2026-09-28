@@ -379,13 +379,24 @@ struct QualityPreviewView: View {
         let inputPath = sourceFile.fileURL.path
         let outputPath = outputURL.path
 
-        let args = PreviewGenerator.buildPreviewArguments(
-            inputPath: inputPath,
-            outputPath: outputPath,
-            profile: profile,
-            startTime: previewStartTime,
-            duration: previewDuration
-        )
+        // Built from the imported file's streams, as the full encode is, so
+        // the preview places stream settings on the same tracks — and is
+        // refused, with the encode's own message, when they cannot be.
+        let args: [String]
+        do {
+            args = try PreviewGenerator.buildPreviewArguments(
+                inputPath: inputPath,
+                outputPath: outputPath,
+                profile: profile,
+                startTime: previewStartTime,
+                duration: previewDuration,
+                sourceStreams: sourceFile.streams.isEmpty ? nil : sourceFile.streams
+            )
+        } catch {
+            isGenerating = false
+            errorMessage = "Preview generation failed: \(error.localizedDescription)"
+            return
+        }
 
         // Execute the preview encode in a background task.
         Task {
