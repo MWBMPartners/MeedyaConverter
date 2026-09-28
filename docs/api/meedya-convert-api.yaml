@@ -498,21 +498,30 @@ paths:
         - name: --video-stream
           in: query
           required: false
-          description: Index of the video stream to encode (default is the first video stream).
+          description: >-
+            The video stream to encode, by the number `meedya-convert probe` shows for it
+            (its position in the whole file, counting every stream). Default is every video
+            stream. A number that is not a video stream of the file is refused (exit code 2).
           schema:
             type: integer
 
         - name: --audio-stream
           in: query
           required: false
-          description: Index of the audio stream to encode (default is the first audio stream).
+          description: >-
+            The audio stream to encode, by the number `meedya-convert probe` shows for it
+            (its position in the whole file). Default is every audio stream. A number that is
+            not an audio stream of the file is refused (exit code 2).
           schema:
             type: integer
 
         - name: --subtitle-stream
           in: query
           required: false
-          description: Index of the subtitle stream to include in the output.
+          description: >-
+            The subtitle stream to include, by the number `meedya-convert probe` shows for it
+            (its position in the whole file). A number that is not a subtitle stream of the
+            file is refused (exit code 2).
           schema:
             type: integer
 

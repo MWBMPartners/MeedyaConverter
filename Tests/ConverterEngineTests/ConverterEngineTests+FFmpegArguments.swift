@@ -45,6 +45,12 @@ extension ConverterEngineTests {
 
     /// A single .passthrough action emits a specific -map per stream
     /// index — replacing the loose `-map 0:s?` glob.
+    ///
+    /// The action's `streamIndex` is the stream's WHOLE-FILE number (the
+    /// tone-map step takes it from the probe), so it is mapped as `0:<n>`.
+    /// Until #530 these tests expected `0:s:<n>`, which ffmpeg reads as "the
+    /// n-th SUBTITLE stream" — a different stream whenever anything comes
+    /// before the subtitles in the file.
     func test_argumentBuilder_subtitleActions_passthroughSpecificIndex() {
         var builder = FFmpegArgumentBuilder()
         builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
@@ -56,8 +62,9 @@ extension ConverterEngineTests {
 
         let args = builder.build()
         let s = args.joined(separator: " ")
-        XCTAssertTrue(s.contains("-map 0:s:2"))
-        XCTAssertTrue(s.contains("-map 0:s:3"))
+        XCTAssertTrue(s.contains("-map 0:2 "))
+        XCTAssertTrue(s.contains("-map 0:3 "))
+        XCTAssertFalse(s.contains("0:s:"), "Whole-file numbers must never be written as type-counted (#530)")
         // The legacy glob must NOT appear when explicit actions are set.
         XCTAssertFalse(s.contains("-map 0:s?"))
     }
@@ -81,9 +88,9 @@ extension ConverterEngineTests {
         // Replacement file is added as -i AFTER inputURL.
         XCTAssertTrue(s.contains("-i /tmp/in.mkv"))
         XCTAssertTrue(s.contains("-i /tmp/sub2.sup"))
-        // Source's subtitle stream at index 2 is suppressed (no -map 0:s:2)
-        // and the replacement is mapped from input 1 instead.
-        XCTAssertFalse(s.contains("-map 0:s:2"))
+        // Source's subtitle stream 2 is suppressed (no -map 0:2) and the
+        // replacement is mapped from input 1 instead.
+        XCTAssertFalse(s.contains("-map 0:2 "))
         XCTAssertTrue(s.contains("-map 1:s:0"))
     }
 
@@ -118,10 +125,17 @@ extension ConverterEngineTests {
                       "English tonemapped subtitle from input 1")
         XCTAssertTrue(s.contains("-map 2:s:0"),
                       "French tonemapped subtitle from input 2")
-        XCTAssertTrue(s.contains("-map 0:s:5"),
+        // Stream 5 is the file's stream number 5 (whole-file numbering, as
+        // the tone-map step records it). This used to assert `-map 0:s:5` —
+        // "the SIXTH subtitle stream" — which in this very layout (subtitles
+        // are streams 2-5, so there are only four) names a stream that does
+        // not exist: ffmpeg would stop with "Stream map matches no streams".
+        // The right specifier is the whole-file `0:5` (#530).
+        XCTAssertTrue(s.contains("-map 0:5 "),
                       "Stream 5 passes through from source")
+        XCTAssertFalse(s.contains("-map 0:s:5"))
         // Dropped stream 3 has no -map.
-        XCTAssertFalse(s.contains("-map 0:s:3"))
+        XCTAssertFalse(s.contains("-map 0:3 "))
     }
 
     /// When the caller already has unrelated `additionalInputs`, the
@@ -185,8 +199,8 @@ extension ConverterEngineTests {
         // the source. Stream 3 still passes through from the source.
         XCTAssertTrue(s.contains("-map 1:s:0"),
                       "Replaced stream 2 maps from input 1")
-        XCTAssertTrue(s.contains("-map 0:s:3"),
-                      "Stream 3 still passes through from source")
+        XCTAssertTrue(s.contains("-map 0:3 "),
+                      "Stream 3 still passes through from source (whole-file number, #530)")
         // The legacy `-map 0:s?` glob must NOT appear when explicit
         // actions are set.
         XCTAssertFalse(s.contains("-map 0:s?"),
@@ -564,15 +578,24 @@ extension ConverterEngineTests {
     // -----------------------------------------------------------------
 
     /// Verifies per-stream audio codec arguments (-c:a:N).
+    ///
+    /// Per-stream settings are keyed by SOURCE stream number and placed on the
+    /// output stream each became (#530), so the builder needs the source's
+    /// streams: here video #0, audio #1, audio #2. Before #530 this test keyed
+    /// the settings 0 and 1 with no source list and expected `-c:a:0`/`-c:a:1`
+    /// — which only held because it treated the keys as output positions,
+    /// while the app stored whole-file numbers.
     func test_argumentBuilder_perStreamAudioCodec() {
         var builder = FFmpegArgumentBuilder()
         builder.inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
         builder.outputURL = URL(fileURLWithPath: "/tmp/output.mkv")
         builder.videoPassthrough = true
+        builder.sourceStreams = streamLayout(.video, .audio, .audio)
 
-        // Multi-codec audio: AAC for stream 0, E-AC-3 for stream 1
-        builder.perStreamAudioCodec = [0: .aacLC, 1: .eac3]
-        builder.perStreamAudioBitrate = [0: 160_000, 1: 640_000]
+        // Multi-codec audio: AAC for source #1 (output a:0), E-AC-3 for
+        // source #2 (output a:1).
+        builder.perStreamAudioCodec = [1: .aacLC, 2: .eac3]
+        builder.perStreamAudioBitrate = [1: 160_000, 2: 640_000]
 
         let args = builder.build()
         let argStr = args.joined(separator: " ")
@@ -594,8 +617,10 @@ extension ConverterEngineTests {
         builder.audioCodec = .aacLC  // Global setting
         builder.audioBitrate = 128_000
 
-        // Per-stream overrides should win
-        builder.perStreamAudioCodec = [0: .flac]
+        // Per-stream overrides should win (source #1 is the only audio
+        // stream, output a:0 — see the note on the test above, #530).
+        builder.sourceStreams = streamLayout(.video, .audio)
+        builder.perStreamAudioCodec = [1: .flac]
 
         let args = builder.build()
         let argStr = args.joined(separator: " ")

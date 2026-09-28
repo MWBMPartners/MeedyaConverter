@@ -77,9 +77,9 @@ If `--output` is omitted, the output is written next to the input with a
 | `--pq-to-dv-hlg` | Convert PQ to Dolby Vision Profile 8.4 + HLG combined output. |
 | `--no-copy-metadata` | Do not copy source metadata to the output. |
 | `--no-copy-chapters` | Do not copy chapter markers to the output. |
-| `--video-stream` | Video stream index to encode (default: first). |
-| `--audio-stream` | Audio stream index to encode (default: first). |
-| `--subtitle-stream` | Subtitle stream index to include. |
+| `--video-stream` | Video stream to encode, by the number `probe` shows — its position in the whole file (default: all video streams). |
+| `--audio-stream` | Audio stream to encode, by the number `probe` shows (default: all audio streams). |
+| `--subtitle-stream` | Subtitle stream to include, by the number `probe` shows. A number that is not a stream of that type in the file is refused with a message. |
 | `--map-all` | Map all streams from the source. |
 | `--hardware` | Use a hardware encoder (VideoToolbox) if available. |
 | `--quiet` | Suppress progress output. |

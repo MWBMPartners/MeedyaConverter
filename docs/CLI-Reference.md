@@ -65,9 +65,9 @@ If `--output` is omitted, the output file is placed in the same directory as the
 | `--pq-to-dv-hlg` | | Flag | Convert PQ to Dolby Vision Profile 8.4 + HLG | false |
 | `--no-copy-metadata` | | Flag | Do not copy source metadata | false |
 | `--no-copy-chapters` | | Flag | Do not copy chapter markers | false |
-| `--video-stream <index>` | | Integer | Video stream index to encode | First |
-| `--audio-stream <index>` | | Integer | Audio stream index to encode | First |
-| `--subtitle-stream <index>` | | Integer | Subtitle stream index to include | -- |
+| `--video-stream <number>` | | Integer | Video stream to encode, by the number `probe` shows (its position in the whole file) | All video streams |
+| `--audio-stream <number>` | | Integer | Audio stream to encode, by the number `probe` shows | All audio streams |
+| `--subtitle-stream <number>` | | Integer | Subtitle stream to include, by the number `probe` shows | -- |
 | `--map-all` | | Flag | Map all streams from source | false |
 | `--hardware` | | Flag | Use hardware encoder if available | false |
 | `--quiet` | | Flag | Suppress progress output | false |

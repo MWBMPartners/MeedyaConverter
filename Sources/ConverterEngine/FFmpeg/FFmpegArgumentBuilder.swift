@@ -209,7 +209,10 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// `Codable`) can synthesise its own Codable conformance — tuples
     /// have no Codable support.
     public struct SubtitleStreamActionEntry: Sendable, Equatable, Codable {
-        /// The source subtitle stream index this action applies to.
+        /// The source subtitle stream this action applies to, by its
+        /// WHOLE-FILE number (as probing reports it). Mapped as
+        /// `-map 0:<number>` (#530; it used to be written into `0:s:<number>`,
+        /// which counts subtitle streams only).
         public var streamIndex: Int
         /// What the encoder should do with that stream.
         public var action: SubtitleStreamAction
@@ -241,17 +244,24 @@ public struct FFmpegArgumentBuilder: Sendable {
 
     // MARK: - Per-Stream Audio Settings (Phase 3.2 / Issue #38)
 
-    /// Per-stream audio codec overrides, keyed by output audio stream index.
+    /// Per-stream audio codec overrides, keyed by the SOURCE stream's
+    /// whole-file number (what the per-stream settings view shows as `#N`).
     /// When set, these take precedence over the global `audioCodec` for the
     /// corresponding stream. Enables multi-codec audio output (e.g., AAC default + TrueHD).
+    ///
+    /// Until #530 these keys were written straight into `-c:a:<key>`, which
+    /// counts only OUTPUT audio streams, so the override landed on the wrong
+    /// track whenever anything came before the audio in the file. They are
+    /// now placed through `OutputStreamPlan` and need `sourceStreams`.
     public var perStreamAudioCodec: [Int: AudioCodec] = [:]
 
-    /// Per-stream audio bitrate overrides.
+    /// Per-stream audio bitrate overrides (keyed like `perStreamAudioCodec`).
     public var perStreamAudioBitrate: [Int: Int] = [:]
 
     // MARK: - Per-Stream Video Settings (Phase 3.5 / Issue #41)
 
-    /// Per-stream video codec overrides, keyed by output video stream index.
+    /// Per-stream video codec overrides, keyed by the SOURCE stream's
+    /// whole-file number; placed through `OutputStreamPlan` (#530).
     public var perStreamVideoCodec: [Int: VideoCodec] = [:]
 
     /// Per-stream video passthrough flags.
@@ -268,32 +278,58 @@ public struct FFmpegArgumentBuilder: Sendable {
 
     // MARK: - Per-Stream Subtitle Settings (Phase 3.5 / Issue #41)
 
-    /// Per-stream subtitle inclusion overrides, keyed by source subtitle
-    /// stream index. When an entry is `false`, that stream is explicitly
-    /// excluded from the output mapping via a negative `-map`, layered on
-    /// top of whichever mapping mode (`mapAllStreams`, `subtitlePassthrough`,
-    /// or `subtitleStreamActions`) selected it. Indices with no entry are
-    /// unaffected and simply follow the surrounding mapping mode.
+    /// Per-stream subtitle inclusion overrides, keyed by the source subtitle
+    /// stream's whole-file number. When an entry is `false`, that stream is
+    /// left out of the output, whichever mapping mode (`mapAllStreams`,
+    /// `subtitlePassthrough`, or `subtitleStreamActions`) selected it.
+    /// Indices with no entry are unaffected and simply follow the surrounding
+    /// mapping mode. A key that is not a subtitle stream of the file is
+    /// ignored (reported by `skippedStreamSettings()`), so a stale setting
+    /// can never remove a video or audio track (#530).
     public var perStreamSubtitleInclude: [Int: Bool] = [:]
 
-    /// Per-stream subtitle passthrough overrides, keyed by source subtitle
-    /// stream index. When `true`, forces `-c:s:<index> copy` for that
-    /// stream, mirroring `perStreamVideoPassthrough` / `perStreamAudioCodec`.
+    /// Per-stream subtitle passthrough overrides, keyed by the source subtitle
+    /// stream's whole-file number. When `true`, forces `-c:s:<output
+    /// position> copy` for that stream, mirroring `perStreamVideoPassthrough`
+    /// / `perStreamAudioCodec`.
     public var perStreamSubtitlePassthrough: [Int: Bool] = [:]
 
     // MARK: - Stream Selection
+    //
+    // Every stream number on this builder — the three picks below, the keys
+    // of the per-stream dictionaries above, `subtitleStreamActions` and
+    // `sourceStreamEdits` — is the stream's WHOLE-FILE number (the `#N`
+    // shown by `meedya-convert probe` and the app's pickers), never a count
+    // among streams of one type. `OutputStreamPlan.swift` does the one
+    // conversion to what ffmpeg needs (issue #530).
 
-    /// Specific video stream index to use from source. Nil means default.
+    /// The video stream (whole-file number) to use. Nil means every video stream.
     public var videoStreamIndex: Int?
 
-    /// Specific audio stream index to use from source. Nil means default.
+    /// The audio stream (whole-file number) to use. Nil means every audio stream.
     public var audioStreamIndex: Int?
 
-    /// Specific subtitle stream index to use. Nil means default.
+    /// The subtitle stream (whole-file number) to use when passing subtitles
+    /// through. Nil means every subtitle stream.
     public var subtitleStreamIndex: Int?
 
     /// Whether to map all streams from source (not just default).
     public var mapAllStreams: Bool = false
+
+    /// The source file's streams, as probing found them.
+    ///
+    /// When set, the builder writes an explicit `-map 0:<number>` for each
+    /// output stream (an `OutputStreamPlan`) and places every per-stream
+    /// setting on the output stream its source stream became. When nil, the
+    /// older glob mapping is used and per-stream settings aimed at output
+    /// streams are left out — see `streamSelectionProblems()` — because the
+    /// output position of a source stream cannot be known without them.
+    public var sourceStreams: [MediaStream]?
+
+    /// Changes a person made in the stream editor, keyed by the source
+    /// stream's whole-file number. Written to whichever output stream that
+    /// source stream becomes; needs `sourceStreams`.
+    public var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
 
     // MARK: - Container / Output
 
@@ -322,7 +358,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Metadata key-value pairs to write to the output file.
     public var metadata: [String: String] = [:]
 
-    /// Per-stream metadata (keyed by stream specifier like "s:a:0").
+    /// Per-stream metadata keyed by an OUTPUT stream specifier such as
+    /// `"s:a:0"` (the first audio stream of the output), written verbatim.
+    ///
+    /// This is a low-level escape hatch: the key must already be in ffmpeg's
+    /// output numbering. Edits a person makes to a SOURCE stream belong in
+    /// `sourceStreamEdits`, which is converted for you. (The stream editor
+    /// used to put `s:a:<whole-file number>` here — the #530 bug.)
     public var streamMetadata: [String: [String: String]] = [:]
 
     // MARK: - Filters
@@ -348,8 +390,9 @@ public struct FFmpegArgumentBuilder: Sendable {
     // MARK: - Stream Disposition (Phase 3.11 / TrueHD-in-MP4)
 
     /// Per-stream disposition overrides.
-    /// Key is the stream specifier (e.g., "a:0", "a:1"), value is the disposition
-    /// string (e.g., "default", "0" to clear default).
+    /// Key is an OUTPUT stream specifier (e.g., "a:0" = the first audio stream
+    /// of the output), value is the disposition string (e.g., "default", "0"
+    /// to clear default). Written verbatim, after any stream-editor roles.
     /// Used to enforce non-default TrueHD in MP4 containers.
     public var streamDispositions: [String: String] = [:]
 
@@ -383,6 +426,13 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// Arguments are ordered: global options → inputs → codec/quality → filters → output.
     public func build() -> [String] {
         var args: [String] = []
+
+        // The output stream plan (#530): which output stream each source
+        // stream becomes. Worked out once here and handed to every part that
+        // maps streams or aims an option at an output stream, so the `-map`
+        // list and the per-stream options can never disagree. Nil when the
+        // source's streams are unknown (see `sourceStreams`).
+        let plan = makeOutputStreamPlan()
 
         // --- Global options ---
         if overwriteOutput {
@@ -418,7 +468,7 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         // --- Stream mapping ---
-        args.append(contentsOf: buildStreamMapping())
+        args.append(contentsOf: buildStreamMapping(plan: plan))
 
         // --- Source metadata passthrough ---
         // Copy all metadata (track names, language, title, etc.) and chapters
@@ -439,13 +489,13 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         // --- Video codec and quality ---
-        args.append(contentsOf: buildVideoArguments())
+        args.append(contentsOf: buildVideoArguments(plan: plan))
 
         // --- Audio codec and quality ---
-        args.append(contentsOf: buildAudioArguments())
+        args.append(contentsOf: buildAudioArguments(plan: plan))
 
         // --- Subtitle handling ---
-        args.append(contentsOf: buildSubtitleArguments())
+        args.append(contentsOf: buildSubtitleArguments(plan: plan))
 
         // --- Video filters ---
         // Build the complete video filter chain: user filters + tone mapping
@@ -465,10 +515,10 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         // --- Stream disposition (TrueHD non-default enforcement) ---
-        args.append(contentsOf: buildDispositionArguments())
+        args.append(contentsOf: buildDispositionArguments(plan: plan))
 
         // --- Metadata ---
-        args.append(contentsOf: buildMetadataArguments())
+        args.append(contentsOf: buildMetadataArguments(plan: plan))
 
         // --- Container format override ---
         if let format = containerFormat {
@@ -591,23 +641,34 @@ public struct FFmpegArgumentBuilder: Sendable {
     // MARK: - Private Builders
 
     /// Build stream mapping arguments (-map).
-    private func buildStreamMapping() -> [String] {
+    ///
+    /// With a plan (the source's streams are known) this is simply the plan's
+    /// explicit `-map 0:<number>` list, in output order. Without one it falls
+    /// back to the older glob mapping (`-map 0`, `0:v?`, `0:a?`, `0:s?`); a
+    /// stream a picker or flag chose is still named by its whole-file number
+    /// (`0:<number>`), which is right whatever else the file holds (#530).
+    private func buildStreamMapping(plan: OutputStreamPlan?) -> [String] {
+        if let plan {
+            return plan.mapArguments
+        }
+
         var args: [String] = []
 
         if mapAllStreams {
             // Map all streams from first input
             args.append(contentsOf: ["-map", "0"])
         } else {
-            // Map specific streams
+            // Map specific streams. A pick is a whole-file number: `0:<n>`,
+            // never `0:v:<n>` (which would count video streams only).
             if let vi = videoStreamIndex {
-                args.append(contentsOf: ["-map", "0:v:\(vi)"])
+                args.append(contentsOf: ["-map", StreamSpecifier.source(vi)])
             } else if !disableSubtitles {
                 // Default: map first video and first audio
                 args.append(contentsOf: ["-map", "0:v?"])
             }
 
             if let ai = audioStreamIndex {
-                args.append(contentsOf: ["-map", "0:a:\(ai)"])
+                args.append(contentsOf: ["-map", StreamSpecifier.source(ai)])
             } else {
                 args.append(contentsOf: ["-map", "0:a?"])
             }
@@ -621,37 +682,26 @@ public struct FFmpegArgumentBuilder: Sendable {
                 args.append(contentsOf: buildSubtitleStreamActionMapping())
             } else if subtitlePassthrough {
                 if let si = subtitleStreamIndex {
-                    args.append(contentsOf: ["-map", "0:s:\(si)"])
+                    args.append(contentsOf: ["-map", StreamSpecifier.source(si)])
                 } else {
                     args.append(contentsOf: ["-map", "0:s?"])
                 }
             }
         }
 
-        // Per-stream subtitle exclusions (Issue #41) — appended after
-        // whichever mapping mode above selected these streams. ffmpeg
-        // applies `-map` options in order, so a later `-map -0:s:N` removes
-        // just that one stream from an earlier broader map, composing
-        // safely with `-map 0` (mapAllStreams), `0:s?`, or the explicit
-        // subtitleStreamActions/passthrough paths.
-        args.append(contentsOf: buildPerStreamSubtitleExclusionMapping())
+        // Per-stream subtitle exclusions (Issue #41) are NOT written here:
+        // without the source's streams a `-map -0:<n>` cannot be checked to be
+        // a subtitle stream, and a stale key could remove a video or audio
+        // track. They are reported by `streamSelectionProblems()` instead, and
+        // the plan (above) applies them safely.
 
-        return args
-    }
-
-    /// Build negative `-map` arguments to exclude subtitle streams whose
-    /// per-stream override explicitly turned inclusion off (Issue #41).
-    private func buildPerStreamSubtitleExclusionMapping() -> [String] {
-        var args: [String] = []
-        for (index, included) in perStreamSubtitleInclude.sorted(by: { $0.key < $1.key }) where !included {
-            args.append(contentsOf: ["-map", "-0:s:\(index)"])
-        }
         return args
     }
 
     /// Map subtitle streams according to the explicit per-stream action
-    /// layout in `subtitleStreamActions`. Replacement inputs are
-    /// referenced by the input index they were declared at in `build()`.
+    /// layout in `subtitleStreamActions`, for the legacy (no plan) path.
+    /// Replacement inputs are referenced by the input index they were
+    /// declared at in `build()`; the plan builds the same list itself.
     private func buildSubtitleStreamActionMapping() -> [String] {
         // The first replacement input's FFmpeg `-i` index is one past
         // `inputURL` (index 0) plus the caller-provided
@@ -663,7 +713,8 @@ public struct FFmpegArgumentBuilder: Sendable {
         for action in subtitleStreamActions {
             switch action.action {
             case .passthrough:
-                args.append(contentsOf: ["-map", "0:s:\(action.streamIndex)"])
+                // A whole-file number from the probe (#530): `0:<n>`.
+                args.append(contentsOf: ["-map", StreamSpecifier.source(action.streamIndex)])
             case .replaceWith:
                 // Each replacement file is itself a standalone subtitle
                 // file (one stream, index 0 within that input).
@@ -700,7 +751,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// 1. **Global**: Single video codec for all streams (default).
     /// 2. **Per-stream**: Different codecs per output video stream via `perStreamVideoCodec`.
     ///    Uses FFmpeg stream specifier syntax (-c:v:0, -c:v:1, etc.).
-    private func buildVideoArguments() -> [String] {
+    private func buildVideoArguments(plan: OutputStreamPlan?) -> [String] {
         var args: [String] = []
 
         // Per-stream video codec overrides (Phase 3.5 / Issue #41)
@@ -708,36 +759,36 @@ public struct FFmpegArgumentBuilder: Sendable {
         // (CRF, preset) are global encoder options that don't accept stream specifiers.
         // For per-stream quality/preset, we apply the first override's values globally
         // since FFmpeg uses one encoder instance per codec type.
-        if !perStreamVideoCodec.isEmpty || !perStreamVideoPassthrough.isEmpty {
-            for (index, isPassthrough) in perStreamVideoPassthrough.sorted(by: { $0.key < $1.key }) {
-                if isPassthrough {
-                    args.append(contentsOf: ["-c:v:\(index)", "copy"])
+        //
+        // The dictionaries are keyed by SOURCE stream number; `placed` turns
+        // each key into the output video position it became (#530). Only
+        // overrides that reached the output count — without a plan, none do,
+        // and `streamSelectionProblems()` says so.
+        let passthroughs = placed(perStreamVideoPassthrough, as: .video, in: plan)
+        let codecs = placed(perStreamVideoCodec, as: .video, in: plan)
+        if !codecs.isEmpty || !passthroughs.isEmpty {
+            for override in passthroughs where override.value {
+                args.append(contentsOf: ["-c:v:\(override.position)", "copy"])
+            }
+            let copied = Set(passthroughs.filter(\.value).map(\.sourceIndex))
+            for override in codecs where !copied.contains(override.sourceIndex) {
+                if let encoderName = override.value.ffmpegEncoder {
+                    args.append(contentsOf: ["-c:v:\(override.position)", encoderName])
+                }
+                if let br = perStreamVideoBitrate[override.sourceIndex] {
+                    args.append(contentsOf: ["-b:v:\(override.position)", formatBitrate(br)])
                 }
             }
-            for (index, codec) in perStreamVideoCodec.sorted(by: { $0.key < $1.key }) {
-                guard perStreamVideoPassthrough[index] != true else { continue }
-                if let encoderName = codec.ffmpegEncoder {
-                    args.append(contentsOf: ["-c:v:\(index)", encoderName])
-                }
-                if let br = perStreamVideoBitrate[index] {
-                    args.append(contentsOf: ["-b:v:\(index)", formatBitrate(br)])
-                }
-            }
-            // Apply CRF and preset from the first video override (global encoder options)
-            if let firstCRF = perStreamVideoCRF.sorted(by: { $0.key < $1.key }).first?.value {
+            // Apply CRF and preset from the first placed video override
+            // (global encoder options), taken in source-stream order.
+            if let firstCRF = placed(perStreamVideoCRF, as: .video, in: plan).first?.value {
                 args.append(contentsOf: ["-crf", "\(firstCRF)"])
             }
-            if let firstPreset = perStreamVideoPreset.sorted(by: { $0.key < $1.key }).first?.value {
+            if let firstPreset = placed(perStreamVideoPreset, as: .video, in: plan).first?.value {
                 args.append(contentsOf: ["-preset", firstPreset])
             }
-            // Apply global codec for streams without per-stream overrides
-            if videoPassthrough {
-                // Only if no per-stream codec overrides set the global default to copy
-                let overriddenIndices = Set(perStreamVideoCodec.keys).union(Set(perStreamVideoPassthrough.keys))
-                if overriddenIndices.isEmpty {
-                    args.append(contentsOf: ["-c:v", "copy"])
-                }
-            }
+            // (A global `-c:v copy` used to be considered here "if no
+            // overrides exist", which can never be true inside this branch.)
             return args
         }
 
@@ -933,7 +984,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     /// 1. **Global**: Single audio codec for all streams (default).
     /// 2. **Per-stream**: Different codecs per output audio stream via `perStreamAudioCodec`.
     ///    Used for multi-codec scenarios like TrueHD + AAC fallback in MP4.
-    private func buildAudioArguments() -> [String] {
+    private func buildAudioArguments(plan: OutputStreamPlan?) -> [String] {
         var args: [String] = []
 
         // Skip audio in first pass of two-pass encoding
@@ -941,16 +992,18 @@ public struct FFmpegArgumentBuilder: Sendable {
             return ["-an"]
         }
 
-        // Per-stream audio codec overrides
-        if !perStreamAudioCodec.isEmpty {
-            for (index, codec) in perStreamAudioCodec.sorted(by: { $0.key < $1.key }) {
-                if let encoderName = codec.ffmpegEncoder {
-                    args.append(contentsOf: ["-c:a:\(index)", encoderName])
+        // Per-stream audio codec overrides, keyed by SOURCE stream number and
+        // placed on the output audio stream each became (#530).
+        let codecs = placed(perStreamAudioCodec, as: .audio, in: plan)
+        if !codecs.isEmpty {
+            for override in codecs {
+                if let encoderName = override.value.ffmpegEncoder {
+                    args.append(contentsOf: ["-c:a:\(override.position)", encoderName])
                 } else {
-                    args.append(contentsOf: ["-c:a:\(index)", "copy"])
+                    args.append(contentsOf: ["-c:a:\(override.position)", "copy"])
                 }
-                if let br = perStreamAudioBitrate[index] {
-                    args.append(contentsOf: ["-b:a:\(index)", formatBitrate(br)])
+                if let br = perStreamAudioBitrate[override.sourceIndex] {
+                    args.append(contentsOf: ["-b:a:\(override.position)", formatBitrate(br)])
                 }
             }
             return args
@@ -1001,7 +1054,7 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// Build subtitle handling arguments.
-    private func buildSubtitleArguments() -> [String] {
+    private func buildSubtitleArguments(plan: OutputStreamPlan?) -> [String] {
         if disableSubtitles {
             return ["-sn"]
         }
@@ -1010,14 +1063,12 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // Per-stream subtitle passthrough overrides (Issue #41) — mirrors
         // perStreamVideoPassthrough / perStreamAudioCodec: force
-        // `-c:s:<index> copy` for specific stream indices regardless of
-        // the global subtitle codec mode below. Skips indices explicitly
-        // excluded via `perStreamSubtitleInclude` — a codec option for a
-        // stream that was just removed from the output mapping has no
-        // matching output stream to apply to.
-        for (index, forceCopy) in perStreamSubtitlePassthrough.sorted(by: { $0.key < $1.key }) where forceCopy {
-            guard perStreamSubtitleInclude[index] != false else { continue }
-            args.append(contentsOf: ["-c:s:\(index)", "copy"])
+        // `-c:s:<output position> copy` for specific source streams
+        // regardless of the global subtitle codec mode below. A stream the
+        // per-stream settings removed from the output is not in the plan, so
+        // it gets no option — there is no output stream left to apply it to.
+        for override in placed(perStreamSubtitlePassthrough, as: .subtitle, in: plan) where override.value {
+            args.append(contentsOf: ["-c:s:\(override.position)", "copy"])
         }
 
         if subtitlePassthrough {
@@ -1030,33 +1081,84 @@ public struct FFmpegArgumentBuilder: Sendable {
     }
 
     /// Build stream disposition arguments.
-    /// Used to enforce non-default flags for codecs that require it in certain containers
-    /// (e.g., TrueHD in MP4 must not be default).
-    private func buildDispositionArguments() -> [String] {
+    ///
+    /// Two sources, in this order (a later `-disposition` for the same output
+    /// stream wins in ffmpeg):
+    /// 1. roles a person set in the stream editor (`sourceStreamEdits`),
+    ///    placed on the output stream their source stream became (#530 —
+    ///    the editor's Default/Forced toggles used to be dropped entirely);
+    /// 2. `streamDispositions`, keyed by OUTPUT specifier (e.g. TrueHD in MP4
+    ///    must not be default), written verbatim.
+    ///
+    /// Both are written in a fixed order (sorted), so the same settings always
+    /// give the same command line.
+    private func buildDispositionArguments(plan: OutputStreamPlan?) -> [String] {
         var args: [String] = []
-        for (streamSpec, disposition) in streamDispositions {
+        if let plan {
+            for (sourceIndex, edit) in sourceStreamEdits.sorted(by: { $0.key < $1.key }) {
+                guard let disposition = edit.disposition,
+                      let specifier = plan.outputSpecifier(forSourceStream: sourceIndex) else { continue }
+                args.append(contentsOf: ["-disposition:\(specifier)", disposition.ffmpegValue])
+            }
+        }
+        for (streamSpec, disposition) in streamDispositions.sorted(by: { $0.key < $1.key }) {
             args.append(contentsOf: ["-disposition:\(streamSpec)", disposition])
         }
         return args
     }
 
     /// Build metadata arguments.
-    private func buildMetadataArguments() -> [String] {
+    ///
+    /// Always in a fixed order (every dictionary is sorted by key), so the
+    /// same settings give the same command line — the previews, the logs and
+    /// the tests can compare them. It used to follow dictionary order, which
+    /// Swift does not keep stable between runs.
+    private func buildMetadataArguments(plan: OutputStreamPlan?) -> [String] {
         var args: [String] = []
 
         // File-level metadata
-        for (key, value) in metadata {
+        for (key, value) in metadata.sorted(by: { $0.key < $1.key }) {
             args.append(contentsOf: ["-metadata", "\(key)=\(value)"])
         }
 
-        // Per-stream metadata
-        for (streamSpec, tags) in streamMetadata {
-            for (key, value) in tags {
+        // Changes made in the stream editor, placed on the output stream each
+        // source stream became (#530).
+        if let plan {
+            for (sourceIndex, edit) in sourceStreamEdits.sorted(by: { $0.key < $1.key }) {
+                guard let specifier = plan.outputSpecifier(forSourceStream: sourceIndex) else { continue }
+                if let title = edit.title {
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "title=\(title)"])
+                }
+                if let language = edit.language {
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "language=\(language)"])
+                }
+            }
+        }
+
+        // Low-level per-stream metadata, keyed by OUTPUT specifier (verbatim).
+        for (streamSpec, tags) in streamMetadata.sorted(by: { $0.key < $1.key }) {
+            for (key, value) in tags.sorted(by: { $0.key < $1.key }) {
                 args.append(contentsOf: ["-metadata:\(streamSpec)", "\(key)=\(value)"])
             }
         }
 
         return args
+    }
+
+    /// Per-stream settings keyed by SOURCE stream number, turned into the
+    /// output position each stream became (#530), in source-stream order.
+    /// Settings for streams that are not in the output — or not of `type` —
+    /// are dropped here and listed by `skippedStreamSettings()`. Without a
+    /// plan nothing can be placed, and the result is empty.
+    private func placed<Value>(
+        _ settings: [Int: Value],
+        as type: StreamType,
+        in plan: OutputStreamPlan?
+    ) -> [(position: Int, sourceIndex: Int, value: Value)] {
+        guard let plan else { return [] }
+        return settings.sorted(by: { $0.key < $1.key }).compactMap { key, value in
+            plan.outputPosition(forSourceStream: key, ofType: type).map { (position: $0, sourceIndex: key, value: value) }
+        }
     }
 
     // MARK: - Helpers

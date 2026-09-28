@@ -26,6 +26,13 @@ public enum EncodingEngineError: LocalizedError, Sendable {
     /// Insufficient disk space for encoding.
     case insufficientDiskSpace(available: String, estimated: String)
 
+    /// The job's stream choices or per-stream settings cannot be applied to
+    /// this source file — a picked stream number that does not exist or is
+    /// the wrong type, or per-stream settings that cannot be matched to an
+    /// output track (issue #530). Each string is one plain-English problem.
+    /// Refused before ffmpeg runs, so no track is ever edited by mistake.
+    case streamSelectionInvalid([String])
+
     public var errorDescription: String? {
         switch self {
         case .ffmpegUnavailable(let details):
@@ -38,6 +45,8 @@ public enum EncodingEngineError: LocalizedError, Sendable {
             return "Encoding failed (exit \(code)): \(stderr.prefix(500))"
         case .insufficientDiskSpace(let available, let estimated):
             return "Insufficient disk space. Available: \(available), estimated needed: \(estimated)"
+        case .streamSelectionInvalid(let problems):
+            return "The stream settings do not fit this file: " + problems.joined(separator: " ")
         }
     }
 }
@@ -615,6 +624,29 @@ public final class EncodingEngine: @unchecked Sendable {
                     return .init(streamIndex: stream.streamIndex, action: .passthrough)
                 }
             }
+        }
+
+        // The source's streams (#530). A fresh probe of the actual input is
+        // the authority — it replaces whatever list the app attached when the
+        // job was queued (the file could have changed since). When the probe
+        // failed, the job keeps the app's list, if it had one.
+        if let sourceInfo {
+            enrichedJob.sourceStreams = sourceInfo.streams
+        }
+
+        // Refuse, in plain words, stream choices that do not fit this file
+        // (a missing or wrong-type stream number) and per-stream settings that
+        // cannot be matched to an output track — rather than let ffmpeg edit
+        // or pick whichever track happens to share the number (#530).
+        let streamProblems = enrichedJob.streamSelectionProblems()
+        guard streamProblems.isEmpty else {
+            throw EncodingEngineError.streamSelectionInvalid(streamProblems)
+        }
+        // Per-stream settings aimed at a stream that is simply not in this
+        // output (a profile made on a different file, say) cannot apply; say
+        // so in the log rather than drop them without a word.
+        for skipped in enrichedJob.skippedStreamSettings() {
+            print("Warning: not applied — \(skipped)")
         }
 
         // Build FFmpeg arguments

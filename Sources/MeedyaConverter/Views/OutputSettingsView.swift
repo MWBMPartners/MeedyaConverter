@@ -1051,42 +1051,46 @@ struct StreamMetadataEditorView: View {
     }
 
     private func loadExistingMetadata() {
+        // Start from what the file says, then lay any earlier edits for THIS
+        // file on top (edits for another file are never shown here: stream
+        // numbers only mean something within one file).
+        let saved = viewModel.sourceStreamEdits(for: mediaFile)
         for stream in mediaFile.streams {
+            let edit = saved[stream.streamIndex]
             streamMetadata[stream.streamIndex] = StreamMetadataEntry(
-                title: stream.title ?? "",
-                language: stream.language ?? "",
+                title: edit?.title ?? stream.title ?? "",
+                language: edit?.language ?? stream.language ?? "",
                 isDefault: stream.isDefault,
                 isForced: stream.isForced
             )
         }
     }
 
+    /// Records the edits, keyed by each stream's WHOLE-FILE number (#530).
+    ///
+    /// This used to build ffmpeg specifiers such as `s:a:<whole-file number>`
+    /// here — which ffmpeg reads as "the Nth AUDIO stream of the output" — so
+    /// an edit landed on the wrong track, or on none. The argument builder now
+    /// works out the output stream for each source stream itself. Only fields
+    /// that differ from the file are recorded ("leave as it is" otherwise).
     private func applyMetadata() {
-        var metadata: [String: [String: String]] = [:]
+        var edits: [Int: SourceStreamEdit] = [:]
 
-        for (index, entry) in streamMetadata {
-            let stream = mediaFile.streams.first { $0.streamIndex == index }
-            guard let streamType = stream?.streamType else { continue }
-
-            let spec: String
-            switch streamType {
-            case .video: spec = "s:v:\(index)"
-            case .audio: spec = "s:a:\(index)"
-            case .subtitle: spec = "s:s:\(index)"
-            default: spec = "s:\(index)"
+        for stream in mediaFile.streams {
+            guard let entry = streamMetadata[stream.streamIndex] else { continue }
+            var edit = SourceStreamEdit()
+            if entry.title != (stream.title ?? "") { edit.title = entry.title }
+            if entry.language != (stream.language ?? ""), !entry.language.isEmpty {
+                edit.language = entry.language
             }
-
-            var tags: [String: String] = [:]
-            if !entry.title.isEmpty { tags["title"] = entry.title }
-            if !entry.language.isEmpty { tags["language"] = entry.language }
-
-            if !tags.isEmpty {
-                metadata[spec] = tags
+            if !edit.isEmpty {
+                edits[stream.streamIndex] = edit
             }
         }
 
-        viewModel.streamMetadataOverrides = metadata
-        viewModel.appendLog(.info, "Applied stream metadata overrides for \(metadata.count) streams",
+        viewModel.sourceStreamEdits = edits
+        viewModel.sourceStreamEditsFileURL = mediaFile.fileURL
+        viewModel.appendLog(.info, "Applied stream metadata changes to \(edits.count) stream(s) of \(mediaFile.fileName)",
                             category: .metadata)
     }
 }

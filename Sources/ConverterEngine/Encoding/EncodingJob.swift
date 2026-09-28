@@ -61,13 +61,16 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// The encoding profile to use.
     public var profile: EncodingProfile
 
-    /// Optional: specific video stream index to encode (nil = default).
+    /// Optional: the video stream to encode, by its whole-file number (the
+    /// `#N` the probe shows). Nil = every video stream.
     public var videoStreamIndex: Int?
 
-    /// Optional: specific audio stream index to encode (nil = default).
+    /// Optional: the audio stream to encode, by its whole-file number.
+    /// Nil = every audio stream.
     public var audioStreamIndex: Int?
 
-    /// Optional: specific subtitle stream index (nil = default).
+    /// Optional: the subtitle stream to pass through, by its whole-file
+    /// number. Nil = every subtitle stream.
     public var subtitleStreamIndex: Int?
 
     /// Whether to map all streams from source.
@@ -76,7 +79,9 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// Additional metadata to embed in the output.
     public var outputMetadata: [String: String]
 
-    /// Per-stream metadata overrides.
+    /// Low-level per-stream metadata keyed by an OUTPUT stream specifier
+    /// (`"s:a:0"` = first audio stream of the output), written verbatim.
+    /// Changes to a SOURCE stream belong in `sourceStreamEdits` (#530).
     public var streamMetadata: [String: [String: String]]
 
     /// Custom video filter chain (overrides profile if set).
@@ -146,6 +151,20 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
     /// so it is optional in Codable and needs no init change.
     public var externalChaptersFile: URL? = nil
 
+    /// The source file's streams, from probing (#530). Lets the argument
+    /// builder write an explicit output stream plan and place every
+    /// per-stream setting on the right output track. The app fills it from
+    /// the imported file; `EncodingEngine.encode` replaces it with a fresh
+    /// probe of the source just before running. A post-construction default
+    /// (like `estimatedSourceDuration`), so it is optional in Codable and
+    /// jobs saved before it existed still load.
+    public var sourceStreams: [MediaStream]? = nil
+
+    /// Changes made in the stream editor, keyed by the source stream's
+    /// whole-file number (#530). Placed on the output stream each source
+    /// stream becomes; needs `sourceStreams`.
+    public var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
+
     public init(
         id: UUID = UUID(),
         inputURL: URL,
@@ -181,6 +200,13 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
 
     /// Convert this job config into FFmpeg arguments using the profile.
     public func buildArguments() -> [String] {
+        configuredBuilder().build()
+    }
+
+    /// The argument builder with every setting of this job applied — shared
+    /// by `buildArguments()` and the stream checks below, so what is checked
+    /// is exactly what is built.
+    private func configuredBuilder() -> FFmpegArgumentBuilder {
         var builder = profile.toArgumentBuilder(inputURL: inputURL, outputURL: outputURL)
 
         // Apply stream selection overrides
@@ -196,6 +222,12 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
         // logic). Populated by EncodingEngine.encode(...) from the
         // SubtitleTonemapPipeline result.
         builder.subtitleStreamActions = subtitleStreamActions
+
+        // The source's streams and the stream editor's changes (#530): with
+        // these the builder writes an explicit output stream plan and places
+        // every per-stream setting on the output track it belongs to.
+        builder.sourceStreams = sourceStreams
+        builder.sourceStreamEdits = sourceStreamEdits
 
         // Apply metadata
         builder.metadata = outputMetadata
@@ -231,7 +263,21 @@ public struct EncodingJobConfig: Identifiable, Codable, Sendable {
             builder.extraArguments.append(contentsOf: builder.buildPQPreservationArguments())
         }
 
-        return builder.build()
+        return builder
+    }
+
+    /// Stream choices and per-stream settings this job could NOT apply, in
+    /// plain English (#530). `EncodingEngine.encode` refuses to run a job
+    /// while this is non-empty, rather than let ffmpeg edit or choose the
+    /// wrong track. Uses the same builder set-up as `buildArguments()`.
+    public func streamSelectionProblems() -> [String] {
+        configuredBuilder().streamSelectionProblems()
+    }
+
+    /// Per-stream settings aimed at streams that are not in this output (or
+    /// not of the right type) — skipped, and worth telling the user about.
+    public func skippedStreamSettings() -> [String] {
+        configuredBuilder().skippedStreamSettings()
     }
 }
 

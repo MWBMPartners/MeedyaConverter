@@ -173,7 +173,7 @@ struct FFmpegPreviewView: View {
             .appendingPathComponent(component)
             .appendingPathExtension(outputExtension)
 
-        let config = EncodingJobConfig(
+        var config = EncodingJobConfig(
             inputURL: file.fileURL,
             outputURL: outputURL,
             // Apply the kill switch here too (#475) — this view exists to show
@@ -183,9 +183,13 @@ struct FFmpegPreviewView: View {
             videoStreamIndex: viewModel.selectedVideoStreamIndex,
             audioStreamIndex: viewModel.selectedAudioStreamIndex,
             subtitleStreamIndex: viewModel.selectedSubtitleStreamIndex,
-            mapAllStreams: viewModel.mapAllStreams,
-            streamMetadata: viewModel.streamMetadataOverrides
+            mapAllStreams: viewModel.mapAllStreams
         )
+        // Same stream information the queued job carries (#530), so the
+        // preview shows the same explicit `-map 0:<number>` list and the same
+        // per-stream placement the encode will use.
+        config.sourceStreams = file.streams
+        config.sourceStreamEdits = viewModel.sourceStreamEdits(for: file)
 
         let arguments = config.buildArguments()
         return FFmpegCommandPreview(arguments: arguments)

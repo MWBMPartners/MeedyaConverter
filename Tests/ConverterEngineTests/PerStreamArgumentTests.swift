@@ -6,15 +6,33 @@
 import XCTest
 @testable import ConverterEngine
 
+/// Per-stream settings are keyed by SOURCE stream number (the `#N` the
+/// per-stream settings view shows) and placed on the output stream each source
+/// stream becomes (issue #530). Every builder here therefore knows the source's
+/// streams — `layout` below — and the keys are whole-file numbers:
+///
+///   video #0, video #1, audio #2, audio #3, subtitle #4, subtitle #5
+///
+/// Before #530 these tests keyed everything 0 and 1 with no source list and
+/// expected `-c:a:0`, `-c:a:1` … That only held because the builder treated
+/// the keys as output positions, while the app stored whole-file numbers — so
+/// in a real file the override landed on the wrong track. With the layout,
+/// audio #2 is output audio 0 and audio #3 is output audio 1, which is what
+/// the expectations below now say.
 final class PerStreamArgumentTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Create a builder pre-configured with dummy input/output URLs.
+    /// The source file every test uses (see the class comment).
+    private let layout = streamLayout(.video, .video, .audio, .audio, .subtitle, .subtitle)
+
+    /// Create a builder pre-configured with dummy input/output URLs and the
+    /// source layout above.
     private func makeBuilder() -> FFmpegArgumentBuilder {
         var builder = FFmpegArgumentBuilder()
         builder.inputURL = URL(fileURLWithPath: "/tmp/input.mkv")
         builder.outputURL = URL(fileURLWithPath: "/tmp/output.mkv")
+        builder.sourceStreams = layout
         return builder
     }
 
@@ -46,8 +64,8 @@ final class PerStreamArgumentTests: XCTestCase {
 
     func testPerStreamAudioCodecOverrides() {
         var builder = makeBuilder()
-        builder.perStreamAudioCodec[0] = .aacLC
-        builder.perStreamAudioCodec[1] = .flac
+        builder.perStreamAudioCodec[2] = .aacLC   // source #2 → output audio 0
+        builder.perStreamAudioCodec[3] = .flac    // source #3 → output audio 1
         let args = builder.build()
 
         assertConsecutive(args, flag: "-c:a:0", value: "aac")
@@ -58,8 +76,8 @@ final class PerStreamArgumentTests: XCTestCase {
 
     func testPerStreamAudioBitrate() {
         var builder = makeBuilder()
-        builder.perStreamAudioCodec[0] = .aacLC
-        builder.perStreamAudioBitrate[0] = 160_000
+        builder.perStreamAudioCodec[2] = .aacLC
+        builder.perStreamAudioBitrate[2] = 160_000
         let args = builder.build()
 
         assertConsecutive(args, flag: "-b:a:0", value: "160k")
@@ -165,31 +183,34 @@ final class PerStreamArgumentTests: XCTestCase {
     // MARK: - 10. EncodingProfile with perStreamSettings via toArgumentBuilder
 
     func testEncodingProfileAppliesPerStreamOverrides() {
+        // Keys are source stream numbers in `layout` (see the class comment).
         let perStream = PerStreamSettings(
             videoOverrides: [
                 0: VideoStreamOverride(passthrough: true),
                 1: VideoStreamOverride(codec: .h265, crf: 20, preset: "slow"),
             ],
             audioOverrides: [
-                0: AudioStreamOverride(codec: .aacLC, bitrate: 192_000),
-                1: AudioStreamOverride(codec: .flac),
+                2: AudioStreamOverride(codec: .aacLC, bitrate: 192_000),
+                3: AudioStreamOverride(codec: .flac),
             ],
             subtitleOverrides: [
-                0: SubtitleStreamOverride(include: true, passthrough: true),
-                1: SubtitleStreamOverride(include: false, passthrough: true),
+                4: SubtitleStreamOverride(include: true, passthrough: true),
+                5: SubtitleStreamOverride(include: false, passthrough: true),
             ]
         )
 
         let profile = EncodingProfile(
             name: "Test Profile",
+            subtitlePassthrough: true,
             perStreamSettings: perStream,
             containerFormat: .mkv
         )
 
-        let builder = profile.toArgumentBuilder(
+        var builder = profile.toArgumentBuilder(
             inputURL: URL(fileURLWithPath: "/tmp/input.mkv"),
             outputURL: URL(fileURLWithPath: "/tmp/output.mkv")
         )
+        builder.sourceStreams = layout
 
         // Verify per-stream video overrides were applied to builder
         XCTAssertEqual(builder.perStreamVideoPassthrough[0], true)
@@ -198,15 +219,15 @@ final class PerStreamArgumentTests: XCTestCase {
         XCTAssertEqual(builder.perStreamVideoPreset[1], "slow")
 
         // Verify per-stream audio overrides were applied to builder
-        XCTAssertEqual(builder.perStreamAudioCodec[0], .aacLC)
-        XCTAssertEqual(builder.perStreamAudioBitrate[0], 192_000)
-        XCTAssertEqual(builder.perStreamAudioCodec[1], .flac)
+        XCTAssertEqual(builder.perStreamAudioCodec[2], .aacLC)
+        XCTAssertEqual(builder.perStreamAudioBitrate[2], 192_000)
+        XCTAssertEqual(builder.perStreamAudioCodec[3], .flac)
 
         // Verify per-stream subtitle overrides were applied to builder
-        XCTAssertEqual(builder.perStreamSubtitleInclude[0], true)
-        XCTAssertEqual(builder.perStreamSubtitleInclude[1], false)
-        XCTAssertEqual(builder.perStreamSubtitlePassthrough[0], true)
-        XCTAssertEqual(builder.perStreamSubtitlePassthrough[1], true)
+        XCTAssertEqual(builder.perStreamSubtitleInclude[4], true)
+        XCTAssertEqual(builder.perStreamSubtitleInclude[5], false)
+        XCTAssertEqual(builder.perStreamSubtitlePassthrough[4], true)
+        XCTAssertEqual(builder.perStreamSubtitlePassthrough[5], true)
 
         // Verify the built arguments contain expected flags
         let args = builder.build()
@@ -217,16 +238,14 @@ final class PerStreamArgumentTests: XCTestCase {
         assertConsecutive(args, flag: "-b:a:0", value: "192k")
         assertConsecutive(args, flag: "-c:s:0", value: "copy")
 
-        // Stream 1's include:false override must produce an explicit
-        // exclusion map, not just a builder-side flag with no CLI effect.
-        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
-        XCTAssertTrue(
-            mapPairs.contains { $0.1 == "-0:s:1" },
-            "Expected a negative -map excluding subtitle stream 1: \(args)"
-        )
+        // Source #5's include:false override removes it from the output:
+        // with a source list the mapping is explicit, so #5 is simply never
+        // mapped (the old legacy path wrote a negative `-map -0:s:1`).
+        let mapped = zip(args, args.dropFirst()).filter { $0.0 == "-map" }.map(\.1)
+        XCTAssertEqual(mapped, ["0:0", "0:1", "0:2", "0:3", "0:4"], "\(args)")
         // Excluded streams get no redundant per-stream codec option —
         // there is no matching output stream left to apply it to.
-        XCTAssertFalse(args.contains("-c:s:1"), "Excluded stream 1 should not get a -c:s:1 codec option")
+        XCTAssertFalse(args.contains("-c:s:1"), "Excluded stream #5 should not get a subtitle codec option")
     }
 
     // MARK: - 11. Empty Overrides Fall Through to Global
@@ -260,40 +279,52 @@ final class PerStreamArgumentTests: XCTestCase {
     func testPerStreamSubtitleExclusionMapping() {
         var builder = makeBuilder()
         builder.subtitlePassthrough = true
-        builder.perStreamSubtitleInclude[1] = false
+        builder.perStreamSubtitleInclude[5] = false
         let args = builder.build()
 
-        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
-        XCTAssertTrue(
-            mapPairs.contains { $0.1 == "0:s?" },
-            "Default all-subtitles map should still be present: \(args)"
-        )
-        XCTAssertTrue(
-            mapPairs.contains { $0.1 == "-0:s:1" },
-            "Stream 1 should be explicitly excluded: \(args)"
-        )
+        let mapped = zip(args, args.dropFirst()).filter { $0.0 == "-map" }.map(\.1)
+        // Every other stream is still mapped (explicitly, by whole-file
+        // number); subtitle #5 is not.
+        XCTAssertEqual(mapped, ["0:0", "0:1", "0:2", "0:3", "0:4"], "\(args)")
     }
 
     func testPerStreamSubtitleExclusionAppliesUnderMapAllStreams() {
         var builder = makeBuilder()
         builder.mapAllStreams = true
-        builder.perStreamSubtitleInclude[2] = false
+        builder.perStreamSubtitleInclude[4] = false
         let args = builder.build()
 
-        let mapPairs = zip(args, args.dropFirst()).filter { $0.0 == "-map" }
-        XCTAssertTrue(mapPairs.contains { $0.1 == "0" }, "mapAllStreams should still emit -map 0: \(args)")
-        XCTAssertTrue(
-            mapPairs.contains { $0.1 == "-0:s:2" },
-            "Stream 2 should still be excluded under mapAllStreams: \(args)"
-        )
+        let mapped = zip(args, args.dropFirst()).filter { $0.0 == "-map" }.map(\.1)
+        XCTAssertEqual(mapped, ["0:0", "0:1", "0:2", "0:3", "0:5"],
+                       "Subtitle #4 should still be excluded under mapAllStreams: \(args)")
     }
 
     func testPerStreamSubtitlePassthroughForcesCopy() {
         var builder = makeBuilder()
-        builder.perStreamSubtitlePassthrough[0] = true
+        builder.subtitlePassthrough = true
+        builder.perStreamSubtitlePassthrough[4] = true   // source #4 → output subtitle 0
         let args = builder.build()
 
         assertConsecutive(args, flag: "-c:s:0", value: "copy")
+    }
+
+    /// Without the source's streams, per-stream settings cannot be matched to
+    /// output tracks. They are left out and reported (the engine then refuses
+    /// the job) — never written with the whole-file number as if it were a
+    /// type-counted one (#530).
+    func testPerStreamSettingsWithoutSourceStreamsAreReportedNotGuessed() {
+        var builder = makeBuilder()
+        builder.sourceStreams = nil
+        builder.perStreamAudioCodec[2] = .flac
+        builder.perStreamSubtitleInclude[4] = false
+        let args = builder.build()
+
+        XCTAssertFalse(args.contains { $0.hasPrefix("-c:a:") }, "\(args)")
+        XCTAssertFalse(args.contains { $0.hasPrefix("-0:") }, "\(args)")
+        let problems = builder.streamSelectionProblems()
+        XCTAssertEqual(problems.count, 1, "\(problems)")
+        XCTAssertTrue(problems[0].contains("audio codec (stream #2)"), problems[0])
+        XCTAssertTrue(problems[0].contains("subtitle removal (stream #4)"), problems[0])
     }
 
     func testEmptyPerStreamSubtitleOverridesNoExclusion() {

@@ -13,21 +13,30 @@ import Foundation
 /// settings for each individual stream in the output.
 ///
 /// When attached to an `EncodingProfile`, these overrides take precedence over the
-/// profile's global settings for the specified stream index. Streams without an
+/// profile's global settings for the specified stream. Streams without an
 /// override inherit the profile defaults.
+///
+/// **Keys are SOURCE stream numbers** — the stream's position in the whole
+/// source file, which is what `PerStreamSettingsView` shows as `#N` and
+/// stores. These comments used to say "output stream index", but the view
+/// has always stored whole-file numbers; issue #530 made the argument builder
+/// read them that way and place each override on the output stream its source
+/// stream becomes. Because the numbers belong to one file's layout, an
+/// override whose stream is missing (or of another type) in a different file
+/// is skipped and reported, never applied to whichever stream shares the number.
 ///
 /// Phase 3.5 — Per-Stream Encoding Settings (Issue #41)
 public struct PerStreamSettings: Codable, Sendable, Hashable {
 
     // MARK: - Video Stream Overrides
 
-    /// Per-video-stream encoding overrides, keyed by output video stream index.
+    /// Per-video-stream encoding overrides, keyed by source stream number.
     public var videoOverrides: [Int: VideoStreamOverride]
 
-    /// Per-audio-stream encoding overrides, keyed by output audio stream index.
+    /// Per-audio-stream encoding overrides, keyed by source stream number.
     public var audioOverrides: [Int: AudioStreamOverride]
 
-    /// Per-subtitle-stream encoding overrides, keyed by output subtitle stream index.
+    /// Per-subtitle-stream encoding overrides, keyed by source stream number.
     public var subtitleOverrides: [Int: SubtitleStreamOverride]
 
     public init(

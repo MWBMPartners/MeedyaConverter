@@ -101,13 +101,17 @@ struct EncodeCommand: AsyncParsableCommand {
 
     // MARK: - Stream Selection
 
-    @Option(name: .customLong("video-stream"), help: "Video stream index to encode (default: first).")
+    // The three stream options take the stream's number in the WHOLE file —
+    // the `#N` that `meedya-convert probe` prints — not a count among streams
+    // of one type (issue #530).
+
+    @Option(name: .customLong("video-stream"), help: "Video stream to encode, by the number `probe` shows (default: all video streams).")
     var videoStreamIndex: Int?
 
-    @Option(name: .customLong("audio-stream"), help: "Audio stream index to encode (default: first).")
+    @Option(name: .customLong("audio-stream"), help: "Audio stream to encode, by the number `probe` shows (default: all audio streams).")
     var audioStreamIndex: Int?
 
-    @Option(name: .customLong("subtitle-stream"), help: "Subtitle stream index to include.")
+    @Option(name: .customLong("subtitle-stream"), help: "Subtitle stream to include, by the number `probe` shows.")
     var subtitleStreamIndex: Int?
 
     @Flag(name: .customLong("map-all"), help: "Map all streams from source.")
@@ -180,6 +184,19 @@ struct EncodeCommand: AsyncParsableCommand {
             subtitleStreamIndex: subtitleStreamIndex,
             mapAllStreams: mapAllStreams
         )
+
+        // The probed streams (#530): lets the builder name every stream by its
+        // whole-file number and check the numbers given above really are
+        // streams of the right type in this file.
+        config.sourceStreams = mediaFile.streams
+        let streamProblems = config.streamSelectionProblems()
+        if !streamProblems.isEmpty {
+            for problem in streamProblems {
+                printStderr("Error: \(problem)")
+            }
+            printStderr("Run `meedya-convert probe \(inputURL.lastPathComponent)` to see each stream's number.")
+            throw ExitCode(ExitCodes.invalidArguments.rawValue)
+        }
 
         if noCopyMetadata {
             config.extraArguments += ["-map_metadata", "-1"]

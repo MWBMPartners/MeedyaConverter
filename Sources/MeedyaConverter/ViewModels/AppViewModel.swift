@@ -401,14 +401,18 @@ final class AppViewModel {
     var outputMode: OutputMode = .flatten
 
     // MARK: - Stream Selection (Phase 3.4–3.5)
+    //
+    // Every stream number here is the stream's WHOLE-FILE number — the `#N`
+    // the pickers show (`MediaStream.streamIndex`). The argument builder turns
+    // it into what ffmpeg needs (issue #530).
 
-    /// Selected video stream index (nil = default/first).
+    /// Selected video stream, by whole-file number (nil = every video stream).
     var selectedVideoStreamIndex: Int?
 
-    /// Selected audio stream index (nil = default/first).
+    /// Selected audio stream, by whole-file number (nil = every audio stream).
     var selectedAudioStreamIndex: Int?
 
-    /// Selected subtitle stream index (nil = none).
+    /// Selected subtitle stream, by whole-file number (nil = none).
     var selectedSubtitleStreamIndex: Int?
 
     /// Whether to map all streams from the source to the output.
@@ -416,9 +420,24 @@ final class AppViewModel {
 
     // MARK: - Stream Metadata (Phase 3.6)
 
-    /// Per-stream metadata overrides from the StreamMetadataEditorView.
-    /// Keyed by FFmpeg stream specifier (e.g. "s:v:0"), value is tag dict.
-    var streamMetadataOverrides: [String: [String: String]] = [:]
+    /// Changes made in the StreamMetadataEditorView, keyed by the source
+    /// stream's whole-file number (#530). The argument builder writes each to
+    /// the output stream its source stream becomes.
+    ///
+    /// This used to be keyed by an ffmpeg specifier built as
+    /// `s:a:<whole-file number>` — which ffmpeg reads as "the Nth AUDIO stream
+    /// of the output", so edits landed on the wrong track or none.
+    var sourceStreamEdits: [Int: SourceStreamEdit] = [:]
+
+    /// The file `sourceStreamEdits` were made for. Stream numbers only mean
+    /// something within one file, so the edits are applied to that file only
+    /// — never to whatever file happens to be selected when a job is queued.
+    var sourceStreamEditsFileURL: URL?
+
+    /// The editor's changes if they belong to `file`, else none.
+    func sourceStreamEdits(for file: MediaFile) -> [Int: SourceStreamEdit] {
+        sourceStreamEditsFileURL == file.fileURL ? sourceStreamEdits : [:]
+    }
 
     // MARK: - Crop Detection (Phase 3.14)
 
@@ -1232,10 +1251,19 @@ final class AppViewModel {
             audioStreamIndex: selectedAudioStreamIndex,
             subtitleStreamIndex: selectedSubtitleStreamIndex,
             mapAllStreams: mapAllStreams,
-            streamMetadata: streamMetadataOverrides,
             videoFilterChain: composedVideoFilter,
             audioFilterChain: stagedAudioGraph
         )
+        // The source's streams, as probed on import, so the argument builder
+        // can place every stream choice and per-stream setting on the right
+        // output track (#530). The engine replaces this with a fresh probe of
+        // the file just before encoding.
+        config.sourceStreams = file.streams
+        // The stream editor's changes — only if they were made for this file.
+        config.sourceStreamEdits = sourceStreamEdits(for: file)
+        if config.sourceStreamEdits.isEmpty, !sourceStreamEdits.isEmpty {
+            appendLog(.warning, "Stream editor changes were made for another file and were not applied to \(file.fileName)", category: .metadata)
+        }
         // Feed the queue optimiser's duration-based strategies (#326). The
         // source was already probed on import, so `file.duration` is the real
         // media length; without this the shortest/longest/estimated-time
