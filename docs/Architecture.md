@@ -271,7 +271,7 @@ section only says where things live and why they are shaped as they are.
 
 ### The policy files and how they are kept honest
 
-- The policy, its 268 conformance cases (+ schema) and its reference data (+
+- The policy, its 290 conformance cases (+ schema) and its reference data (+
   schema) are **exact copies** of the masters in MWBMPartners/MeedyaSuite-core,
   pinned in `docs/standards/MWBM-MEDIA-LANG.lock`. CI runs
   `python3 scripts/media-lang/check_copies.py`, which fails if a copy was edited
@@ -281,6 +281,10 @@ section only says where things live and why they are shaped as they are.
 - `Tests/MediaLanguagePolicyTests` runs **every** case in every section, runs the
   automatic-selection cases again with the tracks reversed, and fails if the file
   has an unknown, missing or empty section or a case lacks a required field.
+  Before running anything it checks the whole case file against its schema copy
+  (`FixtureShapeCheck`: every field's type, `{}` never taken for `[]`, no field
+  the schema does not list, the allowed words, `error` only on a refusal), and
+  runs no case if the file breaks it.
 
 ### Where the code is
 

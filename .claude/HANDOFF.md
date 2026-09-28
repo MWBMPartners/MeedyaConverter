@@ -11,17 +11,43 @@ Previous: 2026-09-28 (language policy round 1) · 2026-09-25 14:55
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
 
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
-`5d2223c`. **Round 1 is pushed** (head `28efa6f`, CI green). **Round 2** — the fixes
-for what the independent review found (see "ROUND 2" below) — is 13 LOCAL commits
-on top (`23165c9` … `2b64022` docs, plus this correction), **not pushed**; the orchestrator pushes after
-reviewing them (a push to `wip/**` triggers CI, the only place `swift test` runs).
-Everything in the "CURRENT STATE" block further down is about
-`wip/alpha-consolidation` and is unchanged by this work.
+`5d2223c`. **Rounds 1 and 2 are pushed** (head `a5abc22`, CI green). **The
+copy-update sweep** (see "COPY-UPDATE SWEEP" below) is LOCAL commits on top
+(`d86a170` onward), **not pushed** — the orchestrator pushes and watches CI (a
+push to `wip/**` triggers CI, the only place `swift test` runs). Everything in the
+"CURRENT STATE" block further down is about `wip/alpha-consolidation` and is
+unchanged by this work.
+
+### COPY-UPDATE SWEEP — copies moved to core `aaaa585` (28 Sept)
+
+Every repository now pins MeedyaSuite-core
+`aaaa585aa145634c057c0bbdd9bd5fc11c3274a0`, the reviewed revision 6.
+- `d86a170` — copies updated with `check_copies.py --update` (290 cases, was 268;
+  22 new, none changed; data file unchanged; checker gains per-copy PHP checks).
+  Online check: 6 copies match.
+- `c44ac56` — the Swift library implements the eight settled rules; 8 new cases
+  had failed (posix-11 trim, sidecar-27/28 builder reads with LANG-002,
+  label-05 each role once, audio-22 canonical order over ALL tracks, audio-23
+  commentary before other with AD asked, subs-22/23 forced-only for private-use
+  and grandfathered audio). Also: whitespace-only malformed keeps the EMPTY text
+  (LANG-026; new KeptTextTests).
+- `7a123bd` — the conformance runner checks the whole case file against the
+  schema copy before running anything (`FixtureShapeCheck`: types, `{}` vs `[]`,
+  no unlisted fields, allowed words, `error` only on refusals expecting null);
+  any problem fails the run and no case runs.
+- Engine: nothing calls the changed parts except the label (automatic track
+  titles) — unchanged in effect. Checked on the final tree: the 13-suite engine
+  harness run, 1005 tests, 0 failures; conformance 290 of 290 (409 checks) with
+  14 policy tests, 0 failures, locally and on Linux (`docker run --rm --name
+  converter-sweep-linuxpolicy swift:6.1`, no warnings; nothing left behind);
+  builds of ConverterEngine, MediaLanguagePolicy and meedya-convert exit 0.
+- **Still owed:** re-pin to core's `main` once core merges (see "Next step" below).
 
 **What it is:** MeedyaConverter's share of the shared language policy
 `MWBM-MEDIA-LANG` 1.0.0 (master in MWBMPartners/MeedyaSuite-core; local copy
 `docs/standards/media-language-bcp47-policy.md`, pinned to core
-`f2e106a9d025c95d679eed825ab0f78a6b23ebe7` in `docs/standards/MWBM-MEDIA-LANG.lock`).
+`aaaa585aa145634c057c0bbdd9bd5fc11c3274a0` in `docs/standards/MWBM-MEDIA-LANG.lock`;
+round 1 had `f2e106a…`).
 Profile: canonical (Parts A + D) plus presentation for the stream editor. The
 mandatory pointer is now in the root `AGENTS.md`, in `.claude/standing_tasks.md`
 and in `.OpenAI/CONTEXT.md`. Developer note: `docs/Architecture.md` → "Languages,
@@ -99,18 +125,21 @@ writes one).
   to its test binary.
 - The engine now REFUSES a job whose stream settings cannot be placed
   (`EncodingEngineError.streamSelectionInvalid`) instead of guessing.
-- Two places where the Swift code follows the policy TEXT where the throwaway
-  Python reference differed (no case tells them apart; PHP agrees with Swift on
-  the first): canonical tie-breaks in automatic selection use real TRACK-050 role
-  ranks; malformed preferences are ignored in automatic selection too.
+- Two places where the Swift code followed the policy TEXT where the throwaway
+  Python reference differed: canonical tie-breaks in automatic selection use real
+  TRACK-050 role ranks; malformed preferences are ignored in automatic selection
+  too. Core revision 6 (`aaaa585`) made the second the policy's rule (cases
+  audio-21, subs-21) and settled "canonical order" as stored order among ALL
+  tracks of the type (audio-22).
 
-**Next step once MeedyaSuite-core merges the policy:** the lock is pinned to
-`f2e106a…`, which today is ONLY on core's `feature/bcp47-language-policy` branch
-(the checker approves that branch for now). After core merges it, run
-`python3 scripts/media-lang/check_copies.py --update <the commit on core main>`
-and commit the lock. If core SQUASH-merges and then deletes the feature branch,
-`f2e106a…` stops being part of an approved branch's history and this repository's
-CI copy check will FAIL until that update is made — so do it promptly.
+**Next step once MeedyaSuite-core merges the policy (still owed):** the lock is
+pinned to `aaaa585…`, which today is ONLY on core's `feature/bcp47-language-policy`
+branch (the checker approves that branch for now). After core merges it, run
+`GITHUB_TOKEN=$(gh auth token) python3 scripts/media-lang/check_copies.py --update
+<the full 40-character commit on core main>` (a short hash is refused) and commit
+the lock. If core SQUASH-merges and then deletes the feature branch, `aaaa585…`
+stops being part of an approved branch's history and this repository's CI copy
+check will FAIL until that update is made — so do it promptly.
 (The CI step already passes `GITHUB_TOKEN` and the workflow declares
 `permissions: contents: read`; `actions/checkout` stays at the repo's `v7.0.1`.)
 
@@ -138,7 +167,9 @@ half is FIXED in round 2 (`make bundle` still is not).
 10. Legacy mapping quirk kept as-is: with subtitles disabled and no video picked,
     video is not mapped.
 11. Core fixtures: add cases for the two text-vs-Python differences above so all
-    implementations are held to one answer.
+    implementations are held to one answer. (Core revision 6 settled the
+    malformed-preference one and the meaning of canonical order; whether its
+    tie-break uses real role ranks still has no case telling them apart.)
 12. `meedya-convert batch --job-file`: the documented example (help
     `cli-reference.md`) lacks keys that synthesised decoding requires (`id`,
     `createdAt`, `priority`, `outputMetadata`, `streamMetadata`,
