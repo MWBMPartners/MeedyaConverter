@@ -116,9 +116,14 @@ final class TrackPreservationToolTests: XCTestCase {
     /// does the parts that matter here: a fresh probe, the cover-art copying
     /// step for a Matroska output, then MeedyaConverter's own arguments.
     @discardableResult
-    private func convert(_ source: URL, to name: String, profile: EncodingProfile) async throws -> (output: URL, config: EncodingJobConfig) {
+    private func convert(
+        _ source: URL,
+        to name: String,
+        profile: EncodingProfile,
+        videoFilter: String? = nil
+    ) async throws -> (output: URL, config: EncodingJobConfig) {
         let output = folder.appendingPathComponent(name)
-        var config = EncodingJobConfig(inputURL: source, outputURL: output, profile: profile)
+        var config = EncodingJobConfig(inputURL: source, outputURL: output, profile: profile, videoFilterChain: videoFilter)
         config.sourceStreams = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: source).streams
         var copies: [Int: URL] = [:]
         for picture in config.attachedPicturesNeedingCopies() {
@@ -178,6 +183,35 @@ final class TrackPreservationToolTests: XCTestCase {
 
         let (mp4, _) = try await convert(source, to: "out.mp4", profile: .remuxToMP4)
         XCTAssertEqual(try streams(mp4).map(\.attachedPicture), [false, false, true])
+    }
+
+    /// Re-encoding the video keeps the cover art as it was: an M4A with a
+    /// cover through "Quick Convert" (H.264/AAC in MP4), and a film with an
+    /// attached cover, re-encoded and scaled. With the cover's flag kept but
+    /// the picture re-encoded as H.264, ffmpeg refuses the whole job.
+    func test_coverArtSurvivesAVideoReencode() async throws {
+        let picture = try makePicture()
+        let song = try make("song.m4a", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3", "-i", picture.path,
+            "-map", "0", "-map", "1", "-c:a", "aac", "-c:v", "copy", "-disposition:v:0", "attached_pic"
+        ])
+        let (fromSong, _) = try await convert(song, to: "song.mp4", profile: .quickConvert)
+        let seenSong = try streams(fromSong)
+        XCTAssertEqual(seenSong.map(\.type), ["audio", "video"])
+        XCTAssertEqual(seenSong.last?.attachedPicture, true)
+        XCTAssertEqual(seenSong.last?.codec, "mjpeg", "copied, not re-encoded")
+
+        let film = try make("film.mkv", [
+            "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4",
+            "-map", "0", "-map", "1", "-c:v", "mpeg4", "-c:a", "aac",
+            "-attach", picture.path, "-metadata:s:t:0", "mimetype=image/jpeg",
+            "-metadata:s:t:0", "filename=cover.jpg"
+        ])
+        let (fromFilm, _) = try await convert(film, to: "film.mp4", profile: .quickConvert, videoFilter: "scale=32:24")
+        let seenFilm = try streams(fromFilm)
+        XCTAssertEqual(seenFilm.map(\.codec), ["h264", "aac", "mjpeg"])
+        XCTAssertEqual(seenFilm.map(\.attachedPicture), [false, false, true])
     }
 
     // MARK: - Titles (review items 2 and 15)

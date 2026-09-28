@@ -521,7 +521,11 @@ public struct FFmpegArgumentBuilder: Sendable {
         }
 
         // --- Video codec and quality ---
-        args.append(contentsOf: buildVideoArguments(plan: plan))
+        let videoArguments = buildVideoArguments(plan: plan)
+        args.append(contentsOf: videoArguments)
+        // Cover art mapped as a stream is COPIED when the video is re-encoded
+        // (see `pictureCopyArguments`).
+        args.append(contentsOf: pictureCopyArguments(plan: plan, videoArguments: videoArguments))
 
         // --- Audio codec and quality ---
         args.append(contentsOf: buildAudioArguments(plan: plan))
@@ -531,10 +535,9 @@ public struct FFmpegArgumentBuilder: Sendable {
 
         // --- Video filters ---
         // Build the complete video filter chain: user filters + tone mapping
-        let vfChain = buildVideoFilterChain()
-        if !vfChain.isEmpty {
-            args.append(contentsOf: ["-vf", vfChain])
-        }
+        // Aimed at the real video only when cover art is mapped beside it
+        // (see `videoFilterArguments`).
+        args.append(contentsOf: videoFilterArguments(buildVideoFilterChain(), plan: plan, videoArguments: videoArguments))
 
         // --- Audio filters ---
         if let af = audioFilterChain, !af.isEmpty {

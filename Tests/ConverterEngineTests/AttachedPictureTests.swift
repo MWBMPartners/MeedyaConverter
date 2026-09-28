@@ -215,6 +215,44 @@ final class AttachedPictureTests: XCTestCase {
         XCTAssertEqual(names, ["-metadata:s:t:0 filename=cover-1.jpg", "-metadata:s:t:1 filename=cover-2.jpg"])
     }
 
+    // MARK: - Re-encoded video
+
+    /// A film with cover art, re-encoded to MP4: the picture is COPIED, not
+    /// re-encoded with the film's encoder (MP4 cover art must stay JPEG/PNG,
+    /// or ffmpeg refuses the job), and the video filters go to the real
+    /// video only (a filter on a copied stream is refused too).
+    func test_reencodedVideoCopiesThePictureAndFiltersOnlyTheVideo() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mp4")
+        builder.sourceStreams = [
+            MediaStream(streamIndex: 0, streamType: .video, codecName: "h264", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "en", disposition: StreamDisposition()),
+            cover(2)
+        ]
+        builder.videoCodec = .h264
+        builder.audioCodec = .aacLC
+        builder.videoFilterChain = "scale=80:60"
+        let args = builder.build()
+        XCTAssertEqual(maps(args), ["0:0", "0:1", "0:2"])
+        XCTAssertEqual(pairs(args, "-c:v"), ["-c:v libx264", "-c:v:1 copy"])
+        XCTAssertEqual(pairs(args, "-filter:v"), ["-filter:v:0 scale=80:60"])
+        XCTAssertFalse(args.contains("-vf"))
+    }
+
+    /// Without cover art nothing changes: one `-vf` for all video.
+    func test_withoutPicturesTheFilterIsUnchanged() {
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mp4")
+        builder.sourceStreams = [MediaStream(streamIndex: 0, streamType: .video, disposition: StreamDisposition())]
+        builder.videoCodec = .h264
+        builder.videoFilterChain = "scale=80:60"
+        let args = builder.build()
+        XCTAssertEqual(pairs(args, "-vf"), ["-vf scale=80:60"])
+        XCTAssertFalse(args.contains { $0.hasPrefix("-c:v:") })
+    }
+
     /// The copying step's own arguments: a byte-for-byte copy of one frame.
     func test_extractionArguments() {
         let args = AttachedPictures.extractionArguments(

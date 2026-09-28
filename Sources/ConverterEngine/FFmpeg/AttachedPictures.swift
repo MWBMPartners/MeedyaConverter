@@ -28,8 +28,16 @@
 // the result back gives exactly what the source had: an attachment that
 // ffprobe reports as an `attached_pic` stream with the same name.
 //
+// When the video is RE-ENCODED, a picture that is mapped as a stream (MP4,
+// or Matroska without a copy) is copied, never re-encoded, and the video
+// filters are aimed at the real video only (`pictureCopyArguments`,
+// `videoFilterArguments`).
+//
 // WHAT IT CANNOT DO
 // -----------------
+// * An output with no video at all (`-vn`, e.g. an audio-only profile to an
+//   MP4-family file) drops cover art mapped as a stream, as it always did; a
+//   Matroska output keeps it, because it is attached rather than mapped.
 // * Only the full encode (`EncodingEngine.encode`) runs the copying step.
 //   Paths that build one ffmpeg command and nothing else (a pipeline step,
 //   the Shortcuts action, the quality preview) have no picture file, so the
@@ -169,6 +177,50 @@ extension FFmpegArgumentBuilder {
                 mimeType: AttachedPictures.attachmentMimeType(for: stream, derived: format.mimeType)
             )
         }
+    }
+
+    /// The video-type positions (`N` in `-c:v:N`) of the attached pictures
+    /// `plan` maps as streams, or `[]` when this output copies its video
+    /// (`-c:v copy`) or has none (`-vn`) — `videoArguments` is what
+    /// `buildVideoArguments` wrote.
+    private func mappedPicturePositions(in plan: OutputStreamPlan?, videoArguments: [String]) -> [Int] {
+        guard !videoPassthrough, !videoArguments.contains("-vn"),
+              let plan, let sources = sourceStreamsByIndex else { return [] }
+        var positions: [Int] = []
+        var position = 0
+        for entry in plan.entries where entry.streamType == .video {
+            if isAttachedPicture(entry, sources: sources) { positions.append(position) }
+            position += 1
+        }
+        return positions
+    }
+
+    /// `-c:v:N copy` for every attached picture the output maps as a stream,
+    /// when the video is RE-ENCODED.
+    ///
+    /// A picture is not video: re-encoding it with the film's encoder is at
+    /// best pointless, and with its `attached_pic` flag kept it is fatal —
+    /// MP4 stores cover art only as JPEG, PNG or BMP, so an H.264 "picture"
+    /// makes ffmpeg refuse the whole job ("codec not currently supported in
+    /// container"; checked with ffmpeg 9.0.1). Copying it keeps it exactly as
+    /// the source had it. (Before the language policy's second review round
+    /// the flag was cleared instead, so the cover became a one-frame H.264
+    /// video track.)
+    func pictureCopyArguments(plan: OutputStreamPlan?, videoArguments: [String]) -> [String] {
+        mappedPicturePositions(in: plan, videoArguments: videoArguments).flatMap { ["-c:v:\($0)", "copy"] }
+    }
+
+    /// The video filter chain's arguments. Normally one `-vf <chain>` for all
+    /// video. When the video is re-encoded and cover art is mapped beside it,
+    /// the chain is given to each REAL video stream (`-filter:v:N`) instead:
+    /// ffmpeg refuses a filter on a stream it copies ("Filtering and
+    /// streamcopy cannot be used together"), and the picture is copied.
+    func videoFilterArguments(_ chain: String, plan: OutputStreamPlan?, videoArguments: [String]) -> [String] {
+        guard !chain.isEmpty else { return [] }
+        let pictures = Set(mappedPicturePositions(in: plan, videoArguments: videoArguments))
+        guard !pictures.isEmpty, let plan else { return ["-vf", chain] }
+        let videoCount = plan.entries.filter { $0.streamType == .video }.count
+        return (0..<videoCount).filter { !pictures.contains($0) }.flatMap { ["-filter:v:\($0)", chain] }
     }
 
     /// `-attach` arguments for `attachments`, each with the `mimetype` and
