@@ -452,9 +452,10 @@ public struct StreamMetadataEditor: Sendable {
         "no", "pl", "pt", "ru", "sv", "th", "tr", "vi", "zh", "zh-Hans", "zh-Hant", "und"
     ]
 
-    /// Whether `code` is a well-formed BCP 47 language tag (LANG-001) —
-    /// `en`, `en-GB`, `zh-Hant`, `es-419`, `sr-Latn-RS` … — rather than
-    /// something else (a name such as `English`, digits, stray punctuation).
+    /// Whether `code` is something the stream editor accepts as a language:
+    /// a BCP 47 tag or an old three-letter code, read the way a value from a
+    /// file is read (LANG-002) — `en`, `en-GB`, `zh-Hant`, `es-419`, `eng` —
+    /// rather than a name such as `English`, digits or stray punctuation.
     public static func isValidLanguageCode(_ code: String) -> Bool {
         if case .valid = checkLanguageEntry(code) { return true }
         return false
@@ -462,22 +463,30 @@ public struct StreamMetadataEditor: Sendable {
 
     /// What a person typed into a language field, checked by the policy.
     public enum LanguageEntryCheck: Sendable, Equatable {
-        /// Nothing typed (the stream keeps the file's language).
+        /// Nothing typed: the language is "not set", so nothing is written
+        /// and the file's own value is kept.
         case empty
-        /// A well-formed tag, in canonical form (`EN-gb` → `en-GB`), with an
-        /// optional plain-English note worth showing (an unregistered code).
+        /// A language, as the canonical tag that will be saved (`eng` →
+        /// `en`, `EN-gb` → `en-GB`), with an optional plain-English note
+        /// worth showing (how it was read; an unregistered code).
         case valid(tag: String, note: String?)
-        /// Not a language tag; `message` says so in plain English.
+        /// Not a language; `message` says so in plain English, with
+        /// examples. The editor's Apply stays off until it is fixed.
         case invalid(message: String)
     }
 
     /// Checks what a person typed into a stream's language field.
     ///
-    /// A typed value is treated as a TAG (policy LANG-001, which is for
-    /// "a tag a person types into a tag field"), so `eng` is not silently
-    /// turned into `en`: it is kept, with a note that it is not a registered
-    /// code and a suggestion ("Did you mean “en”?") — reporting doubt, never
-    /// resolving it by guessing (COMPAT-040).
+    /// Read with the SAME reader as a value found in a file (LANG-002), so
+    /// the old three-letter codes people know work as they expect: `eng` is
+    /// saved as `en`, `fre` as `fr`, `ger` as `de`. The first build checked
+    /// it as a new tag only (LANG-001), so `eng` was kept as the tag `eng`
+    /// — which has no ISO 639-2 entry as a TAG, so the file got `und` while
+    /// the automatic title said "English" (found in the independent review).
+    /// Now the saved tag, the written field and the title all come from the
+    /// one reading. Anything the reader cannot read is refused, never
+    /// guessed (COMPAT-040). A well-formed tag whose language is not in the
+    /// registry (`xx`) is accepted with a note (LANG-001: report it).
     public static func checkLanguageEntry(_ text: String) -> LanguageEntryCheck {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return .empty }
@@ -486,18 +495,41 @@ public struct StreamMetadataEditor: Sendable {
             // was typed, and say so.
             return .valid(tag: trimmed, note: "Language data unavailable — not checked.")
         }
-        let tag = policy.canonicaliser.canonicalise(text)
-        if tag.isMalformed {
-            return .invalid(message: "“\(tag.text)” is not a language tag. Type a code such as en, en-GB, zh-Hant or es-419.")
+        guard let tag = policy.reader.read(trimmed) else {
+            return .invalid(
+                message: "“\(trimmed)” is not a language code. Type a code such as en, pt-BR or zh-Hant, "
+                    + "or und if the language is not known."
+            )
         }
-        guard let language = tag.language, !policy.isRegisteredLanguage(language) else {
-            return .valid(tag: tag.text, note: nil)
+        var notes: [String] = []
+        if tag.lowercased() != trimmed.lowercased() {
+            notes.append("“\(trimmed)” is saved as “\(tag)”.")
         }
-        var note = "“\(language)” is not a registered language code."
-        if let suggestion = policy.reader.read(tag.text), suggestion != tag.text {
-            note += " Did you mean “\(suggestion)”?"
+        if let language = tag.split(separator: "-").first.map(String.init),
+           policy.canonicaliser.canonicalise(tag).kind == .ordinary,
+           !policy.isRegisteredLanguage(language) {
+            notes.append("“\(language)” is not a registered language code.")
         }
-        return .valid(tag: tag.text, note: note)
+        return .valid(tag: tag, note: notes.isEmpty ? nil : notes.joined(separator: " "))
+    }
+
+    /// What `container`'s language field will NOT keep of `tag`, in plain
+    /// English for the stream editor to show before Apply, or `nil` when it
+    /// keeps all of it. Old three-letter fields (Matroska, MP4 …) hold only
+    /// the language: "This file type can only store the language, so “GB”
+    /// will not be saved." The same answer as the job's log gives
+    /// (`TrackLanguage.editedLanguageField`).
+    public static func storageNote(for tag: String, in container: ContainerFormat?) -> String? {
+        guard let field = TrackLanguage.editedLanguageField(tag, in: container) else { return nil }
+        switch field.limit {
+        case .fits, .notATag:
+            return nil
+        case .noThreeLetterCode(let canonical):
+            return "This file type can only store three-letter language codes, and “\(canonical)” has none, "
+                + "so it will be saved as “und” (not known)."
+        case .losesParts(let lost, _):
+            return "This file type can only store the language, so “\(lost)” will not be saved."
+        }
     }
 
     /// `commonLanguageTags` in MENU order (policy Part B, UI-020 to UI-040):

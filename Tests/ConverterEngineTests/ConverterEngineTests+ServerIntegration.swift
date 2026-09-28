@@ -450,9 +450,9 @@ extension ConverterEngineTests {
     /// Verifies language code validation.
     ///
     /// This used to pin a 2-or-3-letters-only rule, which refused real BCP 47
-    /// tags such as `en-GB`, `zh-Hant` and `es-419`. The editor now checks
-    /// typed values with the shared language policy (LANG-001): any
-    /// well-formed tag is accepted (and canonicalised); a name or garbage is
+    /// tags such as `en-GB`, `zh-Hant` and `es-419`. The editor now reads
+    /// typed values with the shared language policy's reader (LANG-002):
+    /// tags and old three-letter codes are accepted; a name or garbage is
     /// refused with a plain message.
     func test_streamMetadataEditor_languageValidation() {
         XCTAssertTrue(StreamMetadataEditor.isValidLanguageCode("eng"))
@@ -468,21 +468,48 @@ extension ConverterEngineTests {
         XCTAssertFalse(StreamMetadataEditor.isValidLanguageCode("en_GB"))
     }
 
-    /// What the editor shows for a typed language: the canonical form, a
-    /// plain refusal, or a note for an unregistered code — never a silent
-    /// change of language.
+    /// What the editor shows for a typed language: the canonical form it is
+    /// saved as, a plain refusal with examples, or a note.
+    ///
+    /// Typing `eng` used to be kept as the TAG `eng` (with a "did you mean
+    /// en?" note), which wrote `und` into the file while the automatic title
+    /// said "English" (independent review, item 5). It is now read like a
+    /// file's value: `eng` → `en`, `fre` → `fr`.
     func test_streamMetadataEditor_checkLanguageEntry() {
         XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("EN-gb"), .valid(tag: "en-GB", note: nil))
         XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("zh-hant-tw"), .valid(tag: "zh-Hant-TW", note: nil))
         XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("  "), .empty)
         guard case .invalid(let message) = StreamMetadataEditor.checkLanguageEntry("English") else {
-            return XCTFail("a language NAME is not a tag")
+            return XCTFail("a language NAME is not a language code")
         }
-        XCTAssertTrue(message.contains("not a language tag"), message)
+        XCTAssertTrue(message.contains("not a language code"), message)
+        XCTAssertTrue(message.contains("en, pt-BR or zh-Hant"), "with examples: \(message)")
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("eng"), .valid(tag: "en", note: "“eng” is saved as “en”."))
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("fre"), .valid(tag: "fr", note: "“fre” is saved as “fr”."))
+        XCTAssertEqual(StreamMetadataEditor.checkLanguageEntry("und"), .valid(tag: "und", note: nil))
         XCTAssertEqual(
-            StreamMetadataEditor.checkLanguageEntry("eng"),
-            .valid(tag: "eng", note: "“eng” is not a registered language code. Did you mean “en”?")
+            StreamMetadataEditor.checkLanguageEntry("xx"),
+            .valid(tag: "xx", note: "“xx” is not a registered language code.")
         )
+    }
+
+    /// What the editor warns about before Apply: what the output's language
+    /// field cannot store (review item 6). Ogg's free-text field stores it all.
+    func test_streamMetadataEditor_storageNote() {
+        XCTAssertEqual(
+            StreamMetadataEditor.storageNote(for: "en-GB", in: .mkv),
+            "This file type can only store the language, so “GB” will not be saved."
+        )
+        XCTAssertEqual(
+            StreamMetadataEditor.storageNote(for: "zh-Hant", in: .mp4),
+            "This file type can only store the language, so “Hant” will not be saved."
+        )
+        XCTAssertEqual(
+            StreamMetadataEditor.storageNote(for: "yue", in: .mkv),
+            "This file type can only store three-letter language codes, and “yue” has none, so it will be saved as “und” (not known)."
+        )
+        XCTAssertNil(StreamMetadataEditor.storageNote(for: "en-GB", in: .ogg))
+        XCTAssertNil(StreamMetadataEditor.storageNote(for: "de", in: .mkv))
     }
 
     /// The quick-pick list is in menu order: the person's languages first,

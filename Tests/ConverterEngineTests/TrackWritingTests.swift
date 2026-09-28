@@ -176,6 +176,31 @@ final class TrackWritingTests: XCTestCase {
         ])
     }
 
+    /// The person can switch the automatic title off for one stream.
+    func test_automaticTitleCanBeSwitchedOff() {
+        var builder = builder()
+        builder.sourceStreamEdits = [6: SourceStreamEdit(writesAutomaticTitle: false)]
+        let titles = pairs(builder.build(), "-metadata:s:").filter { $0.contains("title=") }
+        XCTAssertFalse(titles.contains { $0.contains("SDH") }, "\(titles)")
+        XCTAssertTrue(titles.contains("-metadata:s:s:2 title=English — Forced"))
+    }
+
+    /// One decision: what the editor saves for a typed `eng` gives the file
+    /// `eng` AND the title "English" (the first build wrote `und` with the
+    /// title "English" — review item 5).
+    func test_typedOldCodeGivesAMatchingFieldAndTitle() {
+        guard case .valid(let tag, _) = StreamMetadataEditor.checkLanguageEntry("eng") else {
+            return XCTFail("eng is readable")
+        }
+        var builder = builder()
+        builder.sourceStreamEdits = [2: SourceStreamEdit(language: tag)]
+        let a = pairs(builder.build(), "-metadata:s:a:")
+        // The edited German dub is now English, so it sorts after Japanese
+        // and ahead of the other English tracks' commentary.
+        XCTAssertTrue(a.contains("-metadata:s:a:1 language=eng"), "\(a)")
+        XCTAssertTrue(a.contains("-metadata:s:a:1 title=English"), "\(a)")
+    }
+
     /// Ogg: ffmpeg puts the file's tags into each stream's comments, and a
     /// stream title replaces the song's own title — so never an automatic
     /// title there (the review's "My Song" → "English"). MP4 drops stream

@@ -1275,7 +1275,9 @@ public struct FFmpegArgumentBuilder: Sendable {
     ///    where a stream title replaces the song's title;
     /// 4. the output has more than one track of that type, or carries video
     ///    — a single-track audio-only output (a song) never gets one;
-    /// 5. the source's metadata is being kept at all.
+    /// 5. the source's metadata is being kept at all;
+    /// 6. the person has not switched it off for this stream in the stream
+    ///    editor (`SourceStreamEdit.writesAutomaticTitle`).
     /// The title itself says the language and the roles
     /// (`TrackLanguage.automaticTitle`).
     func automaticTitle(
@@ -1284,6 +1286,7 @@ public struct FFmpegArgumentBuilder: Sendable {
         context: AutomaticTitleContext
     ) -> String? {
         guard writesSourceDerivedStreamMetadata,
+              sourceStreamEdits[entry.sourceStreamIndex]?.writesAutomaticTitle != false,
               entry.streamType == .audio || entry.streamType == .subtitle,
               facts.sourceTitle.map(Self.isBlank) ?? true,
               context.containerKeepsTitles,

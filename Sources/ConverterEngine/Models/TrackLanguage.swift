@@ -210,6 +210,58 @@ extension TrackLanguage {
         }
     }
 
+    /// How a language a person set in the stream editor is stored in a
+    /// container's language field — ONE answer shared by the job's notes
+    /// (`languageWrite`) and the editor's warning before Apply
+    /// (`StreamMetadataEditor.storageNote`), so they cannot disagree.
+    public struct EditedLanguageField: Sendable, Equatable {
+        /// Why the field cannot hold the whole tag, if it cannot.
+        public enum Limit: Sendable, Equatable {
+            /// It holds everything the tag says.
+            case fits
+            /// What was set is not a language tag at all (written `und`).
+            case notATag
+            /// A real language with no three-letter code (written `und`).
+            case noThreeLetterCode(canonical: String)
+            /// A three-letter field keeps only the language: `lost` (the
+            /// region, script …) of `canonical` is not stored.
+            case losesParts(lost: String, canonical: String)
+        }
+        /// What the field gets.
+        public let value: String
+        /// Why it is less than the tag, if it is.
+        public let limit: Limit
+    }
+
+    /// How `tag` (set by a person) is stored in `container`'s language
+    /// field, or `nil` when the policy's data is missing.
+    public static func editedLanguageField(_ tag: String, in container: ContainerFormat?) -> EditedLanguageField? {
+        guard let policy else { return nil }
+        let parsed = policy.canonicaliser.canonicalise(tag)
+        guard let canonical = parsed.canonical else {
+            return EditedLanguageField(value: "und", limit: .notATag)
+        }
+        let form = languageFieldForm(for: container)
+        if form == .fullTag { return EditedLanguageField(value: canonical, limit: .fits) }
+        let codes = policy.iso6392.codes(for: canonical)
+        let code = form == .bibliographic ? codes.b : codes.t
+        if code == "und", canonical != "und" {
+            return EditedLanguageField(value: code, limit: .noThreeLetterCode(canonical: canonical))
+        }
+        if let lost = partsBeyondLanguage(parsed) {
+            return EditedLanguageField(value: code, limit: .losesParts(lost: lost, canonical: canonical))
+        }
+        return EditedLanguageField(value: code, limit: .fits)
+    }
+
+    /// What a three-letter field loses of `tag`: everything after the
+    /// primary language (`GB` of `en-GB`, `Hant-TW` of `zh-Hant-TW`), or
+    /// `nil` when there is nothing after it.
+    static func partsBeyondLanguage(_ tag: LanguageTag) -> String? {
+        guard tag.kind == .ordinary, let language = tag.language, tag.text.count > language.count else { return nil }
+        return String(tag.text.dropFirst(language.count + 1))
+    }
+
     /// What one output stream's `language` field gets, and what to tell the
     /// person about it.
     public struct LanguageWrite: Sendable, Equatable {
@@ -280,40 +332,31 @@ extension TrackLanguage {
             let codes = policy.iso6392.codes(for: tag)
             return form == .bibliographic ? codes.b : codes.t
         }
-        // What a three-letter field loses of `tag`: everything after the
-        // primary language (`GB` of `en-GB`, `Hant-TW` of `zh-Hant-TW`).
-        func partsBeyondLanguage(_ tag: LanguageTag) -> String? {
-            guard tag.kind == .ordinary, let language = tag.language, tag.text.count > language.count else { return nil }
-            return String(tag.text.dropFirst(language.count + 1))
-        }
 
         // --- An edit: the person asked for this language. ---
-        if let edited {
-            let tag = policy.canonicaliser.canonicalise(edited)
-            guard let canonical = tag.canonical else {
+        if let edited, let field = editedLanguageField(edited, in: container) {
+            switch field.limit {
+            case .fits:
+                return LanguageWrite(value: field.value, note: nil)
+            case .notATag:
                 return LanguageWrite(
-                    value: "und",
+                    value: field.value,
                     note: "\(stream): “\(edited)”, set in the stream editor, is not a language tag, "
                         + "so the language is written as “und” (not known)."
                 )
-            }
-            if form == .fullTag { return LanguageWrite(value: canonical, note: nil) }
-            let code = threeLetter(canonical)
-            if code == "und", canonical != "und" {
+            case .noThreeLetterCode(let canonical):
                 return LanguageWrite(
-                    value: code,
+                    value: field.value,
                     note: "\(stream): this file type can only store three-letter language codes, and "
                         + "“\(canonical)” has none, so the language is written as “und” (not known)."
                 )
-            }
-            if let lost = partsBeyondLanguage(tag) {
+            case .losesParts(let lost, let canonical):
                 return LanguageWrite(
-                    value: code,
+                    value: field.value,
                     note: "\(stream): this file type can only store the language, so “\(lost)” in "
-                        + "“\(canonical)” is not saved (written as “\(code)”)."
+                        + "“\(canonical)” is not saved (written as “\(field.value)”)."
                 )
             }
-            return LanguageWrite(value: code, note: nil)
         }
 
         // --- No edit: keep what the source had. ---

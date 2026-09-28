@@ -220,15 +220,28 @@ public struct SourceStreamEdit: Codable, Sendable, Equatable {
     /// replaces all of them — that is what the editor's toggles mean.
     public var disposition: StreamDisposition?
 
-    public init(title: String? = nil, language: String? = nil, disposition: StreamDisposition? = nil) {
+    /// `false` when the person switched OFF the automatic title for this
+    /// stream (the language's own name, written only where the rules in
+    /// `FFmpegArgumentBuilder.automaticTitle` allow). `nil` — the default,
+    /// and what edits saved before this existed decode as — leaves it to
+    /// those rules. Added in the language policy's second review round.
+    public var writesAutomaticTitle: Bool?
+
+    public init(
+        title: String? = nil,
+        language: String? = nil,
+        disposition: StreamDisposition? = nil,
+        writesAutomaticTitle: Bool? = nil
+    ) {
         self.title = title
         self.language = language
         self.disposition = disposition
+        self.writesAutomaticTitle = writesAutomaticTitle
     }
 
     /// Whether this edit changes anything at all.
     public var isEmpty: Bool {
-        title == nil && language == nil && disposition == nil
+        title == nil && language == nil && disposition == nil && writesAutomaticTitle == nil
     }
 }
 

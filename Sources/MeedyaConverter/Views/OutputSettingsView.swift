@@ -975,9 +975,16 @@ struct OutputSettingsView: View {
 ///
 /// Languages follow the shared language policy (MWBM-MEDIA-LANG,
 /// docs/standards/media-language-bcp47-policy.md):
-/// - the field holds a BCP 47 TAG — `en`, `en-GB`, `zh-Hant`, `es-419` —
-///   checked and shown in canonical form (LANG-001); a name or garbage is
-///   refused with a plain message, and Apply stays off until it is fixed;
+/// - the field holds a language — a BCP 47 TAG such as `en`, `en-GB`,
+///   `zh-Hant`, `es-419`, or an old three-letter code, read the way a file's
+///   value is read (LANG-002: `eng` is saved as `en`) — shown in canonical
+///   form; anything unreadable is refused with a plain message and
+///   examples, and Apply stays off until it is fixed;
+/// - an empty field means "not set": nothing is written and the file's own
+///   value is kept (the ✕ button empties it);
+/// - when the output's file type cannot store all of a tag (Matroska and MP4
+///   hold three letters only), the editor says what will be lost BEFORE
+///   Apply, and the job's log says it again;
 /// - beside it, the language's NAME in the interface language (UI-010), so
 ///   the raw tag and the readable name are both visible (the policy expects
 ///   raw tags in editor views);
@@ -987,6 +994,11 @@ struct OutputSettingsView: View {
 /// real toggles that reach the output as dispositions (TRACK-010). Before the
 /// policy work the language field accepted only two or three letters and the
 /// Default/Forced toggles were never written at all.
+///
+/// A stream with no title of its own may get an automatic one (its
+/// language's own name and roles — see `FFmpegArgumentBuilder
+/// .automaticTitle`); the "Name it after its language" switch turns that off
+/// for one stream.
 struct StreamMetadataEditorView: View {
     let mediaFile: MediaFile
     @Environment(\.dismiss) private var dismiss
@@ -996,6 +1008,10 @@ struct StreamMetadataEditorView: View {
 
     /// The interface language (names are shown in it — UI-010).
     private var interfaceLocale: Locale { LocalizationManager.shared.currentLocale }
+
+    /// The output's container (the selected profile's), which decides what
+    /// a language field can store and whether automatic titles are written.
+    private var outputContainer: ContainerFormat { viewModel.selectedProfile.containerFormat }
 
     /// Quick-pick languages in menu order for this person.
     private var suggestions: [String] {
@@ -1080,11 +1096,23 @@ struct StreamMetadataEditorView: View {
                     .accessibilityLabel("Title for \(label)")
 
                 TextField("Language (BCP 47)", text: entry.language,
-                          prompt: Text(stream.language ?? "und"))
+                          prompt: Text(stream.language ?? "not set"))
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 120)
                     .accessibilityLabel("Language tag for \(label)")
-                    .accessibilityHint("A language tag such as en, en-GB, zh-Hant or es-419")
+                    .accessibilityHint("A language code such as en, pt-BR or zh-Hant, or und if not known. Leave empty to keep the file's own.")
+
+                // Empties the field: "not set" — nothing is written and the
+                // file's own language is kept.
+                Button {
+                    entry.wrappedValue.language = ""
+                } label: {
+                    Image(systemName: "xmark.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(entry.wrappedValue.language.isEmpty)
+                .help("Clear: keep the file's own language")
+                .accessibilityLabel("Clear the language for \(label), keeping the file's own")
 
                 Menu("Common") {
                     ForEach(suggestions, id: \.self) { tag in
@@ -1097,6 +1125,18 @@ struct StreamMetadataEditorView: View {
 
             languageCheck(entry.wrappedValue.language)
 
+            // The automatic title can be switched off for this stream.
+            // Shown only where one could be written: audio or subtitles with
+            // no title of their own.
+            if stream.streamType == .audio || stream.streamType == .subtitle,
+               entry.wrappedValue.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Toggle("Name it after its language", isOn: entry.automaticTitle)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .help("Where the file type keeps track titles, a track with no title of its own is named after its language and roles, such as “English — SDH”.")
+                    .accessibilityLabel("Automatic title for \(label)")
+            }
+
             roleToggles(for: stream, disposition: entry.disposition, label: label)
         }
         .padding(.vertical, 4)
@@ -1107,7 +1147,9 @@ struct StreamMetadataEditorView: View {
     private func languageCheck(_ text: String) -> some View {
         switch StreamMetadataEditor.checkLanguageEntry(text) {
         case .empty:
-            EmptyView()
+            Text("Not set — the file's own language is kept.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         case .valid(let tag, let note):
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(languageName(tag)) · \(tag)")
@@ -1115,6 +1157,13 @@ struct StreamMetadataEditorView: View {
                     .foregroundStyle(.secondary)
                 if let note {
                     Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                // What this output's file type cannot store of the tag,
+                // said BEFORE Apply (the job's log says it again).
+                if let limit = StreamMetadataEditor.storageNote(for: tag, in: outputContainer) {
+                    Text(limit)
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -1164,13 +1213,20 @@ struct StreamMetadataEditorView: View {
     }
 
     /// The title field's placeholder: the file's title, or — for an audio or
-    /// subtitle stream with none — the language's own name that the encode
-    /// will write (NAME-010).
+    /// subtitle stream with none, in a file type that keeps track titles —
+    /// the automatic title the encode may write (NAME-010: the language's
+    /// own name and the roles). Whether it is actually written also depends
+    /// on the tracks chosen (a lone audio track in an audio-only file gets
+    /// none), which this sheet does not know, hence "may".
     private func titlePrompt(for stream: MediaStream) -> String {
         if let title = stream.title, !title.isEmpty { return title }
         if stream.streamType == .audio || stream.streamType == .subtitle,
-           let language = stream.language, let autonym = TrackLanguage.autonymTitle(for: language) {
-            return "\(autonym) (automatic)"
+           TrackLanguage.keepsStreamTitlesSeparately(outputContainer),
+           let language = stream.language,
+           let automatic = TrackLanguage.automaticTitle(
+               for: language, disposition: sourceDisposition(stream), type: stream.streamType
+           ) {
+            return "\(automatic) (automatic)"
         }
         return "Untitled"
     }
@@ -1198,7 +1254,8 @@ struct StreamMetadataEditorView: View {
             streamMetadata[stream.streamIndex] = StreamMetadataEntry(
                 title: edit?.title ?? stream.title ?? "",
                 language: edit?.language ?? stream.language ?? "",
-                disposition: edit?.disposition ?? sourceDisposition(stream)
+                disposition: edit?.disposition ?? sourceDisposition(stream),
+                automaticTitle: edit?.writesAutomaticTitle ?? true
             )
         }
     }
@@ -1226,6 +1283,10 @@ struct StreamMetadataEditorView: View {
             if entry.disposition != sourceDisposition(stream) {
                 edit.disposition = entry.disposition
             }
+            // Recorded only when switched OFF; on is the default rule.
+            if !entry.automaticTitle {
+                edit.writesAutomaticTitle = false
+            }
             if !edit.isEmpty {
                 edits[stream.streamIndex] = edit
             }
@@ -1245,4 +1306,6 @@ struct StreamMetadataEntry {
     var language: String = ""
     /// Every role flag, starting from the file's own.
     var disposition = StreamDisposition()
+    /// Whether this stream may get an automatic title (on unless switched off).
+    var automaticTitle = true
 }
