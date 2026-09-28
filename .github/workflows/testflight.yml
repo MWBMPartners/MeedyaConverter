@@ -209,6 +209,34 @@ jobs:
           cp .build/release/MeedyaConverter "${APP}/Contents/MacOS/MeedyaConverter"
           chmod +x "${APP}/Contents/MacOS/MeedyaConverter"
 
+          # Ship BOTH SwiftPM resource bundles inside the .app, as dev-build.yml
+          # and release.yml do. SwiftPM writes each target's resources into a
+          # SEPARATE bundle beside the binary, never into the executable, so a
+          # hand-built .app has no resources unless they are copied here:
+          #   * MeedyaConverter_MeedyaConverterCore.bundle — the app's assets,
+          #     the AppleScript definition and the in-app Help;
+          #   * MeedyaConverter_MediaLanguagePolicy.bundle — the language
+          #     policy's reference data (MWBM-MEDIA-LANG), read whenever a
+          #     track's language is read or written. Without it languages are
+          #     kept as raw text and the app warns that the data is missing.
+          # This step copied neither until the language policy's second review
+          # round, so a TestFlight build would have shipped without them.
+          # Fail closed if either is missing (e.g. a Package.swift regression).
+          for BUNDLE in MeedyaConverter_MeedyaConverterCore.bundle MeedyaConverter_MediaLanguagePolicy.bundle; do
+            if [ -d ".build/release/${BUNDLE}" ]; then
+              cp -R ".build/release/${BUNDLE}" "${APP}/Contents/Resources/"
+            else
+              echo "::error::SwiftPM resource bundle missing at .build/release/${BUNDLE}"
+              exit 1
+            fi
+          done
+
+          # Stage the AppleScript .sdef at Contents/Resources so the
+          # OSAScriptingDefinition Info.plist key (#302) resolves it — inside
+          # the resource bundle it is nested too deep for OSA to find (the
+          # other packaging workflows do the same).
+          cp Sources/MeedyaConverter/Scripting/MeedyaConverter.sdef "${APP}/Contents/Resources/MeedyaConverter.sdef"
+
           # Start from the source Info.plist, then rewrite the three
           # identity fields via PlistBuddy (no fragile string-matching
           # sed).

@@ -118,6 +118,25 @@ jobs:
         run: swift build -c release
 
       # ---------------------------------------------------------------------
+      # Step 6b: Check the language policy's data bundle was built
+      # ---------------------------------------------------------------------
+      # The command-line tool needs MeedyaConverter_MediaLanguagePolicy.bundle
+      # beside it (the language policy's reference data, MWBM-MEDIA-LANG);
+      # Step 11 packages the two together and fails if the bundle is
+      # missing. That check used to be the ONLY one, and it runs AFTER Step
+      # 10 has pushed the release tag — so a missing bundle left a pushed tag
+      # with no release behind it. Checking here, before anything is tagged,
+      # stops the run while nothing has been published.
+      # ---------------------------------------------------------------------
+      - name: Check the language policy data bundle
+        run: |
+          if [ -f .build/release/meedya-convert ] && [ ! -d .build/release/MeedyaConverter_MediaLanguagePolicy.bundle ]; then
+            echo "::error::SwiftPM resource bundle missing at .build/release/MeedyaConverter_MediaLanguagePolicy.bundle"
+            exit 1
+          fi
+          echo "Language policy data bundle present (or no command-line tool was built)."
+
+      # ---------------------------------------------------------------------
       # Step 7: Run tests
       # ---------------------------------------------------------------------
       # All tests must pass before a pre-release is published. This ensures
