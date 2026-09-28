@@ -10,6 +10,40 @@ Previous: 2026-09-28 (language policy round 1) · 2026-09-25 14:55
 
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
 
+### ROUND 3 — fixes from the SECOND independent review (28 Sept) — IN PROGRESS
+
+**State:** everything up to `59f8667` is pushed (CI green). Round 3's commits are
+LOCAL ONLY, on top of `59f8667`, and NOT independently reviewed. The second
+review (a fresh Opus agent standing in for Codex, out of allowance) is in the
+orchestrator's scratch (`review-tmp/converter-review-2/REPORT.md`); the lead's
+decisions are in `brief-converter-r3.md` (scratch). Guiding rule unchanged:
+never lose or damage what the source had (COMPAT-030), never silently turn a
+value into a different language (COMPAT-040), and the job's notes must be true.
+Every "before" fault of the review was reproduced first with the reviewer's
+harness (relinked) and ffmpeg 9.0.1 / MKVToolNix 101 — WebM cover fails (exit
+234); Matroska covers renamed `cover.png` / `cover-3.jpg`, description lost;
+`romanian`/`latvian`/`slovenian` → MP4 `rom`/`lat`/`slo` with a false "kept";
+→ MPEG-TS all dropped with a false "kept"; German/Chinese/Greek → MOV dropped
+silently; mkvmerge `yue`/`cmn`/`nan`/`fr-CA` → `chi`/`fre`, titled "中文", no
+note; cover art → TS `bin_data`, → AVI a stray MJPEG track, → MOV and M4A
+audio-extract dropped silently; MKA note says "picture track".
+
+Facts established this round (ffmpeg 9.0.1, checked by hand, then by the tool
+tests): what each writer stores for a stream `language` value — Matroska,
+WebM, Ogg: any text; MP4/M4A/3GP/3G2: the first three characters when each is
+a lower-case letter (or one of `` ` { | } ~ ``), anything after cut, else
+nothing; MOV: only the strings of ffmpeg's QuickTime list (`ger`, `fra`,
+`chi`, `jpn`, `gre`, `sve`, `hr ` …), else nothing; MPEG-TS and HLS
+segments: pieces of exactly three characters, else nothing; MPEG-PS, AVI,
+FLV, MXF, AIFF, CAF, W64/RF64/WAV, FLAC, MP3, ADTS: nothing. DASH: the MPD
+gets the text as given, but every segment's `mdhd` gets `und` whatever is
+given (this contradicts round 2's note on #533 — worth telling #533). What
+each writer does with an attached picture mapped as a stream: MP4 family,
+FLAC, MP3 keep it as cover art; Matroska makes it a video track (hence the
+attachment route); MOV, 3GP, 3G2, AIFF drop it silently; MPEG-TS makes a
+`bin_data` stream; MPEG-PS an "unknown" video stream; AVI an MJPEG track;
+WebM, Ogg, FLV, CAF, W64, WAV, ADTS refuse the whole job.
+
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
 `5d2223c`. **Rounds 1 and 2 are pushed** (head `a5abc22`, CI green). **The
 copy-update sweep** (see "COPY-UPDATE SWEEP" below) is LOCAL commits on top
