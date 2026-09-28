@@ -132,7 +132,17 @@ public struct LanguageTagCanonicaliser: Sendable {
         guard !trimmed.isEmpty else {
             return LanguageTag(kind: .malformed, text: raw)
         }
-        let lower = trimmed.lowercased()
+        // A tag is ASCII only (RFC 5646). Anything else is malformed HERE,
+        // before any comparison — and case is folded with ASCII rules only.
+        // This used to lower-case with Swift's Unicode rules first, and
+        // looked the result up in the grandfathered table: Unicode maps the
+        // Kelvin sign (U+212A) to a plain `k`, so `i-\u{212A}lingon` matched
+        // `i-klingon` and came out as `tlh` — a value that is not a tag
+        // became a language (found in the independent review).
+        guard trimmed.utf8.allSatisfy({ $0 < 0x80 }) else {
+            return LanguageTag(kind: .malformed, text: trimmed)
+        }
+        let lower = Self.asciiLowercased(trimmed)
 
         // Step 2: a whole grandfathered tag — its replacement (then carry on
         // with that), or the registry's own spelling, never split.
@@ -223,6 +233,19 @@ public struct LanguageTagCanonicaliser: Sendable {
             return ""
         }
         return String(scalars[first...last])
+    }
+
+    /// `value` with A–Z turned into a–z and every other character left
+    /// alone — case folding by ASCII rules only, as RFC 5646 says tags are
+    /// compared. (Swift's `lowercased()` applies Unicode rules, which turn
+    /// some non-ASCII letters into ASCII ones — see `canonicalise`.)
+    static func asciiLowercased(_ value: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        for scalar in value.unicodeScalars {
+            // `UInt8(…)` cannot trap here: A–Z are below 0x80.
+            scalars.append((0x41...0x5A).contains(scalar.value) ? Unicode.Scalar(UInt8(scalar.value + 0x20)) : scalar)
+        }
+        return String(scalars)
     }
 
     /// A stable sort (Swift's `sorted` makes no stability promise, and the
