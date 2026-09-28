@@ -179,6 +179,28 @@ final class StreamIndexSpaceTests: XCTestCase {
         XCTAssertTrue(builder.streamSelectionProblems().isEmpty, "Skipped settings are not a reason to refuse")
     }
 
+    /// Every kind of per-stream setting is reported when it cannot apply —
+    /// including video quality (CRF), preset, and subtitle inclusion aimed
+    /// at a stream that is not a subtitle stream of the file, which used to
+    /// be ignored without a word (independent review, item 12).
+    func test_plan_everyKindOfStaleSettingIsReported() {
+        var builder = makeBuilder()
+        builder.sourceStreams = film
+        builder.subtitlePassthrough = true
+        builder.perStreamVideoCRF = [1: 20]            // #1 is audio
+        builder.perStreamVideoPreset = [2: "slow"]     // #2 is audio
+        builder.perStreamSubtitleInclude = [0: false, 3: false, 9: true]   // #0 video; #3 a real subtitle; #9 absent
+
+        let skipped = builder.skippedStreamSettings()
+        XCTAssertEqual(skipped, [
+            "Video quality (CRF) for stream #1 (not a video stream in this output)",
+            "Video preset for stream #2 (not a video stream in this output)",
+            "Subtitle removal for stream #0 (not a subtitle stream in this file)",
+            "Subtitle inclusion for stream #9 (not a subtitle stream in this file)"
+        ], "#3 is a real subtitle stream, rightly removed, so it is not reported")
+        XCTAssertEqual(maps(builder.build()), ["0:0", "0:1", "0:2", "0:4"], "the video is never removed")
+    }
+
     /// Without the source list, per-stream settings cannot be placed: they are
     /// left out and the job is refused with a plain explanation, rather than
     /// written with the whole-file number as a type-counted one.

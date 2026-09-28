@@ -490,8 +490,13 @@ extension FFmpegArgumentBuilder {
     /// reach the output, because that stream is not in the output or is of
     /// another type (a profile's per-stream settings made on a different
     /// file, for example). Informational: the job can still run.
+    ///
+    /// Every kind of per-stream setting is covered. Until the language
+    /// policy's second review round the video quality (CRF) and preset
+    /// settings, and subtitle inclusion/removal aimed at a stream that is not
+    /// a subtitle stream of this file, were ignored without a word.
     public func skippedStreamSettings() -> [String] {
-        guard let plan = makeOutputStreamPlan() else { return [] }
+        guard let plan = makeOutputStreamPlan(), let sources = sourceStreamsByIndex else { return [] }
         var skipped: [String] = []
 
         func note(_ keys: some Sequence<Int>, _ type: StreamType, _ what: String) {
@@ -502,10 +507,20 @@ extension FFmpegArgumentBuilder {
 
         note(perStreamVideoCodec.keys, .video, "Video codec")
         note(perStreamVideoPassthrough.keys, .video, "Video copy")
+        note(perStreamVideoCRF.keys, .video, "Video quality (CRF)")
         note(perStreamVideoBitrate.keys, .video, "Video bitrate")
+        note(perStreamVideoPreset.keys, .video, "Video preset")
         note(perStreamAudioCodec.keys, .audio, "Audio codec")
         note(perStreamAudioBitrate.keys, .audio, "Audio bitrate")
         note(perStreamSubtitlePassthrough.keys, .subtitle, "Subtitle copy")
+        // Subtitle inclusion is judged against the SOURCE, not the output: a
+        // removed subtitle stream is rightly absent from the output, but a
+        // key that is not a subtitle stream of this file at all is stale —
+        // it is ignored (it can never remove a video or audio track, #530).
+        for key in perStreamSubtitleInclude.keys.sorted() where sources[key]?.streamType != .subtitle {
+            let what = perStreamSubtitleInclude[key] == false ? "Subtitle removal" : "Subtitle inclusion"
+            skipped.append("\(what) for stream #\(key) (not a subtitle stream in this file)")
+        }
         for key in sourceStreamEdits.keys.sorted() where plan.entry(forSourceStream: key) == nil {
             skipped.append("Stream editor changes for stream #\(key) (not in this output)")
         }
@@ -560,7 +575,9 @@ extension FFmpegArgumentBuilder {
         }
         add(perStreamVideoCodec.keys, "video codec")
         add(perStreamVideoPassthrough.keys, "video copy")
+        add(perStreamVideoCRF.keys, "video quality (CRF)")
         add(perStreamVideoBitrate.keys, "video bitrate")
+        add(perStreamVideoPreset.keys, "video preset")
         add(perStreamAudioCodec.keys, "audio codec")
         add(perStreamAudioBitrate.keys, "audio bitrate")
         add(perStreamSubtitlePassthrough.keys, "subtitle copy")
