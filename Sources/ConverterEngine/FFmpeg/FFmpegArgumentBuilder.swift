@@ -1246,6 +1246,7 @@ public struct FFmpegArgumentBuilder: Sendable {
             sourceLanguage: source?.language,
             sourceUnrecognised: source?.unrecognisedLanguage,
             sourceStoredText: source?.languageAsStored,
+            fullTagUnknown: source?.languageFullTagUnknown == true,
             container: container,
             isReplacement: entry.isReplacement,
             keepsSourceMetadata: writesSourceDerivedStreamMetadata
@@ -1262,6 +1263,10 @@ public struct FFmpegArgumentBuilder: Sendable {
         let containerKeepsTitles: Bool
         /// Real tracks (attached pictures excluded) of each type in the output.
         let trackCounts: [StreamType: Int]
+        /// Source streams whose language comes from Matroska's OLD field
+        /// alone while the file may record a fuller one that could not be
+        /// read (`MediaStream.languageFullTagUnknown`).
+        let fullTagUnknown: Set<Int>
         /// Whether the output carries real video (not just cover art).
         var carriesVideo: Bool { (trackCounts[.video] ?? 0) > 0 }
 
@@ -1272,6 +1277,7 @@ public struct FFmpegArgumentBuilder: Sendable {
                 counts[entry.streamType, default: 0] += 1
             }
             trackCounts = counts
+            fullTagUnknown = Set(sources.values.filter { $0.languageFullTagUnknown == true }.map(\.streamIndex))
         }
     }
 
@@ -1291,7 +1297,12 @@ public struct FFmpegArgumentBuilder: Sendable {
     ///    — a single-track audio-only output (a song) never gets one;
     /// 5. the source's metadata is being kept at all;
     /// 6. the person has not switched it off for this stream in the stream
-    ///    editor (`SourceStreamEdit.writesAutomaticTitle`).
+    ///    editor (`SourceStreamEdit.writesAutomaticTitle`);
+    /// 7. the language is not an old Matroska field's code standing in for a
+    ///    fuller tag that could not be read (`MediaStream
+    ///    .languageFullTagUnknown`) — unless the person set the language.
+    ///    mkvmerge writes `chi` there for Cantonese: the second independent
+    ///    review found Cantonese titled "中文".
     /// The title itself says the language and the roles
     /// (`TrackLanguage.automaticTitle`).
     func automaticTitle(
@@ -1305,6 +1316,8 @@ public struct FFmpegArgumentBuilder: Sendable {
               facts.sourceTitle.map(Self.isBlank) ?? true,
               context.containerKeepsTitles,
               (context.trackCounts[entry.streamType] ?? 0) > 1 || context.carriesVideo,
+              !context.fullTagUnknown.contains(entry.sourceStreamIndex)
+                || sourceStreamEdits[entry.sourceStreamIndex]?.language != nil,
               let language = facts.language else {
             return nil
         }

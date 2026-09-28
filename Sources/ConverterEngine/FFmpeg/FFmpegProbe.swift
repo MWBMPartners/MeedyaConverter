@@ -205,7 +205,13 @@ public final class FFmpegProbe: Sendable {
             // cover (`cover.png`, `cover-3.jpg` — found in the second
             // independent review of the language policy work). The
             // attachment's description arrives as `title`.
-            "-show_entries", "stream_tags=language,title,filename,mimetype,BPS,BPS-eng,NUMBER_OF_FRAMES",
+            //
+            // `_STATISTICS_WRITING_APP` names the program that wrote a Matroska
+            // file (mkvmerge writes it on every track), used only when the
+            // file's own track list cannot be read — see
+            // `applyingMatroskaFullLanguageTags`.
+            "-show_entries",
+            "stream_tags=language,title,filename,mimetype,BPS,BPS-eng,NUMBER_OF_FRAMES,_STATISTICS_WRITING_APP",
             "-show_entries", "format_tags=\(Self.formatTagKeys.joined(separator: ","))",
             "-show_entries", "stream_side_data=side_data_type",
             url.path
@@ -214,7 +220,17 @@ public final class FFmpegProbe: Sendable {
         let jsonOutput = try runFFprobe(arguments: arguments)
 
         // Parse the JSON output into our data model
-        return try parseProbeOutput(jsonData: jsonOutput, fileURL: url)
+        var file = try parseProbeOutput(jsonData: jsonOutput, fileURL: url)
+
+        // Matroska's full language tags, which ffprobe does not read
+        // (TRACK-070 — see `applyingMatroskaFullLanguageTags`).
+        file.streams = Self.applyingMatroskaFullLanguageTags(
+            to: file.streams,
+            fileURL: url,
+            formatName: file.containerFormatName,
+            statisticsWritingApplication: Self.statisticsWritingApplication(in: jsonOutput)
+        )
+        return file
     }
 
     // MARK: - FFprobe Execution
@@ -1056,6 +1072,74 @@ public final class FFmpegProbe: Sendable {
         case "eia_608": return .cc608
         case "cc_dec": return .cc708
         default: return nil
+        }
+    }
+}
+
+// MARK: - Matroska's full language tags (TRACK-070)
+
+extension FFmpegProbe {
+
+    /// The program that wrote the file, as ffprobe's Matroska statistics tag
+    /// names it (`_STATISTICS_WRITING_APP`, which mkvmerge writes on every
+    /// track), or `nil`. Sanitised: it comes straight from the file.
+    static func statisticsWritingApplication(in jsonData: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let streams = json["streams"] as? [[String: Any]] else { return nil }
+        for stream in streams {
+            if let value = (stream["tags"] as? [String: Any])?["_STATISTICS_WRITING_APP"] as? String, !value.isEmpty {
+                return MetadataSanitizer.sanitize(value)
+            }
+        }
+        return nil
+    }
+
+    /// `streams` with each Matroska / WebM track's language taken from its
+    /// FULL tag (`LanguageBCP47`) where the file has one — the language
+    /// policy's rule: a reader MUST ignore the old three-letter field when
+    /// the full tag is present (TRACK-070). ffprobe reads only the old field
+    /// (ffmpeg 9.0.1), so a file made by mkvmerge probed as `chi` for
+    /// Cantonese and `fre` for Canadian French (found in the second
+    /// independent review). The old field's text stays in
+    /// `languageAsStored`, because that is what ffmpeg copies.
+    ///
+    /// When the file's track list cannot be read or matched to ffprobe's
+    /// streams (`MatroskaTrackList`), nothing is changed — but if the file's
+    /// writer may have written full tags (anything but ffmpeg's own writer,
+    /// or no writer named), each track with a language is marked
+    /// `languageFullTagUnknown`: the job's notes then say a fuller language
+    /// may have been lost, and no automatic title is made from the old code.
+    ///
+    /// Not a Matroska / WebM file (`formatName`): unchanged.
+    static func applyingMatroskaFullLanguageTags(
+        to streams: [MediaStream],
+        fileURL: URL,
+        formatName: String?,
+        statisticsWritingApplication: String?
+    ) -> [MediaStream] {
+        guard let formatName, formatName.contains("matroska") || formatName.contains("webm") else { return streams }
+        let list = MatroskaTrackList.read(url: fileURL)
+        if let matched = list?.streamsMatched(to: streams) {
+            return streams.map { stream in
+                guard let track = matched[stream.streamIndex],
+                      let full = track.languageBCP47.map(MetadataSanitizer.sanitize), !full.isEmpty else {
+                    return stream
+                }
+                var updated = stream
+                let reading = TrackLanguage.read(fileValue: String(full.prefix(64)))
+                updated.language = reading.language
+                updated.unrecognisedLanguage = reading.unrecognised
+                return updated
+            }
+        }
+        let writer = list?.writingApplication ?? statisticsWritingApplication
+        guard MatroskaTrackList.mayHoldFullLanguageTags(writtenBy: writer) else { return streams }
+        return streams.map { stream in
+            guard stream.streamType == .video || stream.streamType == .audio || stream.streamType == .subtitle,
+                  stream.disposition?.isAttachedPicture != true else { return stream }
+            var updated = stream
+            updated.languageFullTagUnknown = true
+            return updated
         }
     }
 }

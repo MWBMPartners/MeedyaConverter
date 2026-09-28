@@ -304,6 +304,17 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// in for it. Sanitised by the probe, like the title.
     public var languageAsStored: String?
 
+    /// `true` when this is a Matroska / WebM track whose FULL language tag
+    /// (`LanguageBCP47`) could not be read — the file's track list could not
+    /// be read or matched (see `MatroskaTrackList`) — while the file's writer
+    /// may have written one (anything but ffmpeg's own writer, or no writer
+    /// named). `language` then comes from the old three-letter field alone
+    /// and may say less than the file does (mkvmerge writes `chi` there for
+    /// Cantonese): the job's notes say so, and no automatic title is made
+    /// from it. `nil` otherwise, and for streams described before this
+    /// existed. Added in the language policy's third review round.
+    public var languageFullTagUnknown: Bool?
+
     /// User-facing title/label for this stream (e.g., "Director's Commentary").
     public var title: String?
 
@@ -417,6 +428,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         language: String? = nil,
         unrecognisedLanguage: String? = nil,
         languageAsStored: String? = nil,
+        languageFullTagUnknown: Bool? = nil,
         title: String? = nil,
         isDefault: Bool = false,
         isForced: Bool = false,
@@ -452,6 +464,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.language = language
         self.unrecognisedLanguage = unrecognisedLanguage
         self.languageAsStored = languageAsStored
+        self.languageFullTagUnknown = languageFullTagUnknown
         self.title = title
         self.isDefault = isDefault
         self.isForced = isForced
