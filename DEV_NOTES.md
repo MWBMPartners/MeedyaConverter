@@ -430,6 +430,23 @@ All tools are checked for updates via `ToolUpdateChecker` which queries GitHub R
 | **Production Release** | `release.yml` | Push `v*` tag | Universal build, sign, notarize, staple, DMG + CLI tarball, GitHub Release |
 | **TestFlight** | `testflight.yml` | Manual + beta/RC tags (currently `disabled_manually`, see #392) | App Store build, upload |
 
+**Resource bundles that must ship.** SwiftPM puts each target's resources in a
+separate bundle beside the binary, and the hand-built `.app` and CLI archives
+must copy them in. There are two: `MeedyaConverter_MeedyaConverterCore.bundle`
+(app assets, Help, the AppleScript definition) and, since the language policy
+work, `MeedyaConverter_MediaLanguagePolicy.bundle` (the language policy's
+reference data — docs/standards/MWBM-MEDIA-LANG.lock). `release.yml` and
+`dev-build.yml` copy both into `Contents/Resources`, and `release.yml`,
+`dev-build.yml` and `beta-alpha.yml` put the policy bundle next to the
+`meedya-convert` binary in its archive; each step fails the build if the bundle
+is missing. The code finds the policy bundle itself and reports a plain error
+if it is absent — it never uses `Bundle.module`, whose generated accessor stops
+the program when the bundle is missing. (`make bundle` does not copy either
+bundle yet — listed as a follow-up in `.claude/HANDOFF.md`.)
+
+The CI job also runs `python3 scripts/media-lang/check_copies.py` early, which
+checks the language policy copies against their master in MeedyaSuite-core.
+
 ---
 
 ## Troubleshooting

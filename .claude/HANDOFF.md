@@ -5,7 +5,116 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-25 14:55 · VERSION 0.1.0
+**Last updated:** 2026-09-28 (language policy block below) · VERSION 0.1.0
+Previous: 2026-09-25 14:55
+
+## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
+
+A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
+`5d2223c`. **Nothing here is pushed yet** — the orchestrator pushes after review
+(a push to `wip/**` triggers CI, the only place `swift test` runs). Everything in
+the "CURRENT STATE" block further down is about `wip/alpha-consolidation` and is
+unchanged by this work.
+
+**What it is:** MeedyaConverter's share of the shared language policy
+`MWBM-MEDIA-LANG` 1.0.0 (master in MWBMPartners/MeedyaSuite-core; local copy
+`docs/standards/media-language-bcp47-policy.md`, pinned to core
+`f2e106a9d025c95d679eed825ab0f78a6b23ebe7` in `docs/standards/MWBM-MEDIA-LANG.lock`).
+Profile: canonical (Parts A + D) plus presentation for the stream editor. The
+mandatory pointer is now in the root `AGENTS.md`, in `.claude/standing_tasks.md`
+and in `.OpenAI/CONTEXT.md`. Developer note: `docs/Architecture.md` → "Languages,
+tracks and roles"; packaging note in `DEV_NOTES.md` → CI/CD Workflows.
+
+| # | Task | Issue | Status | Notes |
+|---|------|-------|--------|-------|
+| 1 | Stream numbers: whole-file vs type-counted (index-space bug) | #530 | Done locally — `0dabb2a` | explicit `OutputStreamPlan`; wrong-type stream numbers refused |
+| 2 | Policy copies + checker + CI step | — | Done locally — `2f25eff`, updated `a1a973a` | copies at core `f2e106a` (268 cases) |
+| 3 | Swift `MediaLanguagePolicy` target (Foundation only) + packaging | — | Done locally — `8db586a` | bundle shipped in .app and next to the CLI |
+| 4 | Conformance tests (every case, reversed, refusals, structure) | — | Done locally — `ea6cb97` | 268/268 locally and on Linux |
+| 5 | Probe reads languages (LANG-002) and every role | — | Done locally — `1eeee98` | |
+| 6 | Writing: order, language fields, autonym titles, roles | — | Done locally — `35753cb` | checked against real ffmpeg 9.0.1 |
+| 7 | Stream editor (tags, names, roles reach the output) | — | Done locally — `afb3fc6` | the SwiftUI view is type-checked, not run |
+| 7b | Saved jobs without the new job fields still load | — | Done locally — `203400a` | the new field is optional (synthesised decoding) |
+| 7c | Drop an unused parameter | — | Done locally — `2dc2351` | no behaviour change; 204 engine tests ran, 0 failures |
+| 8 | Agent instructions (AGENTS.md + pointers) | — | Done locally — `3fd1430` | committed before 7; order does not matter |
+| 9 | Docs (Architecture, DEV_NOTES, CHANGELOG) + this handoff | — | Done locally — the last `docs:` commit | |
+| 10 | Push + CI to green | — | Queued — orchestrator | |
+| 11 | Independent review (Codex per W13) | — | Queued — orchestrator | nothing here has been independently reviewed yet |
+
+**Verified here (28 Sept), and how:**
+- `swift build --target ConverterEngine`, `--target MediaLanguagePolicy` and
+  `--target meedya-convert`: exit 0, no new warnings. The app module type-checks
+  with the stub recipe (search "A REAL local test-file type-check" below).
+- Tests RAN in the local harness (`.claude/local-test-harness.md`, Xcode's XCTest
+  by file path; never `swift test`): conformance 7 tests / 268 of 268 cases / 0
+  failures; engine suites touched by this work (numbering, per-stream, argument
+  builder, probe, track writing, editor, the real-engine AutoTagEncodeDelivery
+  suite) all 0 failures. Planted faults were caught (the old numbering: 23
+  failures; three policy faults: exactly the covering case each).
+- Linux: the policy target and its tests alone, in `docker run --rm swift:6.1
+  swift test` (Swift 6.1.3, aarch64): 7 tests, 0 failures, no warnings. Container
+  and scratch package removed; 0 containers, 0 dangling volumes.
+- Real tools (TRACK-070 demands a test): `ContainerLanguageToolTests` ran against
+  ffmpeg 9.0.1 — see "what ffmpeg can write" in `TrackLanguage.swift`.
+- `python3 scripts/media-lang/check_copies.py` (online): 6 copies match; an edited
+  copy fails it. `actionlint` on every changed workflow: exit 0.
+
+**NOT verified here (needs CI or a person):** `swift test` itself (no selected
+Xcode) and SwiftLint; the app's SwiftUI editor was type-checked but never run;
+the release/dev-build/beta-alpha packaging steps have not run (they will fail
+closed if the policy bundle is missing); whether the CI runner has ffmpeg (if not,
+`ContainerLanguageToolTests` is skipped, not failed); `elng` reading (no tool here
+writes one).
+
+**Traps and decisions (read before continuing):**
+- **ffmpeg 9.0.1 cannot write, read or keep Matroska `LanguageBCP47`** (it writes
+  the raw metadata string into the OLD `Language` field, and a copy remux drops
+  `LanguageBCP47`), and MP4 gets only `mdhd` (no `elng`; non-three-letter values
+  are silently dropped). So Matroska outputs get the bibliographic code (`ger`),
+  MP4 the terminology code (`deu`); a region/script survives only in the autonym
+  title. Decided NOT to invent the RFC 9559 `xxx-cc` legacy form — the policy's
+  writing rule names the three-letter code only; raised as a question instead.
+- **`Bundle.module` is never used for the policy data**: this toolchain's
+  generated accessor has no build-path fallback and stops the program if the
+  bundle is missing, which would have crashed a shipped CLI. The library looks
+  for the bundle itself and returns an error; the harness copies the bundle next
+  to its test binary.
+- The engine now REFUSES a job whose stream settings cannot be placed
+  (`EncodingEngineError.streamSelectionInvalid`) instead of guessing.
+- Two places where the Swift code follows the policy TEXT where the throwaway
+  Python reference differed (no case tells them apart; PHP agrees with Swift on
+  the first): canonical tie-breaks in automatic selection use real TRACK-050 role
+  ranks; malformed preferences are ignored in automatic selection too.
+
+**Follow-ups to raise (not built — W4):**
+1. Matroska `LanguageBCP47`: a post-pass (mkvpropedit, or our own EBML writer) to
+   write it, and reading it on probe (ffprobe ignores it).
+2. MP4 `elng`: write and read.
+3. Policy question for core: allow Matroska's RFC 9559 `xxx-cc` legacy form when
+   the full-tag field cannot be written?
+4. HLS (`ManifestGenerator`): maps only `0:v:0` and `0:a:0` — other audio
+   languages are dropped.
+5. Dolby Vision re-mux path in `EncodingEngine` maps `0:v:0` only — check it
+   keeps stream tags and roles.
+6. `make bundle` copies neither resource bundle (Core or policy); `testflight.yml`
+   has no step copying them either — check the App Store build.
+7. `MetadataEditorView` is unreferenced (dead) — delete or wire up.
+8. Stream pickers keep their numbers when another file is selected (now refused
+   if the type is wrong, but a same-type stream could be chosen by accident).
+9. Disc models (DVD/Blu-ray/MakeMKV) still use ISO 639-2 codes; MakeMKV output is
+   saved untouched.
+10. Legacy mapping quirk kept as-is: with subtitles disabled and no video picked,
+    video is not mapped.
+11. Core fixtures: add cases for the two text-vs-Python differences above so all
+    implementations are held to one answer.
+12. `meedya-convert batch --job-file`: the documented example (help
+    `cli-reference.md`) lacks keys that synthesised decoding requires (`id`,
+    `createdAt`, `priority`, `outputMetadata`, `streamMetadata`,
+    `subtitleStreamActions`), so it cannot load — pre-existing, not caused here
+    (the new fields were made optional so as not to add to it).
+13. The in-app Help has no page on the stream editor or track languages.
+
+---
 
 ## 📍 CURRENT STATE — 2026-09-23, updated through 25 Sept (read this first)
 

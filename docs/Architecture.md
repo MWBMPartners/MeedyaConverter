@@ -247,17 +247,97 @@ Source File
 The argument builder is the critical translation layer. It processes an `EncodingJob` through these stages:
 
 1. **Input mapping** — `-i <source>` with seek/duration if trimming.
-2. **Stream selection** — `-map` directives for included video, audio, and subtitle streams.
+2. **Stream selection** — `-map` directives for included video, audio, and subtitle streams. With the source's streams known this is an explicit `OutputStreamPlan` (`-map 0:<whole-file number>` per output track), in the language policy's stored order; see "Languages, tracks and roles" below.
 3. **Video encoding** — Codec, CRF/bitrate, preset, pixel format, resolution, crop.
 4. **HDR policy** — Preserves HDR10/PQ/HLG signalling, or inserts a `tonemap` filter chain, based on the builder's own `toneMap` / `convertPQToHLG` / `preserveHDRMetadata` flags.
 5. **Audio encoding** — Per-stream codec, bitrate, sample rate, channel layout, normalization.
 6. **Subtitle handling** — Copy, convert, or burn-in based on format and container compatibility.
-7. **Metadata** — Title, tags, chapter markers, cover art. When auto-tagging
+7. **Metadata** — Title, tags, chapter markers, cover art; per output track the language field, autonym title and roles (language policy). When auto-tagging
    (below) found tags the file was missing, they are already sitting in
    `outputMetadata` by this point, so this stage needs no auto-tag-specific
    code of its own.
 8. **Container settings** — Muxer options, faststart, fragment settings.
 9. **Two-pass setup** — Generates separate pass-1 and pass-2 argument arrays if enabled.
+
+---
+
+## Languages, tracks and roles (MWBM-MEDIA-LANG)
+
+MeedyaConverter follows the shared MWBM / MeedyaSuite language policy,
+`MWBM-MEDIA-LANG` 1.0.0. **The policy is the source of truth** — read
+[`docs/standards/media-language-bcp47-policy.md`](standards/media-language-bcp47-policy.md)
+before changing anything about languages, tracks, roles or their order. This
+section only says where things live and why they are shaped as they are.
+
+### The policy files and how they are kept honest
+
+- The policy, its 268 conformance cases (+ schema) and its reference data (+
+  schema) are **exact copies** of the masters in MWBMPartners/MeedyaSuite-core,
+  pinned in `docs/standards/MWBM-MEDIA-LANG.lock`. CI runs
+  `python3 scripts/media-lang/check_copies.py`, which fails if a copy was edited
+  here or does not match the master at the pinned commit. To take a new version:
+  `python3 scripts/media-lang/check_copies.py --update <core commit>`, then update
+  code and tests as the policy's changelog says. Never edit a copy.
+- `Tests/MediaLanguagePolicyTests` runs **every** case in every section, runs the
+  automatic-selection cases again with the tracks reversed, and fails if the file
+  has an unknown, missing or empty section or a case lacks a required field.
+
+### Where the code is
+
+| Piece | Where | What it does |
+|---|---|---|
+| The policy in Swift | `Sources/MediaLanguagePolicy/` | Foundation only (so it builds and tests on Linux). One job per file: canonical tags, reading old codes, names, roles, stored order, menu order, matching, automatic selection, sidecar names. |
+| The engine's doorway | `Sources/ConverterEngine/Models/TrackLanguage.swift` | Connects the policy to `MediaStream` / `StreamDisposition`; says which language form each container needs, and what ffmpeg can and cannot write. |
+| Reading a file | `FFmpegProbe` | Each stream's language goes through the policy's reader (`eng` → `en`); an unreadable value becomes `und` with the text kept in `unrecognisedLanguage`; every disposition is kept. |
+| Writing a file | `FFmpegArgumentBuilder` + `OutputStreamPlan` | Track order, language fields, autonym titles and roles for every output track. |
+| Editing | `StreamMetadataEditorView` (app) + `StreamMetadataEditor.checkLanguageEntry` | Typed tags checked and shown in canonical form, names in the interface language, roles as toggles. |
+
+### Two orders, never mixed
+
+- **Canonical (stored) order** — what is written into a file: video, audio,
+  subtitles, other; within each type the original language first, then role,
+  then language **code** (`de` before `en`), general before specific. Same on
+  every machine. `CanonicalLanguageOrder`, used when building an output.
+- **Presentation (menu) order** — what a person sees: their own languages
+  first, then the original, then the rest alphabetically by **name in the
+  interface language**. Different per person, so it is never written into a
+  file. `PresentationLanguageOrder`, used for the editor's quick picks.
+
+The two share only small building blocks (language groups, specificity), never
+a comparison function.
+
+### BCP 47 tags are the identity; names are only for people
+
+A language is always a canonical BCP 47 tag (`en`, `en-GB`, `zh-Hant`,
+`es-419`), never a name. Names come from the platform's locale data, never a
+hand-typed list: in menus, the name in the interface language ("German" in
+English, "allemand" in French); **in files, the language's own name** — its
+autonym ("Deutsch", "日本語") — written as the track title only when the track
+has no real title of its own. A title is never read back as the language.
+
+### Roles are structured
+
+Default, original, forced, commentary, SDH/captions, audio description and
+text descriptions are dispositions (Matroska flags, MP4 `kind` boxes), read
+from the file and written to every output — never only words in a title.
+
+### What ffmpeg can and cannot write (checked, not assumed)
+
+Checked with ffmpeg 9.0.1 (details in `TrackLanguage.LanguageFieldForm`, and
+re-checked on every machine with ffmpeg by `ContainerLanguageToolTests`):
+Matroska gets only its old three-letter `Language` field, so the
+**bibliographic** code is written (`ger`); ffmpeg cannot write, read or keep
+`LanguageBCP47`. MP4 gets its `mdhd` field, so the **terminology** code is
+written (`deu`); no `elng` box. So a region or script (`en-GB`, `zh-Hant`) can
+only survive in the autonym title, not in a structured field — a known limit
+of the tool, tracked as a follow-up.
+
+### Stream numbers
+
+Every stream number in the engine is the stream's position in the **whole
+file** (the `#N` the probe shows). ffmpeg's `0:a:N`, `-c:a:N`,
+`-metadata:s:a:N` count only one type — and, for output options, only output
+streams. `OutputStreamPlan` is the one place that converts (issue #530).
 
 ---
 

@@ -23,6 +23,21 @@
 
 ### Added
 
+- **Track languages follow the shared language policy (MWBM-MEDIA-LANG).**
+  Every track's language is read as a proper language tag (`eng` → `en`,
+  `ger` → `de`; a value that can't be read is kept and shown, and treated as
+  "not known" rather than guessed). New files get their tracks in one fixed,
+  predictable order — video, audio, subtitles; the original language first,
+  then main before description and commentary tracks — with the language
+  written in the form each container expects, every role kept (original,
+  forced, commentary, SDH, audio description), and a readable title in the
+  language's own name ("Deutsch", "日本語") where a track had none. The stream
+  editor now accepts full tags such as `en-GB`, `zh-Hant` and `es-419`, shows
+  each language's name in your language, and its role switches actually
+  reach the output. (Matroska files made with ffmpeg can't store a region or
+  script such as "United Kingdom" in their language field — ffmpeg doesn't
+  support the newer field — so that part is kept in the track title.)
+
 - **Settings export and import**, in both the app (Settings › Import &
   Export) and the command line (`meedya-convert settings export`/`import`):
   move your preferences, connection details and your own encoding profiles
@@ -110,6 +125,15 @@
   tests for the first time.
 
 ### Fixed
+
+- **Choosing or editing a particular stream could affect the wrong track**
+  (#530): stream numbers from the app, the command line
+  (`--audio-stream` etc.), subtitle tone-mapping and per-stream settings were
+  sent to ffmpeg as if they counted only one kind of stream. They are now
+  converted properly, and a number that isn't a stream of the right kind is
+  refused with a plain message instead of quietly picking something else.
+- **Tone-mapped subtitles lost their language, title and flags**, and the
+  stream editor's Default/Forced switches were never written — both fixed.
 
 - A staged or auto-detected crop is now dropped (with a warning) when the
   profile copies the video stream, instead of emitting `-vf crop=…` next to
