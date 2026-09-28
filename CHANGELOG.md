@@ -30,11 +30,21 @@
   predictable order — video, audio, subtitles; the original language first,
   then main before description and commentary tracks — with the language
   written in the form each container expects and every role kept (original,
-  forced, commentary, SDH, audio description). A copy or conversion never
-  loses anything the file had that you didn't ask to change: a language the
-  output's three-letter field can't hold (such as Cantonese, `yue`) or a
-  value nobody can read is kept exactly as the file had it, cover art stays
-  cover art, and each case is noted in the job's log. Where a track has no
+  forced, commentary, SDH, audio description). A copy or conversion does not
+  lose or change what the file had without saying so: a language the output's
+  three-letter field has no code for (such as Cantonese, `yue`) or a value
+  nobody can read is kept as the file had it wherever the output's file type
+  really stores it (Matroska, WebM and Ogg store any text; MP4 only three
+  lower-case letters; MOV only the languages on its old QuickTime list;
+  MPEG-TS only three-letter codes; AVI and some others no language at all).
+  Where it would be cut or dropped, it is written as "not known" instead — a
+  cut such as `romanian` → `rom` would name a different language — and the
+  job's log says exactly what happened. Cover art stays cover art in MP4 and
+  in Matroska (attached under its own name and description); a file type
+  that can't hold a picture (WebM, MOV, MPEG-TS, AVI, Ogg and others) leaves
+  it out, and the log says so. Matroska files made by mkvmerge keep their
+  full language (`yue`, `fr-CA`), which ffmpeg alone would read as `chi` or
+  `fre`. Where a track has no
   title at all, the file type keeps track titles (Matroska, WebM) and the
   file has more than one such track or has video, the track is named after
   its language and roles in that language ("Deutsch", "English — SDH",
@@ -152,12 +162,51 @@
   Log and on the command line's standard error, instead of on standard
   output, where the app never showed them and they could break
   `--format json` output.
+- **MOV (QuickTime) outputs** now get their track languages from the old
+  QuickTime list ffmpeg's MOV writer understands — `ger`, `fra`, `chi`,
+  `jpn`, `gre` — instead of the codes it silently dropped (`deu`, `zho`,
+  `ell`). A language not on that list (Swedish, Cantonese, …) can't be
+  stored in a MOV file, and the job's log now says so. MOV also keeps no
+  track role but "default" — commentary, SDH and the rest are lost; #541
+  will make the log say so.
+- **Cover art in a file type that can't hold it** (WebM, MOV, MPEG-TS,
+  MPEG-PS, AVI, Ogg, FLV, AIFF, CAF, W64/RF64, MXF, 3GP) is now left out on
+  purpose, with a line in the job's log, and so is cover art in an output
+  with no video at all (an audio-only MP4/M4A); a Matroska output keeps it
+  as an attachment. Pipelines, the Shortcuts "Convert Media" action and the
+  quality preview now treat cover art exactly as a normal encode does.
+- **The Shortcuts "Convert Media" action** now also returns a short message
+  saying what the output keeps differently from the source (the same lines
+  the app's job log shows); its result value is still the converted file's
+  path. **Pipeline** encode steps write the same lines to the Activity Log.
 - The app module was split into a thin `MeedyaConverter` executable plus a
   testable `MeedyaConverterCore` library (#499), giving app-module code unit
   tests for the first time.
 
 ### Fixed
 
+- **A film with cover art could not be converted to WebM** — ffmpeg refused
+  the whole job. The picture is now left out, with a note.
+- **Cover art turned into a stray extra stream** in MPEG-TS (a data stream)
+  and AVI (a one-frame video track). It is now left out, with a note.
+- **Matroska cover art was renamed and lost its description**
+  (`small_cover.png` became `cover.png`; two covers became `cover-3.jpg` and
+  `cover-4.png`). Names, MIME types and descriptions are now kept.
+- **Unreadable language values were cut to a different language** in MP4
+  (`romanian` → `rom`, which is Romany) and dropped in MPEG-TS, while the log
+  said they were kept. They are now written as "not known", and the log says
+  why.
+- **Matroska files made by mkvmerge lost their full language tags**:
+  Cantonese, Mandarin and Min Nan came out as "Chinese" (`chi`) — Cantonese
+  even titled "中文" — and Canadian French as plain French, with nothing in
+  the log. The file's own full tag is now read and kept as far as the output
+  can store it; where the full tag cannot be read, the log says a fuller
+  language may have been lost, and no automatic title is made from the old
+  code.
+- The stream editor said a language such as `und-GB` "has no three-letter
+  code"; it now says it is the region that cannot be stored. Clearing a
+  track's own title now shows "No title" and the automatic-title switch off,
+  as the encode will do.
 - **Choosing or editing a particular stream could affect the wrong track**
   (#530): stream numbers from the app, the command line
   (`--audio-stream` etc.), subtitle tone-mapping and per-stream settings were

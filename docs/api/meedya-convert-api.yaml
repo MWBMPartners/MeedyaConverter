@@ -1823,12 +1823,27 @@ components:
             `zh-Hant`), read through the shared language policy (MWBM-MEDIA-LANG, LANG-002):
             the file's old three-letter codes are converted (`eng` → `en`, `ger` → `de`).
             `und` when the file's value could not be recognised (the original text is then in
-            `unrecognisedLanguage`). Absent when the file states no language.
+            `unrecognisedLanguage`). For Matroska and WebM the track's full tag
+            (`LanguageBCP47`, which ffprobe does not read) is taken when the file has one, so a
+            file made by mkvmerge gives `yue`, not the `chi` in its old field. Absent when the
+            file states no language.
         unrecognisedLanguage:
           type: string
           description: >-
             The file's language text when it could not be recognised (`language` is then
             `und`), kept so a person can fix it. Absent otherwise.
+        languageAsStored:
+          type: string
+          description: >-
+            The text the file's language field holds, exactly as the probe tool read it (`ger`,
+            `fre-ca`, `chi`) — what a copy would carry over. `language` is what it means; this
+            is what it says. Absent when the file states no language.
+        languageFullTagUnknown:
+          type: boolean
+          description: >-
+            `true` for a Matroska / WebM track whose full language tag could not be read while
+            the file's writer may have written one: `language` then comes from the old
+            three-letter field alone and may say less than the file does. Absent otherwise.
         title:
           type: string
           description: User-facing stream label. Absent if unset.

@@ -291,10 +291,10 @@ section only says where things live and why they are shaped as they are.
 | Piece | Where | What it does |
 |---|---|---|
 | The policy in Swift | `Sources/MediaLanguagePolicy/` | Foundation only (so it builds and tests on Linux). One job per file: canonical tags, reading old codes, names, roles, stored order, menu order, matching, automatic selection, sidecar names. |
-| The engine's doorway | `Sources/ConverterEngine/Models/TrackLanguage.swift` | Connects the policy to `MediaStream` / `StreamDisposition`; says which language form each container needs, and what ffmpeg can and cannot write. |
-| Reading a file | `FFmpegProbe` | Each stream's language goes through the policy's reader (`eng` → `en`); an unreadable value becomes `und` with the text kept in `unrecognisedLanguage`; every disposition is kept. |
+| The engine's doorway | `Sources/ConverterEngine/Models/TrackLanguage.swift` | Connects the policy to `MediaStream` / `StreamDisposition`; says which language form each container needs (`LanguageFieldForm`) and what each file type's writer really stores (`LanguageFieldStorage` — one table, checked against real ffmpeg). |
+| Reading a file | `FFmpegProbe` + `MatroskaTrackList` | Each stream's language goes through the policy's reader (`eng` → `en`); an unreadable value becomes `und` with the text kept in `unrecognisedLanguage`, and the raw text in `languageAsStored`; every disposition is kept. For Matroska, the file's own track list is read so a full tag (`LanguageBCP47`, which ffprobe ignores) wins over the old field. |
 | Writing a file | `FFmpegArgumentBuilder` + `OutputStreamPlan` + `TrackLanguage.languageWrite` | Track order, language fields, automatic titles and every stream flag for every output track; notes for the job's log (`trackWritingNotes`). |
-| Cover art | `AttachedPictures.swift` | Keeps attached pictures as pictures: never ordered as tracks, copied (not re-encoded) when the video is, and attached again as files in Matroska. |
+| Cover art | `AttachedPictures.swift` | Keeps attached pictures as pictures where the file type can hold them: never ordered as tracks, copied (not re-encoded) when the video is, attached again as files (name, MIME type, description) in Matroska, and left out — with a note — where the file type cannot hold one. |
 | Editing | `StreamMetadataEditorView` (app) + `StreamMetadataEditor.checkLanguageEntry` / `storageNote` | Typed values read like a file's (`eng` → `en`), shown in canonical form with names in the interface language; what the output cannot store said before Apply; roles as toggles; a language or automatic title can be left alone. |
 
 ### Two orders, never mixed
@@ -331,30 +331,46 @@ gets one; cover art is not video). The title says the language and the roles,
 joined as the policy's labels are: "English", "English — SDH", "English —
 Forced", "Deutsch — Commentary".
 
-### Nothing the source had is lost
+### Nothing lost or changed without a word
 
 The rule for all of this: a copy or conversion never loses or damages
-anything the source had that the person did not ask to change (COMPAT-030).
-Where the policy's preferred form cannot be written because of what ffmpeg can
-store, what the source had is kept and the job's log says so
-(`TrackLanguage.languageWrite`, `trackWritingNotes`):
+anything the source had that the person did not ask to change (COMPAT-030),
+and never silently turns a value into a different language (COMPAT-040).
+Where something cannot be kept because of what ffmpeg can store, the job's
+log says so — and says it truly (`TrackLanguage.languageWrite`,
+`trackWritingNotes`):
 
-- a track's language is written in the container's three-letter form only
-  when that is a real code and nothing is lost (`deu` → `ger` in Matroska is a
-  correction); a real language with no three-letter code (`yue`, `cmn`, `nan`)
-  and a value nobody can read (`english`, `xx-bogus`) get **no** language
-  option, so ffmpeg copies the source's own value; a region or script
-  (`fr-CA`) is left for Matroska to copy (which keeps it) and written as the
-  language only in MP4 (which cannot hold more);
+- what each file type's writer really stores for a language value is ONE
+  table, `TrackLanguage.LanguageFieldStorage`: any text (Matroska, WebM, Ogg);
+  the first three lower-case letters with the rest cut (MP4, M4A, 3GP); only
+  the old QuickTime list (MOV); codes of exactly three characters (MPEG-TS,
+  HLS); nothing (AVI, FLV, MPEG-PS, MXF, AIFF, CAF, W64, RF64). The second
+  review found notes saying "kept as the source had it" where MP4 had cut the
+  value to a different language and MPEG-TS and MOV had dropped it;
+- a track's language gets, in this order: the policy's code where it loses
+  nothing (`deu` → `ger` in Matroska is a correction; MOV gets the QuickTime
+  list's entry, `ger`, `chi`); else the source's own text, left for ffmpeg to
+  copy, only where this file type stores it exactly and it still reads as the
+  same language (`yue` in MP4 or Matroska, `fr-CA` in Matroska); else the
+  language's own tag as text where that is stored exactly (needed for
+  mkvmerge files, whose old field says `chi` for Cantonese); else the code
+  with the region cut (`fr-CA` → `fra` in MP4); else `und` — or nothing where
+  even that cannot be stored — with a note. The tool is never left to cut a
+  value (`romanian` → `rom`, Romany) or drop it;
 - every stream flag is kept — the roles and also `attached_pic` and any other
-  flag ffprobe reports — and an edit changes only the flags it can;
+  flag ffprobe reports — and an edit changes only the flags it can (MOV keeps
+  none but "default": #541);
 - cover art (`attached_pic`) is not a track: it goes after every real track,
   is copied rather than re-encoded, and in Matroska is attached again as a
-  file under its own name (ffmpeg's Matroska muxer would otherwise make it a
-  video track; see `AttachedPictures.swift`).
+  file under its own name, MIME type and description (ffmpeg's Matroska
+  muxer would otherwise make it a video track). A file type that cannot hold
+  a picture — WebM, MOV, MPEG-TS, AVI, Ogg and others — and an output with
+  no video leave it out, with a note (`AttachedPictures.pictureSupport`).
 
 The job's notes reach the app's Activity Log through `EncodingEngine
-.jobNotices`, and the command-line tool's standard error.
+.jobNotices`, the command-line tool's standard error, a pipeline's log lines
+(`EncodingPipelineExecutor.execute(onNote:)`) and the Shortcuts action's
+message.
 
 ### Roles are structured
 
@@ -364,18 +380,24 @@ from the file and written to every output — never only words in a title.
 
 ### What ffmpeg can and cannot write (checked, not assumed)
 
-Checked with ffmpeg 9.0.1 (details in `TrackLanguage.LanguageFieldForm`, and
-re-checked on every machine with ffmpeg by `ContainerLanguageToolTests` and
-`TrackPreservationToolTests`): Matroska gets only its old three-letter
-`Language` field, so the **bibliographic** code is written (`ger`); ffmpeg
-cannot write, read or keep `LanguageBCP47`. MP4 gets its `mdhd` field, so the
-**terminology** code is written (`deu`); no `elng` box. So a region or script
-(`en-GB`, `zh-Hant`) that a person SETS cannot be stored in a structured field
-(the editor says so before Apply). It appears in words only in an automatic
-title, and only where one is written (above) — a track that already has a
-title keeps it and the region is not stored anywhere. An UNEDITED Matroska
-track keeps the source's own text (above). Writing the full tag needs a
-post-pass: #532.
+Checked with ffmpeg 9.0.1 and MKVToolNix 101 (details in
+`TrackLanguage.LanguageFieldStorage` and `MatroskaTrackList`, and re-checked on
+every machine with ffmpeg by `ContainerLanguageToolTests` — the whole table,
+file type by file type — `TrackPreservationToolTests` and
+`MatroskaTrackListTests`): Matroska gets only its old `Language` field, so the
+**bibliographic** code is written (`ger`); ffmpeg cannot write or keep
+`LanguageBCP47`, and does not read it — MeedyaConverter reads the file's track
+list itself for that (`MatroskaTrackList`; where it cannot be read and the
+file's writer may have written full tags, the log says a fuller language may
+be lost and no automatic title is made from the old code). MP4 gets its
+`mdhd` field, so the **terminology** code is written (`deu`); no `elng` box.
+MOV gets only the old QuickTime list. So a region or script (`en-GB`,
+`zh-Hant`) that a person SETS cannot be stored in a structured field (the
+editor says so before Apply). It appears in words only in an automatic title,
+and only where one is written (above) — a track that already has a title
+keeps it and the region is not stored anywhere. An UNEDITED Matroska track
+keeps the source's full language as text (above). Writing the full tag needs
+a post-pass: #532.
 
 ### Track order can be switched off
 
@@ -394,7 +416,11 @@ just before each step runs), the Shortcuts "Convert Media" action and the
 quality preview all give the argument builder the source's streams, and all
 refuse — with `EncodingEngineError.streamSelectionInvalid` — stream settings
 that cannot be applied to the file, including per-stream settings when the
-streams could not be read.
+streams could not be read. All four also take the same picture step
+(`AttachedPictures.copyPictures`), so a Matroska output attaches cover art
+the same way on every path, and all but the preview report the job's notes
+(the preview is a throwaway clip; it drops the notes but never produces a
+different set of streams from a real run).
 
 ### Stream numbers
 

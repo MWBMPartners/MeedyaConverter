@@ -21,14 +21,22 @@
   (`docs/standards/media-language-bcp47-policy.md`, an exact copy of the master in
   MeedyaSuite-core, checked in CI). The engine reads and writes every track's
   language, roles and order through it (`TrackLanguage.swift`). Rule for every
-  copy or conversion (round 2, 28 Sept): never lose what the source had that the
-  person did not ask to change — a language the output's field cannot hold, or
-  unreadable text, is left for ffmpeg to copy and noted in the job's log
-  (`EncodingEngine.jobNotices` → Activity Log / stderr); every stream flag
-  (including cover art's `attached_pic`) is kept; automatic titles only for
-  untitled tracks in Matroska/WebM with more than one track or with video. ffmpeg
-  9.0.1 writes an `attached_pic` stream into Matroska as a video TRACK, so the
-  engine attaches a copy of the picture instead (`AttachedPictures.swift`).
+  copy or conversion (rounds 2 and 3, 28 Sept): never lose or change what the
+  source had without saying so, and the notes must be true. ONE table says what
+  each file type's writer stores for a language (`TrackLanguage
+  .LanguageFieldStorage`: any text in Matroska/WebM/Ogg; three lower-case
+  letters, the rest cut, in MP4; the old QuickTime list in MOV; exactly three
+  characters in MPEG-TS; nothing in AVI and others). A value is kept as the
+  source had it only where that table says it is stored exactly; else the
+  language's own tag as text, the code with the region cut, or `und` — each
+  noted in the job's log (`EncodingEngine.jobNotices` → Activity Log / stderr;
+  pipelines' `onNote`; the Shortcuts action's message). Matroska full tags
+  (`LanguageBCP47`, which ffprobe ignores) are read by `MatroskaTrackList`.
+  Every stream flag (including cover art's `attached_pic`) is kept; automatic
+  titles only for untitled tracks in Matroska/WebM with more than one track or
+  with video. Cover art: kept in MP4, attached (a copy, own name and
+  description) in Matroska on every encode path (`AttachedPictures
+  .copyPictures`), left out with a note where the file type cannot hold it.
 - **meedya-convert** — command-line tool (Swift ArgumentParser) built on the
   engine. Subcommands: `encode`, `probe`, `profiles`, `batch`, `manifest`,
   `validate`, `serve`.

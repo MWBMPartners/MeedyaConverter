@@ -5,12 +5,12 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-28 (language policy block below — round 2) · VERSION 0.1.0
-Previous: 2026-09-28 (language policy round 1) · 2026-09-25 14:55
+**Last updated:** 2026-09-28 (language policy block below — round 3, local commits) · VERSION 0.1.0
+Previous: 2026-09-28 (language policy round 2) · 2026-09-28 (round 1) · 2026-09-25 14:55
 
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
 
-### ROUND 3 — fixes from the SECOND independent review (28 Sept) — IN PROGRESS
+### ROUND 3 — fixes from the SECOND independent review (28 Sept) — DONE LOCALLY, NOT PUSHED, NOT REVIEWED
 
 **State:** everything up to `59f8667` is pushed (CI green). Round 3's commits are
 LOCAL ONLY, on top of `59f8667`, and NOT independently reviewed. The second
@@ -50,9 +50,75 @@ WebM, Ogg, FLV, CAF, W64, WAV, ADTS refuse the whole job.
 | R3-2 | Conformance runner: one reading of the file (7) | #531 | Done locally — `6a73f04` | 15 policy tests; U+FEFF case fails; planted fault caught |
 | R3-3 | One table of what each file type stores; MOV QuickTime codes; `und-GB` (3, minor) | #531, #541 | Done locally — `976119d` | table tool test 13 file types × 10 values, 0 mismatches |
 | R3-4 | Matroska full tags (`MatroskaTrackList`) (4) | #531, #532 | Done locally — `78fb77b` | 1035 engine tests, 0 failures; real mkvmerge test |
-| R3-5 | Pipeline, Shortcuts, preview: same picture step + notes (5) | #531 | In progress | shared `AttachedPictures.copyPictures` |
-| R3-6 | Minors: editor clearing a title; docs (CHANGELOG, Architecture) | #531 | In progress | |
-| R3-7 | Issues: #540 fonts, #541 MOV roles opened; #539 already covers `nan` | — | Done | |
+| R3-5 | Pipeline, Shortcuts, preview: same picture step + notes (5) | #531 | Done locally — `590371a` | shared `AttachedPictures.copyPictures`; pipeline `onNote`; Shortcuts returns a message |
+| R3-6 | Minors: editor clearing a title; two lint fixes | #531 | Done locally — `50b17c3` | app module type-checks (stub recipe); not run |
+| R3-7 | Docs: CHANGELOG, Architecture, API yaml, `.OpenAI/MEMORY.md`, this handoff | #531 | Done locally — the last `docs:` commit | |
+| R3-8 | Issues: #540 fonts, #541 MOV roles opened; #539 (`nan`) and #533 (DASH) commented; #531 linked | — | Done | |
+| R3-9 | Push + CI to green; independent review of round 3 (W13) | — | Queued — orchestrator | round 3 is NOT independently reviewed |
+
+**What round 3 changed, in one place** (details in the commit messages):
+- Cover art: `AttachedPictures.pictureSupport` — MP4 family keeps a mapped
+  picture; Matroska attaches a copy (name, MIME type AND description — the
+  probe now asks ffprobe for `filename,mimetype`); every other file type
+  leaves it OUT with a note, and so does an output with no video. One
+  decision per picture (`pictureDecisions`) drives the command, the notes and
+  the copying step. `EncodingEngine` always replaces `attachedPictureFiles`.
+- Languages: `TrackLanguage.LanguageFieldStorage` is the ONE table of what
+  each file type stores; `languageWrite` never leaves ffmpeg to cut or drop a
+  value (policy code → source text if stored exactly and same language → the
+  tag as text → code with region cut → `und`/nothing, each noted). MOV uses
+  ffmpeg's QuickTime list (`ger`, `chi`…; entries that do not read back as the
+  same language, like `sve`, are excluded). `MediaStream.languageAsStored`
+  holds the raw text ffmpeg copies.
+- Matroska full tags: `MatroskaTrackList` (bounded EBML read of the track
+  list) + `FFmpegProbe.applyingMatroskaFullLanguageTags`; fallback marks
+  `languageFullTagUnknown` (note, no automatic title) unless ffmpeg wrote the
+  file.
+- Every encode path takes the same picture step and reports the notes
+  (engine; pipeline `onNote` → Activity Log; Shortcuts dialog; preview makes
+  the same streams but drops the notes).
+- Conformance runner: cases come from the shape check's one reading
+  (`JSONValue.plainValue`); `test_runnerRunsTheFileAsWritten`.
+
+**Verified (round 3), and how:**
+- Every reviewer case before AND after with the reviewer's harness (relinked)
+  and ffmpeg 9.0.1 / MKVToolNix 101: WebM cover (exit 234 → OK + note);
+  `small_cover.png` "Back of the box" (renamed, no description → kept);
+  `cover.jpg` + `small_cover.png` (`cover-3.jpg`/`cover-4.png` → kept);
+  `romanian`/`latvian`/`slovenian` → MP4 (`rom`/`lat`/`slo` + false "kept" →
+  `und` + true note) and → MPEG-TS (dropped + false "kept" → `und` + note);
+  German/Greek/Japanese/Chinese → MOV (dropped → `ger`/`gre`/`jpn`/`chi`);
+  mkvmerge `yue`/`cmn`/`nan`/`fr-CA` → MKV (`chi`/`fre`, "中文", no note →
+  `yue`/`cmn`/`nan`/`fr-CA`, Cantonese "廣東話", noted) and → MP4
+  (`yue`/`cmn`/`nan`/`fra`, noted); cover → TS (`bin_data` → left out),
+  AVI (MJPEG track → left out), MOV/Ogg/M4A audio extract (silent → noted);
+  pipeline with the real runner (MJPEG track at `59f8667`, rebuilt in a
+  throwaway worktree → attachment now).
+- Builds: `swift build --target ConverterEngine` exit 0 after every commit
+  (only the known linker search-path and PerceptualHasher deprecation
+  warnings); the app module type-checks with the stub recipe (exit 0).
+- Local harness (Xcode's XCTest by path — never `swift test`), on the final
+  code (`50b17c3`): the round-2 set of 13 engine suites + MatroskaTrackListTests,
+  1037 tests, 0 failures, none skipped; `swift build` of MediaLanguagePolicy,
+  ConverterEngine and meedya-convert exit 0. Policy suites 15 tests, 290 of
+  290 cases, 409 checks, 0 failures; Linux (`docker run --rm --name converter-r3-linuxpolicy
+  swift:6.1 swift test`, the policy target alone): 15 tests, 0 failures, no
+  warnings; 0 containers and 0 dangling volumes left.
+- Planted faults, each caught and each file restored by checksum: 4 (cover
+  art), 1 (runner), 3 (table), 4 (full tags), 2 (paths).
+- `ContainerLanguageToolTests.test_eachFileTypeStoresWhatTheTableSays`: 13
+  file types × 10 values against real ffmpeg, 0 mismatches.
+- SwiftLint (Xcode's SourceKit by path, `TOOLCHAIN_DIR=…XcodeDefault
+  .xctoolchain`) over the 24 Swift files round 3 touched: 0 findings on lines
+  round 3 added (older ones left, mostly `trailing_comma`).
+- `check_copies.py` online with `GITHUB_TOKEN`: 6 copies match at core
+  `aaaa585`. `actionlint` (CI's setting): exit 0 (no workflow changed).
+
+**NOT verified:** `swift test` itself; the SwiftUI editor, the Shortcuts
+action and the quality preview were type-checked, not run; whether CI has
+MKVToolNix (the real-mkvmerge test is skipped without it) or libopus (the
+WebM rows are skipped without it); DASH and DCP picture handling (left out,
+not checked); `elng` reading.
 
 New facts this round: MOV keeps NO track role but "default" (ffmpeg 9.0.1) —
 raised as #541, recorded in `ContainerLanguageToolTests`. The platform titles
@@ -61,12 +127,11 @@ Harness trap: `SettingsKeyCoverageTests` looks for `Sources/` from the CURRENT
 folder, so run the harness binary from the repo root, not from its own folder.
 
 A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
-`5d2223c`. **Rounds 1 and 2 are pushed** (head `a5abc22`, CI green). **The
-copy-update sweep** (see "COPY-UPDATE SWEEP" below) is LOCAL commits on top
-(`d86a170` onward), **not pushed** — the orchestrator pushes and watches CI (a
-push to `wip/**` triggers CI, the only place `swift test` runs). Everything in the
-"CURRENT STATE" block further down is about `wip/alpha-consolidation` and is
-unchanged by this work.
+`5d2223c`. **Rounds 1 and 2 and the copy-update sweep are pushed** (head
+`59f8667`, CI green). **Round 3 (above) is LOCAL commits on top, not pushed** —
+the orchestrator pushes and watches CI (a push to `wip/**` triggers CI, the only
+place `swift test` runs). Everything in the "CURRENT STATE" block further down is
+about `wip/alpha-consolidation` and is unchanged by this work.
 
 ### COPY-UPDATE SWEEP — copies moved to core `aaaa585` (28 Sept)
 
