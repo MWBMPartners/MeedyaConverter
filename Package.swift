@@ -339,6 +339,21 @@ let package = Package(
         ),
 
         // =================================================================
+        // MediaLanguagePolicyTests
+        // =================================================================
+        // Runs EVERY conformance case of the policy (all sections), each
+        // automatic-selection case again with the tracks reversed, and checks
+        // the count equals the number of cases in the file. The cases are the
+        // exact copy in Tests/Fixtures/MediaLanguage/ (read by file path, so
+        // the copy the checker guards is the one the tests use).
+        // =================================================================
+        .testTarget(
+            name: "MediaLanguagePolicyTests",
+            dependencies: ["MediaLanguagePolicy"],
+            path: "Tests/MediaLanguagePolicyTests"
+        ),
+
+        // =================================================================
         // ConverterEngine (Library)
         // =================================================================
         // The platform-agnostic core that houses:
