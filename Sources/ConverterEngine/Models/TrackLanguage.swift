@@ -346,11 +346,15 @@ extension TrackLanguage {
             case losesParts(lost: String, canonical: String)
             /// This file type cannot store this language at all: MOV, whose
             /// list has no entry for it, or a file type with no place for a
-            /// language. Nothing is written.
+            /// language. The output stores NO language for the track: the
+            /// command clears the field, so the source's value is not copied
+            /// in instead (`LanguageWrite.Action.clear`).
             case cannotStore(canonical: String)
         }
-        /// What the field gets, or `nil` when nothing is written (the file
-        /// type cannot store it — or cannot store even `und`).
+        /// What the field gets, or `nil` when the output stores no language
+        /// for the track (the file type cannot store this one — or cannot
+        /// store even `und`). `nil` never means "leave the source's value":
+        /// the command clears the field (`LanguageWrite.Action.clear`).
         public let value: String?
         /// Why it is less than the tag, if it is.
         public let limit: Limit
@@ -408,7 +412,9 @@ extension TrackLanguage {
     }
 
     /// What "not known" is stored as: `und`, or `nil` where even that cannot
-    /// be stored (MOV, the file types with no language field).
+    /// be stored (MOV, the file types with no language field) — the output
+    /// then stores no language, and the command clears the field rather than
+    /// let ffmpeg copy the source's value in (`LanguageWrite.Action.clear`).
     static func storedUnknown(in storage: LanguageFieldStorage) -> String? {
         storage == .unchecked ? "und" : storage.stored("und")
     }
@@ -427,12 +433,50 @@ extension TrackLanguage {
     /// What one output stream's `language` field gets, and what to tell the
     /// person about it.
     public struct LanguageWrite: Sendable, Equatable {
-        /// The value to give ffmpeg, or `nil` to give none — ffmpeg then
-        /// copies the source's own value unchanged (or there is none).
-        public let value: String?
+
+        /// What the command does with the output stream's `language` field.
+        /// There are THREE outcomes, not two. Until the third independent
+        /// review there were two — write a value, or give ffmpeg nothing —
+        /// and "nothing" was used for "store no language" as well. But given
+        /// nothing, ffmpeg COPIES the source's own value in: an mkvmerge file
+        /// whose old field says `chi` for Cantonese came out of a MOV
+        /// conversion as `chi` (which Apple's players read as Traditional
+        /// Chinese), and an edit to `sv` left `eng`, both while the job's
+        /// note said "no language is stored".
+        public enum Action: Sendable, Equatable {
+            /// Give ffmpeg nothing: it copies the source's own value unchanged
+            /// — or there is no value to copy.
+            case copySource
+            /// Give ffmpeg this value.
+            case write(String)
+            /// Give ffmpeg an EMPTY value (`-metadata:s:<type>:N language=`),
+            /// which removes the key: the output stores no language, whatever
+            /// the source had. (ffmpeg then treats the stream as having none;
+            /// checked with ffmpeg 9.0.1 — ffprobe and Apple's AVFoundation
+            /// both read no language back from a MOV made this way.)
+            case clear
+        }
+
+        /// What happens to the field.
+        public let action: Action
         /// A plain-English line for the job's log when the output cannot
         /// hold exactly what the track says, else `nil`.
         public let note: String?
+
+        public init(action: Action, note: String?) {
+            self.action = action
+            self.note = note
+        }
+
+        /// The text after `language=` in ffmpeg's arguments: the value, an
+        /// empty string to clear the field, or `nil` when nothing is given.
+        public var argumentValue: String? {
+            switch action {
+            case .copySource: return nil
+            case .write(let value): return value
+            case .clear: return ""
+            }
+        }
     }
 
     /// Decides one output stream's `language` field (TRACK-070), under the
@@ -458,15 +502,20 @@ extension TrackLanguage {
     ///    than its full-tag field (mkvmerge writes `chi` for Cantonese);
     /// 4. the policy's code with the region or script cut (`fra` for
     ///    `fr-CA` in MP4), with a note naming what is not saved;
-    /// 5. otherwise `und` (not known) — or nothing, where even `und` cannot
-    ///    be stored — with a note saying exactly why. The tool is never left
-    ///    to cut or drop a value on its own: `romanian` into MP4 would have
-    ///    become `rom` (Romany), a different language.
+    /// 5. otherwise `und` (not known) — or NO language, where even `und`
+    ///    cannot be stored — with a note saying exactly why. The tool is
+    ///    never left to cut or drop a value on its own: `romanian` into MP4
+    ///    would have become `rom` (Romany), a different language.
     /// A value the probe could not read at all (`english`, `romanian`) takes
     /// only 2 or 5. In a free-text field (Ogg) the canonical tag is written.
     ///
     /// A stream the person DID edit gets the policy's form of their tag, with
     /// a note when the field cannot hold all of it (`editedLanguageField`).
+    ///
+    /// "No language" is never left to chance: when the answer is that the
+    /// output stores none and ffmpeg would otherwise copy the source's value
+    /// in, the field is CLEARED (`LanguageWrite.Action.clear`). See `Action`
+    /// for the fault this fixed.
     ///
     /// Without the policy's data nothing is converted: an edit is written as
     /// typed, and an unedited value as the file gave it.
@@ -503,29 +552,40 @@ extension TrackLanguage {
     ) -> LanguageWrite {
         let stream = "Stream #\(streamNumber)"
         guard let policy else {
-            if let edited { return LanguageWrite(value: edited, note: nil) }
-            return LanguageWrite(value: keepsSourceMetadata ? sourceLanguage : nil, note: nil)
+            if let edited { return LanguageWrite(action: .write(edited), note: nil) }
+            guard keepsSourceMetadata, let sourceLanguage else { return LanguageWrite(action: .copySource, note: nil) }
+            return LanguageWrite(action: .write(sourceLanguage), note: nil)
         }
         let storage = languageFieldStorage(for: container)
         let unknown = storedUnknown(in: storage)
+        // "Store no language": CLEAR the field when ffmpeg would otherwise
+        // copy a value in — the source's own (when its metadata is kept), or
+        // a replacement stream's file's. With nothing to copy, giving ffmpeg
+        // nothing already stores nothing, and the command stays as it was.
+        let copiesAValue = isReplacement
+            || (keepsSourceMetadata && (sourceStoredText ?? sourceUnrecognised ?? sourceLanguage) != nil)
+        let storeNothing: LanguageWrite.Action = copiesAValue ? .clear : .copySource
+        // What "not known" becomes: `und`, or no language where even that
+        // cannot be stored (MOV, the file types with no field).
+        let unknownAction = unknown.map(LanguageWrite.Action.write) ?? storeNothing
         // "written as “und” (not known)", or where even that cannot be
         // stored: "no language is stored".
         let unknownWords = unknown == nil ? "no language is stored" : "it is written as “und” (not known)"
 
         // --- An edit: the person asked for this language. ---
         if let edited, let field = editedLanguageField(edited, in: container) {
-            return editedWrite(edited: edited, field: field, stream: stream, storage: storage)
+            return editedWrite(edited: edited, field: field, stream: stream, storage: storage, storeNothing: storeNothing)
         }
 
         // --- No edit: keep what the source had. ---
-        guard keepsSourceMetadata else { return LanguageWrite(value: nil, note: nil) }
+        guard keepsSourceMetadata else { return LanguageWrite(action: .copySource, note: nil) }
 
         // The file type has no place for a language at all.
         if storage == .nothing {
             let what = sourceUnrecognised ?? sourceLanguage
-            guard let what, what != "und" else { return LanguageWrite(value: nil, note: nil) }
+            guard let what, what != "und" else { return LanguageWrite(action: storeNothing, note: nil) }
             return LanguageWrite(
-                value: nil,
+                action: storeNothing,
                 note: "\(stream): this file type has no place for a track's language, so “\(what)” is not kept."
             )
         }
@@ -536,20 +596,20 @@ extension TrackLanguage {
             let fix = " Set the right language in the stream editor if you know it."
             if storage != .unchecked, storage.keeps(raw) {
                 return LanguageWrite(
-                    value: isReplacement ? raw : nil,
+                    action: isReplacement ? .write(raw) : .copySource,
                     note: "\(stream): the file's language “\(raw)” is not a language code; kept as the source had it." + fix
                 )
             }
             return LanguageWrite(
-                value: unknown,
+                action: unknownAction,
                 note: "\(stream): the file's language “\(raw)” is not a language code, and "
                     + limitWords(for: raw, in: storage) + ", so \(unknownWords)." + fix
             )
         }
 
-        guard let source = sourceLanguage else { return LanguageWrite(value: nil, note: nil) }
+        guard let source = sourceLanguage else { return LanguageWrite(action: .copySource, note: nil) }
         let tag = policy.canonicaliser.canonicalise(source)
-        guard let canonical = tag.canonical else { return LanguageWrite(value: nil, note: nil) }
+        guard let canonical = tag.canonical else { return LanguageWrite(action: .copySource, note: nil) }
         let copied = sourceStoredText ?? source
         // A Matroska source whose fuller language tag could not be read
         // (see `MediaStream.languageFullTagUnknown`): said on its own, or
@@ -557,16 +617,16 @@ extension TrackLanguage {
         let fullTagSentence = "The source may also record a fuller language tag for this track (with a region "
             + "or script, say), which could not be read; if it does, that is not kept, and no automatic title is "
             + "made from the three-letter code “\(copied)”."
-        func write(_ value: String?, _ note: String?) -> LanguageWrite {
-            guard fullTagUnknown else { return LanguageWrite(value: value, note: note) }
-            return LanguageWrite(value: value, note: note.map { $0 + " " + fullTagSentence } ?? "\(stream): " + fullTagSentence)
+        func write(_ action: LanguageWrite.Action, _ note: String?) -> LanguageWrite {
+            guard fullTagUnknown else { return LanguageWrite(action: action, note: note) }
+            return LanguageWrite(action: action, note: note.map { $0 + " " + fullTagSentence } ?? "\(stream): " + fullTagSentence)
         }
 
         // "Not known" in the source: `und` where it can be stored.
-        if canonical == "und" { return write(unknown, nil) }
+        if canonical == "und" { return write(unknownAction, nil) }
 
         let form = languageFieldForm(for: container)
-        if form == .fullTag { return write(canonical, nil) }
+        if form == .fullTag { return write(.write(canonical), nil) }
 
         let code = policyCode(for: tag, form: form)
         let lost = partsBeyondLanguage(tag)
@@ -588,18 +648,18 @@ extension TrackLanguage {
 
         // 1. The policy's code, when it loses nothing and is stored as it is.
         if let code, lost == nil, storage == .unchecked || storage.keeps(code) {
-            return write(code, nil)
+            return write(.write(code), nil)
         }
         if storage != .unchecked {
             // 2. The source's own text, when stored exactly and still the
             //    same language.
             if storage.keeps(copied), read(fileValue: copied).language == canonical {
-                return write(isReplacement ? copied : nil, "\(stream): \(reason); kept as the source had it.\(fix)")
+                return write(isReplacement ? .write(copied) : .copySource, "\(stream): \(reason); kept as the source had it.\(fix)")
             }
             // 3. The language's tag itself, as text.
             if storage.keeps(canonical) {
                 return write(
-                    canonical,
+                    .write(canonical),
                     "\(stream): \(reason), so “\(canonical)” is written into the field as it is, because copying "
                         + "the source's own field (“\(copied)”) would not keep it.\(fix)"
                 )
@@ -608,7 +668,7 @@ extension TrackLanguage {
         // 4. The code with the region or script cut.
         if let code, let lost, storage == .unchecked || storage.keeps(code) {
             return write(
-                code,
+                .write(code),
                 "\(stream): this file type can only store the language, so “\(lost)” in “\(canonical)” is not saved "
                     + "(written as “\(code)”)."
             )
@@ -616,12 +676,12 @@ extension TrackLanguage {
         // 5. Not known, and why.
         if storage == .quickTimeList, code == nil {
             return write(
-                unknown,
+                unknownAction,
                 "\(stream): this file type (QuickTime) can only store the languages on its old list, and "
                     + "“\(canonical)” is not on it, so \(unknownWords).\(fix)"
             )
         }
-        return write(unknown, "\(stream): \(reason), and " + limitWords(for: canonical, in: storage) + ", so \(unknownWords).\(fix)")
+        return write(unknownAction, "\(stream): \(reason), and " + limitWords(for: canonical, in: storage) + ", so \(unknownWords).\(fix)")
     }
 
     /// `text` when it is not a language tag at all (data probed before the
@@ -661,34 +721,39 @@ extension TrackLanguage {
         }
     }
 
-    /// The write for an edited language (see `editedLanguageField`).
+    /// The write for an edited language (see `editedLanguageField`). Where
+    /// the field gets nothing, `storeNothing` says how that is made true:
+    /// CLEAR it when ffmpeg would otherwise copy the source's value in —
+    /// an edit to `sv` going to MOV used to leave the source's `eng`.
     private static func editedWrite(
-        edited: String, field: EditedLanguageField, stream: String, storage: LanguageFieldStorage
+        edited: String, field: EditedLanguageField, stream: String, storage: LanguageFieldStorage,
+        storeNothing: LanguageWrite.Action
     ) -> LanguageWrite {
+        let action = field.value.map(LanguageWrite.Action.write) ?? storeNothing
         let unknownWords = field.value == nil ? "no language is stored" : "the language is written as “und” (not known)"
         switch field.limit {
         case .fits:
-            return LanguageWrite(value: field.value, note: nil)
+            return LanguageWrite(action: action, note: nil)
         case .notATag:
             return LanguageWrite(
-                value: field.value,
+                action: action,
                 note: "\(stream): “\(edited)”, set in the stream editor, is not a language tag, so \(unknownWords)."
             )
         case .noThreeLetterCode(let canonical):
             return LanguageWrite(
-                value: field.value,
+                action: action,
                 note: "\(stream): this file type can only store three-letter language codes, and “\(canonical)” has "
                     + "none, so \(unknownWords)."
             )
         case .losesParts(let lost, let canonical):
             return LanguageWrite(
-                value: field.value,
+                action: action,
                 note: "\(stream): this file type can only store the language, so “\(lost)” in “\(canonical)” is not "
                     + "saved (written as “\(field.value ?? "und")”)."
             )
         case .cannotStore(let canonical):
             return LanguageWrite(
-                value: nil,
+                action: storeNothing,
                 note: storage == .nothing
                     ? "\(stream): this file type has no place for a track's language, so “\(canonical)”, set in the "
                         + "stream editor, is not saved."

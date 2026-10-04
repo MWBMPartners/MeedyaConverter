@@ -258,11 +258,21 @@ final class MatroskaTrackListTests: XCTestCase {
         return (process.terminationStatus, data)
     }
 
-    /// The review's case end to end: four tracks tagged by mkvmerge as
-    /// `yue`, `cmn`, `nan` and `fr-CA`, remuxed with MeedyaConverter's own
-    /// arguments to MKV and to MP4. None may become `chi` or `fre`, and
-    /// Cantonese must never be titled "中文". Skipped without ffmpeg,
-    /// ffprobe and mkvmerge.
+    /// The review's case end to end: five tracks tagged by mkvmerge as
+    /// `yue`, `cmn`, `nan`, `fr-CA` and `apc` (Levantine Arabic), remuxed
+    /// with MeedyaConverter's own arguments to MKV, MP4 and MOV. mkvmerge
+    /// writes the old field as `chi`, `chi`, `chi`, `fre` and `ara`. None may
+    /// become `chi`, `fre` or `ara`, and Cantonese must never be titled
+    /// "中文".
+    ///
+    /// MOV (the third independent review's must-fix): its field holds only
+    /// ffmpeg's QuickTime list, which has none of `yue`, `cmn`, `nan`, `apc`
+    /// — so each must come out with NO language, and each note must say so
+    /// truthfully. The round-3 build gave ffmpeg nothing for them, so ffmpeg
+    /// copied the old field in: `chi` (which Apple's players read as
+    /// Traditional Chinese) and `ara`, under a note saying "no language is
+    /// stored". Read back with ffprobe AND with Apple's AVFoundation.
+    /// Skipped without ffmpeg, ffprobe and mkvmerge.
     func test_aRealMkvmergeFileKeepsItsLanguages() async throws {
         guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe"), let mkvmerge = tool("mkvmerge") else {
             throw XCTSkip("ffmpeg, ffprobe or mkvmerge not installed")
@@ -273,28 +283,34 @@ final class MatroskaTrackListTests: XCTestCase {
 
         let plain = folder.appendingPathComponent("plain.mkv")
         var arguments = ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4"]
-        for frequency in [440, 550, 660, 770] {
+        for frequency in [440, 550, 660, 770, 880] {
             arguments += ["-f", "lavfi", "-i", "sine=frequency=\(frequency):duration=0.4"]
         }
-        arguments += ["-map", "0", "-map", "1", "-map", "2", "-map", "3", "-map", "4", "-c:v", "mpeg4", "-c:a", "aac", plain.path]
+        arguments += ["-map", "0", "-map", "1", "-map", "2", "-map", "3", "-map", "4", "-map", "5",
+                      "-c:v", "mpeg4", "-c:a", "aac", plain.path]
         XCTAssertEqual(try run(ffmpeg, arguments).status, 0, "making the source")
 
         let tagged = folder.appendingPathComponent("tagged.mkv")
         let merged = try run(mkvmerge, ["-q", "-o", tagged.path, "--language", "1:yue", "--language", "2:cmn",
-                                        "--language", "3:nan", "--language", "4:fr-CA", plain.path])
+                                        "--language", "3:nan", "--language", "4:fr-CA", "--language", "5:apc", plain.path])
         XCTAssertLessThan(merged.status, 2, "mkvmerge (1 is warnings only)")
 
         let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: tagged)
         let audio = probed.streams.filter { $0.streamType == .audio }
-        XCTAssertEqual(audio.map(\.language), ["yue", "cmn", "nan", "fr-CA"], "the full tags win")
-        XCTAssertEqual(audio.map(\.languageAsStored), ["chi", "chi", "chi", "fre"], "what ffmpeg would copy")
+        XCTAssertEqual(audio.map(\.language), ["yue", "cmn", "nan", "fr-CA", "apc"], "the full tags win")
+        XCTAssertEqual(audio.map(\.languageAsStored), ["chi", "chi", "chi", "fre", "ara"], "what ffmpeg would copy")
 
-        for (name, container, expected) in [
-            ("out.mkv", ContainerFormat.mkv, ["cmn", "fr-CA", "nan", "yue"]),
-            ("out.mp4", ContainerFormat.mp4, ["cmn", "fra", "nan", "yue"])
-        ] {
+        // Each output: what ffprobe must read for each audio track, in order.
+        // `nil` = no language at all.
+        let cases: [(name: String, container: ContainerFormat, expected: [String?])] = [
+            ("out.mkv", .mkv, ["yue", "cmn", "nan", "fr-CA", "apc"]),
+            ("out.mp4", .mp4, ["yue", "cmn", "nan", "fra", "apc"]),
+            ("out.mov", .mov, [nil, nil, nil, "fra", nil])
+        ]
+        for (name, container, expected) in cases {
             let output = folder.appendingPathComponent(name)
             var profile = container == .mkv ? EncodingProfile.remuxToMKV : EncodingProfile.remuxToMP4
+            profile.containerFormat = container
             profile.orderTracksCanonically = false
             var config = EncodingJobConfig(inputURL: tagged, outputURL: output, profile: profile)
             config.sourceStreams = probed.streams
@@ -304,11 +320,28 @@ final class MatroskaTrackListTests: XCTestCase {
             XCTAssertEqual(status, 0)
             let streams = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["streams"] as? [[String: Any]] ?? []
             let tags = streams.filter { $0["codec_type"] as? String == "audio" }.map { $0["tags"] as? [String: Any] ?? [:] }
-            XCTAssertEqual(tags.compactMap { $0["language"] as? String }.sorted(), expected, "\(name): no chi or fre")
-            let cantonese = tags.first { $0["language"] as? String == "yue" }
-            XCTAssertNotNil(cantonese, "\(name): Cantonese is there")
-            XCTAssertNotEqual(cantonese?["title"] as? String, "中文", "\(name): Cantonese is not titled 中文")
-            XCTAssertEqual(config.trackWritingNotes().count, 4, "\(name): each is reported")
+            XCTAssertEqual(tags.map { $0["language"] as? String }, expected, "\(name): no chi, fre or ara")
+            if container == .mkv {
+                let cantonese = tags.first { $0["language"] as? String == "yue" }
+                XCTAssertNotNil(cantonese, "\(name): Cantonese is there")
+                XCTAssertNotEqual(cantonese?["title"] as? String, "中文", "\(name): Cantonese is not titled 中文")
+            }
+            XCTAssertEqual(config.trackWritingNotes().count, 5, "\(name): each is reported")
+            if container == .mov {
+                // The notes say what the file really holds.
+                for (stream, tag) in [(1, "yue"), (2, "cmn"), (3, "nan"), (5, "apc")] {
+                    XCTAssertTrue(config.trackWritingNotes().contains(
+                        "Stream #\(stream): this file type (QuickTime) can only store the languages on its old list, "
+                            + "and “\(tag)” is not on it, so no language is stored."
+                    ), "\(name): the note for \(tag)")
+                }
+                // And Apple's players read the same: no language on the four,
+                // French on the fifth — never Traditional Chinese or Arabic.
+                if let apple = try await MediaTools.appleAudioLanguages(of: output) {
+                    XCTAssertEqual(apple.map(\.isNone), [true, true, true, false, true], "\(name): AVFoundation \(apple)")
+                    XCTAssertEqual(apple.dropFirst(3).first?.code, "fra", "\(name): AVFoundation \(apple)")
+                }
+            }
         }
     }
 }

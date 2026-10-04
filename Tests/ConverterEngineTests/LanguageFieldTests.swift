@@ -19,6 +19,12 @@
 // stores (`TrackLanguage.LanguageFieldStorage`); ContainerLanguageToolTests
 // checks it against the real ffmpeg, and TrackPreservationToolTests checks
 // whole conversions.
+//
+// The third independent review found "no language is stored" (MOV) was not
+// true either: giving ffmpeg NO value made it COPY the source's own value in
+// (`chi` for mkvmerge's Cantonese, `eng` under an edit to `sv`). A write now
+// has three outcomes — copy the source's value, write a value, or CLEAR the
+// field (`TrackLanguage.LanguageWrite.Action`) — and these tests say which.
 // ============================================================================
 
 import Foundation
@@ -51,7 +57,7 @@ final class LanguageFieldTests: XCTestCase {
         for tag in ["yue", "cmn", "nan"] {
             for container: ContainerFormat in [.mkv, .mp4] {
                 let result = write(tag, to: container)
-                XCTAssertNil(result.value, "\(tag) in \(container)")
+                XCTAssertEqual(result.action, .copySource, "\(tag) in \(container)")
                 XCTAssertEqual(result.note, "Stream #2: language “\(tag)” has no three-letter code; kept as the source had it.")
             }
         }
@@ -59,10 +65,17 @@ final class LanguageFieldTests: XCTestCase {
 
     /// A real correction loses nothing and is still made.
     func test_realCodesAreStillWrittenInTheContainersForm() {
-        XCTAssertEqual(write("de", to: .mkv), .init(value: "ger", note: nil))
-        XCTAssertEqual(write("de", to: .mp4), .init(value: "deu", note: nil))
-        XCTAssertEqual(write("und", to: .mkv), .init(value: "und", note: nil), "the source said \"not known\"")
-        XCTAssertEqual(write(nil, to: .mkv), .init(value: nil, note: nil), "the source said nothing")
+        XCTAssertEqual(write("de", to: .mkv), .init(action: .write("ger"), note: nil))
+        XCTAssertEqual(write("de", to: .mp4), .init(action: .write("deu"), note: nil))
+        XCTAssertEqual(write("und", to: .mkv), .init(action: .write("und"), note: nil), "the source said \"not known\"")
+        XCTAssertEqual(write(nil, to: .mkv), .init(action: .copySource, note: nil), "the source said nothing")
+    }
+
+    /// What each outcome puts after `language=` in ffmpeg's arguments.
+    func test_eachOutcomesArgument() {
+        XCTAssertNil(TrackLanguage.LanguageWrite(action: .copySource, note: nil).argumentValue)
+        XCTAssertEqual(TrackLanguage.LanguageWrite(action: .write("ger"), note: nil).argumentValue, "ger")
+        XCTAssertEqual(TrackLanguage.LanguageWrite(action: .clear, note: nil).argumentValue, "")
     }
 
     /// An unrecognised value is left for ffmpeg to copy, with a note — in
@@ -70,7 +83,7 @@ final class LanguageFieldTests: XCTestCase {
     func test_unrecognisedValueIsKeptWhereTheFieldHoldsAnyText() {
         for container: ContainerFormat in [.mkv, .webm, .ogg] {
             let result = write("und", unrecognised: "english", to: container)
-            XCTAssertNil(result.value)
+            XCTAssertEqual(result.action, .copySource)
             XCTAssertTrue(result.note?.hasPrefix("Stream #2: the file's language “english” is not a language code; kept") == true)
         }
     }
@@ -80,22 +93,23 @@ final class LanguageFieldTests: XCTestCase {
     /// left it to ffmpeg and said "kept as the source had it" (this test
     /// asserted that). Now `und`, and a note saying exactly what would have
     /// happened. MPEG-TS stores only three-letter codes, so it gets `und` too;
-    /// MOV cannot even store `und`, so nothing is written there.
+    /// MOV cannot even store `und`, so its field is CLEARED there (given
+    /// nothing, ffmpeg would copy the source's text in).
     func test_unrecognisedValueIsNotLeftToBeCutOrDropped() {
         XCTAssertEqual(write("und", unrecognised: "romanian", to: .mp4), .init(
-            value: "und",
+            action: .write("und"),
             note: "Stream #2: the file's language “romanian” is not a language code, and this file type would keep only "
                 + "its first three letters, “rom”, which is itself a language code, and may not be the language meant, "
                 + "so it is written as “und” (not known). Set the right language in the stream editor if you know it."
         ))
         XCTAssertEqual(write("und", unrecognised: "romanian", to: .mpegTS), .init(
-            value: "und",
+            action: .write("und"),
             note: "Stream #2: the file's language “romanian” is not a language code, and this file type can only store "
                 + "codes of exactly three letters, so it is written as “und” (not known). Set the right language in the "
                 + "stream editor if you know it."
         ))
         let mov = write("und", unrecognised: "english", to: .mov)
-        XCTAssertNil(mov.value)
+        XCTAssertEqual(mov.action, .clear)
         XCTAssertEqual(
             mov.note,
             "Stream #2: the file's language “english” is not a language code, and this file type (QuickTime) can only "
@@ -110,7 +124,7 @@ final class LanguageFieldTests: XCTestCase {
     /// kept, and reported as not registered (the review's second example).
     func test_unregisteredTagIsKeptAndReportedAsSuch() {
         let result = write("xx-bogus", to: .mkv)
-        XCTAssertNil(result.value)
+        XCTAssertEqual(result.action, .copySource)
         XCTAssertEqual(
             result.note,
             "Stream #2: the file's language “xx-bogus” is not a registered language code; kept as the source had it. "
@@ -122,33 +136,38 @@ final class LanguageFieldTests: XCTestCase {
     /// hold the language, and says so.
     func test_regionIsKeptWhereTheFieldCanHoldIt() {
         let matroska = write("fr-CA", to: .mkv)
-        XCTAssertNil(matroska.value)
+        XCTAssertEqual(matroska.action, .copySource)
         XCTAssertEqual(
             matroska.note,
             "Stream #2: language “fr-CA” cannot be written to this file type's three-letter language field "
                 + "without losing “CA”; kept as the source had it."
         )
         let mp4 = write("fr-CA", to: .mp4)
-        XCTAssertEqual(mp4.value, "fra")
+        XCTAssertEqual(mp4.action, .write("fra"))
         XCTAssertEqual(mp4.note, "Stream #2: this file type can only store the language, so “CA” in “fr-CA” is not saved (written as “fra”).")
     }
 
     /// Free-text fields (Ogg) take the whole canonical tag: nothing lost.
     func test_freeTextFieldsGetTheWholeTag() {
-        XCTAssertEqual(write("yue", to: .ogg), .init(value: "yue", note: nil))
-        XCTAssertEqual(write("zh-Hant-TW", to: .ogg), .init(value: "zh-Hant-TW", note: nil))
+        XCTAssertEqual(write("yue", to: .ogg), .init(action: .write("yue"), note: nil))
+        XCTAssertEqual(write("zh-Hant-TW", to: .ogg), .init(action: .write("zh-Hant-TW"), note: nil))
     }
 
     /// A replacement stream comes from a separate file with no tags, so
     /// "leave it for ffmpeg to copy" would lose it: the value is written.
+    /// Where the output stores no language, a replacement's field is cleared
+    /// too (its own file could carry a value).
     func test_replacementStreamsGetTheSourcesValueWritten() {
-        XCTAssertEqual(write("yue", to: .mkv, replacement: true).value, "yue")
-        XCTAssertEqual(write("und", unrecognised: "english", to: .mkv, replacement: true).value, "english")
+        XCTAssertEqual(write("yue", to: .mkv, replacement: true).action, .write("yue"))
+        XCTAssertEqual(write("und", unrecognised: "english", to: .mkv, replacement: true).action, .write("english"))
+        XCTAssertEqual(write("sv", to: .mov, replacement: true).action, .clear)
     }
 
-    /// With the source's metadata dropped, nothing of the source's is written.
+    /// With the source's metadata dropped, nothing of the source's is written
+    /// — and nothing is copied either, so there is nothing to clear.
     func test_droppedSourceMetadataWritesNothing() {
-        XCTAssertEqual(write("yue", to: .mkv, keepSource: false), .init(value: nil, note: nil))
+        XCTAssertEqual(write("yue", to: .mkv, keepSource: false), .init(action: .copySource, note: nil))
+        XCTAssertEqual(write("yue", stored: "chi", to: .mov, keepSource: false), .init(action: .copySource, note: nil))
     }
 
     // MARK: - What each file type stores (second review, must-fix 3)
@@ -191,68 +210,104 @@ final class LanguageFieldTests: XCTestCase {
     /// list (Swedish is listed as `sve`, which is not a language code and
     /// reads back as something else) cannot be kept, and the note says so.
     func test_movGetsTheQuickTimeListsCode() {
-        XCTAssertEqual(write("de", to: .mov), .init(value: "ger", note: nil))
-        XCTAssertEqual(write("zh", to: .mov), .init(value: "chi", note: nil))
-        XCTAssertEqual(write("el", to: .mov), .init(value: "gre", note: nil))
-        XCTAssertEqual(write("ja", to: .mov), .init(value: "jpn", note: nil))
-        XCTAssertEqual(write("hr", to: .mov), .init(value: "hr ", note: nil), "the list's own label, space and all")
-        XCTAssertEqual(write("und", to: .mov), .init(value: nil, note: nil), "MOV cannot store und; nothing is lost")
+        XCTAssertEqual(write("de", to: .mov), .init(action: .write("ger"), note: nil))
+        XCTAssertEqual(write("zh", to: .mov), .init(action: .write("chi"), note: nil))
+        XCTAssertEqual(write("el", to: .mov), .init(action: .write("gre"), note: nil))
+        XCTAssertEqual(write("ja", to: .mov), .init(action: .write("jpn"), note: nil))
+        XCTAssertEqual(write("hr", to: .mov), .init(action: .write("hr "), note: nil), "the list's own label, space and all")
+        // MOV cannot store `und`: the field is cleared, which stores no
+        // language — "not known" either way, so nothing is lost or noted.
+        XCTAssertEqual(write("und", to: .mov), .init(action: .clear, note: nil))
         XCTAssertEqual(write("sv", to: .mov), .init(
-            value: nil,
+            action: .clear,
             note: "Stream #2: this file type (QuickTime) can only store the languages on its old list, and “sv” is not "
                 + "on it, so no language is stored."
         ))
         XCTAssertEqual(write("zh-Hant", to: .mov), .init(
-            value: "chi",
+            action: .write("chi"),
             note: "Stream #2: this file type can only store the language, so “Hant” in “zh-Hant” is not saved "
                 + "(written as “chi”)."
         ))
         XCTAssertEqual(TrackLanguage.languageFieldForm(for: .mov), .quickTimeList)
     }
 
+    /// "No language is stored" must be TRUE (third independent review, its
+    /// must-fix): giving ffmpeg nothing made it copy the source's own value,
+    /// and MOV keeps whatever is on its QuickTime list. mkvmerge writes `chi`
+    /// in the old field for Cantonese, Mandarin and Min Nan, and `ara` for
+    /// Levantine Arabic — all on the list, so all came out as that. Now the
+    /// field is CLEARED, and the note is true.
+    func test_movStoresNoLanguageByClearingTheField() {
+        for (tag, oldField) in [("yue", "chi"), ("cmn", "chi"), ("nan", "chi"), ("apc", "ara")] {
+            let result = write(tag, stored: oldField, to: .mov)
+            XCTAssertEqual(result.action, .clear, tag)
+            XCTAssertEqual(
+                result.note,
+                "Stream #2: this file type (QuickTime) can only store the languages on its old list, and “\(tag)” is "
+                    + "not on it, so no language is stored.",
+                tag
+            )
+        }
+        // Edits: an edit to `sv` (not storable) or to `english` (not a tag)
+        // used to leave the source's `eng` in the file.
+        XCTAssertEqual(write("en", stored: "eng", edited: "sv", to: .mov).action, .clear)
+        XCTAssertEqual(write("en", stored: "eng", edited: "english", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: “english”, set in the stream editor, is not a language tag, so no language is stored."
+        ))
+        // An edit to `und`: MOV cannot store it, so the output has no
+        // language — which is what "not known" means. No note.
+        XCTAssertEqual(write("en", stored: "eng", edited: "und", to: .mov), .init(action: .clear, note: nil))
+        // With nothing in the source, there is nothing to clear.
+        XCTAssertEqual(write(nil, edited: "sv", to: .mov).action, .copySource)
+    }
+
     /// MPEG-TS keeps codes of exactly three letters, so `yue` is kept as it
     /// is; a region is cut with a note.
     func test_transportStreamKeepsThreeLetterCodes() {
-        XCTAssertEqual(write("yue", to: .mpegTS).value, nil)
+        XCTAssertEqual(write("yue", to: .mpegTS).action, .copySource)
         XCTAssertEqual(write("yue", to: .mpegTS).note, "Stream #2: language “yue” has no three-letter code; kept as the source had it.")
-        XCTAssertEqual(write("de", to: .mpegTS), .init(value: "deu", note: nil))
-        XCTAssertEqual(write("fr-CA", stored: "fr-CA", to: .mpegTS).value, "fra")
+        XCTAssertEqual(write("de", to: .mpegTS), .init(action: .write("deu"), note: nil))
+        XCTAssertEqual(write("fr-CA", stored: "fr-CA", to: .mpegTS).action, .write("fra"))
     }
 
     /// A file type with no place for a track's language says so — the
-    /// round-2 build wrote a code there, which vanished without a word.
+    /// round-2 build wrote a code there, which vanished without a word. The
+    /// field is cleared too, so "not kept" stays true even if a later
+    /// ffmpeg began to store something there.
     func test_fileTypesWithNoLanguageFieldSaySo() {
         XCTAssertEqual(write("en", to: .avi), .init(
-            value: nil, note: "Stream #2: this file type has no place for a track's language, so “en” is not kept."
+            action: .clear, note: "Stream #2: this file type has no place for a track's language, so “en” is not kept."
         ))
-        XCTAssertEqual(write("und", to: .avi), .init(value: nil, note: nil), "“not known” loses nothing")
-        XCTAssertEqual(write(nil, to: .avi), .init(value: nil, note: nil))
+        XCTAssertEqual(write("und", to: .avi), .init(action: .clear, note: nil), "“not known” loses nothing")
+        XCTAssertEqual(write(nil, to: .avi), .init(action: .copySource, note: nil))
     }
 
     /// When the source's own field says LESS than its language — mkvmerge
     /// writes `chi` in the old field for Cantonese `yue` — copying it would
     /// turn Cantonese into Chinese. The language's own tag is written
     /// instead, where the file type keeps it as it is (Matroska, MP4), with
-    /// a note; MOV cannot keep it and says so.
+    /// a note; MOV cannot keep it and says so — and CLEARS its field, which
+    /// would otherwise get `chi` copied in (the third review's must-fix).
     func test_aSourceFieldThatSaysLessIsNotCopied() {
         XCTAssertEqual(write("yue", stored: "chi", to: .mkv), .init(
-            value: "yue",
+            action: .write("yue"),
             note: "Stream #2: language “yue” has no three-letter code, so “yue” is written into the field as it is, "
                 + "because copying the source's own field (“chi”) would not keep it."
         ))
-        XCTAssertEqual(write("yue", stored: "chi", to: .mp4).value, "yue")
-        XCTAssertNil(write("yue", stored: "chi", to: .mov).value)
-        XCTAssertEqual(write("fr-CA", stored: "fre", to: .mkv).value, "fr-CA")
-        XCTAssertEqual(write("fr-CA", stored: "fre", to: .mp4).value, "fra")
+        XCTAssertEqual(write("yue", stored: "chi", to: .mp4).action, .write("yue"))
+        XCTAssertEqual(write("yue", stored: "chi", to: .mov).action, .clear)
+        XCTAssertEqual(write("fr-CA", stored: "fre", to: .mkv).action, .write("fr-CA"))
+        XCTAssertEqual(write("fr-CA", stored: "fre", to: .mp4).action, .write("fra"))
         // The source's own text is copied when it says the same.
-        XCTAssertNil(write("fr-CA", stored: "fre-ca", to: .mkv).value)
+        XCTAssertEqual(write("fr-CA", stored: "fre-ca", to: .mkv).action, .copySource)
     }
 
     /// With no file type known nothing can be promised: the code is written
     /// as before, and anything else becomes `und`, saying why.
     func test_anUnknownFileTypeWritesCodesOrUnd() {
-        XCTAssertEqual(write("de", to: nil), .init(value: "deu", note: nil))
-        XCTAssertEqual(write("yue", to: nil).value, "und")
+        XCTAssertEqual(write("de", to: nil), .init(action: .write("deu"), note: nil))
+        XCTAssertEqual(write("yue", to: nil).action, .write("und"))
         XCTAssertTrue(write("yue", to: nil).note?.contains("the output's file type is not known") == true)
     }
 
@@ -260,35 +315,36 @@ final class LanguageFieldTests: XCTestCase {
 
     func test_editedTagsAreWrittenWithANoteWhenSomethingCannotBeStored() {
         XCTAssertEqual(write("fr", edited: "en-GB", to: .mkv), .init(
-            value: "eng",
+            action: .write("eng"),
             note: "Stream #2: this file type can only store the language, so “GB” in “en-GB” is not saved (written as “eng”)."
         ))
-        XCTAssertEqual(write("fr", edited: "en-GB", to: .ogg), .init(value: "en-GB", note: nil))
+        XCTAssertEqual(write("fr", edited: "en-GB", to: .ogg), .init(action: .write("en-GB"), note: nil))
         XCTAssertEqual(write("fr", edited: "yue", to: .mp4), .init(
-            value: "und",
+            action: .write("und"),
             note: "Stream #2: this file type can only store three-letter language codes, and “yue” has none, "
                 + "so the language is written as “und” (not known)."
         ))
-        XCTAssertEqual(write("fr", edited: "de", to: .mkv), .init(value: "ger", note: nil))
+        XCTAssertEqual(write("fr", edited: "de", to: .mkv), .init(action: .write("ger"), note: nil))
         // `und-GB`: it is the REGION that cannot be stored (the round-2
         // build said "und-GB has no three-letter code").
         XCTAssertEqual(write("fr", edited: "und-GB", to: .mkv), .init(
-            value: "und",
+            action: .write("und"),
             note: "Stream #2: this file type can only store the language, so “GB” in “und-GB” is not saved (written as “und”)."
         ))
         XCTAssertEqual(StreamMetadataEditor.storageNote(for: "und-GB", in: .mkv),
                        "This file type can only store the language, so “GB” will not be saved.")
-        // MOV and the file types with no language field.
-        XCTAssertEqual(write("fr", edited: "de", to: .mov), .init(value: "ger", note: nil))
-        XCTAssertEqual(write("fr", edited: "sv", to: .mov).value, nil)
+        // MOV and the file types with no language field: the source's `fr`
+        // is CLEARED, not left to be copied in.
+        XCTAssertEqual(write("fr", edited: "de", to: .mov), .init(action: .write("ger"), note: nil))
+        XCTAssertEqual(write("fr", edited: "sv", to: .mov).action, .clear)
         XCTAssertEqual(StreamMetadataEditor.storageNote(for: "sv", in: .mov),
                        "This file type (QuickTime) can only store the languages on its old list, and “sv” is not on it, "
-                           + "so no language will be saved.")
+                           + "so the track will have no language.")
         XCTAssertEqual(write("fr", edited: "de", to: .avi), .init(
-            value: nil, note: "Stream #2: this file type has no place for a track's language, so “de”, set in the stream editor, is not saved."
+            action: .clear, note: "Stream #2: this file type has no place for a track's language, so “de”, set in the stream editor, is not saved."
         ))
         XCTAssertEqual(StreamMetadataEditor.storageNote(for: "de", in: .avi),
-                       "This file type has no place for a track's language, so it will not be saved.")
+                       "This file type has no place for a track's language, so the track will have no language.")
     }
 
     // MARK: - The policy's data
@@ -329,5 +385,43 @@ final class LanguageFieldTests: XCTestCase {
             XCTAssertEqual(languages, written, "\(output): what is written")
             XCTAssertEqual(builder.trackWritingNotes().count, 2, "\(output): yue and xx-bogus are reported")
         }
+    }
+
+    /// The command CLEARS what MOV cannot store (`language=`, an empty
+    /// value), on the output stream each source stream became: mkvmerge's
+    /// Cantonese (old field `chi`), an edit to `sv`, and an unedited
+    /// `und`. German still gets the QuickTime list's `ger`.
+    func test_theBuilderClearsWhatMOVCannotStore() {
+        let sources = [
+            MediaStream(streamIndex: 0, streamType: .video, disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, language: "yue", languageAsStored: "chi",
+                        disposition: StreamDisposition()),
+            MediaStream(streamIndex: 2, streamType: .audio, language: "en", languageAsStored: "eng",
+                        disposition: StreamDisposition()),
+            MediaStream(streamIndex: 3, streamType: .audio, language: "de", languageAsStored: "ger",
+                        disposition: StreamDisposition()),
+            MediaStream(streamIndex: 4, streamType: .audio, language: "und", languageAsStored: "und",
+                        disposition: StreamDisposition())
+        ]
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mkv")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mov")
+        builder.sourceStreams = sources
+        builder.mapAllStreams = true
+        builder.videoPassthrough = true
+        builder.audioPassthrough = true
+        builder.orderTracksCanonically = false
+        var swedish = SourceStreamEdit()
+        swedish.language = "sv"
+        builder.sourceStreamEdits = [2: swedish]
+        let args = builder.build()
+        let languages = zip(args, args.dropFirst())
+            .filter { $0.0.hasPrefix("-metadata:s:") && $0.1.hasPrefix("language=") }
+            .map { "\($0.0) \($0.1)" }
+        XCTAssertEqual(languages, [
+            "-metadata:s:a:0 language=", "-metadata:s:a:1 language=", "-metadata:s:a:2 language=ger",
+            "-metadata:s:a:3 language="
+        ])
+        XCTAssertEqual(builder.trackWritingNotes().count, 2, "yue and the sv edit are reported; und is not a loss")
     }
 }

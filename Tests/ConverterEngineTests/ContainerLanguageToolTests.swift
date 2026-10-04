@@ -142,6 +142,45 @@ final class ContainerLanguageToolTests: XCTestCase {
         print("TRACK-070 table check: \(rows.count) file types × \(values.count) values, \(mismatches.count) mismatches")
     }
 
+    /// The fact `TrackLanguage.LanguageWrite.Action.clear` rests on: an
+    /// EMPTY value (`-metadata:s:a:0 language=`) removes the language, where
+    /// giving ffmpeg nothing copies the source's own value in. The third
+    /// independent review found MOV outputs holding the copied `chi` and
+    /// `eng` under a note saying "no language is stored". MOV then stores no
+    /// language (Apple's AVFoundation reads `und`), MP4 stores `und` (its
+    /// writer's value for "none"), and Matroska, MPEG-TS and Ogg store none.
+    func test_anEmptyValueClearsTheField() async throws {
+        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
+            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meedya-lang-clear-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("source.mkv")
+        XCTAssertEqual(try run(ffmpeg, [
+            "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+            "-c:a", "aac", "-metadata:s:a:0", "language=eng", source.path
+        ]).status, 0, "making the source")
+
+        for (muxer, fileExtension, codec, cleared) in [
+            ("mov", "mov", "aac", nil), ("mp4", "mp4", "aac", "und"), ("matroska", "mkv", "aac", nil),
+            ("mpegts", "ts", "aac", nil), ("ogg", "ogg", "flac", nil)
+        ] as [(String, String, String, String?)] {
+            for (clear, expected) in [(false, "eng"), (true, cleared)] {
+                let output = folder.appendingPathComponent("\(clear ? "cleared" : "copied").\(fileExtension)")
+                let made = try run(ffmpeg, ["-v", "error", "-y", "-i", source.path, "-map", "0", "-c:a", codec]
+                    + (clear ? ["-metadata:s:a:0", "language="] : []) + ["-f", muxer, output.path])
+                XCTAssertEqual(made.status, 0, "\(muxer), cleared: \(clear)")
+                let read = (try rawStreams(ffprobe, output).first?["tags"] as? [String: Any])?["language"] as? String
+                XCTAssertEqual(read, expected, "\(muxer), cleared: \(clear)")
+                if muxer == "mov", let apple = try await MediaTools.appleAudioLanguages(of: output) {
+                    XCTAssertEqual(apple.map(\.isNone), [clear], "MOV, cleared: \(clear) — AVFoundation \(apple)")
+                }
+            }
+        }
+    }
+
     // MARK: - The check
 
     func test_ffmpegWritesTheLanguageFieldsWeRelyOn() async throws {

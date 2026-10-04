@@ -398,6 +398,44 @@ final class TrackPreservationToolTests: XCTestCase {
         XCTAssertEqual(job.trackWritingNotes().count, 2)
     }
 
+    /// An edit MOV cannot store must leave the track with NO language: `sv`
+    /// (Swedish is not on ffmpeg's QuickTime list as a language code) and
+    /// `english` (not a language tag at all, as a job file could carry).
+    /// The round-3 build gave ffmpeg nothing for them, so ffmpeg copied the
+    /// source's `eng` in — under a note saying "no language is stored" (the
+    /// third independent review's must-fix). Read back with ffprobe and
+    /// with Apple's AVFoundation.
+    func test_editsMOVCannotStoreLeaveNoLanguage() async throws {
+        let source = try make("english.mkv", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3",
+            "-f", "lavfi", "-i", "sine=frequency=550:duration=0.3",
+            "-map", "0", "-map", "1", "-c:a", "aac",
+            "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=eng"
+        ])
+        let output = folder.appendingPathComponent("out.mov")
+        var profile = EncodingProfile.remuxToMKV
+        profile.containerFormat = .mov
+        profile.orderTracksCanonically = false
+        var config = EncodingJobConfig(inputURL: source, outputURL: output, profile: profile)
+        config.sourceStreams = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: source).streams
+        var swedish = SourceStreamEdit()
+        swedish.language = "sv"
+        var notATag = SourceStreamEdit()
+        notATag.language = "english"
+        config.sourceStreamEdits = [0: swedish, 1: notATag]
+        XCTAssertEqual(try run(ffmpeg, ["-v", "error"] + config.buildArguments()).status, 0, "encoding out.mov")
+
+        XCTAssertEqual(try streams(output).map(\.language), [nil, nil], "ffprobe: no language on either track")
+        if let apple = try await MediaTools.appleAudioLanguages(of: output) {
+            XCTAssertEqual(apple.map(\.isNone), [true, true], "AVFoundation: \(apple)")
+        }
+        XCTAssertEqual(config.trackWritingNotes(), [
+            "Stream #0: this file type (QuickTime) can only store the languages on its old list, and “sv”, set in "
+                + "the stream editor, is not on it, so no language is stored.",
+            "Stream #1: “english”, set in the stream editor, is not a language tag, so no language is stored."
+        ])
+    }
+
     /// Two untitled audio tracks in Matroska get their languages' own names.
     func test_untitledTracksInMatroskaGetAutomaticTitles() async throws {
         let source = try make("two.mka", [

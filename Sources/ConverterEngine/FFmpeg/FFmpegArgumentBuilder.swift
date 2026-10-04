@@ -1193,11 +1193,22 @@ public struct FFmpegArgumentBuilder: Sendable {
                 // (a language with no three-letter code, an unrecognised
                 // value, a region in Matroska): then the source's own text is
                 // kept, but only where this file type's writer really stores
-                // it; otherwise `und`, with a note saying why. Nothing is
-                // written when `value` is nil. See `languageWrite(for:…)` and
+                // it; otherwise `und`, with a note saying why. THREE
+                // outcomes: give ffmpeg nothing (it copies the source's own
+                // value), write a value, or CLEAR the field with an empty
+                // value, where the answer is "no language is stored" and
+                // ffmpeg would otherwise copy the source's value in (the
+                // third independent review found MOV outputs keeping `chi`
+                // and `eng` under that note). See `languageWrite(for:…)`,
+                // `TrackLanguage.LanguageWrite.Action` and
                 // `TrackLanguage.LanguageFieldStorage`.
-                if let value = languageWrite(for: entry, sources: sources, container: container).value {
+                switch languageWrite(for: entry, sources: sources, container: container).action {
+                case .copySource:
+                    break
+                case .write(let value):
                     args.append(contentsOf: ["-metadata:s:\(specifier)", "language=\(value)"])
+                case .clear:
+                    args.append(contentsOf: ["-metadata:s:\(specifier)", "language="])
                 }
 
                 // Title: the editor's title if one was set (an empty one

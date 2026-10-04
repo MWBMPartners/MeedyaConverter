@@ -534,11 +534,16 @@ public struct StreamMetadataEditor: Sendable {
         case .losesParts(let lost, _):
             return "This file type can only store the language, so “\(lost)” will not be saved."
         case .cannotStore(let canonical):
+            // "The track will have no language" — not "no language will be
+            // saved", which reads as though the track's OLD language stays.
+            // And it is true: the command clears the field rather than let
+            // ffmpeg copy the source's language in (the third independent
+            // review found an edit to `sv` leaving `eng` in a MOV file).
             if TrackLanguage.languageFieldStorage(for: container) == .nothing {
-                return "This file type has no place for a track's language, so it will not be saved."
+                return "This file type has no place for a track's language, so the track will have no language."
             }
             return "This file type (QuickTime) can only store the languages on its old list, and “\(canonical)” "
-                + "is not on it, so no language will be saved."
+                + "is not on it, so the track will have no language."
         }
     }
 
