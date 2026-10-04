@@ -35,14 +35,17 @@
   three-letter field has no code for (such as Cantonese, `yue`) or a value
   nobody can read is kept as the file had it wherever the output's file type
   really stores it (Matroska, WebM and Ogg store any text; MP4 only three
-  lower-case letters; MOV only the languages on its old QuickTime list;
-  MPEG-TS only three-letter codes; AVI and some others no language at all).
-  Where it would be cut or dropped, it is written as "not known" instead — a
-  cut such as `romanian` → `rom` would name a different language — and the
-  job's log says exactly what happened. Cover art stays cover art in MP4 and
-  in Matroska (attached under its own name and description); a file type
-  that can't hold a picture (WebM, MOV, MPEG-TS, AVI, Ogg and others) leaves
-  it out, and the log says so. Matroska files made by mkvmerge keep their
+  lower-case letters; MOV only the languages on its old QuickTime list, as
+  Apple's players read them; MPEG-TS only three-letter codes; AVI and some
+  others no language at all). Where it would be cut or dropped, it is written
+  as "not known" instead — or, in MOV, where even that can't be stored, the
+  track is given no language at all — because a cut such as `romanian` →
+  `rom` would name a different language; the job's log says exactly what
+  happened. Cover art stays cover art in MP4 (when it is JPEG, PNG or BMP —
+  the only kinds MP4 takes) and in Matroska (attached under its own name and
+  description); a picture MP4 can't take, or a file type that can't hold a
+  picture at all (WebM, MOV, MPEG-TS, AVI, Ogg and others), leaves it out,
+  and the log says so. Matroska files made by mkvmerge keep their
   full language (`yue`, `fr-CA`), which ffmpeg alone would read as `chi` or
   `fre`. Where a track has no
   title at all, the file type keeps track titles (Matroska, WebM) and the
@@ -163,12 +166,17 @@
   output, where the app never showed them and they could break
   `--format json` output.
 - **MOV (QuickTime) outputs** now get their track languages from the old
-  QuickTime list ffmpeg's MOV writer understands — `ger`, `fra`, `chi`,
-  `jpn`, `gre` — instead of the codes it silently dropped (`deu`, `zho`,
-  `ell`). A language not on that list (Swedish, Cantonese, …) can't be
-  stored in a MOV file, and the job's log now says so. MOV also keeps no
-  track role but "default" — commentary, SDH and the rest are lost; #541
-  will make the log say so.
+  QuickTime list ffmpeg's MOV writer understands — `ger`, `fra`, `jpn`,
+  `gre` — instead of the codes it silently dropped (`deu`, `zho`, `ell`),
+  and only where Apple's players read that entry as the same language:
+  Apple reads the list's Chinese entry as Traditional Chinese, so it is used
+  only for Traditional Chinese (`zh-Hant`), and likewise Azerbaijani only in
+  Cyrillic and Mongolian only in Mongolian script. Any other language —
+  Chinese without that script, Swedish and Irish (whose entries are not real
+  language codes, so no other program can read them back), Cantonese, … —
+  can't be stored in a MOV file: the track is given no language at all, and
+  the job's log says why. MOV also keeps no track role but "default" —
+  commentary, SDH and the rest are lost; #541 will make the log say so.
 - **Cover art in a file type that can't hold it** (WebM, MOV, MPEG-TS,
   MPEG-PS, AVI, Ogg, FLV, AIFF, CAF, W64/RF64, MXF, 3GP) is now left out on
   purpose, with a line in the job's log, and so is cover art in an output
@@ -185,6 +193,24 @@
 
 ### Fixed
 
+- **MOV outputs kept a language the log said was not stored**: given no
+  value, ffmpeg copied the source's own — Cantonese, Mandarin and Min Nan
+  from mkvmerge files came out as "Chinese" (which Apple's players read as
+  Traditional Chinese), and a track set to Swedish in the stream editor kept
+  its old English — while the log said "no language is stored". The
+  language is now removed, so the log is true.
+- **A GIF or TIFF cover made an MP4 conversion fail** — ffmpeg's MP4 writer
+  takes only JPEG, PNG or BMP cover art. Such a picture is now left out, with
+  a note, and the job succeeds.
+- **An unregistered language (such as `xx-bogus`) went into Ogg without a
+  word**; it is kept, and the log now says it is not a registered language,
+  as it already did for Matroska.
+- **Reading a Matroska file's own track list could take half a minute and
+  hundreds of megabytes** for a damaged or hostile file with millions of empty
+  track entries, and a file padded with thousands of filler elements before
+  its track list was not read at all. The list is now walked without copying,
+  filler is skipped, and a list of more than 1,024 tracks is treated as
+  unreadable (the log then says the full language could not be read).
 - **A film with cover art could not be converted to WebM** — ffmpeg refused
   the whole job. The picture is now left out, with a note.
 - **Cover art turned into a stray extra stream** in MPEG-TS (a data stream)

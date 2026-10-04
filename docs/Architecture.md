@@ -347,25 +347,50 @@ log says so — and says it truly (`TrackLanguage.languageWrite`,
   HLS); nothing (AVI, FLV, MPEG-PS, MXF, AIFF, CAF, W64, RF64). The second
   review found notes saying "kept as the source had it" where MP4 had cut the
   value to a different language and MPEG-TS and MOV had dropped it;
+- a write has THREE outcomes (`TrackLanguage.LanguageWrite.Action`): give
+  ffmpeg nothing, so it copies the source's own value; write a value; or
+  CLEAR the field with an empty value (`language=`), which stores no
+  language whatever the source had. The third review found MOV notes saying
+  "no language is stored" while ffmpeg, given nothing, had copied the
+  source's `chi` or `eng` in; now "no language" is always a clear (checked by
+  `ContainerLanguageToolTests.test_anEmptyValueClearsTheField`);
+- MOV's list is read as APPLE'S players read it
+  (`TrackLanguage.quickTimeCodesByTag`): the file stores an old Macintosh
+  language number, and Apple reads `chi` as Traditional Chinese (`zh-Hant`),
+  `aze` as Azerbaijani in Cyrillic, `mon` as Mongolian in Mongolian script —
+  so each is written only for that tag, and plain `zh`, `zh-Hans`, `az` and
+  `mn` store no language, with a note saying why. `sve` and `iri` (Swedish,
+  Irish to Apple) are not language codes, so no other program can read them
+  back; they are never written. Every entry written is re-checked with
+  AVFoundation (`test_movCodesAreWhatApplesPlayersRead`);
 - a track's language gets, in this order: the policy's code where it loses
   nothing (`deu` → `ger` in Matroska is a correction; MOV gets the QuickTime
-  list's entry, `ger`, `chi`); else the source's own text, left for ffmpeg to
-  copy, only where this file type stores it exactly and it still reads as the
-  same language (`yue` in MP4 or Matroska, `fr-CA` in Matroska); else the
+  list's entry Apple's players read as the same language, `ger`, and `chi`
+  for `zh-Hant`); else the source's own text, left for ffmpeg to copy, only
+  where this file type stores it exactly and it still reads as the same
+  language once stored (`yue` in MP4 or Matroska, `fr-CA` in Matroska; never
+  a `chi` that would become Traditional Chinese in MOV); else the
   language's own tag as text where that is stored exactly (needed for
   mkvmerge files, whose old field says `chi` for Cantonese); else the code
-  with the region cut (`fr-CA` → `fra` in MP4); else `und` — or nothing where
-  even that cannot be stored — with a note. The tool is never left to cut a
-  value (`romanian` → `rom`, Romany) or drop it;
+  with the region cut (`fr-CA` → `fra` in MP4); else `und` — or, where even
+  that cannot be stored (MOV, the file types with no field), NO language, the
+  field cleared — with a note. The tool is never left to cut a value
+  (`romanian` → `rom`, Romany) or drop it. An unregistered language
+  (`xx-bogus`) is kept where the field holds any text — Ogg included — and
+  noted as not registered;
 - every stream flag is kept — the roles and also `attached_pic` and any other
   flag ffprobe reports — and an edit changes only the flags it can (MOV keeps
   none but "default": #541);
 - cover art (`attached_pic`) is not a track: it goes after every real track,
   is copied rather than re-encoded, and in Matroska is attached again as a
   file under its own name, MIME type and description (ffmpeg's Matroska
-  muxer would otherwise make it a video track). A file type that cannot hold
-  a picture — WebM, MOV, MPEG-TS, AVI, Ogg and others — and an output with
-  no video leave it out, with a note (`AttachedPictures.pictureSupport`).
+  muxer would otherwise make it a video track). The MP4 family keeps it as
+  cover art only when it is JPEG, PNG or BMP — ffmpeg's MP4 writer refuses the
+  whole job for any other picture (GIF, TIFF, WebP) — so any other is left
+  out, with a note (`AttachedPictures.mp4CoverArtCodecs`). A file type that
+  cannot hold a picture — WebM, MOV, MPEG-TS, AVI, Ogg and others — and an
+  output with no video leave it out, with a note
+  (`AttachedPictures.pictureSupport`).
 
 The job's notes reach the app's Activity Log through `EncodingEngine
 .jobNotices`, the command-line tool's standard error, a pipeline's log lines
@@ -384,14 +409,19 @@ Checked with ffmpeg 9.0.1 and MKVToolNix 101 (details in
 `TrackLanguage.LanguageFieldStorage` and `MatroskaTrackList`, and re-checked on
 every machine with ffmpeg by `ContainerLanguageToolTests` — the whole table,
 file type by file type — `TrackPreservationToolTests` and
-`MatroskaTrackListTests`): Matroska gets only its old `Language` field, so the
+`MatroskaTrackListTests`; CI's build-and-test job installs ffmpeg and
+MKVToolNix and sets `MEEDYA_REQUIRE_MEDIA_TOOLS=1`, so there these tests FAIL
+rather than skip when a tool is missing — see
+`Tests/ConverterEngineTests/MediaToolSupport.swift`): Matroska gets only its old `Language` field, so the
 **bibliographic** code is written (`ger`); ffmpeg cannot write or keep
 `LanguageBCP47`, and does not read it — MeedyaConverter reads the file's track
-list itself for that (`MatroskaTrackList`; where it cannot be read and the
-file's writer may have written full tags, the log says a fuller language may
-be lost and no automatic title is made from the old code). MP4 gets its
+list itself for that (`MatroskaTrackList` — a bounded read: at most 16 MiB
+of track list, walked by position without copying, filler elements stepped
+over, at most 1,024 track entries; where it cannot be read and the file's
+writer may have written full tags, the log says a fuller language may be
+lost and no automatic title is made from the old code). MP4 gets its
 `mdhd` field, so the **terminology** code is written (`deu`); no `elng` box.
-MOV gets only the old QuickTime list. So a region or script (`en-GB`,
+MOV gets only the old QuickTime list, as Apple's players read it (above). So a region or script (`en-GB`,
 `zh-Hant`) that a person SETS cannot be stored in a structured field (the
 editor says so before Apply). It appears in words only in an automatic title,
 and only where one is written (above) — a track that already has a title

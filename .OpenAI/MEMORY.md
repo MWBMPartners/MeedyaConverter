@@ -21,22 +21,31 @@
   (`docs/standards/media-language-bcp47-policy.md`, an exact copy of the master in
   MeedyaSuite-core, checked in CI). The engine reads and writes every track's
   language, roles and order through it (`TrackLanguage.swift`). Rule for every
-  copy or conversion (rounds 2 and 3, 28 Sept): never lose or change what the
-  source had without saying so, and the notes must be true. ONE table says what
+  copy or conversion (rounds 2 to 4): never lose or change what the source had
+  without saying so, and the notes must be true. ONE table says what
   each file type's writer stores for a language (`TrackLanguage
   .LanguageFieldStorage`: any text in Matroska/WebM/Ogg; three lower-case
   letters, the rest cut, in MP4; the old QuickTime list in MOV; exactly three
   characters in MPEG-TS; nothing in AVI and others). A value is kept as the
   source had it only where that table says it is stored exactly; else the
-  language's own tag as text, the code with the region cut, or `und` — each
-  noted in the job's log (`EncodingEngine.jobNotices` → Activity Log / stderr;
-  pipelines' `onNote`; the Shortcuts action's message). Matroska full tags
-  (`LanguageBCP47`, which ffprobe ignores) are read by `MatroskaTrackList`.
+  language's own tag as text, the code with the region cut, or `und` — or, in
+  MOV, NO language — each noted in the job's log (`EncodingEngine.jobNotices`
+  → Activity Log / stderr; pipelines' `onNote`; the Shortcuts action's
+  message). A write has three outcomes (`LanguageWrite.Action`): copy the
+  source's value, write one, or CLEAR the field (`language=`) — giving ffmpeg
+  nothing copies the source's value in, so "no language" is always a clear.
+  MOV's QuickTime list is used as Apple's players read it
+  (`quickTimeCodesByTag`): `chi` only for `zh-Hant`, `aze` for `az-Cyrl`,
+  `mon` for `mn-Mong`, never `sve`/`iri`. Matroska full tags
+  (`LanguageBCP47`, which ffprobe ignores) are read by `MatroskaTrackList`
+  (bounded: no copies, filler skipped, at most 1,024 tracks).
   Every stream flag (including cover art's `attached_pic`) is kept; automatic
   titles only for untitled tracks in Matroska/WebM with more than one track or
-  with video. Cover art: kept in MP4, attached (a copy, own name and
-  description) in Matroska on every encode path (`AttachedPictures
-  .copyPictures`), left out with a note where the file type cannot hold it.
+  with video. Cover art: kept in MP4 when JPEG, PNG or BMP, attached (a copy,
+  own name and description) in Matroska on every encode path (`AttachedPictures
+  .copyPictures`), left out with a note otherwise. CI's build-and-test job
+  installs ffmpeg and MKVToolNix and requires the real-tool tests
+  (`MEEDYA_REQUIRE_MEDIA_TOOLS=1`, `Tests/ConverterEngineTests/MediaToolSupport.swift`).
 - **meedya-convert** — command-line tool (Swift ArgumentParser) built on the
   engine. Subcommands: `encode`, `probe`, `profiles`, `batch`, `manifest`,
   `validate`, `serve`.

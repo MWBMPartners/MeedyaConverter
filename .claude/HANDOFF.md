@@ -37,7 +37,7 @@ this Mac let it through. `e497c3b` moved the call into a `nonisolated` helper,
 and CI passed there. Lesson: this Mac's compiler is newer and more lenient than
 CI's — keep Swift 6.1's strict concurrency rules in mind.
 
-### ROUND 4 — fixes from the THIRD independent review — IN PROGRESS
+### ROUND 4 — fixes from the THIRD independent review — DONE; not yet independently reviewed
 
 The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r4.md`
 (scratch). Guiding rule unchanged: never lose or damage what the source had
@@ -87,9 +87,10 @@ a restart; get each finished step somewhere lasting when that is allowed.
 | R4-3 | MP4 covers only JPEG, PNG or BMP (3) | #531 | Done — `b4a985b` | GIF/TIFF covers to MP4: job succeeds, note per picture; planted fault caught (11 failures) |
 | R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Done — `02463c5` | tools hidden: 20 skipped without the variable, 20 FAILED with it; with the tools: 31 passed either way; `actionlint` exit 0 |
 | R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Done — `4c2603a` | the 16 MiB shape: 36.2 s / 708 MB → 0.20 s / 74 MB peak (the fz tool's own buffers); 3 planted faults caught |
-| R4-6 | Test: the saved picture list is always replaced (6) | #531 | Done — the `test(tracks)` commit after `02463c5` | real `EncodingEngine.encode`, picture copy refused by a stand-in; the review's M15 now fails it (2 failures) |
+| R4-6 | Test: the saved picture list is always replaced (6) | #531 | Done — `889677d` | real `EncodingEngine.encode`, picture copy refused by a stand-in; the review's M15 now fails it (2 failures) |
 | R4-7 | Ogg: an unregistered language is noted (7) | #531 | Done — `1d2db82` | unit + tool test (`xx-bogus` to Ogg Opus); planted fault caught (3 failures) |
-| R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | In progress | review table and CI record above |
+| R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | Done — `48e60ba` and the last `docs:` commit | CHANGELOG, Architecture, `.OpenAI/MEMORY.md` |
+| R4-9 | Independent review of round 4 (W13) | — | Queued — orchestrator | commits after `e497c3b` are not yet reviewed |
 
 **CI now includes the real-tool tests.** From round 4's `ci:` commit on, the
 build-and-test job (`build.yml`) runs `brew install ffmpeg mkvtoolnix` and
@@ -104,6 +105,63 @@ The dev-build, beta/alpha and release workflows still SKIP these tests: they
 do not set the variable (a release bundles its own ffmpeg). Whether it works
 on the runner shows only in a CI run that includes the `ci:` commit
 (`gh run list --branch wip/bcp47-language-policy`).
+
+**What round 4 changed, in one place** (details in the commit messages):
+- A language write has three outcomes (`TrackLanguage.LanguageWrite.Action`):
+  copy the source's value, write one, or CLEAR the field (`language=`).
+  "No language is stored" is always a clear, so it is true.
+- MOV's QuickTime list is read as Apple's players read it
+  (`quickTimeCodesByTag`): `chi` only for `zh-Hant`, `aze` only for
+  `az-Cyrl`, `mon` only for `mn-Mong`, never `sve`/`iri`; anything else stores
+  no language, with a note that says why (`quickTimeWords`, shared with the
+  stream editor's warning).
+- MP4 covers only JPEG, PNG or BMP (`AttachedPictures.mp4CoverArtCodecs`);
+  any other picture is left out with a note.
+- Ogg notes an unregistered language (`xx-bogus`).
+- `MatroskaTrackList`: children walked by position (no copies), filler
+  skipped, at most 1,024 track entries; `Effort` counts for the tests.
+- CI (`build.yml`) installs ffmpeg + MKVToolNix and sets
+  `MEEDYA_REQUIRE_MEDIA_TOOLS=1`; `MediaToolSupport.swift` makes the
+  real-tool tests fail rather than skip under it.
+- A test proves the engine always replaces the saved picture list.
+
+**Verified (round 4, on 4 Oct), and how:**
+- Every "before" fault reproduced on `e497c3b` with the rewritten reviewer
+  tools and ffmpeg 9.0.1 / MKVToolNix 101 / AVFoundation, and every "after"
+  read back the same way: mkvmerge `yue`/`cmn`/`nan`/`apc` to MOV (`chi`,
+  `chi`, `chi`, `ara` — AVFoundation `zh-Hant` ×3, `ara` → no language,
+  AVFoundation `und`; `fr-CA` → `fra`); edits to `sv`/`english`/`und` on an
+  English track to MOV (`eng` kept → none); `chi aze mon zh-Hant zh-Hans
+  az-Cyrl mn-Mong sv swe gle` to MOV (Apple read `zh-Hant` for `zh` and
+  `zh-Hans` → only for `zh-Hant`, the rest none, each noted); TIFF, GIF and
+  GIF+TIFF+JPEG covers to MP4 (exit 234 → OK, notes, JPEG kept); `xx-bogus`
+  to Ogg (no note → noted); track-list reader on the 16 MiB shape (36.2 s,
+  708 MB peak → 0.20 s, 74 MB for the whole tool), "5000 voids" (nothing
+  read → both tracks), every prefix of a real mkvmerge file (same answers).
+- Builds: `swift build --target MediaLanguagePolicy`, `ConverterEngine`,
+  `meedya-convert` exit 0 (only the known linker search-path and
+  PerceptualHasher deprecation warnings).
+- Local harness (Xcode's XCTest by path — never `swift test`) on the final
+  code: the 14 engine suites, 1051 tests, 0 failures, none skipped; policy
+  suites 15 tests, 290 of 290 conformance cases, 409 checks, 0 failures.
+  `test_movCodesAreWhatApplesPlayersRead`: 98 entries, 0 mismatches.
+- Planted faults (scratch `plant.py`), each caught and restored by checksum:
+  item 1 ×2 (5 and 21 failures), item 2 ×3 (13, 1, 1), item 7 (3), item 3
+  (11), item 5 ×3 (3, 3, 1), the review's M15 (2 — it failed nothing before).
+- The third review's own planted-fault set (`faultplant.py`, rewritten,
+  14 faults) on the final code: all 14 caught — 12 as written (M1 14 failures, M2 8, M3 3, M4 2, M5 12, M6 31, M8 3, M9 1, M10 1, M11 4, M13 1, M15 2; M15 failed nothing before round 4), and M12 and M14, whose lines round 4 changed, planted on the new lines (6 and 7); every file restored by checksum.
+- With the tools hidden: 20 tool tests skip without `MEEDYA_REQUIRE_MEDIA_TOOLS`
+  and FAIL with it; with the tools, 31 pass either way.
+- SwiftLint over the 11 Swift files round 4 touched: 0 findings on added
+  lines. `actionlint` 1.7.12 (CI's setting): exit 0. `check_copies.py`
+  online with `GITHUB_TOKEN`: 6 copies match at core `aaaa585`.
+
+**NOT verified:** `swift test` itself, and the CI workflow change (only a CI
+run shows whether `brew install ffmpeg mkvtoolnix` and the required tests
+work on the runner); Swift 6.1's concurrency checking (this Mac has 6.4 —
+the new code adds no closures across actors and only `Sendable` statics,
+but CI is the check); the SwiftUI editor (its warning text comes from the
+engine, which is tested).
 
 **Known limit found in round 4 (raise, do not fix here):** the policy's
 reader reads a MOV source's own `chi` as plain Chinese (`zh`), because
