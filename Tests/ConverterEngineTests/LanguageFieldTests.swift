@@ -211,24 +211,104 @@ final class LanguageFieldTests: XCTestCase {
     /// reads back as something else) cannot be kept, and the note says so.
     func test_movGetsTheQuickTimeListsCode() {
         XCTAssertEqual(write("de", to: .mov), .init(action: .write("ger"), note: nil))
-        XCTAssertEqual(write("zh", to: .mov), .init(action: .write("chi"), note: nil))
+        XCTAssertEqual(write("fr", to: .mov), .init(action: .write("fra"), note: nil))
         XCTAssertEqual(write("el", to: .mov), .init(action: .write("gre"), note: nil))
         XCTAssertEqual(write("ja", to: .mov), .init(action: .write("jpn"), note: nil))
         XCTAssertEqual(write("hr", to: .mov), .init(action: .write("hr "), note: nil), "the list's own label, space and all")
         // MOV cannot store `und`: the field is cleared, which stores no
         // language — "not known" either way, so nothing is lost or noted.
         XCTAssertEqual(write("und", to: .mov), .init(action: .clear, note: nil))
-        XCTAssertEqual(write("sv", to: .mov), .init(
+        XCTAssertEqual(write("yue", to: .mov), .init(
             action: .clear,
-            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list, and “sv” is not "
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list, and “yue” is not "
                 + "on it, so no language is stored."
         ))
-        XCTAssertEqual(write("zh-Hant", to: .mov), .init(
-            action: .write("chi"),
-            note: "Stream #2: this file type can only store the language, so “Hant” in “zh-Hant” is not saved "
-                + "(written as “chi”)."
+        XCTAssertEqual(write("sr-Latn", to: .mov), .init(
+            action: .write("sr "),
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list, so “Latn” in "
+                + "“sr-Latn” is not saved (written as “sr ”)."
         ))
         XCTAssertEqual(TrackLanguage.languageFieldForm(for: .mov), .quickTimeList)
+    }
+
+    /// The QuickTime list as Apple's players read it (the third independent
+    /// review): `chi` is Traditional Chinese, `aze` Azerbaijani in Cyrillic,
+    /// `mon` Mongolian in Mongolian script — so each is written only for that
+    /// tag, and plain `zh`, `zh-Hans`, `az`, `mn` store no language, saying
+    /// why. Round 3 wrote `chi` for any Chinese, so `zh-Hans` became
+    /// Traditional Chinese to Apple's players. `sve` and `iri` (Apple:
+    /// Swedish, Irish) are not language codes, so they are never written.
+    func test_movCodesAreWhatApplesPlayersRead() {
+        XCTAssertEqual(write("zh-Hant", to: .mov), .init(action: .write("chi"), note: nil), "what chi means")
+        XCTAssertEqual(write("az-Cyrl", to: .mov), .init(action: .write("aze"), note: nil))
+        XCTAssertEqual(write("mn-Mong", to: .mov), .init(action: .write("mon"), note: nil))
+        XCTAssertEqual(write("zh-Hant-TW", to: .mov), .init(
+            action: .write("chi"),
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list, so “TW” in "
+                + "“zh-Hant-TW” is not saved (written as “chi”)."
+        ))
+        func chinese(_ tag: String, _ differs: String) -> String {
+            "Stream #2: this file type (QuickTime) can only store the languages on its old list; that list has Chinese "
+                + "only as “chi”, which Apple's players read as Chinese in Traditional script (“zh-Hant”), and “\(tag)” "
+                + "\(differs), so no language is stored."
+        }
+        XCTAssertEqual(write("zh", to: .mov), .init(action: .clear, note: chinese("zh", "does not say that")))
+        XCTAssertEqual(write("zh-Hans", to: .mov), .init(action: .clear, note: chinese("zh-Hans", "is not that")))
+        XCTAssertEqual(write("zh-TW", to: .mov), .init(action: .clear, note: chinese("zh-TW", "does not say that")))
+        XCTAssertEqual(write("az", to: .mov).action, .clear)
+        XCTAssertTrue(write("az", to: .mov).note?.contains("Azerbaijani in Cyrillic script (“az-Cyrl”), and “az” does not say that") == true)
+        XCTAssertEqual(write("az-Latn", to: .mov).action, .clear)
+        XCTAssertEqual(write("mn", to: .mov).action, .clear)
+        XCTAssertTrue(write("mn-Cyrl", to: .mov).note?.contains("Mongolian in Mongolian script (“mn-Mong”), and “mn-Cyrl” is not that") == true)
+        // A MOV source's own `chi`, read by the policy as plain Chinese, is
+        // not copied into a MOV output either: to Apple's players it would
+        // say Traditional Chinese, which the track (as read) does not.
+        XCTAssertEqual(write("zh", stored: "chi", to: .mov).action, .clear)
+
+        XCTAssertEqual(write("sv", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list; that list has "
+                + "Swedish only under the label “sve”, which is not a language code: other programs, this one included, "
+                + "could not read it back, so no language is stored."
+        ))
+        XCTAssertTrue(write("ga", to: .mov).note?.contains("Irish only under the label “iri”") == true)
+        // Text the source did not give as a language never becomes one: the
+        // unrecognised `sve` is not copied into MOV, where Apple's players
+        // would read Swedish.
+        XCTAssertEqual(write("und", unrecognised: "sve", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: the file's language “sve” is not a language code, and this file type (QuickTime) holds "
+                + "“sve” only as its old list's label for Swedish, which Apple's players read as Swedish and other "
+                + "programs, this one included, cannot read back, so no language is stored. Set the right language in "
+                + "the stream editor if you know it."
+        ))
+
+        // The table itself: never `sve` or `iri`; the three with their script.
+        let written = Set(TrackLanguage.quickTimeCodesByTag.values)
+        XCTAssertFalse(written.contains("sve"))
+        XCTAssertFalse(written.contains("iri"))
+        XCTAssertEqual(TrackLanguage.quickTimeCodesByTag["zh-Hant"], "chi")
+        XCTAssertNil(TrackLanguage.quickTimeCodesByTag["zh"])
+        XCTAssertNil(TrackLanguage.quickTimeCodesByTag["az"])
+        XCTAssertNil(TrackLanguage.quickTimeCodesByTag["mn"])
+        XCTAssertEqual(TrackLanguage.quickTimeCodesByTag["ro"], "ron", "first in list order, as in ffmpeg")
+
+        // Edits and the editor's warning say the same.
+        XCTAssertEqual(write("fr", edited: "zh", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list; that list has "
+                + "Chinese only as “chi”, which Apple's players read as Chinese in Traditional script (“zh-Hant”), and "
+                + "“zh”, set in the stream editor, does not say that, so no language is stored."
+        ))
+        XCTAssertEqual(
+            StreamMetadataEditor.storageNote(for: "zh", in: .mov),
+            "This file type (QuickTime) can only store the languages on its old list; that list has Chinese only as "
+                + "“chi”, which Apple's players read as Chinese in Traditional script (“zh-Hant”), and “zh” does not say "
+                + "that, so the track will have no language."
+        )
+        XCTAssertEqual(StreamMetadataEditor.storageNote(for: "zh-Hant-TW", in: .mov),
+                       "This file type (QuickTime) can only store the languages on its old list, so “TW” will not be saved.")
+        XCTAssertNil(StreamMetadataEditor.storageNote(for: "zh-Hant", in: .mov))
     }
 
     /// "No language is stored" must be TRUE (third independent review, its
@@ -338,7 +418,11 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("fr", edited: "de", to: .mov), .init(action: .write("ger"), note: nil))
         XCTAssertEqual(write("fr", edited: "sv", to: .mov).action, .clear)
         XCTAssertEqual(StreamMetadataEditor.storageNote(for: "sv", in: .mov),
-                       "This file type (QuickTime) can only store the languages on its old list, and “sv” is not on it, "
+                       "This file type (QuickTime) can only store the languages on its old list; that list has Swedish "
+                           + "only under the label “sve”, which is not a language code: other programs, this one "
+                           + "included, could not read it back, so the track will have no language.")
+        XCTAssertEqual(StreamMetadataEditor.storageNote(for: "yue", in: .mov),
+                       "This file type (QuickTime) can only store the languages on its old list, and “yue” is not on it, "
                            + "so the track will have no language.")
         XCTAssertEqual(write("fr", edited: "de", to: .avi), .init(
             action: .clear, note: "Stream #2: this file type has no place for a track's language, so “de”, set in the stream editor, is not saved."

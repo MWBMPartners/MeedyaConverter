@@ -142,6 +142,54 @@ final class ContainerLanguageToolTests: XCTestCase {
         print("TRACK-070 table check: \(rows.count) file types × \(values.count) values, \(mismatches.count) mismatches")
     }
 
+    /// MOV's language as APPLE'S players read it (the third independent
+    /// review): every QuickTime-list entry this converter writes
+    /// (`TrackLanguage.quickTimeCodesByTag`) must read back, through Apple's
+    /// AVFoundation, as the very tag it is written for — `chi` as `zh-Hant`,
+    /// `aze` as `az-Cyrl`, `mon` as `mn-Mong`, `ger` as German. And the two
+    /// labels never written read as Swedish and Irish there, while ffprobe
+    /// gives back the text `sve`/`iri` (which is why they are never written).
+    /// One MOV file with one short audio track per entry, made by ffmpeg.
+    func test_movCodesAreWhatApplesPlayersRead() async throws {
+        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
+            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        }
+        let policy = try XCTUnwrap(TrackLanguage.policy)
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meedya-lang-quicktime-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let written = TrackLanguage.quickTimeCodesByTag.sorted { $0.key < $1.key }
+        XCTAssertGreaterThan(written.count, 90, "nearly the whole list is written")
+        let entries = written.map(\.value) + ["sve", "iri"]
+        var arguments = ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.1"]
+        for (index, entry) in entries.enumerated() {
+            arguments += ["-map", "0:a", "-metadata:s:a:\(index)", "language=\(entry)"]
+        }
+        let output = folder.appendingPathComponent("list.mov")
+        XCTAssertEqual(try run(ffmpeg, arguments + ["-c:a", "aac", "-f", "mov", output.path]).status, 0, "making list.mov")
+
+        // ffprobe reads each label back.
+        let labels = try rawStreams(ffprobe, output).map { ($0["tags"] as? [String: Any])?["language"] as? String }
+        XCTAssertEqual(labels, entries.map(Optional.some), "ffprobe reads the labels back")
+
+        guard let apple = try await MediaTools.appleAudioLanguages(of: output) else {
+            throw XCTSkip("AVFoundation is not available here")
+        }
+        XCTAssertEqual(apple.count, entries.count)
+        var mismatches: [String] = []
+        for (index, (tag, entry)) in written.enumerated() where index < apple.count {
+            // Apple's reading as a tag: its extended tag when it gives one
+            // (`zh-Hant`), else its three-letter code read by the policy.
+            let read = apple[index].tag ?? apple[index].code.flatMap { policy.reader.read($0) }
+            if read != tag { mismatches.append("“\(entry)” for “\(tag)”: Apple reads \(apple[index])") }
+        }
+        XCTAssertEqual(mismatches, [], "what Apple's players read differs from TrackLanguage.quickTimeCodesByTag")
+        XCTAssertEqual(apple.suffix(2).map(\.code), ["swe", "gle"], "sve and iri: Swedish and Irish to Apple")
+        print("QuickTime check: \(written.count) entries read back by AVFoundation, \(mismatches.count) mismatches")
+    }
+
     /// The fact `TrackLanguage.LanguageWrite.Action.clear` rests on: an
     /// EMPTY value (`-metadata:s:a:0 language=`) removes the language, where
     /// giving ffmpeg nothing copies the source's own value in. The third

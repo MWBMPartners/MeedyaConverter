@@ -82,8 +82,8 @@ a restart; get each finished step somewhere lasting when that is allowed.
 
 | # | Task (brief item) | Issue | Status | Notes |
 |---|---|---|---|---|
-| R4-1 | MOV: "no language is stored" made true — clear the field (1) | #531 | In progress | |
-| R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Queued | |
+| R4-1 | MOV: "no language is stored" made true — clear the field (1) | #531 | Done — `abdc1f8` | 1042 engine tests, 0 failures; 2 planted faults caught; ffprobe + AVFoundation read-backs |
+| R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Done — the `fix(language)` commit after `abdc1f8` | 1044 engine tests, 0 failures; 98 entries read back by AVFoundation, 0 mismatches; 3 planted faults caught |
 | R4-3 | MP4 covers only JPEG, PNG or BMP (3) | #531 | Queued | |
 | R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Queued | |
 | R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Queued | |

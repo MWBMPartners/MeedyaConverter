@@ -168,10 +168,11 @@ extension TrackLanguage {
         /// ISO 639-2 terminology (`deu`) — MP4's `mdhd`; also used for the
         /// containers the policy's table does not name (MPEG-TS, DASH …).
         case terminology
-        /// The entry on ffmpeg's QuickTime language list for the same
-        /// language (`ger`, `fra`, `chi`, `jpn`, `gre` — see
-        /// `quickTimeCode(forLanguage:)`) — MOV, whose writer stores nothing
-        /// else. Writing the terminology code there (`deu`) stored nothing.
+        /// The entry on ffmpeg's QuickTime language list that Apple's players
+        /// read as the same language (`ger`, `fra`, `jpn`, `gre`; `chi` only
+        /// for `zh-Hant` — see `quickTimeCodesByTag`) — MOV, whose writer
+        /// stores nothing else. Writing the terminology code there (`deu`)
+        /// stored nothing.
         case quickTimeList
         /// The canonical BCP 47 tag — free-text fields (Ogg's Vorbis comment
         /// `LANGUAGE`).
@@ -224,6 +225,8 @@ extension TrackLanguage {
         /// so only the strings on ffmpeg's QuickTime list
         /// (`quickTimeListEntries`) are stored, matched exactly. Anything
         /// else stores nothing — `deu`, `zho`, `ell`, `yue` and `und` too.
+        /// (What is stored is ffprobe's reading. What Apple's players read
+        /// can differ — see `quickTimeCodesByTag`.)
         case quickTimeList
         /// MPEG-TS, and HLS (whose segments are MPEG-TS): comma-separated
         /// pieces of exactly three bytes, any characters, any case (`ENG`,
@@ -302,31 +305,136 @@ extension TrackLanguage {
         "uig", "dzo", "jav"
     ]
 
-    /// The QuickTime list's entry for primary language `language` (`de` →
-    /// `ger`, `zh` → `chi`, `el` → `gre`), or `nil` when the list has none.
-    /// An entry counts only when the policy's reader reads it back as that
-    /// SAME language (LANG-002) — so the next program to open the file,
-    /// this one included, gets the language back. That leaves out the
-    /// labels that are not language codes: `sve` (Swedish) and `iri`
-    /// (Irish) read as other text, so Swedish and Irish cannot be kept in a
-    /// MOV file made by ffmpeg, and are reported. The first match in list
-    /// order wins, as in ffmpeg (`ron` before `mol` for Romanian).
-    static func quickTimeCode(forLanguage language: String) -> String? {
-        quickTimeCodesByLanguage[language]
+    // WHAT A QUICKTIME ENTRY MEANS
+    // ---------------------------
+    // A MOV file does not store the label (`chi`): it stores an old
+    // Macintosh language NUMBER, and the label is only ffmpeg's name for it.
+    // ffprobe reads the label back, and the policy's reader reads `chi` as
+    // Chinese (`zh`); but Apple's players read the NUMBER — and for three
+    // entries they read a script as well. Checked with Apple's AVFoundation
+    // (one MOV with an audio track for each of the 101 entries of ffmpeg
+    // 9.0.1's list, as the third independent review did), and re-checked for
+    // every entry this converter writes by
+    // `ContainerLanguageToolTests.test_movCodesAreWhatApplesPlayersRead`:
+    //
+    //   * `chi` is Traditional Chinese (`zh-Hant`), `aze` Azerbaijani in
+    //     Cyrillic (`az-Cyrl`), `mon` Mongolian in Mongolian script
+    //     (`mn-Mong`). So each is written ONLY for that tag: `chi` for plain
+    //     `zh` would say more than the track does, and for `zh-Hans` it would
+    //     be a different script. Round 3 wrote `chi` for any Chinese.
+    //   * `sve` and `iri` Apple reads as Swedish and Irish, but they are not
+    //     language codes: ffprobe gives back the text, which the policy's
+    //     reader — and so this converter, and any other program that reads
+    //     the label — cannot tell from rubbish. They are never written.
+    //     (Round 3 said Swedish and Irish "cannot be kept" because the labels
+    //     "read as other text" — true of ffprobe, not of Apple's players.)
+    //   * Every other entry reads the same in both: `ger` is German, `hr `
+    //     Croatian, `nor` Norwegian.
+    //
+    // A language the list has only in one of these ways stores no language,
+    // and the note says why (`quickTimeGapWords`).
+
+    /// A QuickTime-list entry Apple's players read WITH a script.
+    struct QuickTimeScriptEntry: Sendable {
+        /// ffmpeg's label (`chi`).
+        let entry: String
+        /// What Apple's players read it as (`zh-Hant`).
+        let tag: String
+        /// The language's English name, for notes (`Chinese`).
+        let languageName: String
+        /// The whole meaning in words, for notes.
+        let meaning: String
     }
 
-    /// `quickTimeCode(forLanguage:)`'s table, worked out once from the list
-    /// and the policy's reader. Empty without the policy's data.
-    private static let quickTimeCodesByLanguage: [String: String] = {
+    /// The three entries Apple's players read with a script (see above).
+    static let quickTimeEntriesReadWithAScript: [QuickTimeScriptEntry] = [
+        QuickTimeScriptEntry(entry: "chi", tag: "zh-Hant", languageName: "Chinese", meaning: "Chinese in Traditional script"),
+        QuickTimeScriptEntry(entry: "aze", tag: "az-Cyrl", languageName: "Azerbaijani",
+                             meaning: "Azerbaijani in Cyrillic script"),
+        QuickTimeScriptEntry(entry: "mon", tag: "mn-Mong", languageName: "Mongolian",
+                             meaning: "Mongolian in Mongolian script")
+    ]
+
+    /// A QuickTime-list label that is not a language code (see above).
+    struct QuickTimeLabelEntry: Sendable {
+        /// ffmpeg's label (`sve`).
+        let entry: String
+        /// The language Apple's players read it as (`sv`).
+        let language: String
+        /// That language's English name, for notes (`Swedish`).
+        let languageName: String
+    }
+
+    /// The two labels never written (see above).
+    static let quickTimeLabelsThatAreNotCodes: [QuickTimeLabelEntry] = [
+        QuickTimeLabelEntry(entry: "sve", language: "sv", languageName: "Swedish"),
+        QuickTimeLabelEntry(entry: "iri", language: "ga", languageName: "Irish")
+    ]
+
+    /// The language tag Apple's players read QuickTime-list entry `entry`
+    /// as — `zh-Hant` for `chi`, `de` for `ger` — or `nil` for an entry this
+    /// converter never writes (`sve`, `iri`), text not on the list, or
+    /// without the policy's data.
+    static func quickTimeMeaning(ofEntry entry: String) -> String? {
+        guard quickTimeListEntries.contains(entry),
+              !quickTimeLabelsThatAreNotCodes.contains(where: { $0.entry == entry }) else { return nil }
+        if let scripted = quickTimeEntriesReadWithAScript.first(where: { $0.entry == entry }) {
+            return scripted.tag
+        }
+        guard policy != nil else { return nil }
+        let reading = read(fileValue: entry)
+        guard reading.unrecognised == nil, reading.language != "und" else { return nil }
+        return reading.language
+    }
+
+    /// The entry this converter writes for each tag MOV can store, keyed by
+    /// what Apple's players read the entry as (`zh-Hant` → `chi`, `de` →
+    /// `ger`). The first match in list order wins, as in ffmpeg (`ron`
+    /// before `mol` for Romanian). Empty without the policy's data.
+    static let quickTimeCodesByTag: [String: String] = {
         var table: [String: String] = [:]
         for entry in quickTimeListEntries {
-            let reading = read(fileValue: entry)
-            guard reading.unrecognised == nil, reading.language != "und", policy != nil,
-                  table[reading.language] == nil else { continue }
-            table[reading.language] = entry
+            guard let meaning = quickTimeMeaning(ofEntry: entry), table[meaning] == nil else { continue }
+            table[meaning] = entry
         }
         return table
     }()
+
+    /// The QuickTime-list entry for `tag`, and the part of the tag that entry
+    /// says (`zh-Hant` for `zh-Hant-TW` → `chi`; `sr` for `sr-Latn` → `sr `),
+    /// or `nil` when MOV cannot store the tag's language as it is.
+    static func quickTimeEntry(for tag: LanguageTag) -> (code: String, says: String)? {
+        guard tag.kind == .ordinary, let language = tag.language else { return nil }
+        if let script = tag.script, let code = quickTimeCodesByTag["\(language)-\(script)"] {
+            return (code, "\(language)-\(script)")
+        }
+        if let code = quickTimeCodesByTag[language] { return (code, language) }
+        return nil
+    }
+
+    /// Why MOV stores no language for `canonical` although its QuickTime
+    /// list has the language in SOME form — words that complete "this file
+    /// type (QuickTime) can only store the languages on its old list; …" —
+    /// or `nil` when the list does not have the language at all. Shared by
+    /// the job's notes and the stream editor's warning. `named` is how the
+    /// tag is named in the words (`“zh”`, or `“zh”, set in the stream
+    /// editor,`).
+    static func quickTimeGapWords(for canonical: String, named: String? = nil) -> String? {
+        guard let policy else { return nil }
+        let tag = policy.canonicaliser.canonicalise(canonical)
+        guard tag.kind == .ordinary, let language = tag.language, quickTimeEntry(for: tag) == nil else { return nil }
+        let named = named ?? "“\(canonical)”"
+        if let scripted = quickTimeEntriesReadWithAScript.first(where: { $0.tag.hasPrefix(language + "-") }) {
+            let differs = tag.script == nil ? "\(named) does not say that" : "\(named) is not that"
+            return "that list has \(scripted.languageName) only as “\(scripted.entry)”, which Apple's players read as "
+                + "\(scripted.meaning) (“\(scripted.tag)”), and \(differs)"
+        }
+        if let label = quickTimeLabelsThatAreNotCodes.first(where: { $0.language == language }) {
+            return "that list has \(label.languageName) only under the label “\(label.entry)”, which is not a "
+                + "language code: other programs, this one included, could not read it back"
+        }
+        return nil
+    }
 
     /// How a language a person set in the stream editor is stored in a
     /// container's language field — ONE answer shared by the job's notes
@@ -385,7 +493,7 @@ extension TrackLanguage {
             if form == .quickTimeList { return EditedLanguageField(value: nil, limit: .cannotStore(canonical: canonical)) }
             return EditedLanguageField(value: unknown, limit: .noThreeLetterCode(canonical: canonical))
         }
-        if let lost = partsBeyondLanguage(parsed) {
+        if let lost = partsNotSaid(of: parsed, form: form) {
             return EditedLanguageField(value: code, limit: .losesParts(lost: lost, canonical: canonical))
         }
         return EditedLanguageField(value: code, limit: .fits)
@@ -394,7 +502,8 @@ extension TrackLanguage {
     /// The policy's code for `tag`'s primary language in `form` — `ger`
     /// (bibliographic), `deu` (terminology), the QuickTime list's entry — or
     /// `nil` when there is none (`yue`, a grandfathered or private-use tag,
-    /// a MOV language not on the list). `und` itself gives `und` (it has no
+    /// a MOV language not on the list, or on it only with another script —
+    /// see `quickTimeEntry(for:)`). `und` itself gives `und` (it has no
     /// QuickTime entry, so `nil` there). Not for `.fullTag`.
     static func policyCode(for tag: LanguageTag, form: LanguageFieldForm) -> String? {
         guard let policy else { return nil }
@@ -406,9 +515,29 @@ extension TrackLanguage {
             if code == "und" && tag.language != "und" { return nil }
             return code
         case .quickTimeList:
-            guard let language = tag.language else { return nil }
-            return quickTimeCode(forLanguage: language)
+            return quickTimeEntry(for: tag)?.code
         }
+    }
+
+    /// What `form`'s code for `tag` does not say: for a three-letter field,
+    /// everything after the primary language (`partsBeyondLanguage`); for
+    /// MOV, everything after what the QuickTime entry says — `TW` of
+    /// `zh-Hant-TW` (whose entry `chi` says `zh-Hant`), `Latn` of `sr-Latn`.
+    static func partsNotSaid(of tag: LanguageTag, form: LanguageFieldForm) -> String? {
+        guard form == .quickTimeList, let says = quickTimeEntry(for: tag)?.says,
+              tag.text.hasPrefix(says) else { return partsBeyondLanguage(tag) }
+        guard tag.text.count > says.count else { return nil }
+        return String(tag.text.dropFirst(says.count + 1))
+    }
+
+    /// What a value written into `storage`'s field will be read back as —
+    /// for MOV, what Apple's players read the entry as (`chi` is `zh-Hant`,
+    /// `sve` nothing this converter can use); elsewhere, the policy's reading
+    /// of the text (`fre` is `fr`). `nil` when it is not a language.
+    static func meaningOnceStored(_ value: String, in storage: LanguageFieldStorage) -> String? {
+        if storage == .quickTimeList { return quickTimeMeaning(ofEntry: value) }
+        let reading = read(fileValue: value)
+        return reading.unrecognised == nil ? reading.language : nil
     }
 
     /// What "not known" is stored as: `und`, or `nil` where even that cannot
@@ -591,10 +720,13 @@ extension TrackLanguage {
         }
 
         // A value that is not a language at all: kept only where this file
-        // type stores it exactly; otherwise `und`, and why.
+        // type stores it exactly; otherwise `und`, and why. Never in MOV,
+        // where the only such values its list holds — `sve`, `iri` — would
+        // be read by Apple's players as Swedish and Irish: text the source
+        // did not give as a language would silently become one (COMPAT-040).
         if let raw = sourceUnrecognised ?? nonTag(sourceLanguage, policy: policy) {
             let fix = " Set the right language in the stream editor if you know it."
-            if storage != .unchecked, storage.keeps(raw) {
+            if storage != .unchecked, storage != .quickTimeList, storage.keeps(raw) {
                 return LanguageWrite(
                     action: isReplacement ? .write(raw) : .copySource,
                     note: "\(stream): the file's language “\(raw)” is not a language code; kept as the source had it." + fix
@@ -629,7 +761,7 @@ extension TrackLanguage {
         if form == .fullTag { return write(.write(canonical), nil) }
 
         let code = policyCode(for: tag, form: form)
-        let lost = partsBeyondLanguage(tag)
+        let lost = partsNotSaid(of: tag, form: form)
         let registered = tag.language.map(policy.isRegisteredLanguage) ?? true
         // Why the policy's code will not do, in words: having no code at all
         // matters more than losing a region.
@@ -652,12 +784,14 @@ extension TrackLanguage {
         }
         if storage != .unchecked {
             // 2. The source's own text, when stored exactly and still the
-            //    same language.
-            if storage.keeps(copied), read(fileValue: copied).language == canonical {
+            //    same language once stored — for MOV, as Apple's players read
+            //    it: `chi` copied in for plain `zh` would become Traditional
+            //    Chinese there.
+            if storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical {
                 return write(isReplacement ? .write(copied) : .copySource, "\(stream): \(reason); kept as the source had it.\(fix)")
             }
             // 3. The language's tag itself, as text.
-            if storage.keeps(canonical) {
+            if storage.keeps(canonical), storage != .quickTimeList || meaningOnceStored(canonical, in: storage) == canonical {
                 return write(
                     .write(canonical),
                     "\(stream): \(reason), so “\(canonical)” is written into the field as it is, because copying "
@@ -669,19 +803,36 @@ extension TrackLanguage {
         if let code, let lost, storage == .unchecked || storage.keeps(code) {
             return write(
                 .write(code),
-                "\(stream): this file type can only store the language, so “\(lost)” in “\(canonical)” is not saved "
+                "\(stream): " + onlyStoresWords(storage) + ", so “\(lost)” in “\(canonical)” is not saved "
                     + "(written as “\(code)”)."
             )
         }
         // 5. Not known, and why.
         if storage == .quickTimeList, code == nil {
-            return write(
-                unknownAction,
-                "\(stream): this file type (QuickTime) can only store the languages on its old list, and "
-                    + "“\(canonical)” is not on it, so \(unknownWords).\(fix)"
-            )
+            return write(unknownAction, "\(stream): " + quickTimeWords(for: canonical) + ", so \(unknownWords).\(fix)")
         }
         return write(unknownAction, "\(stream): \(reason), and " + limitWords(for: canonical, in: storage) + ", so \(unknownWords).\(fix)")
+    }
+
+    /// Why MOV cannot store `canonical`, in words for a note or the stream
+    /// editor's warning: "this file type (QuickTime) can only store the
+    /// languages on its old list, and “yue” is not on it" — or, where the
+    /// list has the language only with another script or under a label that
+    /// is not a language code, which (`quickTimeGapWords`).
+    static func quickTimeWords(for canonical: String, named: String? = nil) -> String {
+        let start = "this file type (QuickTime) can only store the languages on its old list"
+        if let gap = quickTimeGapWords(for: canonical, named: named) { return "\(start); \(gap)" }
+        return "\(start), and \(named ?? "“\(canonical)”") is not on it"
+    }
+
+    /// What a field that keeps less than the whole tag can store, in words:
+    /// "this file type can only store the language" — or, for MOV, whose
+    /// entries can carry a script as well (`chi` is `zh-Hant` to Apple's
+    /// players), "…only store the languages on its old list".
+    static func onlyStoresWords(_ storage: LanguageFieldStorage) -> String {
+        storage == .quickTimeList
+            ? "this file type (QuickTime) can only store the languages on its old list"
+            : "this file type can only store the language"
     }
 
     /// `text` when it is not a language tag at all (data probed before the
@@ -711,6 +862,11 @@ extension TrackLanguage {
         case .threeCharacterPieces:
             return "this file type can only store codes of exactly three letters"
         case .quickTimeList:
+            if let label = quickTimeLabelsThatAreNotCodes.first(where: { $0.entry == value }) {
+                return "this file type (QuickTime) holds “\(value)” only as its old list's label for "
+                    + "\(label.languageName), which Apple's players read as \(label.languageName) and other programs, "
+                    + "this one included, cannot read back"
+            }
             return "this file type (QuickTime) can only store the languages on its old list"
         case .nothing:
             return "this file type has no place for a track's language"
@@ -748,7 +904,7 @@ extension TrackLanguage {
         case .losesParts(let lost, let canonical):
             return LanguageWrite(
                 action: action,
-                note: "\(stream): this file type can only store the language, so “\(lost)” in “\(canonical)” is not "
+                note: "\(stream): " + onlyStoresWords(storage) + ", so “\(lost)” in “\(canonical)” is not "
                     + "saved (written as “\(field.value ?? "und")”)."
             )
         case .cannotStore(let canonical):
@@ -757,8 +913,8 @@ extension TrackLanguage {
                 note: storage == .nothing
                     ? "\(stream): this file type has no place for a track's language, so “\(canonical)”, set in the "
                         + "stream editor, is not saved."
-                    : "\(stream): this file type (QuickTime) can only store the languages on its old list, and "
-                        + "“\(canonical)”, set in the stream editor, is not on it, so no language is stored."
+                    : "\(stream): " + quickTimeWords(for: canonical, named: "“\(canonical)”, set in the stream editor,")
+                        + ", so no language is stored."
             )
         }
     }

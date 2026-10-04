@@ -399,7 +399,8 @@ final class TrackPreservationToolTests: XCTestCase {
     }
 
     /// An edit MOV cannot store must leave the track with NO language: `sv`
-    /// (Swedish is not on ffmpeg's QuickTime list as a language code) and
+    /// (Swedish is on ffmpeg's QuickTime list only under the label `sve`,
+    /// which is not a language code, so it is never written) and
     /// `english` (not a language tag at all, as a job file could carry).
     /// The round-3 build gave ffmpeg nothing for them, so ffmpeg copied the
     /// source's `eng` in — under a note saying "no language is stored" (the
@@ -430,8 +431,9 @@ final class TrackPreservationToolTests: XCTestCase {
             XCTAssertEqual(apple.map(\.isNone), [true, true], "AVFoundation: \(apple)")
         }
         XCTAssertEqual(config.trackWritingNotes(), [
-            "Stream #0: this file type (QuickTime) can only store the languages on its old list, and “sv”, set in "
-                + "the stream editor, is not on it, so no language is stored.",
+            "Stream #0: this file type (QuickTime) can only store the languages on its old list; that list has "
+                + "Swedish only under the label “sve”, which is not a language code: other programs, this one included, "
+                + "could not read it back, so no language is stored.",
             "Stream #1: “english”, set in the stream editor, is not a language tag, so no language is stored."
         ])
     }

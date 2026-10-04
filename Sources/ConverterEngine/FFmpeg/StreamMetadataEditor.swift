@@ -532,7 +532,8 @@ public struct StreamMetadataEditor: Sendable {
             return "This file type can only store three-letter language codes, and “\(canonical)” has none, "
                 + "so it will be saved as “und” (not known)."
         case .losesParts(let lost, _):
-            return "This file type can only store the language, so “\(lost)” will not be saved."
+            let words = TrackLanguage.onlyStoresWords(TrackLanguage.languageFieldStorage(for: container))
+            return words.prefix(1).uppercased() + words.dropFirst() + ", so “\(lost)” will not be saved."
         case .cannotStore(let canonical):
             // "The track will have no language" — not "no language will be
             // saved", which reads as though the track's OLD language stays.
@@ -542,8 +543,13 @@ public struct StreamMetadataEditor: Sendable {
             if TrackLanguage.languageFieldStorage(for: container) == .nothing {
                 return "This file type has no place for a track's language, so the track will have no language."
             }
-            return "This file type (QuickTime) can only store the languages on its old list, and “\(canonical)” "
-                + "is not on it, so the track will have no language."
+            // The same words as the job's note (`TrackLanguage.quickTimeWords`):
+            // "…and “yue” is not on it", or why a language the list has in
+            // some form still cannot be stored (`zh` — the list's `chi` is
+            // Traditional Chinese to Apple's players; `sv` — its label `sve`
+            // is not a language code).
+            let words = TrackLanguage.quickTimeWords(for: canonical)
+            return words.prefix(1).uppercased() + words.dropFirst() + ", so the track will have no language."
         }
     }
 
