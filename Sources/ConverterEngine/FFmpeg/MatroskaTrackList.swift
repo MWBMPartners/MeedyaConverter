@@ -422,14 +422,15 @@ public struct MatroskaTrackList: Sendable, Equatable {
 
 // MARK: - Byte sources
 
-/// Where the reader gets its bytes: a file, or memory.
-private protocol ByteSource {
+/// Where a track-list reader gets its bytes: a file, or memory. Shared by
+/// `MatroskaTrackList` and `QuickTimeTrackList`.
+protocol ByteSource {
     var size: UInt64 { get }
     func bytes(at offset: UInt64, count: Int) -> [UInt8]?
 }
 
 /// Bytes from an open file, read only where asked.
-private struct FileSource: ByteSource {
+struct FileSource: ByteSource {
     let handle: FileHandle
     let size: UInt64
 
@@ -442,7 +443,7 @@ private struct FileSource: ByteSource {
 }
 
 /// Bytes already in memory.
-private struct MemorySource: ByteSource {
+struct MemorySource: ByteSource {
     let bytesInMemory: [UInt8]
     var size: UInt64 { UInt64(bytesInMemory.count) }
 

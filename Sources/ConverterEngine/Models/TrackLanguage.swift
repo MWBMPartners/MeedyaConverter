@@ -288,112 +288,206 @@ extension TrackLanguage {
         }
     }
 
-    /// The strings ffmpeg's MOV writer accepts as a language, in the order of
-    /// its QuickTime list (`mov_mdhd_language_map` in ffmpeg's `isom.c`,
-    /// 9.0.1): each is the label ffmpeg gives one old Macintosh language
-    /// number, and it reads the same label back. Several are not ISO 639-2
-    /// codes at all (`sve`, `iri`), and four end in a space (`hr `, `fo `,
-    /// `sr `, `pa `). Empty entries are left out.
-    static let quickTimeListEntries: [String] = [
-        "eng", "fra", "ger", "ita", "dut", "sve", "spa", "dan", "por", "nor", "heb", "jpn", "ara", "fin",
-        "gre", "ice", "mlt", "tur", "hr ", "chi", "urd", "hin", "tha", "kor", "lit", "pol", "hun", "est",
-        "lav", "smi", "fo ", "per", "rus", "iri", "alb", "ron", "ces", "slk", "slv", "yid", "sr ", "mac",
-        "bul", "ukr", "bel", "uzb", "kaz", "aze", "arm", "geo", "mol", "kir", "tgk", "tuk", "mon", "pus",
-        "kur", "kas", "snd", "tib", "nep", "san", "mar", "ben", "asm", "guj", "pa ", "ori", "mal", "kan",
-        "tam", "tel", "sin", "bur", "khm", "lao", "vie", "ind", "tgl", "may", "amh", "tir", "orm", "som",
-        "swa", "kin", "run", "nya", "mlg", "epo", "wel", "baq", "cat", "lat", "que", "grn", "aym", "tat",
-        "uig", "dzo", "jav"
-    ]
-
-    // WHAT A QUICKTIME ENTRY MEANS
-    // ---------------------------
+    // WHAT A QUICKTIME LANGUAGE NUMBER MEANS
+    // --------------------------------------
     // A MOV file does not store the label (`chi`): it stores an old
-    // Macintosh language NUMBER, and the label is only ffmpeg's name for it.
-    // ffprobe reads the label back, and the policy's reader reads `chi` as
-    // Chinese (`zh`); but Apple's players read the NUMBER — and for three
-    // entries they read a script as well. Checked with Apple's AVFoundation
-    // (one MOV with an audio track for each of the 101 entries of ffmpeg
-    // 9.0.1's list, as the third independent review did), and re-checked for
-    // every entry this converter writes by
-    // `ContainerLanguageToolTests.test_movCodesAreWhatApplesPlayersRead`:
+    // Macintosh language NUMBER, and the label is only ffmpeg's name for it —
+    // ffprobe reports the label, and ffmpeg's MOV writer turns a label back
+    // into the FIRST number that has it. Apple's players read the NUMBER, and
+    // for some numbers they read a script as well. Checked on 4 Oct 2026
+    // with ffmpeg 9.0.1 and Apple's AVFoundation, writing EVERY number from 0
+    // to 151 into one MOV and reading each back both ways (the table below;
+    // the third independent review had checked the 101 labels):
     //
-    //   * `chi` is Traditional Chinese (`zh-Hant`), `aze` Azerbaijani in
-    //     Cyrillic (`az-Cyrl`), `mon` Mongolian in Mongolian script
-    //     (`mn-Mong`). So each is written ONLY for that tag: `chi` for plain
+    //   * 19 `chi` is Traditional Chinese (`zh-Hant`) and 33 — ALSO labelled
+    //     `chi` — Simplified (`zh-Hans`); 49 `aze` is Azerbaijani in Cyrillic
+    //     (`az-Cyrl`) and 50, also `aze`, in Arabic script; 57 `mon` is
+    //     Mongolian in Mongolian script (`mn-Mong`); 84, a second `may`,
+    //     Malay in Arabic script. ffmpeg writes `chi` as 19, `aze` as 49,
+    //     `mon` as 57, so each is written ONLY for that tag: `chi` for plain
     //     `zh` would say more than the track does, and for `zh-Hans` it would
     //     be a different script. Round 3 wrote `chi` for any Chinese.
-    //   * `sve` and `iri` Apple reads as Swedish and Irish, but they are not
-    //     language codes: ffprobe gives back the text, which the policy's
-    //     reader — and so this converter, and any other program that reads
-    //     the label — cannot tell from rubbish. They are never written.
-    //     (Round 3 said Swedish and Irish "cannot be kept" because the labels
-    //     "read as other text" — true of ffprobe, not of Apple's players.)
-    //   * Every other entry reads the same in both: `ger` is German, `hr `
-    //     Croatian, `nor` Norwegian.
+    //   * 5 `sve` and 35 `iri` Apple reads as Swedish and Irish. But `sve`
+    //     and `iri` are the registered codes of OTHER languages — Serili and
+    //     Rigwe — and that is how any program reading ffprobe's text, or an
+    //     MP4's packed letters, reads them. So they are never written for
+    //     Swedish or Irish from anywhere else (`quickTimeEntriesNamingAnother
+    //     Language`): the output would say Swedish to Apple and Serili to
+    //     everyone else. A MOV source's OWN `sve` is kept on a MOV-to-MOV
+    //     remux, where the output says exactly what the source said.
+    //   * Every other number with a label reads the same in both: `ger` is
+    //     German, `hr ` Croatian, `nor` Norwegian.
+    //   * Numbers with no label in ffmpeg's list (34, 58, 95–127, 139–151)
+    //     come out of ffprobe as no language at all, and ffmpeg cannot write
+    //     them. They are not read here.
+    //
+    // The same table READS a MOV or MP4 source: given the number a track
+    // stores (`QuickTimeTrackList`), its language is what Apple's players
+    // read (`quickTimeLanguage(number:label:)`), so a MOV-to-MOV remux keeps
+    // `chi`, `aze`, `mon`, `sve` and `iri`, and a MOV-to-MKV remux writes
+    // what they mean (`zh-Hant`, `sv` …). Until the fourth independent review
+    // a source's `chi` was read as plain Chinese whatever its number, so a
+    // MOV-to-MOV remux of a Traditional-Chinese track stored no language.
     //
     // A language the list has only in one of these ways stores no language,
     // and the note says why (`quickTimeGapWords`).
 
-    /// A QuickTime-list entry Apple's players read WITH a script.
+    /// One number of the QuickTime language list that ffmpeg gives a label
+    /// (see above): the number a file stores, ffmpeg 9.0.1's label for it
+    /// (`mov_mdhd_language_map` in its `isom.c` — what ffprobe reports), and
+    /// what Apple's AVFoundation reads it as: `languageCode` (ISO 639-2/T)
+    /// and, where it gives one, `extendedLanguageTag` (BCP 47).
+    struct QuickTimeLanguageNumber: Sendable {
+        let number: UInt16
+        let label: String
+        let appleCode: String
+        let appleTag: String?
+
+        init(_ number: UInt16, _ label: String, _ appleCode: String, _ appleTag: String?) {
+            self.number = number
+            self.label = label
+            self.appleCode = appleCode
+            self.appleTag = appleTag
+        }
+    }
+
+    /// Every number ffmpeg 9.0.1 gives a label, with Apple's reading of it —
+    /// measured, not assumed (see above), and re-checked against
+    /// AVFoundation by `ContainerLanguageToolTests
+    /// .test_quickTimeNumbersAreWhatApplesPlayersRead`. Four labels end in a
+    /// space (`hr `, `fo `, `sr `, `pa `).
+    static let quickTimeNumbers: [QuickTimeLanguageNumber] = [
+.init(0, "eng", "eng", nil), .init(1, "fra", "fra", nil), .init(2, "ger", "deu", nil),
+        .init(3, "ita", "ita", nil), .init(4, "dut", "nld", nil), .init(5, "sve", "swe", nil),
+        .init(6, "spa", "spa", nil), .init(7, "dan", "dan", nil), .init(8, "por", "por", nil),
+        .init(9, "nor", "nor", nil), .init(10, "heb", "heb", nil), .init(11, "jpn", "jpn", nil),
+        .init(12, "ara", "ara", nil), .init(13, "fin", "fin", nil), .init(14, "gre", "ell", nil),
+        .init(15, "ice", "isl", nil), .init(16, "mlt", "mlt", nil), .init(17, "tur", "tur", nil),
+        .init(18, "hr ", "hrv", nil), .init(19, "chi", "zho", "zh-Hant"), .init(20, "urd", "urd", nil),
+        .init(21, "hin", "hin", nil), .init(22, "tha", "tha", nil), .init(23, "kor", "kor", nil),
+        .init(24, "lit", "lit", nil), .init(25, "pol", "pol", nil), .init(26, "hun", "hun", nil),
+        .init(27, "est", "est", nil), .init(28, "lav", "lav", nil), .init(29, "smi", "smi", nil),
+        .init(30, "fo ", "fao", nil), .init(31, "per", "fas", nil), .init(32, "rus", "rus", nil),
+        .init(33, "chi", "zho", "zh-Hans"), .init(35, "iri", "gle", nil), .init(36, "alb", "sqi", nil),
+        .init(37, "ron", "ron", nil), .init(38, "ces", "ces", nil), .init(39, "slk", "slk", nil),
+        .init(40, "slv", "slv", nil), .init(41, "yid", "yid", nil), .init(42, "sr ", "srp", nil),
+        .init(43, "mac", "mkd", nil), .init(44, "bul", "bul", nil), .init(45, "ukr", "ukr", nil),
+        .init(46, "bel", "bel", nil), .init(47, "uzb", "uzb", nil), .init(48, "kaz", "kaz", nil),
+        .init(49, "aze", "aze", "az-Cyrl"), .init(50, "aze", "aze", "az-Arab"), .init(51, "arm", "hye", nil),
+        .init(52, "geo", "kat", nil), .init(53, "mol", "mol", nil), .init(54, "kir", "kir", nil),
+        .init(55, "tgk", "tgk", nil), .init(56, "tuk", "tuk", nil), .init(57, "mon", "mon", "mn-Mong"),
+        .init(59, "pus", "pus", nil), .init(60, "kur", "kur", nil), .init(61, "kas", "kas", nil),
+        .init(62, "snd", "snd", nil), .init(63, "tib", "bod", nil), .init(64, "nep", "nep", nil),
+        .init(65, "san", "san", nil), .init(66, "mar", "mar", nil), .init(67, "ben", "ben", nil),
+        .init(68, "asm", "asm", nil), .init(69, "guj", "guj", nil), .init(70, "pa ", "pan", nil),
+        .init(71, "ori", "ori", nil), .init(72, "mal", "mal", nil), .init(73, "kan", "kan", nil),
+        .init(74, "tam", "tam", nil), .init(75, "tel", "tel", nil), .init(76, "sin", "sin", nil),
+        .init(77, "bur", "mya", nil), .init(78, "khm", "khm", nil), .init(79, "lao", "lao", nil),
+        .init(80, "vie", "vie", nil), .init(81, "ind", "ind", nil), .init(82, "tgl", "tgl", nil),
+        .init(83, "may", "msa", nil), .init(84, "may", "msa", "ms-Arab"), .init(85, "amh", "amh", nil),
+        .init(86, "tir", "tir", nil), .init(87, "orm", "orm", nil), .init(88, "som", "som", nil),
+        .init(89, "swa", "swa", nil), .init(90, "kin", "kin", nil), .init(91, "run", "run", nil),
+        .init(92, "nya", "nya", nil), .init(93, "mlg", "mlg", nil), .init(94, "epo", "epo", nil),
+        .init(128, "wel", "cym", nil), .init(129, "baq", "eus", nil), .init(130, "cat", "cat", nil),
+        .init(131, "lat", "lat", nil), .init(132, "que", "que", nil), .init(133, "grn", "grn", nil),
+        .init(134, "aym", "aym", nil), .init(135, "tat", "tat", nil), .init(136, "uig", "uig", nil),
+        .init(137, "dzo", "dzo", nil), .init(138, "jav", "jav", nil)
+    ]
+
+    /// The strings ffmpeg's MOV writer accepts as a language, in the order of
+    /// its QuickTime list: each label once, in number order (`chi` is 19,
+    /// not 33). Several are not ISO 639-2 codes of the language they stand
+    /// for (`sve`, `iri`, `chi`'s Traditional script), and four end in a
+    /// space.
+    static let quickTimeListEntries: [String] = {
+        var labels: [String] = []
+        for entry in quickTimeNumbers where !labels.contains(entry.label) { labels.append(entry.label) }
+        return labels
+    }()
+
+    /// A QuickTime-list entry Apple's players read WITH a script, as ffmpeg
+    /// writes it (the first number with the label): the words for notes.
     struct QuickTimeScriptEntry: Sendable {
         /// ffmpeg's label (`chi`).
         let entry: String
-        /// What Apple's players read it as (`zh-Hant`).
-        let tag: String
         /// The language's English name, for notes (`Chinese`).
         let languageName: String
         /// The whole meaning in words, for notes.
         let meaning: String
+        /// What Apple's players read it as (`zh-Hant`), from the table.
+        var tag: String { TrackLanguage.quickTimeMeaning(ofEntry: entry) ?? "" }
     }
 
     /// The three entries Apple's players read with a script (see above).
     static let quickTimeEntriesReadWithAScript: [QuickTimeScriptEntry] = [
-        QuickTimeScriptEntry(entry: "chi", tag: "zh-Hant", languageName: "Chinese", meaning: "Chinese in Traditional script"),
-        QuickTimeScriptEntry(entry: "aze", tag: "az-Cyrl", languageName: "Azerbaijani",
-                             meaning: "Azerbaijani in Cyrillic script"),
-        QuickTimeScriptEntry(entry: "mon", tag: "mn-Mong", languageName: "Mongolian",
-                             meaning: "Mongolian in Mongolian script")
+        QuickTimeScriptEntry(entry: "chi", languageName: "Chinese", meaning: "Chinese in Traditional script"),
+        QuickTimeScriptEntry(entry: "aze", languageName: "Azerbaijani", meaning: "Azerbaijani in Cyrillic script"),
+        QuickTimeScriptEntry(entry: "mon", languageName: "Mongolian", meaning: "Mongolian in Mongolian script")
     ]
 
-    /// A QuickTime-list label that is not a language code (see above).
-    struct QuickTimeLabelEntry: Sendable {
+    /// A QuickTime-list entry whose label is the registered code of ANOTHER
+    /// language (see above).
+    struct QuickTimeEntryNamingAnotherLanguage: Sendable {
         /// ffmpeg's label (`sve`).
         let entry: String
         /// The language Apple's players read it as (`sv`).
         let language: String
         /// That language's English name, for notes (`Swedish`).
         let languageName: String
+        /// The English name of the language the label is the registered
+        /// code for (`Serili`) — how other programs read it.
+        let registeredName: String
     }
 
-    /// The two labels never written (see above).
-    static let quickTimeLabelsThatAreNotCodes: [QuickTimeLabelEntry] = [
-        QuickTimeLabelEntry(entry: "sve", language: "sv", languageName: "Swedish"),
-        QuickTimeLabelEntry(entry: "iri", language: "ga", languageName: "Irish")
+    /// The two entries never written for a language from elsewhere (see
+    /// above).
+    static let quickTimeEntriesNamingAnotherLanguage: [QuickTimeEntryNamingAnotherLanguage] = [
+        QuickTimeEntryNamingAnotherLanguage(entry: "sve", language: "sv", languageName: "Swedish", registeredName: "Serili"),
+        QuickTimeEntryNamingAnotherLanguage(entry: "iri", language: "ga", languageName: "Irish", registeredName: "Rigwe")
     ]
 
-    /// The language tag Apple's players read QuickTime-list entry `entry`
-    /// as — `zh-Hant` for `chi`, `de` for `ger` — or `nil` for an entry this
-    /// converter never writes (`sve`, `iri`), text not on the list, or
-    /// without the policy's data.
-    static func quickTimeMeaning(ofEntry entry: String) -> String? {
-        guard quickTimeListEntries.contains(entry),
-              !quickTimeLabelsThatAreNotCodes.contains(where: { $0.entry == entry }) else { return nil }
-        if let scripted = quickTimeEntriesReadWithAScript.first(where: { $0.entry == entry }) {
-            return scripted.tag
-        }
-        guard policy != nil else { return nil }
-        let reading = read(fileValue: entry)
+    /// What Apple's players read `entry` as, as a canonical tag — its
+    /// extended tag where AVFoundation gives one (`zh-Hant`), else the
+    /// policy's reading of its `languageCode` (`swe` → `sv`) — or `nil` when
+    /// that is not a language (`und`), or without the policy's data.
+    static func appleMeaning(of entry: QuickTimeLanguageNumber) -> String? {
+        guard let policy else { return nil }
+        if let tag = entry.appleTag { return policy.canonicaliser.canonicalise(tag).canonical }
+        let reading = read(fileValue: entry.appleCode)
         guard reading.unrecognised == nil, reading.language != "und" else { return nil }
         return reading.language
+    }
+
+    /// The language a MOV or MP4 track with QuickTime language NUMBER
+    /// `number` has, as Apple's players read it (`zh-Hant` for 19, `zh-Hans`
+    /// for 33, `sv` for 5) — or `nil` when the number has no label, `label`
+    /// (ffprobe's text for the track) is not ffmpeg's label for that number
+    /// (then the track and the number were not matched with certainty, and
+    /// nothing is changed), or without the policy's data. For the probe
+    /// (`FFmpegProbe.applyingQuickTimeLanguages`).
+    public static func quickTimeLanguage(number: UInt16, label: String) -> String? {
+        guard let entry = quickTimeNumbers.first(where: { $0.number == number }), entry.label == label else { return nil }
+        return appleMeaning(of: entry)
+    }
+
+    /// The language tag Apple's players read QuickTime-list entry `entry`
+    /// as, AS FFMPEG WRITES IT — the first number with that label: `zh-Hant`
+    /// for `chi` (19), `de` for `ger`, `sv` for `sve` — or `nil` for text not
+    /// on the list, or without the policy's data. What a value written into
+    /// a MOV will be read back as (`meaningOnceStored`).
+    static func quickTimeMeaning(ofEntry entry: String) -> String? {
+        guard let first = quickTimeNumbers.first(where: { $0.label == entry }) else { return nil }
+        return appleMeaning(of: first)
     }
 
     /// The entry this converter writes for each tag MOV can store, keyed by
     /// what Apple's players read the entry as (`zh-Hant` → `chi`, `de` →
     /// `ger`). The first match in list order wins, as in ffmpeg (`ron`
-    /// before `mol` for Romanian). Empty without the policy's data.
+    /// before `mol` for Romanian). Never `sve` or `iri` (see above). Empty
+    /// without the policy's data.
     static let quickTimeCodesByTag: [String: String] = {
         var table: [String: String] = [:]
-        for entry in quickTimeListEntries {
+        for entry in quickTimeListEntries where !quickTimeEntriesNamingAnotherLanguage.contains(where: { $0.entry == entry }) {
             guard let meaning = quickTimeMeaning(ofEntry: entry), table[meaning] == nil else { continue }
             table[meaning] = entry
         }
@@ -413,12 +507,12 @@ extension TrackLanguage {
     }
 
     /// Why MOV stores no language for `canonical` although its QuickTime
-    /// list has the language in SOME form — words that complete "this file
-    /// type (QuickTime) can only store the languages on its old list; …" —
-    /// or `nil` when the list does not have the language at all. Shared by
-    /// the job's notes and the stream editor's warning. `named` is how the
-    /// tag is named in the words (`“zh”`, or `“zh”, set in the stream
-    /// editor,`).
+    /// list has the language — or the code — in SOME form: words that
+    /// complete "this file type (QuickTime) can only store the languages on
+    /// its old list; …" — or `nil` when the list does not have it at all.
+    /// Shared by the job's notes and the stream editor's warning. `named` is
+    /// how the tag is named in the words (`“zh”`, or `“zh”, set in the
+    /// stream editor,`).
     static func quickTimeGapWords(for canonical: String, named: String? = nil) -> String? {
         guard let policy else { return nil }
         let tag = policy.canonicaliser.canonicalise(canonical)
@@ -429,9 +523,18 @@ extension TrackLanguage {
             return "that list has \(scripted.languageName) only as “\(scripted.entry)”, which Apple's players read as "
                 + "\(scripted.meaning) (“\(scripted.tag)”), and \(differs)"
         }
-        if let label = quickTimeLabelsThatAreNotCodes.first(where: { $0.language == language }) {
-            return "that list has \(label.languageName) only under the label “\(label.entry)”, which is not a "
-                + "language code: other programs, this one included, could not read it back"
+        // Swedish or Irish: on the list only under another language's code.
+        if let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.language == language }) {
+            return "that list has \(other.languageName) only as “\(other.entry)”, which Apple's players read as "
+                + "\(other.languageName) but other programs read as \(other.registeredName), the language that code "
+                + "is registered for"
+        }
+        // Serili or Rigwe (a Matroska `sve` track, say): the code is on the
+        // list, but as Apple's code for Swedish or Irish. The third review's
+        // build said it was not on the list at all, which was untrue.
+        if let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == language }) {
+            return "\(named) is on that list, but Apple's players read it as \(other.languageName), not as "
+                + "\(other.registeredName)"
         }
         return nil
     }
@@ -531,9 +634,10 @@ extension TrackLanguage {
     }
 
     /// What a value written into `storage`'s field will be read back as —
-    /// for MOV, what Apple's players read the entry as (`chi` is `zh-Hant`,
-    /// `sve` nothing this converter can use); elsewhere, the policy's reading
-    /// of the text (`fre` is `fr`). `nil` when it is not a language.
+    /// for MOV, what Apple's players read the entry as, as ffmpeg writes it
+    /// (`chi` is `zh-Hant`, `sve` is `sv`); elsewhere, the policy's reading
+    /// of the text (`fre` is `fr`, `sve` is Serili). `nil` when it is not a
+    /// language.
     static func meaningOnceStored(_ value: String, in storage: LanguageFieldStorage) -> String? {
         if storage == .quickTimeList { return quickTimeMeaning(ofEntry: value) }
         let reading = read(fileValue: value)
@@ -725,9 +829,9 @@ extension TrackLanguage {
 
         // A value that is not a language at all: kept only where this file
         // type stores it exactly; otherwise `und`, and why. Never in MOV,
-        // where the only such values its list holds — `sve`, `iri` — would
-        // be read by Apple's players as Swedish and Irish: text the source
-        // did not give as a language would silently become one (COMPAT-040).
+        // where whatever its list holds Apple's players read as a language:
+        // text the source did not give as a language would silently become
+        // one (COMPAT-040).
         if let raw = sourceUnrecognised ?? nonTag(sourceLanguage, policy: policy) {
             let fix = " Set the right language in the stream editor if you know it."
             if storage != .unchecked, storage != .quickTimeList, storage.keeps(raw) {
@@ -822,6 +926,19 @@ extension TrackLanguage {
             //    Chinese there.
             //    Never when ffmpeg copies nothing (`copiesNothing`).
             if !copiesNothing, storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical {
+                // MOV, and the source's own `sve` or `iri` (a MOV's Swedish
+                // or Irish): kept, because the output then says exactly what
+                // the source said — but never written for Swedish or Irish
+                // from anywhere else, so the note says why this is different.
+                if storage == .quickTimeList,
+                   let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == copied }) {
+                    return write(
+                        isReplacement ? .write(copied) : .copySource,
+                        "\(stream): the source's own QuickTime code “\(copied)” is kept as it was. Apple's players read it as "
+                            + "\(other.languageName), but other programs read it as \(other.registeredName), the language "
+                            + "that code is registered for."
+                    )
+                }
                 return write(isReplacement ? .write(copied) : .copySource, "\(stream): \(reason); kept as the source had it.\(fix)")
             }
             // 3. The language's tag itself, as text.
@@ -896,10 +1013,9 @@ extension TrackLanguage {
         case .threeCharacterPieces:
             return "this file type can only store codes of exactly three letters"
         case .quickTimeList:
-            if let label = quickTimeLabelsThatAreNotCodes.first(where: { $0.entry == value }) {
-                return "this file type (QuickTime) holds “\(value)” only as its old list's label for "
-                    + "\(label.languageName), which Apple's players read as \(label.languageName) and other programs, "
-                    + "this one included, cannot read back"
+            if let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == value }) {
+                return "this file type (QuickTime) would store “\(value)” as the code Apple's players read as "
+                    + "\(other.languageName)"
             }
             return "this file type (QuickTime) can only store the languages on its old list"
         case .nothing:

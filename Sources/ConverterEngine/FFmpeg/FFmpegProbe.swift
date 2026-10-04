@@ -230,6 +230,14 @@ public final class FFmpegProbe: Sendable {
             formatName: file.containerFormatName,
             statisticsWritingApplication: Self.statisticsWritingApplication(in: jsonOutput)
         )
+        // MOV and MP4: each track's language as Apple's players read it — the
+        // QuickTime number, not ffprobe's label for it, and the full tag
+        // (`elng`) where there is one (see `applyingQuickTimeLanguages`).
+        file.streams = Self.applyingQuickTimeLanguages(
+            to: file.streams,
+            fileURL: url,
+            formatName: file.containerFormatName
+        )
         return file
     }
 
@@ -1152,6 +1160,52 @@ extension FFmpegProbe {
                   stream.disposition?.isAttachedPicture != true else { return stream }
             var updated = stream
             updated.languageFullTagUnknown = true
+            return updated
+        }
+    }
+}
+
+// MARK: - MOV and MP4 track languages, as Apple's players read them (TRACK-070)
+
+extension FFmpegProbe {
+
+    /// `streams` with each MOV / MP4 track's language read as Apple's players
+    /// read it, from the file's own track list (`QuickTimeTrackList`):
+    ///
+    /// * a full tag in the track's `elng` box wins over its old field, as
+    ///   Matroska's `LanguageBCP47` does (TRACK-070) — Apple's own writer
+    ///   stores `zh-Hant` there beside a plain `zho`;
+    /// * otherwise an old Macintosh language NUMBER is read as Apple's
+    ///   players read it (`TrackLanguage.quickTimeLanguage(number:label:)`):
+    ///   19 `chi` is `zh-Hant`, 33 `chi` is `zh-Hans`, 5 `sve` is `sv`;
+    /// * three packed letters (an MP4's `chi`, an Apple-written MOV's `aze`)
+    ///   are left as ffprobe read them — they mean exactly what they say.
+    ///
+    /// ffprobe's text stays in `languageAsStored`, because that is what
+    /// ffmpeg copies (an empty text when ffprobe gave none: ffmpeg copies
+    /// nothing). The fourth independent review found a MOV's
+    /// Traditional-Chinese `chi` read as plain Chinese, so a MOV-to-MOV remux
+    /// stored no language, and a MOV's Swedish `sve` read as Serili.
+    ///
+    /// When the track list cannot be read or matched to ffprobe's streams,
+    /// nothing is changed. Not a MOV / MP4 file (`formatName`): unchanged.
+    static func applyingQuickTimeLanguages(to streams: [MediaStream], fileURL: URL, formatName: String?) -> [MediaStream] {
+        guard let formatName, formatName.contains("mov") || formatName.contains("mp4"),
+              let matched = QuickTimeTrackList.read(url: fileURL)?.streamsMatched(to: streams) else { return streams }
+        return streams.map { stream in
+            guard let track = matched[stream.streamIndex] else { return stream }
+            var updated = stream
+            if let full = track.extendedLanguage.map(MetadataSanitizer.sanitize), !full.isEmpty {
+                let reading = TrackLanguage.read(fileValue: String(full.prefix(64)))
+                updated.language = reading.language
+                updated.unrecognisedLanguage = reading.unrecognised
+                if updated.languageAsStored == nil { updated.languageAsStored = "" }
+                return updated
+            }
+            guard track.hasMacintoshLanguageNumber, let number = track.languageCode, let label = stream.languageAsStored,
+                  let meaning = TrackLanguage.quickTimeLanguage(number: number, label: label) else { return stream }
+            updated.language = meaning
+            updated.unrecognisedLanguage = nil
             return updated
         }
     }
