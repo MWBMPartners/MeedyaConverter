@@ -14,8 +14,9 @@
 // independent review's cover-art findings (WebM, MPEG-TS, AVI, audio-only
 // MP4, Matroska names and descriptions) are checked the same way.
 //
-// Skipped (not failed) when ffmpeg/ffprobe are not installed, per
-// CONTRIBUTING's rule for tests that need FFmpeg. First run 28 Sept 2026
+// Skipped when ffmpeg/ffprobe are not installed, per CONTRIBUTING's rule for
+// tests that need FFmpeg — but FAILED in CI's build-and-test job, which
+// installs the tools and requires them (`MediaTools.missing`). First run 28 Sept 2026
 // with ffmpeg 9.0.1 (Homebrew): passed.
 // ============================================================================
 
@@ -32,8 +33,8 @@ final class TrackPreservationToolTests: XCTestCase {
     private var folder = URL(fileURLWithPath: "/")
 
     override func setUpWithError() throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
-            throw XCTSkip("ffmpeg/ffprobe not installed — tool checks skipped")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — tool checks")
         }
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
@@ -43,13 +44,6 @@ final class TrackPreservationToolTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: folder)
-    }
-
-    /// The first executable found for `name` in the usual places.
-    private func tool(_ name: String) -> String? {
-        let folders = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-            + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-        return folders.map { "\($0)/\(name)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Runs a tool and returns its exit code and standard output.
@@ -247,7 +241,7 @@ final class TrackPreservationToolTests: XCTestCase {
     /// encoders (skipped without them).
     func test_coverArtToWebMIsLeftOutAndTheJobSucceeds() async throws {
         guard try hasEncoder("libvpx-vp9"), try hasEncoder("libopus") else {
-            throw XCTSkip("this ffmpeg has no libvpx-vp9 or libopus")
+            try MediaTools.missing("this ffmpeg has no libvpx-vp9 or libopus")
         }
         let film = try makeFilm("film.mkv", pictures: [(try makePicture(), "image/jpeg", nil)])
         var profile = EncodingProfile.webNextGen
@@ -368,7 +362,7 @@ final class TrackPreservationToolTests: XCTestCase {
             XCTAssertEqual(try streams(output).map(\.title), ["My Song"], "\(name): the song keeps its title")
             checked += 1
         }
-        if checked == 0 { throw XCTSkip("this ffmpeg has neither libvorbis nor libopus") }
+        if checked == 0 { try MediaTools.missing("this ffmpeg has neither libvorbis nor libopus") }
     }
 
     // MARK: - Languages (review items 3 and 4)
@@ -424,7 +418,7 @@ final class TrackPreservationToolTests: XCTestCase {
     /// job's notes say it is not a registered language — the third
     /// independent review found no note at all. Needs the Opus encoder.
     func test_anUnregisteredLanguageToOggIsKeptAndNoted() async throws {
-        guard try hasEncoder("libopus") else { throw XCTSkip("this ffmpeg has no libopus") }
+        guard try hasEncoder("libopus") else { try MediaTools.missing("this ffmpeg has no libopus") }
         let source = try make("bogus.mkv", [
             "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3", "-c:a", "aac", "-metadata:s:a:0", "language=xx-bogus"
         ])

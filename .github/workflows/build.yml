@@ -162,12 +162,41 @@ jobs:
         run: swift build
 
       # ---------------------------------------------------------------------
+      # Step 6b: Install the media tools the real-tool tests need
+      # ---------------------------------------------------------------------
+      # ContainerLanguageToolTests, TrackPreservationToolTests and
+      # MatroskaTrackListTests run MeedyaConverter's own commands through the
+      # real ffmpeg and MKVToolNix and read the results back — the language
+      # policy requires checking what a tool writes against the tool itself
+      # (MWBM-MEDIA-LANG TRACK-070). Without the tools they used to SKIP, so a
+      # green run said nothing about them (found in the third independent
+      # review of the language-policy work). They are installed here, and
+      # MEEDYA_REQUIRE_MEDIA_TOOLS on the test step below makes a missing tool
+      # FAIL those tests instead of skipping them (see
+      # Tests/ConverterEngineTests/MediaToolSupport.swift). Only this job
+      # requires them: the release workflows bundle their own ffmpeg, and a
+      # second one on those runners would only blur which is used.
+      # No action is added: Homebrew is already on the runner. A failed
+      # install fails this step, loudly, rather than leaving the tests to
+      # fail one by one.
+      # ---------------------------------------------------------------------
+      - name: Install ffmpeg and MKVToolNix (for the real-tool tests)
+        run: |
+          brew install ffmpeg mkvtoolnix
+          ffmpeg -hide_banner -version | head -n 1
+          mkvmerge --version
+
+      # ---------------------------------------------------------------------
       # Step 7: Run tests
       # ---------------------------------------------------------------------
       # Execute all test targets defined in Package.swift. The --parallel
       # flag runs test cases concurrently for faster feedback.
+      # MEEDYA_REQUIRE_MEDIA_TOOLS=1: the real-tool tests FAIL, not skip, if
+      # ffmpeg, ffprobe, MKVToolNix or an encoder they need is missing.
       # ---------------------------------------------------------------------
       - name: Run tests
+        env:
+          MEEDYA_REQUIRE_MEDIA_TOOLS: '1'
         run: swift test --parallel
 
       # ---------------------------------------------------------------------

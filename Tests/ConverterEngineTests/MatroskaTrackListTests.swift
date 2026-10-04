@@ -20,7 +20,8 @@
 //     tags — marks the tracks, so the notes say so and no automatic title is
 //     made from the old code;
 //   * with MKVToolNix and ffmpeg installed, a real mkvmerge file goes all the
-//     way through MeedyaConverter's own arguments (skipped otherwise).
+//     way through MeedyaConverter's own arguments (skipped otherwise — but
+//     failed in CI's build-and-test job, which installs and requires them).
 // ============================================================================
 
 import Foundation
@@ -292,13 +293,6 @@ final class MatroskaTrackListTests: XCTestCase {
 
     // MARK: - With the real tools
 
-    /// The first executable found for `name` in the usual places.
-    private func tool(_ name: String) -> String? {
-        let folders = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-            + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-        return folders.map { "\($0)/\(name)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
     /// Runs a tool and returns its exit code and standard output.
     @discardableResult
     private func run(_ path: String, _ arguments: [String]) throws -> (status: Int32, output: Data) {
@@ -328,10 +322,12 @@ final class MatroskaTrackListTests: XCTestCase {
     /// copied the old field in: `chi` (which Apple's players read as
     /// Traditional Chinese) and `ara`, under a note saying "no language is
     /// stored". Read back with ffprobe AND with Apple's AVFoundation.
-    /// Skipped without ffmpeg, ffprobe and mkvmerge.
+    /// Skipped without ffmpeg, ffprobe and mkvmerge — FAILED without them
+    /// in CI's build-and-test job (`MediaTools.missing`).
     func test_aRealMkvmergeFileKeepsItsLanguages() async throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe"), let mkvmerge = tool("mkvmerge") else {
-            throw XCTSkip("ffmpeg, ffprobe or mkvmerge not installed")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe"),
+              let mkvmerge = MediaTools.find("mkvmerge") else {
+            try MediaTools.missing("ffmpeg, ffprobe or mkvmerge not installed")
         }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-mkvmerge-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

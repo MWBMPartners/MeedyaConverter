@@ -85,11 +85,25 @@ a restart; get each finished step somewhere lasting when that is allowed.
 | R4-1 | MOV: "no language is stored" made true — clear the field (1) | #531 | Done — `abdc1f8` | 1042 engine tests, 0 failures; 2 planted faults caught; ffprobe + AVFoundation read-backs |
 | R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Done — `07ccd76` | 1044 engine tests, 0 failures; 98 entries read back by AVFoundation, 0 mismatches; 3 planted faults caught |
 | R4-3 | MP4 covers only JPEG, PNG or BMP (3) | #531 | Done — `b4a985b` | GIF/TIFF covers to MP4: job succeeds, note per picture; planted fault caught (11 failures) |
-| R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Queued | |
-| R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Done — the `fix(language)` commit after `b4a985b` | the 16 MiB shape: 36.2 s / 708 MB → 0.20 s / 74 MB peak (the fz tool's own buffers); 3 planted faults caught |
+| R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Done — the `ci:` commit after `4c2603a` | tools hidden: 20 skipped without the variable, 20 FAILED with it; with the tools: 31 passed either way; `actionlint` exit 0 |
+| R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Done — `4c2603a` | the 16 MiB shape: 36.2 s / 708 MB → 0.20 s / 74 MB peak (the fz tool's own buffers); 3 planted faults caught |
 | R4-6 | Test: the saved picture list is always replaced (6) | #531 | Queued | |
 | R4-7 | Ogg: an unregistered language is noted (7) | #531 | Done — `1d2db82` | unit + tool test (`xx-bogus` to Ogg Opus); planted fault caught (3 failures) |
 | R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | In progress | review table and CI record above |
+
+**CI now includes the real-tool tests.** From round 4's `ci:` commit on, the
+build-and-test job (`build.yml`) runs `brew install ffmpeg mkvtoolnix` and
+sets `MEEDYA_REQUIRE_MEDIA_TOOLS=1` for `swift test`, so a green CI run
+INCLUDES ContainerLanguageToolTests, TrackPreservationToolTests and
+MatroskaTrackListTests' real-tool tests — they FAIL, not skip, if a tool or
+an encoder they need is missing (`MediaToolSupport.swift`). Two things to
+know: CI gets Homebrew's CURRENT `ffmpeg` formula (newer than this Mac's
+9.0.1, which is `ffmpeg-full`), and that formula has no libvorbis (the Ogg
+Vorbis row of the Ogg title test is then passed over; the Opus row runs).
+The dev-build, beta/alpha and release workflows still SKIP these tests: they
+do not set the variable (a release bundles its own ffmpeg). Whether it works
+on the runner shows only in a CI run that includes the `ci:` commit
+(`gh run list --branch wip/bcp47-language-policy`).
 
 **Known limit found in round 4 (raise, do not fix here):** the policy's
 reader reads a MOV source's own `chi` as plain Chinese (`zh`), because

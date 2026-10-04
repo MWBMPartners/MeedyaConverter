@@ -23,8 +23,9 @@
 //     probed with FFmpegProbe, converted with MeedyaConverter's own arguments
 //     to Matroska, MP4 and MOV, and read back.
 //
-// Skipped (not failed) when no ffmpeg/ffprobe is installed, per CONTRIBUTING's
-// rule for tests that need FFmpeg. DASH, HLS and MXF were checked by hand
+// Skipped when no ffmpeg/ffprobe is installed, per CONTRIBUTING's rule for
+// tests that need FFmpeg — but FAILED in CI's build-and-test job, which
+// installs the tools and requires them (`MediaTools.missing`). DASH, HLS and MXF were checked by hand
 // (28 Sept 2026, ffmpeg 9.0.1), not here: they need a folder of segments or a
 // video track.
 //
@@ -41,13 +42,6 @@ import XCTest
 final class ContainerLanguageToolTests: XCTestCase {
 
     // MARK: - Tools
-
-    /// The first executable found for `name` in the usual places.
-    private func tool(_ name: String) -> String? {
-        let folders = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-            + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-        return folders.map { "\($0)/\(name)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
 
     /// Runs a tool and returns its exit code and standard output.
     @discardableResult
@@ -86,8 +80,8 @@ final class ContainerLanguageToolTests: XCTestCase {
     }
 
     func test_eachFileTypeStoresWhatTheTableSays() throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
-            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — TRACK-070 tool check")
         }
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("meedya-lang-table-\(UUID().uuidString)")
@@ -112,6 +106,8 @@ final class ContainerLanguageToolTests: XCTestCase {
         ]
         if try hasEncoder(ffmpeg, "libopus") {
             rows.append((.webm, "webm", "webm", ["-c:a", "libopus"]))
+        } else if MediaTools.required {
+            try MediaTools.missing("this ffmpeg has no libopus (needed for the WebM row)")
         }
         let values = ["ger", "deu", "fr-CA", "romanian", "yue", "ENG", "und", "hr ", "e_g", "eng,fre"]
         var mismatches: [String] = []
@@ -151,8 +147,8 @@ final class ContainerLanguageToolTests: XCTestCase {
     /// gives back the text `sve`/`iri` (which is why they are never written).
     /// One MOV file with one short audio track per entry, made by ffmpeg.
     func test_movCodesAreWhatApplesPlayersRead() async throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
-            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — TRACK-070 tool check")
         }
         let policy = try XCTUnwrap(TrackLanguage.policy)
         let folder = FileManager.default.temporaryDirectory
@@ -175,7 +171,7 @@ final class ContainerLanguageToolTests: XCTestCase {
         XCTAssertEqual(labels, entries.map(Optional.some), "ffprobe reads the labels back")
 
         guard let apple = try await MediaTools.appleAudioLanguages(of: output) else {
-            throw XCTSkip("AVFoundation is not available here")
+            try MediaTools.missing("AVFoundation is not available here")
         }
         XCTAssertEqual(apple.count, entries.count)
         var mismatches: [String] = []
@@ -198,8 +194,8 @@ final class ContainerLanguageToolTests: XCTestCase {
     /// language (Apple's AVFoundation reads `und`), MP4 stores `und` (its
     /// writer's value for "none"), and Matroska, MPEG-TS and Ogg store none.
     func test_anEmptyValueClearsTheField() async throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
-            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — TRACK-070 tool check")
         }
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("meedya-lang-clear-\(UUID().uuidString)")
@@ -232,8 +228,8 @@ final class ContainerLanguageToolTests: XCTestCase {
     // MARK: - The check
 
     func test_ffmpegWritesTheLanguageFieldsWeRelyOn() async throws {
-        guard let ffmpeg = tool("ffmpeg"), let ffprobe = tool("ffprobe") else {
-            throw XCTSkip("ffmpeg/ffprobe not installed — TRACK-070 tool check skipped")
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — TRACK-070 tool check")
         }
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("meedya-lang-tool-\(UUID().uuidString)")
