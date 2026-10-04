@@ -300,6 +300,47 @@ final class TrackPreservationToolTests: XCTestCase {
         })
     }
 
+    /// The engine ALWAYS replaces a job's saved picture list
+    /// (`attachedPictureFiles`) with the copies it made just now — even when
+    /// it made none. A job file is saved with that list, so it can carry
+    /// paths from an earlier run, or ones written by hand; only a copy made
+    /// in this job's own temporary folder may be attached. The second review
+    /// found the list replaced only when a copy was made, and the third found
+    /// no test would notice if that came back (its planted fault M15 failed
+    /// nothing). Here the real `EncodingEngine.encode` runs with a stand-in
+    /// for ffmpeg that refuses only the picture copy (the one command writing
+    /// an `image2` file) and runs the real ffmpeg for everything else; the
+    /// job carries a stale picture for the source's cover. The cover must be
+    /// left out — never replaced by the stale file.
+    func test_theEngineNeverAttachesASavedPictureListItDidNotJustMake() async throws {
+        let film = try makeFilm("film.mkv", pictures: [(try makePicture(), "image/jpeg", nil)])
+        XCTAssertEqual(try streams(film).map(\.attachedPicture), [false, false, true], "the source as made")
+
+        let stand = folder.appendingPathComponent("tools")
+        try FileManager.default.createDirectory(at: stand, withIntermediateDirectories: true)
+        let wrapper = stand.appendingPathComponent("ffmpeg")
+        let script = "#!/bin/sh\n"
+            + "# Test stand-in: refuse the picture copy (-f image2), run the real ffmpeg for everything else.\n"
+            + "for argument in \"$@\"; do [ \"$argument\" = image2 ] && exit 1; done\n"
+            + "exec '\(ffmpeg)' \"$@\"\n"
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+
+        let stale = try makePNG("stale.png")
+        let output = folder.appendingPathComponent("out.mkv")
+        var job = EncodingJobConfig(inputURL: film, outputURL: output, profile: .remuxToMKV)
+        job.attachedPictureFiles = [2: stale]
+        let temporary = folder.appendingPathComponent("engine-temp")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let engine = EncodingEngine(ffmpegPath: wrapper.path, ffprobePath: ffprobe, tempDirectory: temporary)
+        try engine.configure()
+        try await engine.encode(job: job)
+
+        let seen = try streams(output)
+        XCTAssertEqual(seen.map(\.type), ["video", "audio"], "the cover is left out; the stale picture is not attached")
+        XCTAssertFalse(seen.contains { $0.attachedPicture })
+    }
+
     /// MPEG-TS turned the cover into a `bin_data` stream and AVI into a stray
     /// MJPEG video track. Now it is left out of both, with a note.
     func test_coverArtIsLeftOutOfTransportStreamAndAVI() async throws {
