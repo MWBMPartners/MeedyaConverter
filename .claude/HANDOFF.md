@@ -5,18 +5,97 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-28 (language policy block below — round 3, local commits) · VERSION 0.1.0
-Previous: 2026-09-28 (language policy round 2) · 2026-09-28 (round 1) · 2026-09-25 14:55
+**Last updated:** 2026-10-04 (language policy block below — round 4) · VERSION 0.1.0
+Previous: 2026-09-28 (language policy round 3) · round 2 · round 1 · 2026-09-25 14:55
 
-## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`, 28 Sept
+## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`
 
-### ROUND 3 — fixes from the SECOND independent review (28 Sept) — DONE LOCALLY, NOT PUSHED, NOT REVIEWED
+A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
+`5d2223c`. This block records no push state: git is the record (`git log
+origin/wip/bcp47-language-policy..HEAD` lists what is not on GitHub). A push to
+`wip/**` triggers CI, the only place `swift test` runs. Everything in the
+"CURRENT STATE" block further down is about `wip/alpha-consolidation` and is
+unchanged by this work.
 
-**State:** everything up to `59f8667` is pushed (CI green). Round 3's commits are
-LOCAL ONLY, on top of `59f8667`, and NOT independently reviewed. The second
-review (a fresh Opus agent standing in for Codex, out of allowance) is in the
-orchestrator's scratch (`review-tmp/converter-review-2/REPORT.md`); the lead's
-decisions are in `brief-converter-r3.md` (scratch). Guiding rule unchanged:
+**Independent reviews — finished ones only** (each range checked with `git log`):
+
+| Review | Commits reviewed | Reviewer | Result | Acted on in |
+|---|---|---|---|---|
+| 1 | `5d2223c..28efa6f` — 15, round 1 | a fresh Opus agent standing in for Codex (out of allowance) | not clean | round 2 |
+| 2 | `28efa6f..59f8667` — 17, round 2 + the core `aaaa585` copy sweep | the same kind of stand-in | not clean: 3 must-fix, 4 should-fix, minors | round 3 |
+| 3 | `59f8667..e497c3b` — 10, round 3 | the same kind of stand-in | not clean: 1 must-fix, 3 should-fix, 4 minor | round 4 (below) |
+
+Commits after `e497c3b` are not yet reviewed.
+
+**CI record for this branch** (`gh run list --branch wip/bcp47-language-policy`):
+passed at `28efa6f`, `a5abc22`, `59f8667` and `e497c3b`. FAILED at `67c41ca`
+(round 1, fixed by `28efa6f`) and at `7271ae8`: round 3's `590371a` gave the
+quality preview a main-actor closure that it passes to
+`AttachedPictures.copyPictures`, and Swift 6.1 on the runner refused it
+("sending value of non-Sendable type … risks causing data races"); Swift 6.4 on
+this Mac let it through. `e497c3b` moved the call into a `nonisolated` helper,
+and CI passed there. Lesson: this Mac's compiler is newer and more lenient than
+CI's — keep Swift 6.1's strict concurrency rules in mind.
+
+### ROUND 4 — fixes from the THIRD independent review — IN PROGRESS
+
+The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r4.md`
+(scratch). Guiding rule unchanged: never lose or damage what the source had
+(COMPAT-030), never silently turn a value into a different language
+(COMPAT-040), and the job's notes must be true.
+
+**Redone on 4 Oct.** Round 4 was first built on 28 Sept, in a clone kept in a
+temporary folder; the Mac restarted on 2 Oct and emptied it, with the review
+evidence, and every round-4 commit existed only there — all were lost. It was
+redone from the same decisions on a fresh clone of `e497c3b`. The reviewer's
+own tools (`cmp.py`, `cov.sh`, the AVFoundation reader `av`, the track-list
+tool `fz`, the planted-fault runner) were rewritten from the earlier session's
+record of them, and the test media regenerated (mkvmerge for the full-tag
+files). Lesson: work that exists only in a temporary folder does not survive
+a restart; get each finished step somewhere lasting when that is allowed.
+
+**Reproduced before fixing (ffmpeg 9.0.1, MKVToolNix 101, AVFoundation):**
+- MOV "no language is stored" was untrue: nothing was given to ffmpeg, so it
+  COPIED the source's own field. mkvmerge's `yue`/`cmn`/`nan` (old field
+  `chi`) came out as `chi` — ffprobe `chi`, AVFoundation `zh-Hant` — each
+  noted "no language is stored"; `apc` (old field `ara`) came out as `ara`. An
+  edit to `sv`, or to `english`, on an English track left `eng` in the MOV
+  under the same note.
+- Apple reads three QuickTime-list codes with a SCRIPT: `chi` is `zh-Hant`,
+  `aze` is `az-Cyrl`, `mon` is `mn-Mong` (one MOV with a track for each of the
+  101 entries, read with AVFoundation). So `zh`, `zh-Hans` (a different
+  script!), `az` and `mn` became Traditional Chinese, Cyrillic Azerbaijani and
+  Mongolian-script Mongolian to Apple. `sve` and `iri` Apple reads as Swedish
+  and Irish, but ffprobe gives back the text `sve`/`iri`, which is not a
+  language code.
+- GIF and TIFF covers to MP4: ffmpeg refused the whole job (exit 234, "Could
+  not find tag for codec … not currently supported in container"). ffmpeg's
+  MP4 writer takes cover art only as JPEG, PNG or BMP (`codec_cover_image_tags`).
+- `xx-bogus` to Ogg: written, with no note (Matroska said "not a registered
+  language code").
+- Track-list reader: the third review measured 32.7 s and 631 MB of memory for
+  a 16 MiB track list of 8,388,000 empty entries (every child was copied);
+  5,000 filler (Void) elements before the track list stopped it reading at
+  all.
+- The review's planted fault M15 (the saved picture list replaced only when a
+  copy was made) failed no test.
+
+| # | Task (brief item) | Issue | Status | Notes |
+|---|---|---|---|---|
+| R4-1 | MOV: "no language is stored" made true — clear the field (1) | #531 | In progress | |
+| R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Queued | |
+| R4-3 | MP4 covers only JPEG, PNG or BMP (3) | #531 | Queued | |
+| R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Queued | |
+| R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Queued | |
+| R4-6 | Test: the saved picture list is always replaced (6) | #531 | Queued | |
+| R4-7 | Ogg: an unregistered language is noted (7) | #531 | Queued | |
+| R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | In progress | review table and CI record above |
+
+### ROUND 3 — fixes from the SECOND independent review (28 Sept) — DONE; reviewed by review 3
+
+The second review (a fresh Opus agent standing in for Codex, out of allowance)
+is in the orchestrator's scratch (`review-tmp/converter-review-2/REPORT.md`);
+the lead's decisions are in `brief-converter-r3.md` (scratch). Guiding rule:
 never lose or damage what the source had (COMPAT-030), never silently turn a
 value into a different language (COMPAT-040), and the job's notes must be true.
 Every "before" fault of the review was reproduced first with the reviewer's
@@ -33,7 +112,8 @@ tests): what each writer stores for a stream `language` value — Matroska,
 WebM, Ogg: any text; MP4/M4A/3GP/3G2: the first three characters when each is
 a lower-case letter (or one of `` ` { | } ~ ``), anything after cut, else
 nothing; MOV: only the strings of ffmpeg's QuickTime list (`ger`, `fra`,
-`chi`, `jpn`, `gre`, `sve`, `hr ` …), else nothing; MPEG-TS and HLS
+`chi`, `jpn`, `gre`, `sve`, `hr ` …), else nothing (what Apple reads three of
+them as — `chi`, `aze`, `mon` — is a round-4 finding, above); MPEG-TS and HLS
 segments: pieces of exactly three characters, else nothing; MPEG-PS, AVI,
 FLV, MXF, AIFF, CAF, W64/RF64/WAV, FLAC, MP3, ADTS: nothing. DASH: the MPD
 gets the text as given, but every segment's `mdhd` gets `und` whatever is
@@ -46,15 +126,15 @@ WebM, Ogg, FLV, CAF, W64, WAV, ADTS refuse the whole job.
 
 | # | Task (brief item) | Issue | Status | Notes |
 |---|---|---|---|---|
-| R3-1 | Cover art: left out where the file type cannot hold it; Matroska name + description (1, 2, 6, minor) | #531 | Done locally — `1ff75ac` | 1017 engine tests, 0 failures; 4 planted faults caught |
-| R3-2 | Conformance runner: one reading of the file (7) | #531 | Done locally — `6a73f04` | 15 policy tests; U+FEFF case fails; planted fault caught |
-| R3-3 | One table of what each file type stores; MOV QuickTime codes; `und-GB` (3, minor) | #531, #541 | Done locally — `976119d` | table tool test 13 file types × 10 values, 0 mismatches |
-| R3-4 | Matroska full tags (`MatroskaTrackList`) (4) | #531, #532 | Done locally — `78fb77b` | 1035 engine tests, 0 failures; real mkvmerge test |
-| R3-5 | Pipeline, Shortcuts, preview: same picture step + notes (5) | #531 | Done locally — `590371a` | shared `AttachedPictures.copyPictures`; pipeline `onNote`; Shortcuts returns a message |
-| R3-6 | Minors: editor clearing a title; two lint fixes | #531 | Done locally — `50b17c3` | app module type-checks (stub recipe); not run |
-| R3-7 | Docs: CHANGELOG, Architecture, API yaml, `.OpenAI/MEMORY.md`, this handoff | #531 | Done locally — the last `docs:` commit | |
+| R3-1 | Cover art: left out where the file type cannot hold it; Matroska name + description (1, 2, 6, minor) | #531 | Done — `1ff75ac` | 1017 engine tests, 0 failures; 4 planted faults caught |
+| R3-2 | Conformance runner: one reading of the file (7) | #531 | Done — `6a73f04` | 15 policy tests; U+FEFF case fails; planted fault caught |
+| R3-3 | One table of what each file type stores; MOV QuickTime codes; `und-GB` (3, minor) | #531, #541 | Done — `976119d` | table tool test 13 file types × 10 values, 0 mismatches |
+| R3-4 | Matroska full tags (`MatroskaTrackList`) (4) | #531, #532 | Done — `78fb77b` | 1035 engine tests, 0 failures; real mkvmerge test |
+| R3-5 | Pipeline, Shortcuts, preview: same picture step + notes (5) | #531 | Done — `590371a` | shared `AttachedPictures.copyPictures`; pipeline `onNote`; Shortcuts returns a message |
+| R3-6 | Minors: editor clearing a title; two lint fixes | #531 | Done — `50b17c3` | app module type-checks (stub recipe); not run |
+| R3-7 | Docs: CHANGELOG, Architecture, API yaml, `.OpenAI/MEMORY.md`, this handoff | #531 | Done — the last `docs:` commit | |
 | R3-8 | Issues: #540 fonts, #541 MOV roles opened; #539 (`nan`) and #533 (DASH) commented; #531 linked | — | Done | |
-| R3-9 | Push + CI to green; independent review of round 3 (W13) | — | Queued — orchestrator | round 3 is NOT independently reviewed |
+| R3-9 | Independent review of round 3 (W13) | — | Done — review 3 | CI failed at `7271ae8` and passed at `e497c3b` (see the CI record above) |
 
 **What round 3 changed, in one place** (details in the commit messages):
 - Cover art: `AttachedPictures.pictureSupport` — MP4 family keeps a mapped
@@ -67,8 +147,11 @@ WebM, Ogg, FLV, CAF, W64, WAV, ADTS refuse the whole job.
   each file type stores; `languageWrite` never leaves ffmpeg to cut or drop a
   value (policy code → source text if stored exactly and same language → the
   tag as text → code with region cut → `und`/nothing, each noted). MOV uses
-  ffmpeg's QuickTime list (`ger`, `chi`…; entries that do not read back as the
-  same language, like `sve`, are excluded). `MediaStream.languageAsStored`
+  ffmpeg's QuickTime list (`ger`, `chi`…). Round 3 said entries like `sve`
+  were left out because they "do not read back as the same language" — true
+  of ffprobe, which gives back the text `sve`; Apple reads it as Swedish. The
+  third review also found Apple reads `chi`, `aze` and `mon` with a script
+  (round 4). `MediaStream.languageAsStored`
   holds the raw text ffmpeg copies.
 - Matroska full tags: `MatroskaTrackList` (bounded EBML read of the track
   list) + `FFmpegProbe.applyingMatroskaFullLanguageTags`; fallback marks
@@ -126,13 +209,6 @@ Mandarin (`cmn`) "中文" (its own autonym for it); Cantonese is "廣東話".
 Harness trap: `SettingsKeyCoverageTests` looks for `Sources/` from the CURRENT
 folder, so run the harness binary from the repo root, not from its own folder.
 
-A separate piece of work on its OWN branch, cut from `wip/alpha-consolidation` at
-`5d2223c`. **Rounds 1 and 2 and the copy-update sweep are pushed** (head
-`59f8667`, CI green). **Round 3 (above) is LOCAL commits on top, not pushed** —
-the orchestrator pushes and watches CI (a push to `wip/**` triggers CI, the only
-place `swift test` runs). Everything in the "CURRENT STATE" block further down is
-about `wip/alpha-consolidation` and is unchanged by this work.
-
 ### COPY-UPDATE SWEEP — copies moved to core `aaaa585` (28 Sept)
 
 Every repository now pins MeedyaSuite-core
@@ -170,32 +246,32 @@ tracks and roles"; packaging note in `DEV_NOTES.md` → CI/CD Workflows.
 
 | # | Task | Issue | Status | Notes |
 |---|------|-------|--------|-------|
-| 1 | Stream numbers: whole-file vs type-counted (index-space bug) | #530 | Done locally — `0dabb2a` | explicit `OutputStreamPlan`; wrong-type stream numbers refused |
-| 2 | Policy copies + checker + CI step | — | Done locally — `2f25eff`, updated `a1a973a` | copies at core `f2e106a` (268 cases) |
-| 3 | Swift `MediaLanguagePolicy` target (Foundation only) + packaging | — | Done locally — `8db586a` | bundle shipped in .app and next to the CLI |
-| 4 | Conformance tests (every case, reversed, refusals, structure) | — | Done locally — `ea6cb97` | 268/268 locally and on Linux |
-| 5 | Probe reads languages (LANG-002) and every role | — | Done locally — `1eeee98` | |
-| 6 | Writing: order, language fields, autonym titles, roles | — | Done locally — `35753cb` | checked against real ffmpeg 9.0.1 |
-| 7 | Stream editor (tags, names, roles reach the output) | — | Done locally — `afb3fc6` | the SwiftUI view is type-checked, not run |
-| 7b | Saved jobs without the new job fields still load | — | Done locally — `203400a` | the new field is optional (synthesised decoding) |
-| 7c | Drop an unused parameter | — | Done locally — `2dc2351` | no behaviour change; 204 engine tests ran, 0 failures |
-| 8 | Agent instructions (AGENTS.md + pointers) | — | Done locally — `3fd1430` | committed before 7; order does not matter |
-| 9 | Docs (Architecture, DEV_NOTES, CHANGELOG) + this handoff | — | Done locally — the last `docs:` commit | |
-| 10 | Push + CI to green | — | Done — pushed `28efa6f`, CI green | |
+| 1 | Stream numbers: whole-file vs type-counted (index-space bug) | #530 | Done — `0dabb2a` | explicit `OutputStreamPlan`; wrong-type stream numbers refused |
+| 2 | Policy copies + checker + CI step | — | Done — `2f25eff`, updated `a1a973a` | copies at core `f2e106a` (268 cases) |
+| 3 | Swift `MediaLanguagePolicy` target (Foundation only) + packaging | — | Done — `8db586a` | bundle shipped in .app and next to the CLI |
+| 4 | Conformance tests (every case, reversed, refusals, structure) | — | Done — `ea6cb97` | 268/268 locally and on Linux |
+| 5 | Probe reads languages (LANG-002) and every role | — | Done — `1eeee98` | |
+| 6 | Writing: order, language fields, autonym titles, roles | — | Done — `35753cb` | checked against real ffmpeg 9.0.1 |
+| 7 | Stream editor (tags, names, roles reach the output) | — | Done — `afb3fc6` | the SwiftUI view is type-checked, not run |
+| 7b | Saved jobs without the new job fields still load | — | Done — `203400a` | the new field is optional (synthesised decoding) |
+| 7c | Drop an unused parameter | — | Done — `2dc2351` | no behaviour change; 204 engine tests ran, 0 failures |
+| 8 | Agent instructions (AGENTS.md + pointers) | — | Done — `3fd1430` | committed before 7; order does not matter |
+| 9 | Docs (Architecture, DEV_NOTES, CHANGELOG) + this handoff | — | Done — the last `docs:` commit | |
+| 10 | CI | — | Done — CI passed at `28efa6f` | |
 | 11 | Independent review (W13) | — | Done — round 1 reviewed | by a fresh Opus agent standing in for Codex (out of allowance); its findings are round 2 |
-| R2-1 | Cover art kept as cover art; every stream flag kept | #531 | Done locally — `23165c9`, `9f25ad7` | Matroska: attached again from a copy |
-| R2-2 | Automatic titles only where nothing is lost; roles in titles | #531 | Done locally — `b8c509b` | items 2 and 15 |
-| R2-3 | Languages the field cannot hold are kept and reported | #531 | Done locally — `a30f73c` | items 3 and 4 |
-| R2-4 | Editor: reads `eng` as `en`; warns before Apply; can leave a language/title alone | #531 | Done locally — `fae4252` | items 5, 6, 16 |
-| R2-5 | Track order can be switched off (profile, job, app, `--keep-track-order`) | #531 | Done locally — `a770c9a` | item 7 |
-| R2-6 | Pipeline, Shortcuts action and preview read the source's streams | #531 | Done locally — `95c2386` | item 8 |
-| R2-7 | TestFlight bundles; pre-release bundle check before tagging | #531 | Done locally — `4147274` | item 9 |
+| R2-1 | Cover art kept as cover art; every stream flag kept | #531 | Done — `23165c9`, `9f25ad7` | Matroska: attached again from a copy |
+| R2-2 | Automatic titles only where nothing is lost; roles in titles | #531 | Done — `b8c509b` | items 2 and 15 |
+| R2-3 | Languages the field cannot hold are kept and reported | #531 | Done — `a30f73c` | items 3 and 4 |
+| R2-4 | Editor: reads `eng` as `en`; warns before Apply; can leave a language/title alone | #531 | Done — `fae4252` | items 5, 6, 16 |
+| R2-5 | Track order can be switched off (profile, job, app, `--keep-track-order`) | #531 | Done — `a770c9a` | item 7 |
+| R2-6 | Pipeline, Shortcuts action and preview read the source's streams | #531 | Done — `95c2386` | item 8 |
+| R2-7 | TestFlight bundles; pre-release bundle check before tagging | #531 | Done — `4147274` | item 9 |
 | R2-8 | Follow-up issues | #532–#539 | Done — opened, linked from #531 | item 10 (and 14 → #533) |
-| R2-9 | ASCII-only grandfathered lookup | #531 | Done locally — `df63f41` | item 11 |
-| R2-10 | Every stale per-stream setting reported | #531 | Done locally — `e29e9a2` | item 12 |
-| R2-11 | "Data missing" warning to stderr and the app | #531 | Done locally — `87cdf7d` | item 13 |
-| R2-12 | Docs (CHANGELOG, Architecture, CLI docs, API yaml, DEV_NOTES) + this handoff | #531 | Done locally — `2b64022` | items 6, 7, 17 |
-| R2-13 | Push + CI to green; review of round 2 (W13) | — | Queued — orchestrator | round 2 is not independently reviewed yet |
+| R2-9 | ASCII-only grandfathered lookup | #531 | Done — `df63f41` | item 11 |
+| R2-10 | Every stale per-stream setting reported | #531 | Done — `e29e9a2` | item 12 |
+| R2-11 | "Data missing" warning to stderr and the app | #531 | Done — `87cdf7d` | item 13 |
+| R2-12 | Docs (CHANGELOG, Architecture, CLI docs, API yaml, DEV_NOTES) + this handoff | #531 | Done — `2b64022` | items 6, 7, 17 |
+| R2-13 | Review of round 2 (W13) | — | Done — review 2 | CI passed at `59f8667` |
 
 **Verified here (28 Sept), and how:**
 - `swift build --target ConverterEngine`, `--target MediaLanguagePolicy` and
