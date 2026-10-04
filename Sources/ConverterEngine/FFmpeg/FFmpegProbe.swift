@@ -1101,7 +1101,9 @@ extension FFmpegProbe {
     /// (ffmpeg 9.0.1), so a file made by mkvmerge probed as `chi` for
     /// Cantonese and `fre` for Canadian French (found in the second
     /// independent review). The old field's text stays in
-    /// `languageAsStored`, because that is what ffmpeg copies.
+    /// `languageAsStored`, because that is what ffmpeg copies — or, where
+    /// ffprobe gave no text (the old field says `und`), an EMPTY text:
+    /// ffmpeg then copies nothing.
     ///
     /// When the file's track list cannot be read or matched to ffprobe's
     /// streams (`MatroskaTrackList`), nothing is changed — but if the file's
@@ -1129,6 +1131,17 @@ extension FFmpegProbe {
                 let reading = TrackLanguage.read(fileValue: String(full.prefix(64)))
                 updated.language = reading.language
                 updated.unrecognisedLanguage = reading.unrecognised
+                // ffprobe gave no text for the old field: it said `und`,
+                // which ffprobe hides — mkvmerge writes `und` there for a
+                // language with no three-letter code (`abq`, `pnb`) and for
+                // `und-Latn`, `und-419`, `und-x-foo`. So ffmpeg copies
+                // NOTHING, and that is recorded as an EMPTY text, not left
+                // as `nil` (which would mean "not known — take `language`
+                // as the text"). Until the fourth independent review it was
+                // left as `nil`, so the converter took ffmpeg to copy `abq`
+                // and noted "kept as the source had it" while the output
+                // held no language at all.
+                if updated.languageAsStored == nil { updated.languageAsStored = "" }
                 return updated
             }
         }

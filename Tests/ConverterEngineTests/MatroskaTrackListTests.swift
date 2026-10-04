@@ -21,7 +21,10 @@
 //     made from the old code;
 //   * with MKVToolNix and ffmpeg installed, a real mkvmerge file goes all the
 //     way through MeedyaConverter's own arguments (skipped otherwise — but
-//     failed in CI's build-and-test job, which installs and requires them).
+//     failed in CI's build-and-test job, which installs and requires them);
+//   * a full tag over an old field that says only `und` (Abaza `abq`,
+//     `und-Latn` …) is written, not left for ffmpeg to copy — it copies
+//     nothing (the fourth independent review).
 // ============================================================================
 
 import Foundation
@@ -234,7 +237,9 @@ final class MatroskaTrackListTests: XCTestCase {
             to: withText, fileURL: url, formatName: "matroska,webm", statisticsWritingApplication: nil
         )
         XCTAssertEqual(streams.map(\.language), ["und", "yue", "fr-CA", "en"])
-        XCTAssertEqual(streams.map(\.languageAsStored), [nil, "chi", "fre", "en"])
+        // The video's old field says `und`, which ffprobe hides: an EMPTY
+        // text records that ffmpeg copies nothing (not `nil`, "not known").
+        XCTAssertEqual(streams.map(\.languageAsStored), ["", "chi", "fre", "en"])
         XCTAssertEqual(streams.map(\.languageFullTagUnknown), [nil, nil, nil, nil])
         // Not Matroska: unchanged.
         XCTAssertEqual(FFmpegProbe.applyingMatroskaFullLanguageTags(
@@ -395,5 +400,139 @@ final class MatroskaTrackListTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// The audio languages ffprobe reads from `url`, in order (`nil` = none).
+    private func audioLanguages(_ ffprobe: String, _ url: URL) throws -> [String?] {
+        let (status, data) = try run(ffprobe, ["-v", "error", "-print_format", "json", "-show_entries",
+                                               "stream=codec_type:stream_tags=language", url.path])
+        XCTAssertEqual(status, 0, "ffprobe \(url.lastPathComponent)")
+        let streams = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["streams"] as? [[String: Any]] ?? []
+        return streams.filter { $0["codec_type"] as? String == "audio" }
+            .map { ($0["tags"] as? [String: Any])?["language"] as? String }
+    }
+
+    /// The audio languages mkvmerge reads from `url` (its `language` field).
+    private func mkvmergeAudioLanguages(_ mkvmerge: String, _ url: URL) throws -> [String?] {
+        let (status, data) = try run(mkvmerge, ["-J", url.path])
+        XCTAssertEqual(status, 0, "mkvmerge -J \(url.lastPathComponent)")
+        let tracks = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["tracks"] as? [[String: Any]] ?? []
+        return tracks.filter { $0["type"] as? String == "audio" }
+            .map { ($0["properties"] as? [String: Any])?["language"] as? String }
+    }
+
+    /// The fourth independent review's case: a language with NO three-letter
+    /// code of its own — Abaza `abq`, Western Panjabi `pnb` — and the tags
+    /// `und-x-foo`, `und-Latn`, `und-419`. mkvmerge writes `und` in the old
+    /// field for every one of them, and ffprobe hides `und`, so ffmpeg has
+    /// NOTHING to copy. The round-4 build left the field "for ffmpeg to
+    /// copy" anyway: Matroska, MP4 and MPEG-TS outputs lost `abq` and `pnb`
+    /// (and Matroska the three `und-…` tags) under the note "kept as the
+    /// source had it". Now the tag is written as text wherever the file type
+    /// keeps it; MP4 and MPEG-TS, which hold three letters, get `und` for the
+    /// `und-…` tags with a note saying what is not saved. MOV (none of them
+    /// is on its list: no language, noted) and Ogg (the whole tag) are as
+    /// they were. Read back with ffprobe, with mkvmerge (Matroska) and with
+    /// Apple's AVFoundation (MP4, MOV). Skipped without ffmpeg, ffprobe and
+    /// mkvmerge — FAILED without them in CI's build-and-test job.
+    func test_aFullTagOverAnOldFieldThatSaysUndIsWritten() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe"),
+              let mkvmerge = MediaTools.find("mkvmerge") else {
+            try MediaTools.missing("ffmpeg, ffprobe or mkvmerge not installed")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-undfield-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let tags = ["abq", "pnb", "und-x-foo", "und-Latn", "und-419"]
+        let plain = folder.appendingPathComponent("plain.mkv")
+        var arguments = ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4"]
+        for frequency in [440, 550, 660, 770, 880] {
+            arguments += ["-f", "lavfi", "-i", "sine=frequency=\(frequency):duration=0.4"]
+        }
+        arguments += ["-map", "0", "-map", "1", "-map", "2", "-map", "3", "-map", "4", "-map", "5",
+                      "-c:v", "mpeg4", "-c:a", "aac", plain.path]
+        XCTAssertEqual(try run(ffmpeg, arguments).status, 0, "making the source")
+        let tagged = folder.appendingPathComponent("tagged.mkv")
+        var merge = ["-q", "-o", tagged.path]
+        for (track, tag) in tags.enumerated() { merge += ["--language", "\(track + 1):\(tag)"] }
+        XCTAssertLessThan(try run(mkvmerge, merge + [plain.path]).status, 2, "mkvmerge (1 is warnings only)")
+        XCTAssertEqual(try mkvmergeAudioLanguages(mkvmerge, tagged), ["und", "und", "und", "und", "und"],
+                       "mkvmerge writes `und` in the old field")
+
+        let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: tagged)
+        let audio = probed.streams.filter { $0.streamType == .audio }
+        XCTAssertEqual(audio.map(\.language), tags, "the full tags win")
+        XCTAssertEqual(audio.map(\.languageAsStored), ["", "", "", "", ""], "ffmpeg copies nothing")
+
+        let because = "because copying the source's old field (which says only “und”, not known) would not keep it."
+        func convert(_ name: String, _ profile: EncodingProfile) throws -> (URL, [String]) {
+            let output = folder.appendingPathComponent(name)
+            var profile = profile
+            profile.orderTracksCanonically = false
+            var config = EncodingJobConfig(inputURL: tagged, outputURL: output, profile: profile)
+            config.sourceStreams = probed.streams
+            config.mapAllStreams = profile.containerFormat == .ogg
+            XCTAssertEqual(try run(ffmpeg, ["-v", "error"] + config.buildArguments()).status, 0, "encoding \(name)")
+            let notes = config.trackWritingNotes()
+            XCTAssertFalse(notes.contains { $0.contains("kept as the source had it") }, "\(name): nothing is \"kept\"")
+            return (output, notes)
+        }
+
+        // Matroska keeps any text: every tag, as text.
+        var mkv = EncodingProfile.remuxToMKV
+        mkv.containerFormat = .mkv
+        let (mkvOut, mkvNotes) = try convert("out.mkv", mkv)
+        XCTAssertEqual(try audioLanguages(ffprobe, mkvOut), tags, "out.mkv: ffprobe")
+        XCTAssertEqual(try mkvmergeAudioLanguages(mkvmerge, mkvOut), ["abq", "pnb", "und", "und", "und"],
+                       "out.mkv: mkvmerge reads the language of each text")
+        XCTAssertEqual(mkvNotes.count, 5)
+        XCTAssertTrue(mkvNotes.allSatisfy { $0.hasSuffix("is written into the field as it is, " + because) }, "\(mkvNotes)")
+
+        // MP4 and MPEG-TS hold three letters: `abq` and `pnb` as they are;
+        // `und` for the `und-…` tags, saying what is not saved.
+        for (name, container) in [("out.mp4", ContainerFormat.mp4), ("out.ts", .mpegTS)] {
+            var profile = EncodingProfile.remuxToMP4
+            profile.containerFormat = container
+            let (output, notes) = try convert(name, profile)
+            XCTAssertEqual(try audioLanguages(ffprobe, output), ["abq", "pnb", "und", "und", "und"], "\(name): ffprobe")
+            XCTAssertEqual(notes, [
+                "Stream #1: language “abq” has no three-letter code, so “abq” is written into the field as it is, " + because,
+                "Stream #2: language “pnb” has no three-letter code, so “pnb” is written into the field as it is, " + because,
+                "Stream #3: this file type can only store the language, so “x-foo” in “und-x-foo” is not saved "
+                    + "(written as “und”).",
+                "Stream #4: this file type can only store the language, so “Latn” in “und-Latn” is not saved "
+                    + "(written as “und”).",
+                "Stream #5: this file type can only store the language, so “419” in “und-419” is not saved "
+                    + "(written as “und”)."
+            ], name)
+            if container == .mp4, let apple = try await MediaTools.appleAudioLanguages(of: output) {
+                XCTAssertEqual(apple.map(\.code), ["abq", "pnb", "und", "und", "und"], "\(name): AVFoundation \(apple)")
+            }
+        }
+
+        // MOV: none of them is on its list — no language, each noted (as before).
+        var mov = EncodingProfile.remuxToMKV
+        mov.containerFormat = .mov
+        let (movOut, movNotes) = try convert("out.mov", mov)
+        XCTAssertEqual(try audioLanguages(ffprobe, movOut), [nil, nil, nil, nil, nil], "out.mov: ffprobe")
+        XCTAssertEqual(movNotes, tags.enumerated().map {
+            "Stream #\($0.offset + 1): this file type (QuickTime) can only store the languages on its old list, and "
+                + "“\($0.element)” is not on it, so no language is stored."
+        })
+        if let apple = try await MediaTools.appleAudioLanguages(of: movOut) {
+            XCTAssertEqual(apple.map(\.isNone), [true, true, true, true, true], "out.mov: AVFoundation \(apple)")
+        }
+
+        // Ogg: the whole tag (as before). Needs the Opus encoder; checked
+        // last, so the cases above run on any machine with the tools.
+        let encoders = String(decoding: try run(ffmpeg, ["-hide_banner", "-encoders"]).output, as: UTF8.self)
+        guard encoders.contains(" libopus ") else { try MediaTools.missing("this ffmpeg has no libopus (the Ogg case)") }
+        var ogg = EncodingProfile.audioExtract
+        ogg.audioCodec = .opus
+        ogg.containerFormat = .ogg
+        let (oggOut, oggNotes) = try convert("out.ogg", ogg)
+        XCTAssertEqual(try audioLanguages(ffprobe, oggOut), tags, "out.ogg: ffprobe")
+        XCTAssertEqual(oggNotes, [], "out.ogg: the whole tag is kept")
     }
 }

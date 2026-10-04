@@ -302,6 +302,15 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// .languageWrite`). `nil` when the file states none, and for streams
     /// described before this was kept (saved jobs) — then `language` stands
     /// in for it. Sanitised by the probe, like the title.
+    ///
+    /// An EMPTY text means "ffmpeg copies nothing": a Matroska track whose
+    /// language comes from its full tag (`LanguageBCP47`) while its old
+    /// field says only `und`, which ffprobe hides — mkvmerge does that for
+    /// a language with no three-letter code (`abq`, `pnb`) and for tags
+    /// such as `und-Latn`. Leaving it `nil` there made the converter take
+    /// `language` as the text ffmpeg copies, so `abq` was noted "kept as
+    /// the source had it" while the output held no language (found in the
+    /// fourth independent review); now the tag is written as text instead.
     public var languageAsStored: String?
 
     /// `true` when this is a Matroska / WebM track whose FULL language tag

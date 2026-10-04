@@ -628,7 +628,8 @@ extension TrackLanguage {
     ///    source had it";
     /// 3. the language's own tag as text (`yue`, `fr-CA`), when the file type
     ///    stores it exactly — needed when the source's old field says less
-    ///    than its full-tag field (mkvmerge writes `chi` for Cantonese);
+    ///    than its full-tag field (mkvmerge writes `chi` for Cantonese), or
+    ///    nothing ffmpeg copies (`und` for Abaza `abq`: then 2 never applies);
     /// 4. the policy's code with the region or script cut (`fra` for
     ///    `fr-CA` in MP4), with a note naming what is not saved;
     /// 5. otherwise `und` (not known) — or NO language, where even `und`
@@ -659,6 +660,9 @@ extension TrackLanguage {
     ///     what ffmpeg copies when given no value (`MediaStream
     ///     .languageAsStored`). `nil` when unknown (data probed before it was
     ///     kept): then the source is taken to hold `sourceLanguage` itself.
+    ///     EMPTY when ffmpeg copies nothing (a Matroska full tag whose old
+    ///     field says only `und`): then nothing is left for ffmpeg to copy,
+    ///     and a value that must be kept is written instead.
     ///   - fullTagUnknown: The source is a Matroska file that may record a
     ///     fuller language than its old field says, which could not be read
     ///     (`MediaStream.languageFullTagUnknown`) — said in a note.
@@ -727,8 +731,13 @@ extension TrackLanguage {
         if let raw = sourceUnrecognised ?? nonTag(sourceLanguage, policy: policy) {
             let fix = " Set the right language in the stream editor if you know it."
             if storage != .unchecked, storage != .quickTimeList, storage.keeps(raw) {
+                // Left for ffmpeg to copy only when what it copies IS that
+                // text; a Matroska full tag's text is not in the old field
+                // ffmpeg copies (which may say only `und`, copied as
+                // nothing), so there it is written.
+                let copiesRaw = (sourceStoredText ?? raw) == raw
                 return LanguageWrite(
-                    action: isReplacement ? .write(raw) : .copySource,
+                    action: isReplacement || !copiesRaw ? .write(raw) : .copySource,
                     note: "\(stream): the file's language “\(raw)” is not a language code; kept as the source had it." + fix
                 )
             }
@@ -743,6 +752,18 @@ extension TrackLanguage {
         let tag = policy.canonicaliser.canonicalise(source)
         guard let canonical = tag.canonical else { return LanguageWrite(action: .copySource, note: nil) }
         let copied = sourceStoredText ?? source
+        // ffmpeg copies NOTHING (see `MediaStream.languageAsStored`): a
+        // Matroska track whose full tag is `abq`, `pnb` or `und-Latn` while
+        // its old field says only `und`. Then step 2 below ("leave it for
+        // ffmpeg to copy") can never keep the language, and step 3 writes the
+        // tag as text. The fourth independent review found `abq` and `pnb`
+        // gone from Matroska, MP4 and MPEG-TS outputs under the note "kept
+        // as the source had it", because the empty field was taken to say
+        // `abq`.
+        let copiesNothing = copied.isEmpty
+        let sourceField = copiesNothing
+            ? "the source's old field (which says only “und”, not known)"
+            : "the source's own field (“\(copied)”)"
         // A Matroska source whose fuller language tag could not be read
         // (see `MediaStream.languageFullTagUnknown`): said on its own, or
         // after whatever else is said about this stream.
@@ -799,7 +820,8 @@ extension TrackLanguage {
             //    same language once stored — for MOV, as Apple's players read
             //    it: `chi` copied in for plain `zh` would become Traditional
             //    Chinese there.
-            if storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical {
+            //    Never when ffmpeg copies nothing (`copiesNothing`).
+            if !copiesNothing, storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical {
                 return write(isReplacement ? .write(copied) : .copySource, "\(stream): \(reason); kept as the source had it.\(fix)")
             }
             // 3. The language's tag itself, as text.
@@ -807,7 +829,7 @@ extension TrackLanguage {
                 return write(
                     .write(canonical),
                     "\(stream): \(reason), so “\(canonical)” is written into the field as it is, because copying "
-                        + "the source's own field (“\(copied)”) would not keep it.\(fix)"
+                        + "\(sourceField) would not keep it.\(fix)"
                 )
             }
         }

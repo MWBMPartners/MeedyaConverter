@@ -25,6 +25,11 @@
 // (`chi` for mkvmerge's Cantonese, `eng` under an edit to `sv`). A write now
 // has three outcomes — copy the source's value, write a value, or CLEAR the
 // field (`TrackLanguage.LanguageWrite.Action`) — and these tests say which.
+//
+// The fourth independent review found "leave it for ffmpeg to copy" used
+// where ffmpeg copies NOTHING: a Matroska track whose full tag is Abaza
+// `abq` while its old field says only `und` (which ffprobe hides). The
+// probe now records that as an empty text, and the tag is written instead.
 // ============================================================================
 
 import Foundation
@@ -395,6 +400,55 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("fr-CA", stored: "fre", to: .mp4).action, .write("fra"))
         // The source's own text is copied when it says the same.
         XCTAssertEqual(write("fr-CA", stored: "fre-ca", to: .mkv).action, .copySource)
+    }
+
+    /// When the source's old field holds NOTHING ffmpeg copies — mkvmerge
+    /// writes `und` there for Abaza `abq`, Western Panjabi `pnb` and tags
+    /// such as `und-Latn`, and ffprobe hides `und`, so the probe records an
+    /// EMPTY text — leaving the field "for ffmpeg to copy" keeps nothing.
+    /// The fourth independent review found `abq` and `pnb` gone from
+    /// Matroska, MP4 and MPEG-TS outputs under "kept as the source had it".
+    /// The tag is written as text wherever the file type keeps it; MOV still
+    /// cannot, and clears; Ogg still writes the whole tag.
+    func test_aSourceFieldThatHoldsNothingIsNotLeftToBeCopied() {
+        let because = "because copying the source's old field (which says only “und”, not known) would not keep it."
+        for tag in ["abq", "pnb"] {
+            for container: ContainerFormat in [.mkv, .mp4, .mpegTS] {
+                XCTAssertEqual(write(tag, stored: "", to: container), .init(
+                    action: .write(tag),
+                    note: "Stream #2: language “\(tag)” has no three-letter code, so “\(tag)” is written into the field "
+                        + "as it is, " + because
+                ), "\(tag) in \(container)")
+            }
+            XCTAssertEqual(write(tag, stored: "", to: .mov).action, .clear, "\(tag) in MOV: none, as before")
+            XCTAssertEqual(write(tag, stored: "", to: .ogg).action, .write(tag), "\(tag) in Ogg: the whole tag, as before")
+        }
+        for (tag, lost) in [("und-Latn", "Latn"), ("und-419", "419"), ("und-x-foo", "x-foo")] {
+            // Matroska keeps any text: the whole tag, as text.
+            XCTAssertEqual(write(tag, stored: "", to: .mkv), .init(
+                action: .write(tag),
+                note: "Stream #2: language “\(tag)” cannot be written to this file type's three-letter language field "
+                    + "without losing “\(lost)”, so “\(tag)” is written into the field as it is, " + because
+            ))
+            // MP4 and MPEG-TS hold three letters: `und`, saying what is lost.
+            for container: ContainerFormat in [.mp4, .mpegTS] {
+                XCTAssertEqual(write(tag, stored: "", to: container), .init(
+                    action: .write("und"),
+                    note: "Stream #2: this file type can only store the language, so “\(lost)” in “\(tag)” is not saved "
+                        + "(written as “und”)."
+                ), "\(tag) in \(container)")
+            }
+            XCTAssertEqual(write(tag, stored: "", to: .mov).action, .clear)
+            XCTAssertEqual(write(tag, stored: "", to: .ogg).action, .write(tag))
+        }
+        // A full tag that is not a language at all, over an old field that
+        // holds nothing — or something else: the text is written, so "kept"
+        // is true; it is left to be copied only when the old field says it.
+        XCTAssertEqual(write("und", unrecognised: "1234", stored: "", to: .mkv).action, .write("1234"))
+        XCTAssertEqual(write("und", unrecognised: "1234", stored: "eng", to: .mkv).action, .write("1234"))
+        XCTAssertEqual(write("und", unrecognised: "1234", stored: "1234", to: .mkv).action, .copySource)
+        // "Not known" itself needs nothing written but `und`.
+        XCTAssertEqual(write("und", stored: "", to: .mkv), .init(action: .write("und"), note: nil))
     }
 
     /// With no file type known nothing can be promised: the code is written
