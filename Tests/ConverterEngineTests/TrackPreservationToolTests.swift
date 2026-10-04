@@ -116,10 +116,12 @@ final class TrackPreservationToolTests: XCTestCase {
         _ source: URL,
         to name: String,
         profile: EncodingProfile,
-        videoFilter: String? = nil
+        videoFilter: String? = nil,
+        mapAll: Bool = false
     ) async throws -> (output: URL, config: EncodingJobConfig) {
         let output = folder.appendingPathComponent(name)
         var config = EncodingJobConfig(inputURL: source, outputURL: output, profile: profile, videoFilterChain: videoFilter)
+        config.mapAllStreams = mapAll
         config.sourceStreams = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: source).streams
         var copies: [Int: URL] = [:]
         for picture in config.attachedPicturesNeedingCopies() {
@@ -339,6 +341,53 @@ final class TrackPreservationToolTests: XCTestCase {
         let seen = try streams(output)
         XCTAssertEqual(seen.map(\.type), ["video", "audio"], "the cover is left out; the stale picture is not attached")
         XCTAssertFalse(seen.contains { $0.attachedPicture })
+    }
+
+    /// The fourth independent review: a Matroska film carrying a font and a
+    /// BMP and a WebP picture — which ffmpeg reads as plain ATTACHMENTS, not
+    /// as cover art — converted to MP4 with "map all streams" made ffmpeg
+    /// refuse the WHOLE job (exit 234, "Could not find tag for codec none");
+    /// MOV the same, MPEG-TS turned the font into a `bin_data` stream, and
+    /// WebM dropped it without a word. Without "map all streams" the
+    /// attachments were dropped
+    /// without a word. Now each job succeeds, only the video and audio are
+    /// written, and every attachment is noted — with or without "map all
+    /// streams".
+    func test_attachmentsAreLeftOutOfOtherFileTypesAndTheJobSucceeds() async throws {
+        // ffmpeg never reads an attachment's bytes, so the font and the WebP
+        // picture are stand-ins: a TrueType signature, and a RIFF/WEBP one.
+        let font = folder.appendingPathComponent("f.ttf")
+        try Data([0x00, 0x01, 0x00, 0x00] + [UInt8](repeating: 0, count: 60)).write(to: font)
+        let webp = folder.appendingPathComponent("f.webp")
+        try Data(Array("RIFF".utf8) + [0x04, 0, 0, 0] + Array("WEBP".utf8)).write(to: webp)
+        let bmp = try make("c.bmp", ["-f", "lavfi", "-i", "color=c=blue:size=16x16:duration=1", "-frames:v", "1"])
+        let film = try makeFilm("film.mkv", pictures: [(font, "font/ttf", nil), (bmp, "image/bmp", nil), (webp, "image/webp", nil)])
+        XCTAssertEqual(try streams(film).map(\.type), ["video", "audio", "attachment", "attachment", "attachment"],
+                       "the source as made: three plain attachments")
+
+        let rows: [(name: String, container: ContainerFormat, mapAll: Bool)] = [
+            ("all.mp4", .mp4, true), ("chosen.mp4", .mp4, false), ("all.mov", .mov, true), ("all.ts", .mpegTS, true)
+        ]
+        for row in rows {
+            var profile = EncodingProfile.remuxToMP4
+            profile.containerFormat = row.container
+            let (output, config) = try await convert(film, to: row.name, profile: profile, mapAll: row.mapAll)
+            XCTAssertEqual(try streams(output).map(\.type), ["video", "audio"], "\(row.name): nothing else is written")
+            XCTAssertEqual(config.trackWritingNotes(), [
+                "Stream #2 is a font attached to the file (“f.ttf”, font/ttf).",
+                "Stream #3 is a picture attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a plain "
+                    + "attachment, not as cover art.",
+                "Stream #4 is a picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain "
+                    + "attachment, not as cover art."
+            ].map {
+                $0 + " Only a Matroska file can hold attachments, so it is left out of this \(row.container.displayName) file."
+            }, row.name)
+        }
+
+        // Matroska with "map all streams" still copies all three.
+        let (mkv, mkvJob) = try await convert(film, to: "all.mkv", profile: .remuxToMKV, mapAll: true)
+        XCTAssertEqual(try streams(mkv).compactMap(\.fileName), ["f.ttf", "c.bmp", "f.webp"])
+        XCTAssertEqual(mkvJob.trackWritingNotes(), [])
     }
 
     /// MPEG-TS turned the cover into a `bin_data` stream and AVI into a stray

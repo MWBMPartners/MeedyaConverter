@@ -22,7 +22,10 @@
 // outright, cover art turned into a `bin_data` stream (MPEG-TS) or a stray
 // MJPEG track (AVI), dropped without a word (MOV, Ogg, audio-only MP4), and
 // Matroska covers renamed and stripped of their descriptions. Pictures a file
-// type cannot hold are now left out, with a note.
+// type cannot hold are now left out, with a note. The FOURTH found other
+// attachments — fonts, and BMP or WebP pictures, which ffmpeg reads as plain
+// attachments rather than cover art — mapped into outputs that cannot hold
+// them, failing MP4 and MOV jobs; they are now left out too, with a note.
 // TrackPreservationToolTests checks the same with a real ffmpeg.
 // ============================================================================
 
@@ -309,6 +312,79 @@ final class AttachedPictureTests: XCTestCase {
                             to: "/tmp/out.unknownext")
         XCTAssertEqual(maps(builder.build()), ["0:0", "0:1"])
         XCTAssertEqual(builder.trackWritingNotes(), [])
+    }
+
+    // MARK: - Other attachments (fourth review)
+
+    /// A film with a font and two pictures ffmpeg reads as PLAIN attachments
+    /// (BMP, WebP — not cover art), as ffprobe describes them.
+    private var filmWithAttachments: [MediaStream] {
+        func attachment(_ index: Int, _ name: String, _ mime: String) -> MediaStream {
+            MediaStream(streamIndex: index, streamType: .attachment, disposition: StreamDisposition(),
+                        attachmentFileName: name, attachmentMimeType: mime)
+        }
+        return [
+            MediaStream(streamIndex: 0, streamType: .video, codecName: "h264", disposition: StreamDisposition()),
+            MediaStream(streamIndex: 1, streamType: .audio, codecName: "aac", disposition: StreamDisposition()),
+            attachment(2, "f.ttf", "font/ttf"), attachment(3, "c.bmp", "image/bmp"), attachment(4, "f.webp", "image/webp")
+        ]
+    }
+
+    /// Attachments into a file type that is not Matroska are never mapped —
+    /// mapped (by "map all streams"), ffmpeg refused the whole job for MP4,
+    /// M4V, M4A and MOV, made a font a `bin_data` stream in MPEG-TS and left
+    /// it out of WebM without a word (the fourth independent review) — and
+    /// each is noted, with or without
+    /// "map all streams" (without it they used to go without a word).
+    func test_attachmentsAreLeftOutOfEveryOtherFileTypeWithANote() {
+        for output in ["/tmp/out.mp4", "/tmp/out.m4v", "/tmp/out.mov", "/tmp/out.webm", "/tmp/out.ts", "/tmp/out.avi"] {
+            let container = ContainerFormat.from(fileExtension: (output as NSString).pathExtension)?.displayName ?? "?"
+            let expected = [
+                "Stream #2 is a font attached to the file (“f.ttf”, font/ttf).",
+                "Stream #3 is a picture attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a plain "
+                    + "attachment, not as cover art.",
+                "Stream #4 is a picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain "
+                    + "attachment, not as cover art."
+            ].map { $0 + " Only a Matroska file can hold attachments, so it is left out of this \(container) file." }
+            for mapAll in [true, false] {
+                var builder = remux(filmWithAttachments, to: output)
+                builder.mapAllStreams = mapAll
+                XCTAssertEqual(maps(builder.build()), ["0:0", "0:1"], "\(output), map all \(mapAll): no attachment mapped")
+                XCTAssertEqual(pairs(builder.build(), "-disposition:t"), [], "\(output): no options for attachments")
+                XCTAssertEqual(builder.trackWritingNotes(), expected, "\(output), map all \(mapAll)")
+            }
+        }
+    }
+
+    /// Matroska holds attachments: with "map all streams" they are mapped
+    /// (copied) and nothing is noted, as before. Without it they are not
+    /// chosen, as before (issue #540). With no file type known nothing was
+    /// checked, so they are mapped as they always were.
+    func test_matroskaAndUnknownFileTypesMapAttachmentsAsBefore() {
+        for output in ["/tmp/out.mkv", "/tmp/out.mka", "/tmp/out.unknownext"] {
+            let builder = remux(filmWithAttachments, to: output)
+            XCTAssertEqual(maps(builder.build()), ["0:0", "0:1", "0:2", "0:3", "0:4"], output)
+            XCTAssertEqual(builder.trackWritingNotes(), [], output)
+        }
+        var chosen = remux(filmWithAttachments, to: "/tmp/out.mkv")
+        chosen.mapAllStreams = false
+        XCTAssertEqual(maps(chosen.build()), ["0:0", "0:1"])
+        XCTAssertEqual(chosen.trackWritingNotes(), [])
+        XCTAssertEqual(AttachedPictures.holdsAttachments(in: .mkv), true)
+        XCTAssertEqual(AttachedPictures.holdsAttachments(in: .webm), false)
+        XCTAssertNil(AttachedPictures.holdsAttachments(in: nil))
+    }
+
+    /// The words for an attachment with no name or type, or another kind of
+    /// file.
+    func test_attachmentWordsForOtherFiles() {
+        XCTAssertEqual(AttachedPictures.attachmentWords(fileName: nil, mimeType: nil), "an attached file.")
+        XCTAssertEqual(AttachedPictures.attachmentWords(fileName: "notes.txt", mimeType: "text/plain"),
+                       "an attached file (“notes.txt”, text/plain).")
+        XCTAssertEqual(AttachedPictures.attachmentWords(fileName: "Font.OTF", mimeType: "application/octet-stream"),
+                       "a font attached to the file (“Font.OTF”, application/octet-stream).")
+        XCTAssertEqual(AttachedPictures.attachmentWords(fileName: "a/b/c.ttf", mimeType: nil),
+                       "a font attached to the file (“c.ttf”).", "only the last part of a path")
     }
 
     /// The table itself.

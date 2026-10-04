@@ -59,6 +59,27 @@
 //     and noted too. A Matroska output keeps it, because it is attached, not
 //     mapped.
 //
+// OTHER ATTACHMENTS
+// -----------------
+// A Matroska file can also carry files that are not cover art: fonts for
+// styled subtitles, above all — and pictures that ffmpeg's Matroska reader
+// does NOT turn into cover art. It does that only for some image types (JPEG,
+// PNG, GIF, TIFF in ffmpeg 9.0.1); a BMP or WebP attachment stays a plain
+// ATTACHMENT stream, with no codec. Only Matroska can hold attachments
+// (`holdsAttachments`). With "map all streams", every attachment used to be
+// mapped whatever the output, and ffmpeg refused the WHOLE job for MP4, M4V,
+// M4A and MOV ("Could not find tag for codec none … not currently supported
+// in container", exit 234), turned a font into a `bin_data` stream in
+// MPEG-TS, and left it out of WebM without a word — found in the fourth
+// independent review of the language policy work (WebM checked by hand with
+// ffmpeg 9.0.1: VP9 and Opus with a font mapped, the job succeeds and the
+// font is simply not there). Now an attachment is never mapped into a file type
+// that cannot hold it, and is left out with a note — with or without "map
+// all streams" (without it, attachments were already not mapped, but they
+// went without a word). A Matroska output is unchanged: with "map all
+// streams" its attachments are copied; without it they are still not chosen
+// (issue #540).
+//
 // When the video is RE-ENCODED, a picture that is mapped (MP4) is copied,
 // never re-encoded, and the video filters are aimed at the real video only
 // (`pictureCopyArguments`, `videoFilterArguments`).
@@ -121,8 +142,9 @@ public enum AttachedPictures {
         case unchecked
     }
 
-    /// Why a picture is not in the output. Each is reported, in plain
-    /// English, in the job's notes (`FFmpegArgumentBuilder.trackWritingNotes`).
+    /// Why a picture — or another attached file — is not in the output.
+    /// Each is reported, in plain English, in the job's notes
+    /// (`FFmpegArgumentBuilder.trackWritingNotes`).
     public enum LeftOutReason: Sendable, Equatable {
         /// ffmpeg cannot write a picture into this file type.
         case fileTypeCannotHoldPictures(ContainerFormat)
@@ -139,6 +161,11 @@ public enum AttachedPictures {
         /// An MP4-family output, and the picture is not JPEG, PNG or BMP —
         /// the only cover art ffmpeg's MP4 writer takes (`mp4CoverArtCodecs`).
         case notMP4CoverArtFormat(codec: String?, container: ContainerFormat)
+        /// An ATTACHMENT stream — a font, or a picture ffmpeg reads as a plain
+        /// attachment (BMP, WebP …) — and an output that is not Matroska,
+        /// which cannot hold attachments (`holdsAttachments`). The source's
+        /// file name and MIME type, when it gives them, name it in the note.
+        case attachmentNotHeld(container: ContainerFormat, fileName: String?, mimeType: String?)
     }
 
     /// The picture formats (ffprobe's codec names) ffmpeg's MP4 writer takes
@@ -188,6 +215,18 @@ public enum AttachedPictures {
     /// itself; the rest cannot keep one at all.
     public static func needsAttachment(in container: ContainerFormat?) -> Bool {
         pictureSupport(in: container) == .attachment
+    }
+
+    /// Whether `container` can hold an ATTACHMENT stream (a font, or a
+    /// picture ffmpeg reads as a plain attachment): only Matroska (MKV, MKA,
+    /// MKS, MK3D). Everything else refuses the job, turns it into another
+    /// kind of stream, or drops it without a word — WebM included (see the
+    /// file header). `nil`
+    /// when no file type is known: nothing was checked, and attachments are
+    /// mapped as they always were.
+    public static func holdsAttachments(in container: ContainerFormat?) -> Bool? {
+        guard let container else { return nil }
+        return pictureSupport(in: container) == .attachment
     }
 
     /// The file extension and MIME type for a picture in `codec` (ffprobe's
@@ -260,7 +299,32 @@ public enum AttachedPictures {
         case .notMP4CoverArtFormat(let codec, let container):
             return "\(picture) ffmpeg can only write JPEG, PNG or BMP cover art into \(container.displayName) files, "
                 + "and this picture is \(pictureFormatName(forCodec: codec)), so it is left out."
+        case .attachmentNotHeld(let container, let fileName, let mimeType):
+            return "Stream #\(streamIndex) is " + attachmentWords(fileName: fileName, mimeType: mimeType)
+                + " Only a Matroska file can hold attachments, so it is left out of this \(container.displayName) file."
         }
+    }
+
+    /// What an attachment stream is, in words for a note, ending in a full
+    /// stop: "a font attached to the file (“f.ttf”, font/ttf)." or "a picture
+    /// attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a
+    /// plain attachment, not as cover art." The name and type come from the
+    /// source (the probe sanitises them); a long name is shortened.
+    static func attachmentWords(fileName: String?, mimeType: String?) -> String {
+        let name = fileName.map { String(($0 as NSString).lastPathComponent.prefix(100)) }.flatMap { $0.isEmpty ? nil : $0 }
+        let type = mimeType.map { String($0.prefix(100)).lowercased() }.flatMap { $0.isEmpty ? nil : $0 }
+        let named = [name.map { "“\($0)”" }, type].compactMap { $0 }
+        let given = named.isEmpty ? "" : " (\(named.joined(separator: ", ")))"
+        let fileExtension = name.map { ($0 as NSString).pathExtension.lowercased() } ?? ""
+        if type?.hasPrefix("image/") == true {
+            return "a picture attached to the file\(given) that ffmpeg reads as a plain attachment, not as cover art."
+        }
+        let fontWords = ["font", "truetype", "opentype"]
+        if fontWords.contains(where: { type?.contains($0) == true })
+            || ["ttf", "otf", "ttc", "woff", "woff2"].contains(fileExtension) {
+            return "a font attached to the file\(given)."
+        }
+        return "an attached file\(given)."
     }
 }
 
@@ -280,7 +344,8 @@ extension FFmpegArgumentBuilder {
         let plan: OutputStreamPlan
         /// The pictures written with `-attach`.
         let attachments: [AttachedPictureAttachment]
-        /// The pictures left out of the output, with the reason for each.
+        /// The pictures — and other attachments (fonts …) — left out of the
+        /// output, with the reason for each.
         let leftOut: [(sourceStreamIndex: Int, reason: AttachedPictures.LeftOutReason)]
     }
 
@@ -337,6 +402,22 @@ extension FFmpegArgumentBuilder {
                 if noVideo { leftOut.append((index, .outputHasNoVideo)) }
             case .none:
                 if let container { leftOut.append((index, .fileTypeCannotHoldPictures(container))) }
+            }
+        }
+
+        // Attachment streams — fonts, and pictures ffmpeg reads as plain
+        // attachments (BMP, WebP …): only Matroska can hold them. Into any
+        // other file type they are left out, with a note, whether or not
+        // "map all streams" chose them (see the file header): mapped, they
+        // made ffmpeg refuse MP4 and MOV jobs, became a `bin_data` stream in
+        // MPEG-TS and vanished from WebM; not chosen, they went without a
+        // word.
+        if let container, AttachedPictures.holdsAttachments(in: container) == false {
+            for stream in sources.values.sorted(by: { $0.streamIndex < $1.streamIndex })
+            where stream.streamType == .attachment {
+                leftOut.append((stream.streamIndex, .attachmentNotHeld(
+                    container: container, fileName: stream.attachmentFileName, mimeType: stream.attachmentMimeType
+                )))
             }
         }
 

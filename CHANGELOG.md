@@ -45,9 +45,13 @@
   the only kinds MP4 takes) and in Matroska (attached under its own name and
   description); a picture MP4 can't take, or a file type that can't hold a
   picture at all (WebM, MOV, MPEG-TS, AVI, Ogg and others), leaves it out,
-  and the log says so. Matroska files made by mkvmerge keep their
-  full language (`yue`, `fr-CA`), which ffmpeg alone would read as `chi` or
-  `fre`. Where a track has no
+  and the log says so. Fonts and other files attached to a Matroska file —
+  including BMP and WebP pictures, which ffmpeg reads as plain attachments
+  rather than as cover art — are left out of any output that isn't
+  Matroska, with or without "map all streams", and the log says so too
+  (with "map all streams" they used to make an MP4, M4A or MOV job fail).
+  Matroska files made by mkvmerge keep their full language (`yue`, `fr-CA`),
+  which ffmpeg alone would read as `chi` or `fre`. Where a track has no
   title at all, the file type keeps track titles (Matroska, WebM) and the
   file has more than one such track or has video, the track is named after
   its language and roles in that language ("Deutsch", "English — SDH",
