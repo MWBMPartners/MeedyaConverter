@@ -83,13 +83,23 @@ a restart; get each finished step somewhere lasting when that is allowed.
 | # | Task (brief item) | Issue | Status | Notes |
 |---|---|---|---|---|
 | R4-1 | MOV: "no language is stored" made true — clear the field (1) | #531 | Done — `abdc1f8` | 1042 engine tests, 0 failures; 2 planted faults caught; ffprobe + AVFoundation read-backs |
-| R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Done — the `fix(language)` commit after `abdc1f8` | 1044 engine tests, 0 failures; 98 entries read back by AVFoundation, 0 mismatches; 3 planted faults caught |
+| R4-2 | MOV codes as Apple reads them: `chi`/`aze`/`mon` only with their script; never `sve`/`iri` (2) | #531 | Done — `07ccd76` | 1044 engine tests, 0 failures; 98 entries read back by AVFoundation, 0 mismatches; 3 planted faults caught |
 | R4-3 | MP4 covers only JPEG, PNG or BMP (3) | #531 | Queued | |
 | R4-4 | CI installs ffmpeg + MKVToolNix; the tool tests fail in CI without them (4) | #531 | Queued | |
 | R4-5 | Track-list reader: no copies, filler skipped, at most 1,024 entries (5) | #531, #532 | Queued | |
 | R4-6 | Test: the saved picture list is always replaced (6) | #531 | Queued | |
-| R4-7 | Ogg: an unregistered language is noted (7) | #531 | Queued | |
+| R4-7 | Ogg: an unregistered language is noted (7) | #531 | Done — the `fix(language)` commit after `07ccd76` | unit + tool test (`xx-bogus` to Ogg Opus); planted fault caught (3 failures) |
 | R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | In progress | review table and CI record above |
+
+**Known limit found in round 4 (raise, do not fix here):** the policy's
+reader reads a MOV source's own `chi` as plain Chinese (`zh`), because
+ffprobe gives the same text for MOV's `chi` (Traditional Chinese to Apple's
+players) and MP4's packed `chi` (plain Chinese). So a MOV-to-MOV remux of a
+Traditional-Chinese track now stores NO language, with a true note, where
+round 3 kept `chi`. Telling the two apart needs the source's container
+(its `ftyp` brand is `qt  ` for QuickTime) — a question for whoever takes #541
+or #532. The same holds for `aze`/`mon`, and for `sve`/`iri` (a Swedish or
+Irish MOV loses its language on a MOV-to-MOV remux).
 
 ### ROUND 3 — fixes from the SECOND independent review (28 Sept) — DONE; reviewed by review 3
 

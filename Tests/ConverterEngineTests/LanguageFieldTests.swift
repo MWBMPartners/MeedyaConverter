@@ -153,6 +153,20 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("zh-Hant-TW", to: .ogg), .init(action: .write("zh-Hant-TW"), note: nil))
     }
 
+    /// Ogg keeps `xx-bogus` whole, but it is still not a registered
+    /// language, and the note says so — as it does for Matroska. The third
+    /// independent review found Ogg wrote it with no note at all.
+    func test_anUnregisteredLanguageIsReportedInOggToo() {
+        XCTAssertEqual(write("xx-bogus", to: .ogg), .init(
+            action: .write("xx-bogus"),
+            note: "Stream #2: the file's language “xx-bogus” is not a registered language code; kept as the source had "
+                + "it. Set the right language in the stream editor if you know it."
+        ))
+        XCTAssertEqual(write("xx-bogus", stored: "XX-Bogus", to: .ogm).note,
+                       "Stream #2: the file's language “xx-bogus” is not a registered language code; written as "
+                           + "“xx-bogus”. Set the right language in the stream editor if you know it.")
+    }
+
     /// A replacement stream comes from a separate file with no tags, so
     /// "leave it for ffmpeg to copy" would lose it: the value is written.
     /// Where the output stores no language, a replacement's field is cleared

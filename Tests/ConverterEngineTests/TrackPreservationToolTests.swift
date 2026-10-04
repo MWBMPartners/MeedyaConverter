@@ -398,6 +398,25 @@ final class TrackPreservationToolTests: XCTestCase {
         XCTAssertEqual(job.trackWritingNotes().count, 2)
     }
 
+    /// `xx-bogus` to Ogg: kept whole (Ogg's field holds any text), and the
+    /// job's notes say it is not a registered language — the third
+    /// independent review found no note at all. Needs the Opus encoder.
+    func test_anUnregisteredLanguageToOggIsKeptAndNoted() async throws {
+        guard try hasEncoder("libopus") else { throw XCTSkip("this ffmpeg has no libopus") }
+        let source = try make("bogus.mkv", [
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3", "-c:a", "aac", "-metadata:s:a:0", "language=xx-bogus"
+        ])
+        var profile = EncodingProfile.audioExtract
+        profile.audioCodec = .opus
+        profile.containerFormat = .ogg
+        let (output, job) = try await convert(source, to: "out.ogg", profile: profile)
+        XCTAssertEqual(try streams(output).map(\.language), ["xx-bogus"])
+        XCTAssertEqual(job.trackWritingNotes(), [
+            "Stream #0: the file's language “xx-bogus” is not a registered language code; kept as the source had it. "
+                + "Set the right language in the stream editor if you know it."
+        ])
+    }
+
     /// An edit MOV cannot store must leave the track with NO language: `sv`
     /// (Swedish is on ffmpeg's QuickTime list only under the label `sve`,
     /// which is not a language code, so it is never written) and

@@ -758,11 +758,23 @@ extension TrackLanguage {
         if canonical == "und" { return write(unknownAction, nil) }
 
         let form = languageFieldForm(for: container)
-        if form == .fullTag { return write(.write(canonical), nil) }
+        let registered = tag.language.map(policy.isRegisteredLanguage) ?? true
+        if form == .fullTag {
+            // A free-text field (Ogg) keeps the whole tag — but a language
+            // that is not registered (`xx-bogus`) is said, as it is for
+            // Matroska (LANG-001: report it; COMPAT-040). The third
+            // independent review found Ogg wrote it with no note.
+            guard !registered else { return write(.write(canonical), nil) }
+            let kept = copied == canonical ? "kept as the source had it" : "written as “\(canonical)”"
+            return write(
+                .write(canonical),
+                "\(stream): the file's language “\(canonical)” is not a registered language code; \(kept). "
+                    + "Set the right language in the stream editor if you know it."
+            )
+        }
 
         let code = policyCode(for: tag, form: form)
         let lost = partsNotSaid(of: tag, form: form)
-        let registered = tag.language.map(policy.isRegisteredLanguage) ?? true
         // Why the policy's code will not do, in words: having no code at all
         // matters more than losing a region.
         let reason: String
