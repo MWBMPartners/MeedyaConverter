@@ -284,6 +284,28 @@ final class TrackPreservationToolTests: XCTestCase {
         XCTAssertEqual(try streams(output).compactMap(\.fileName), ["cover.jpg", "small_cover.png"])
     }
 
+    /// GIF and TIFF covers to MP4: ffmpeg's MP4 writer takes only JPEG, PNG or
+    /// BMP cover art, and refused the WHOLE job (exit 234) when a GIF or TIFF
+    /// picture was mapped — the third independent review. Now the job
+    /// succeeds, those two are left out with a note each, and a JPEG cover
+    /// beside them is kept as cover art.
+    func test_gifAndTIFFCoversToMP4AreLeftOutAndTheJobSucceeds() async throws {
+        let gif = try make("back.gif", ["-f", "lavfi", "-i", "color=c=green:size=16x16:duration=1", "-frames:v", "1"])
+        let tiff = try make("disc.tif", ["-f", "lavfi", "-i", "color=c=yellow:size=16x16:duration=1", "-frames:v", "1"])
+        let film = try makeFilm("film.mkv", pictures: [
+            (gif, "image/gif", nil), (tiff, "image/tiff", nil), (try makePicture(), "image/jpeg", nil)
+        ])
+        XCTAssertEqual(try streams(film).map(\.codec), ["mpeg4", "aac", "gif", "tiff", "mjpeg"], "the source as made")
+        let (output, config) = try await convert(film, to: "out.mp4", profile: .remuxToMP4)
+        let seen = try streams(output)
+        XCTAssertEqual(seen.map(\.codec), ["mpeg4", "aac", "mjpeg"], "only the JPEG cover is written")
+        XCTAssertEqual(seen.last?.attachedPicture, true, "and it is still cover art")
+        XCTAssertEqual(config.trackWritingNotes(), [("#2", "GIF"), ("#3", "TIFF")].map {
+            "Stream \($0.0) is a picture attached to the file (cover art). ffmpeg can only write JPEG, PNG or BMP "
+                + "cover art into MP4 (MPEG-4 Part 14) files, and this picture is \($0.1), so it is left out."
+        })
+    }
+
     /// MPEG-TS turned the cover into a `bin_data` stream and AVI into a stray
     /// MJPEG video track. Now it is left out of both, with a note.
     func test_coverArtIsLeftOutOfTransportStreamAndAVI() async throws {

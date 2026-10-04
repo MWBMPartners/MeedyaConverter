@@ -274,6 +274,33 @@ final class AttachedPictureTests: XCTestCase {
         XCTAssertEqual(mka.trackWritingNotes(), [])
     }
 
+    /// MP4's writer takes only JPEG, PNG or BMP cover art; any other picture
+    /// made ffmpeg refuse the WHOLE job (the third independent review: GIF and
+    /// TIFF). Now such a picture is left out, and the notes say so; JPEG, PNG
+    /// and BMP stay cover art.
+    func test_mp4KeepsOnlyJPEGPNGAndBMPCovers() {
+        var pictures: [MediaStream] = [MediaStream(streamIndex: 0, streamType: .audio, disposition: StreamDisposition())]
+        for (index, codec) in ["mjpeg", "png", "bmp", "gif", "tiff", "webp"].enumerated() {
+            var picture = cover(index + 1)
+            picture.codecName = codec
+            pictures.append(picture)
+        }
+        for output in ["/tmp/out.mp4", "/tmp/out.m4a", "/tmp/out.m4v"] {
+            let builder = remux(pictures, to: output)
+            XCTAssertEqual(maps(builder.build()), ["0:0", "0:1", "0:2", "0:3"], "\(output): JPEG, PNG and BMP only")
+            let container = ContainerFormat.from(fileExtension: (output as NSString).pathExtension)?.displayName ?? "?"
+            XCTAssertEqual(builder.trackWritingNotes(), [("#4", "GIF"), ("#5", "TIFF"), ("#6", "WebP")].map {
+                "Stream \($0.0) is a picture attached to the file (cover art). ffmpeg can only write JPEG, PNG or BMP "
+                    + "cover art into \(container) files, and this picture is \($0.1), so it is left out."
+            }, output)
+        }
+        // Matroska attaches all of them (its attachments take any format it
+        // knows a MIME type for).
+        var mkv = remux(pictures, to: "/tmp/out.mkv")
+        mkv.attachedPictureFiles = Dictionary(uniqueKeysWithValues: (1...6).map { ($0, URL(fileURLWithPath: "/tmp/p\($0)")) })
+        XCTAssertEqual(pairs(mkv.build(), "-attach").count, 6)
+    }
+
     /// With no file type known (only possible when the builder is used
     /// directly) nothing was checked, so the picture is mapped as it always
     /// was.

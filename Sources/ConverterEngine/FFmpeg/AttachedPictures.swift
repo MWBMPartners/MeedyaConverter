@@ -14,7 +14,11 @@
 // cover as a copied stream with its flag kept (`TrackPreservationToolTests`
 // re-checks the important ones against whatever ffmpeg the test machine has):
 //
-//   * MP4, M4A, M4V, M4B (and FLAC, MP3): kept as cover art (`covr`).
+//   * MP4, M4A, M4V, M4B (and FLAC, MP3): kept as cover art (`covr`) — but
+//     MP4's writer takes only JPEG, PNG or BMP cover art (`codec_cover_image_tags`
+//     in ffmpeg's `movenc.c`): a GIF, TIFF or WebP cover makes it refuse the
+//     WHOLE job ("Could not find tag for codec gif … not currently supported
+//     in container", exit 234).
 //   * Matroska (MKV, MKA, MKS, MK3D): the picture is an ATTACHMENT — a file
 //     inside the file, with a name, a MIME type and a description. ffmpeg's
 //     demuxer turns it into an `attached_pic` video stream, but its MATROSKA
@@ -34,7 +38,11 @@
 //
 // So, per file type (`pictureSupport`):
 //
-//   * MP4 family: the picture is mapped, with its flag, and stays cover art.
+//   * MP4 family: a JPEG, PNG or BMP picture is mapped, with its flag, and
+//     stays cover art; a picture in any other format is left out, with a
+//     note (`mp4CoverArtCodecs`). Until the third independent review of the
+//     language policy work, every picture was mapped, so a GIF or TIFF cover
+//     made an MP4 job fail.
 //   * Matroska: the engine first copies each picture, byte for byte, out of
 //     the source into its temporary folder (`extractionArguments`,
 //     `copyPictures`), and the argument builder ATTACHES that file with
@@ -128,6 +136,30 @@ public enum AttachedPictures {
         /// A Matroska output, and the picture's format (ffprobe's codec name)
         /// has no known file type to attach it as.
         case unknownPictureFormat(String?)
+        /// An MP4-family output, and the picture is not JPEG, PNG or BMP —
+        /// the only cover art ffmpeg's MP4 writer takes (`mp4CoverArtCodecs`).
+        case notMP4CoverArtFormat(codec: String?, container: ContainerFormat)
+    }
+
+    /// The picture formats (ffprobe's codec names) ffmpeg's MP4 writer takes
+    /// as cover art: JPEG (`mjpeg`), PNG and BMP — `codec_cover_image_tags`
+    /// in ffmpeg's `movenc.c` (checked in 9.0.1's source, and by
+    /// `TrackPreservationToolTests`: a GIF or TIFF cover made it refuse the
+    /// whole job). Any other picture is left out of an MP4-family output.
+    static let mp4CoverArtCodecs: Set<String> = ["mjpeg", "png", "bmp"]
+
+    /// A picture format's everyday name for a note (`GIF`, `TIFF`), from
+    /// ffprobe's codec name.
+    static func pictureFormatName(forCodec codec: String?) -> String {
+        switch codec?.lowercased() {
+        case "gif": return "GIF"
+        case "tiff": return "TIFF"
+        case "webp": return "WebP"
+        case "jpegls": return "JPEG-LS"
+        case "apng": return "animated PNG"
+        case let other?: return other.uppercased()
+        case nil: return "an unknown format"
+        }
     }
 
     /// What ffmpeg's writer does with a picture in `container` (see the file
@@ -225,6 +257,9 @@ public enum AttachedPictures {
         case .unknownPictureFormat(let codec):
             return "\(picture) Its picture format (\(codec ?? "unknown")) is not one MeedyaConverter can "
                 + "attach to a Matroska file, so it is left out."
+        case .notMP4CoverArtFormat(let codec, let container):
+            return "\(picture) ffmpeg can only write JPEG, PNG or BMP cover art into \(container.displayName) files, "
+                + "and this picture is \(pictureFormatName(forCodec: codec)), so it is left out."
         }
     }
 }
@@ -290,7 +325,15 @@ extension FFmpegArgumentBuilder {
                     mimeType: AttachedPictures.attachmentMimeType(for: stream, derived: format.mimeType),
                     description: attachmentDescription(for: stream)
                 ))
-            case .mappedAsCoverArt, .unchecked:
+            case .mappedAsCoverArt:
+                let codec = sources[index]?.codecName
+                if noVideo {
+                    leftOut.append((index, .outputHasNoVideo))
+                } else if let container, !AttachedPictures.mp4CoverArtCodecs.contains(codec?.lowercased() ?? "") {
+                    // Mapped, it would make ffmpeg refuse the whole job.
+                    leftOut.append((index, .notMP4CoverArtFormat(codec: codec, container: container)))
+                }
+            case .unchecked:
                 if noVideo { leftOut.append((index, .outputHasNoVideo)) }
             case .none:
                 if let container { leftOut.append((index, .fileTypeCannotHoldPictures(container))) }
