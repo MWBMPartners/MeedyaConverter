@@ -32,9 +32,20 @@
 //   ffmpeg write, as RFC 9559 recommends; a file with its track list at the
 //   END is not read, and the caller treats it as "could not tell".
 // * It never reads more than 16 MiB for the track list or 1 MiB for the
-//   segment information, and looks at no more than 4,096 top-level elements,
-//   so a damaged or hostile file cannot make it read without end. Anything
-//   it does not understand makes it stop and answer `nil` — never a guess.
+//   segment information, and looks at no more than 4,096 top-level elements
+//   (plus up to 65,536 filler elements — EBML `Void`, which writers leave as
+//   padding), so a damaged or hostile file cannot make it read without end.
+//   Anything it does not understand makes it stop and answer `nil` — never
+//   a guess.
+// * Inside the track list it walks each element's children BY POSITION in
+//   the one buffer it read, copying nothing but the few short values it
+//   keeps; it steps over filler; and a list of more than 1,024 tracks is
+//   treated as unreadable (the caller then says the full tags could not be
+//   read). The third independent review found the first version copied
+//   every child: a 16 MiB track list of 8,388,000 empty entries took 32.7
+//   seconds and 631 MB of memory, and 5,000 filler elements before the track
+//   list stopped it reading at all. `Effort` counts what a read looked at,
+//   so tests can prove the bounds without timing anything.
 // * It reads; it never writes. Writing `LanguageBCP47` into an output is
 //   issue #532 (ffmpeg cannot).
 // * Matching tracks to ffprobe's streams is by ORDER (ffmpeg makes one stream
@@ -100,8 +111,27 @@ public struct MatroskaTrackList: Sendable, Equatable {
     /// The most read for the track list and for the segment information.
     private static let tracksLimit: UInt64 = 16 * 1024 * 1024
     private static let infoLimit: UInt64 = 1024 * 1024
-    /// The most top-level elements looked at before giving up.
+    /// The most top-level elements looked at before giving up — filler not
+    /// counted, as it has its own limit.
     private static let elementLimit = 4096
+    /// The most top-level filler (EBML `Void`) elements stepped over before
+    /// giving up. Writers leave one or a few as padding; 65,536 is far more
+    /// than any real file, and each costs one small read.
+    private static let fillerLimit = 65_536
+    /// The most track entries read. More makes the list "unreadable" (`nil`
+    /// tracks), which the caller reports; no real file comes near it.
+    static let trackEntryLimit = 1024
+    /// EBML `Void`: filler that says nothing, allowed anywhere.
+    private static let voidID: UInt32 = 0xEC
+
+    /// How much one read looked at — so tests can prove the walk stays
+    /// bounded by counting, never by timing.
+    struct Effort: Sendable, Equatable {
+        /// Elements whose header was read, at every level, filler included.
+        var elementsVisited = 0
+        /// Filler (`Void`) elements stepped over, at every level.
+        var fillerSkipped = 0
+    }
 
     // MARK: - Reading a file
 
@@ -111,18 +141,25 @@ public struct MatroskaTrackList: Sendable, Equatable {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
-        return read(from: FileSource(handle: handle, size: size))
+        var effort = Effort()
+        return read(from: FileSource(handle: handle, size: size), effort: &effort)
     }
 
     /// Reads a track list from bytes already in memory (for tests, and any
     /// caller that has the start of a file).
     public static func read(bytes: [UInt8]) -> MatroskaTrackList? {
-        read(from: MemorySource(bytes: bytes))
+        var effort = Effort()
+        return read(bytes: bytes, effort: &effort)
+    }
+
+    /// `read(bytes:)`, also counting what it looked at (`Effort`).
+    static func read(bytes: [UInt8], effort: inout Effort) -> MatroskaTrackList? {
+        read(from: MemorySource(bytes: bytes), effort: &effort)
     }
 
     /// The walk itself: the EBML header, then the Segment's top-level
     /// elements up to the first Cluster.
-    private static func read(from source: some ByteSource) -> MatroskaTrackList? {
+    private static func read(from source: some ByteSource, effort: inout Effort) -> MatroskaTrackList? {
         // The EBML header must come first; its size says where the Segment is.
         guard let header = elementHeader(in: source, at: 0, end: source.size),
               header.id == ID.ebmlHeader, let headerSize = header.size else { return nil }
@@ -136,18 +173,26 @@ public struct MatroskaTrackList: Sendable, Equatable {
         var tracks: [Track]?
         var offset = segment.dataStart
         var looked = 0
-        while offset < segmentEnd, looked < elementLimit, tracks == nil || writingApp == nil {
+        var filler = 0
+        while offset < segmentEnd, looked < elementLimit, filler < fillerLimit, tracks == nil || writingApp == nil {
             guard let element = elementHeader(in: source, at: offset, end: segmentEnd) else { break }
-            looked += 1
+            effort.elementsVisited += 1
             if element.id == ID.cluster { break }
             // An element of unknown size cannot be stepped over.
             guard let size = element.size, element.dataStart + size <= segmentEnd else { break }
-            if element.id == ID.info, size <= infoLimit,
-               let body = source.bytes(at: element.dataStart, count: Int(size)) {
-                writingApp = children(of: body).first { $0.id == ID.writingApp }.flatMap { text($0.data) }
-            } else if element.id == ID.tracks, size <= tracksLimit,
-                      let body = source.bytes(at: element.dataStart, count: Int(size)) {
-                tracks = trackEntries(in: body)
+            if element.id == voidID {
+                // Filler: stepped over, and counted against its own limit.
+                filler += 1
+                effort.fillerSkipped += 1
+            } else {
+                looked += 1
+                if element.id == ID.info, size <= infoLimit,
+                   let body = source.bytes(at: element.dataStart, count: Int(size)) {
+                    writingApp = writingApplication(in: body, effort: &effort)
+                } else if element.id == ID.tracks, size <= tracksLimit,
+                          let body = source.bytes(at: element.dataStart, count: Int(size)) {
+                    tracks = trackEntries(in: body, effort: &effort)
+                }
             }
             offset = element.dataStart + size
         }
@@ -156,21 +201,51 @@ public struct MatroskaTrackList: Sendable, Equatable {
     }
 
     /// Every `TrackEntry` in a `Tracks` element's body, or `nil` when the
-    /// body is damaged.
-    private static func trackEntries(in body: [UInt8]) -> [Track]? {
-        guard let entries = childrenOrNil(of: body) else { return nil }
+    /// body is damaged or holds more than `trackEntryLimit` entries. Walked
+    /// by position (`ChildWalker`): nothing is copied but the four short
+    /// values kept from each entry, and filler is stepped over. For each
+    /// field the FIRST occurrence counts, as before.
+    private static func trackEntries(in body: [UInt8], effort: inout Effort) -> [Track]? {
         var result: [Track] = []
-        for entry in entries where entry.id == ID.trackEntry {
-            guard let fields = childrenOrNil(of: entry.data) else { return nil }
-            func field(_ id: UInt32) -> [UInt8]? { fields.first { $0.id == id }?.data }
+        var entries = ChildWalker(body: body, range: 0..<body.count)
+        defer { entries.addCounts(to: &effort) }
+        while let entry = entries.next() {
+            guard entry.id == ID.trackEntry else { continue }
+            guard result.count < trackEntryLimit else { return nil }
+            var number: Range<Int>?, type: Range<Int>?, language: Range<Int>?, full: Range<Int>?
+            var fields = ChildWalker(body: body, range: entry.data)
+            while let field = fields.next() {
+                switch field.id {
+                case ID.trackNumber where number == nil: number = field.data
+                case ID.trackType where type == nil: type = field.data
+                case ID.language where language == nil: language = field.data
+                case ID.languageBCP47 where full == nil: full = field.data
+                default: break
+                }
+            }
+            fields.addCounts(to: &effort)
+            guard !fields.isDamaged else { return nil }
             result.append(Track(
-                number: field(ID.trackNumber).flatMap(unsigned),
-                type: field(ID.trackType).flatMap(unsigned),
-                language: field(ID.language).flatMap(text),
-                languageBCP47: field(ID.languageBCP47).flatMap(text)
+                number: number.flatMap { unsigned(body[$0]) },
+                type: type.flatMap { unsigned(body[$0]) },
+                language: language.flatMap { text(body[$0]) },
+                languageBCP47: full.flatMap { text(body[$0]) }
             ))
         }
-        return result
+        return entries.isDamaged ? nil : result
+    }
+
+    /// `WritingApp` from a segment-information body — the first one — or
+    /// `nil` (also when the body is damaged: nothing else there matters).
+    private static func writingApplication(in body: [UInt8], effort: inout Effort) -> String? {
+        var children = ChildWalker(body: body, range: 0..<body.count)
+        var found: Range<Int>?
+        while let child = children.next() {
+            if found == nil, child.id == ID.writingApp { found = child.data }
+        }
+        children.addCounts(to: &effort)
+        guard !children.isDamaged, let found else { return nil }
+        return text(body[found])
     }
 
     // MARK: - Matching ffprobe's streams
@@ -225,10 +300,70 @@ public struct MatroskaTrackList: Sendable, Equatable {
         let size: UInt64?
     }
 
-    /// One child element read from memory.
-    private struct Child {
+    /// One child element: its ID and where its data lies in the parent's
+    /// body — a position, never a copy.
+    private struct ChildPlace {
         let id: UInt32
-        let data: [UInt8]
+        let data: Range<Int>
+    }
+
+    /// Walks the children of a master element's body, one at a time, by
+    /// position, stepping over filler (`Void`). It stops, and says
+    /// `isDamaged`, at a child that does not fit or has an unknown size.
+    /// A plain loop rather than a list of children, so a body of millions of
+    /// tiny elements costs a counter, not millions of copies.
+    private struct ChildWalker {
+        let body: [UInt8]
+        private var index: Int
+        private let end: Int
+        /// Whether the walk stopped at a child that did not fit.
+        private(set) var isDamaged = false
+        /// Children whose header was read, filler included.
+        private(set) var visited = 0
+        /// Filler children stepped over.
+        private(set) var fillerSkipped = 0
+
+        init(body: [UInt8], range: Range<Int>) {
+            self.body = body
+            index = range.lowerBound
+            end = min(range.upperBound, body.count)
+        }
+
+        /// The next child that is not filler, or `nil` at the end of the
+        /// body or at damage.
+        mutating func next() -> ChildPlace? {
+            while index < end, !isDamaged {
+                guard let id = MatroskaTrackList.variableLengthNumber(body, at: index, maxLength: 4, keepMarker: true),
+                      let size = MatroskaTrackList.variableLengthNumber(
+                        body, at: index + id.length, maxLength: 8, keepMarker: false
+                      ),
+                      !size.isUnknown else {
+                    isDamaged = true
+                    return nil
+                }
+                visited += 1
+                let start = index + id.length + size.length
+                guard start <= end, size.value <= UInt64(end - start) else {
+                    isDamaged = true
+                    return nil
+                }
+                let stop = start + Int(size.value)
+                index = stop
+                let childID = UInt32(truncatingIfNeeded: id.value)
+                if childID == MatroskaTrackList.voidID {
+                    fillerSkipped += 1
+                    continue
+                }
+                return ChildPlace(id: childID, data: start..<stop)
+            }
+            return nil
+        }
+
+        /// Adds this walk's counts to `effort`.
+        func addCounts(to effort: inout Effort) {
+            effort.elementsVisited += visited
+            effort.fillerSkipped += fillerSkipped
+        }
     }
 
     /// The element header at `offset`, or `nil` when it does not fit before
@@ -244,30 +379,6 @@ public struct MatroskaTrackList: Sendable, Equatable {
             dataStart: offset + UInt64(id.length + size.length),
             size: size.isUnknown ? nil : size.value
         )
-    }
-
-    /// The children of a master element's body, or `[]` when it is damaged
-    /// (for the segment information, where nothing else matters).
-    private static func children(of body: [UInt8]) -> [Child] {
-        childrenOrNil(of: body) ?? []
-    }
-
-    /// The children of a master element's body, or `nil` when one does not
-    /// fit, or has an unknown size.
-    private static func childrenOrNil(of body: [UInt8]) -> [Child]? {
-        var result: [Child] = []
-        var index = 0
-        while index < body.count {
-            guard let id = variableLengthNumber(body, at: index, maxLength: 4, keepMarker: true),
-                  let size = variableLengthNumber(body, at: index + id.length, maxLength: 8, keepMarker: false),
-                  !size.isUnknown else { return nil }
-            let start = index + id.length + size.length
-            guard size.value <= UInt64(body.count - start) else { return nil }
-            let end = start + Int(size.value)
-            result.append(Child(id: UInt32(truncatingIfNeeded: id.value), data: Array(body[start..<end])))
-            index = end
-        }
-        return result
     }
 
     /// An EBML variable-length number at `index`: its value, its length in
@@ -292,7 +403,7 @@ public struct MatroskaTrackList: Sendable, Equatable {
     }
 
     /// An unsigned integer element's value (at most 8 bytes, big-endian).
-    private static func unsigned(_ data: [UInt8]) -> UInt64? {
+    private static func unsigned(_ data: ArraySlice<UInt8>) -> UInt64? {
         guard data.count <= 8 else { return nil }
         return data.reduce(0) { ($0 << 8) | UInt64($1) }
     }
@@ -301,7 +412,7 @@ public struct MatroskaTrackList: Sendable, Equatable {
     /// spaces trimmed, at most 256 bytes — or `nil` when that is empty or
     /// not valid UTF-8 (a language tag or a program's name never is), so
     /// damaged text is treated as absent rather than read as something else.
-    private static func text(_ data: [UInt8]) -> String? {
+    private static func text(_ data: ArraySlice<UInt8>) -> String? {
         let used = data.prefix { $0 != 0 }.prefix(256)
         guard let decoded = String(bytes: used, encoding: .utf8) else { return nil }
         let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)

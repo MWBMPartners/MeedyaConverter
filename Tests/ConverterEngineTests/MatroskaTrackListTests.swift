@@ -129,6 +129,62 @@ final class MatroskaTrackListTests: XCTestCase {
         XCTAssertNil(MatroskaTrackList.variableLengthNumber([0x08, 0x00], at: 0, maxLength: 4, keepMarker: true), "too long an ID")
     }
 
+    // MARK: - Bounds (third independent review)
+
+    /// The reviewer's shape: a track list of just under 16 MiB made of
+    /// EMPTY track entries (`AE 80`, 8,388,000 of them). The first version
+    /// copied every one — 32.7 seconds and 631 MB of memory. Now a list of
+    /// more than 1,024 entries is "unreadable" as soon as the 1,025th is
+    /// seen. Counted (`Effort`), never timed.
+    func test_aTrackListOfMoreThan1024EntriesIsRefusedEarly() throws {
+        let count = 8_388_000
+        var body = [UInt8](repeating: 0x80, count: count * 2)
+        for index in stride(from: 0, to: body.count, by: 2) { body[index] = 0xAE }
+        var effort = MatroskaTrackList.Effort()
+        let list = MatroskaTrackList.read(bytes: file(info("mkvmerge v101.0") + tracks(body)), effort: &effort)
+        XCTAssertEqual(list?.writingApplication, "mkvmerge v101.0", "the writer is still read")
+        XCTAssertNil(list?.tracks, "more than 1,024 entries: the list is unreadable")
+        XCTAssertLessThanOrEqual(effort.elementsVisited, 1_030, "stopped at the 1,025th entry, not after \(count)")
+
+        // 1,024 entries are read; 1,025 are not.
+        let entry: [UInt8] = [0xAE, 0x80]
+        let limit = MatroskaTrackList.trackEntryLimit
+        XCTAssertEqual(limit, 1024)
+        let atLimit = Array(Array(repeating: entry, count: limit).joined())
+        XCTAssertEqual(MatroskaTrackList.read(bytes: file(tracks(atLimit)))?.tracks?.count, limit)
+        XCTAssertNil(MatroskaTrackList.read(bytes: file(tracks(atLimit + entry)))?.tracks)
+    }
+
+    /// Filler (EBML `Void`, which writers leave as padding) is stepped over
+    /// wherever it is: 5,000 elements of it before the track list — which
+    /// stopped the first version reading at all, as each counted against its
+    /// 4,096-element limit — 100,000 inside the track list, and some between
+    /// a track entry's fields. Counted (`Effort`), never timed.
+    func test_fillerIsSteppedOver() throws {
+        let void: [UInt8] = [0xEC, 0x80]
+        let before = file(Array(Array(repeating: void, count: 5000).joined())
+                          + info("mkvmerge v101.0") + tracks(track(1, type: 2, language: "chi", full: "yue")))
+        var effort = MatroskaTrackList.Effort()
+        let list = MatroskaTrackList.read(bytes: before, effort: &effort)
+        XCTAssertEqual(list?.writingApplication, "mkvmerge v101.0")
+        XCTAssertEqual(list?.tracks, [.init(number: 1, type: 2, language: "chi", languageBCP47: "yue")])
+        XCTAssertEqual(effort.fillerSkipped, 5000)
+
+        let inside = file(tracks(track(1, type: 2, language: "chi", full: "yue")
+                                 + Array(Array(repeating: void, count: 100_000).joined())
+                                 + track(2, type: 2, language: "fre", full: "fr-CA")))
+        effort = MatroskaTrackList.Effort()
+        XCTAssertEqual(MatroskaTrackList.read(bytes: inside, effort: &effort)?.tracks?.map(\.languageBCP47), ["yue", "fr-CA"])
+        XCTAssertEqual(effort.fillerSkipped, 100_000)
+
+        // Filler among a track entry's own fields (a two-byte and a
+        // four-byte `Void`).
+        let entry = element([0xAE], uint([0xD7], 1) + void + uint([0x83], 2) + [0xEC, 0x82, 0x00, 0x00]
+                            + text([0x22, 0xB5, 0x9D], "yue"))
+        XCTAssertEqual(MatroskaTrackList.read(bytes: file(tracks(entry)))?.tracks,
+                       [.init(number: 1, type: 2, language: nil, languageBCP47: "yue")])
+    }
+
     // MARK: - Matching ffprobe's streams
 
     private func stream(_ index: Int, _ type: StreamType, language: String? = nil, picture: Bool = false) -> MediaStream {
