@@ -1,13 +1,32 @@
 # MWBM-MEDIA-LANG policy copies (docs/standards/MWBM-MEDIA-LANG.lock).
 # They must stay byte for byte identical to the masters in
 # MWBMPartners/MeedyaSuite-core — scripts/media-lang/check_copies.py compares
-# checksums in CI — so git must never convert their line endings (a Windows
-# checkout with core.autocrlf would otherwise fail the check). Never edit
-# these files here; change the master and run check_copies.py --update.
-docs/standards/media-language-bcp47-policy.md -text
-docs/standards/MWBM-MEDIA-LANG.lock -text
-Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.json -text
-Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.schema.json -text
-Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.json -text
-Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.schema.json -text
-scripts/media-lang/check_copies.py -text
+# checksums in CI. Never edit these files here; change the master and run
+# check_copies.py --update.
+#
+# Each line below stops git changing a copy's bytes in four ways: line-ending
+# conversion (-text; a Windows checkout with core.autocrlf would otherwise
+# fail the check), filters (-filter), encoding conversion
+# (-working-tree-encoding) and $Id$ expansion (-ident).
+#
+# What can still override these lines (git takes each attribute from the
+# setting with the highest priority):
+#   * any LATER line in this same file that also matches the copy — git uses
+#     the last matching line for each attribute, so it need not be a broader
+#     one. Keep these lines at the end of the file;
+#   * a .gitattributes closer to the copy: in the copy's own folder, or in a
+#     folder between the copy and the top of the repository (a deeper file
+#     wins over a shallower one). A .gitattributes in a folder that does not
+#     contain the copy has no effect on it;
+#   * .git/info/attributes on someone's own machine, which git always gives
+#     the highest priority.
+# The global and system attributes files have the LOWEST priority, so they
+# do not override these lines. If anything does change a copy's bytes, the
+# copy checker reports that copy as changed.
+docs/standards/media-language-bcp47-policy.md -text -filter -working-tree-encoding -ident
+docs/standards/MWBM-MEDIA-LANG.lock -text -filter -working-tree-encoding -ident
+Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.json -text -filter -working-tree-encoding -ident
+Tests/Fixtures/MediaLanguage/bcp47-language-policy-v1.schema.json -text -filter -working-tree-encoding -ident
+Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.json -text -filter -working-tree-encoding -ident
+Sources/MediaLanguagePolicy/Resources/bcp47-language-data-v1.schema.json -text -filter -working-tree-encoding -ident
+scripts/media-lang/check_copies.py -text -filter -working-tree-encoding -ident
