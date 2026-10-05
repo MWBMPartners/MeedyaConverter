@@ -627,7 +627,7 @@ final class MatroskaTrackListTests: XCTestCase {
 
         // Ogg: the whole tag (as before). Needs the Opus encoder; checked
         // last, so the cases above run on any machine with the tools.
-        let encoders = String(decoding: try run(ffmpeg, ["-hide_banner", "-encoders"]).output, as: UTF8.self)
+        let encoders = String(data: try run(ffmpeg, ["-hide_banner", "-encoders"]).output, encoding: .utf8) ?? ""
         guard encoders.contains(" libopus ") else { try MediaTools.missing("this ffmpeg has no libopus (the Ogg case)") }
         var ogg = EncodingProfile.audioExtract
         ogg.audioCodec = .opus

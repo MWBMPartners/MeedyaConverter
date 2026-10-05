@@ -443,7 +443,8 @@ final class QuickTimeTrackListTests: XCTestCase {
             while offset + 8 <= end {
                 let size = Int(data[offset..<offset + 4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
                 guard size >= 8, offset + size <= end else { break }
-                result.append((String(decoding: data[offset + 4..<offset + 8], as: UTF8.self), offset + 8, offset + size))
+                let type = String(bytes: data[offset + 4..<offset + 8], encoding: .isoLatin1) ?? ""
+                result.append((type, offset + 8, offset + size))
                 offset += size
             }
             return result
