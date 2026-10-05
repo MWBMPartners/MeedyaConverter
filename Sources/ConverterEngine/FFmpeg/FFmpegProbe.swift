@@ -1088,6 +1088,43 @@ public final class FFmpegProbe: Sendable {
 
 extension FFmpegProbe {
 
+    /// What a track's full language tag field says — Matroska's
+    /// `LanguageBCP47` or a MOV / MP4 `elng` box, as the track-list reader
+    /// gave it.
+    enum FullLanguageTagReading: Equatable {
+        /// No full tag (none, or empty).
+        case absent
+        /// A real, well-formed language tag: its canonical form.
+        case tag(String)
+        /// A full tag that must NOT be used, and why.
+        case ignored(IgnoredFullLanguageTag)
+    }
+
+    /// Reads a full language tag field. It is used only when the language
+    /// policy's reader reads it as a real, well-formed tag; anything else —
+    /// not a tag (`en_GB!x?a12`), or text holding control characters, which
+    /// is damage — is IGNORED, never read as "not known" over a valid old
+    /// field (COMPAT-030). Until the stand-in review of round 5 such a tag
+    /// replaced the old field's language: a track whose old field said `eng`
+    /// and whose full tag was damaged came out with the damaged text, noted
+    /// "kept as the source had it", while MKVToolNix and Apple's AVFoundation
+    /// both read the source as English.
+    static func fullLanguageTag(_ text: String?) -> FullLanguageTagReading {
+        guard let text, !text.isEmpty else { return .absent }
+        let clean = MetadataSanitizer.sanitize(text)
+        guard clean == text else {
+            // Shown with each character the sanitiser removes as "�", so the
+            // note never quotes damaged text as if it were a real tag.
+            let shown = String(String.UnicodeScalarView(text.unicodeScalars.map {
+                MetadataSanitizer.sanitize(String($0)).isEmpty ? "\u{FFFD}" : $0
+            }))
+            return .ignored(.notATag(shown))
+        }
+        let reading = TrackLanguage.read(fileValue: String(clean.prefix(64)))
+        guard reading.unrecognised == nil else { return .ignored(.notATag(clean)) }
+        return .tag(reading.language)
+    }
+
     /// The program that wrote the file, as ffprobe's Matroska statistics tag
     /// names it (`_STATISTICS_WRITING_APP`, which mkvmerge writes on every
     /// track), or `nil`. Sanitised: it comes straight from the file.
@@ -1131,14 +1168,19 @@ extension FFmpegProbe {
         let list = MatroskaTrackList.read(url: fileURL)
         if let matched = list?.streamsMatched(to: streams) {
             return streams.map { stream in
-                guard let track = matched[stream.streamIndex],
-                      let full = track.languageBCP47.map(MetadataSanitizer.sanitize), !full.isEmpty else {
-                    return stream
-                }
+                guard let track = matched[stream.streamIndex] else { return stream }
                 var updated = stream
-                let reading = TrackLanguage.read(fileValue: String(full.prefix(64)))
-                updated.language = reading.language
-                updated.unrecognisedLanguage = reading.unrecognised
+                switch fullLanguageTag(track.languageBCP47) {
+                case .absent:
+                    return stream
+                case .ignored(let why):
+                    // Not a language tag: the old field's reading stands.
+                    updated.ignoredFullLanguageTag = why
+                    return updated
+                case .tag(let language):
+                    updated.language = language
+                    updated.unrecognisedLanguage = nil
+                }
                 // ffprobe gave no text for the old field: it said `und`,
                 // which ffprobe hides — mkvmerge writes `und` there for a
                 // language with no three-letter code (`abq`, `pnb`) and for
@@ -1218,10 +1260,16 @@ extension FFmpegProbe {
         return streams.map { stream in
             guard let track = matched[stream.streamIndex] else { return stream }
             var updated = stream
-            if let full = track.extendedLanguage.map(MetadataSanitizer.sanitize), !full.isEmpty {
-                let reading = TrackLanguage.read(fileValue: String(full.prefix(64)))
-                updated.language = reading.language
-                updated.unrecognisedLanguage = reading.unrecognised
+            switch fullLanguageTag(track.extendedLanguage) {
+            case .absent:
+                break
+            case .ignored(let why):
+                // Not a language tag: read the number, as if there were no
+                // `elng` (Apple's AVFoundation still reports the old code).
+                updated.ignoredFullLanguageTag = why
+            case .tag(let language):
+                updated.language = language
+                updated.unrecognisedLanguage = nil
                 if updated.languageAsStored == nil { updated.languageAsStored = "" }
                 return updated
             }
@@ -1229,18 +1277,18 @@ extension FFmpegProbe {
             // where it has none (34, 58, 139–151, which Apple's players
             // still read as a language in a MOV): the check that the track
             // and the stream really are the same.
-            guard track.hasMacintoshLanguageNumber, let number = track.languageCode else { return stream }
+            guard track.hasMacintoshLanguageNumber, let number = track.languageCode else { return updated }
             let label = stream.languageAsStored ?? ""
             let reading: TrackLanguage.Reading
             if list.isQuickTimeFile {
                 // A QuickTime movie: the Macintosh language.
-                guard let meaning = TrackLanguage.quickTimeLanguage(number: number, label: label) else { return stream }
+                guard let meaning = TrackLanguage.quickTimeLanguage(number: number, label: label) else { return updated }
                 reading = TrackLanguage.Reading(language: meaning, unrecognised: nil)
             } else {
                 // Any other MP4: as Apple's players read it there — packed
                 // letters, not a Macintosh language (`mp4Reading(ofNumber:)`).
                 guard label == TrackLanguage.quickTimeLabel(ofNumber: number),
-                      let read = TrackLanguage.mp4Reading(ofNumber: number) else { return stream }
+                      let read = TrackLanguage.mp4Reading(ofNumber: number) else { return updated }
                 reading = read
             }
             updated.language = reading.language

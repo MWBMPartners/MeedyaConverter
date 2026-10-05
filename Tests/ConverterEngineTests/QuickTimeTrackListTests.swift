@@ -296,6 +296,25 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(streams.map(\.languageFullTagUnknown), [Bool?](repeating: nil, count: 8), "read: nothing marked")
     }
 
+    /// An `elng` that is not a well-formed language tag never replaces the
+    /// track's number: the number is read as if there were no `elng`, and
+    /// the stream records the ignored tag for the job's note. The stand-in
+    /// review of round 5's `el-both.mov`: number 0 (English, as AVFoundation
+    /// reads it) with an `elng` of `en_GB!x?a12` came out of MP4 as `und`
+    /// and of MOV with no language.
+    func test_aDamagedFullTagIsIgnored() throws {
+        let bytes = ftyp + box("moov", trak(hdlr("soun") + mdhd(0) + elng("en_GB!x?a12"))
+                                   + trak(hdlr("soun") + mdhd(packed("fra")) + elng("1#3")))
+        let probed = [stream(0, .audio, language: "eng"), stream(1, .audio, language: "fra")]
+        let streams = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(bytes),
+                                                             formatName: "mov,mp4,m4a,3gp,3g2,mj2")
+        XCTAssertEqual(streams.map(\.language), ["en", "fr"])
+        XCTAssertEqual(streams.map(\.unrecognisedLanguage), [nil, nil])
+        XCTAssertEqual(streams.map(\.languageAsStored), ["eng", "fra"])
+        XCTAssertEqual(streams.map(\.ignoredFullLanguageTag), [.notATag("en_GB!x?a12"), .notATag("1#3")])
+        XCTAssertEqual(streams.map(\.languageFromQuickTimeNumber), [true, nil])
+    }
+
     /// In an MP4 (no QuickTime brand) a number below 0x400 is read as Apple's
     /// players read it THERE: packed letters that are no language — 2 is
     /// "``b", not ffprobe's German `ger`; 5 is not Swedish — 0 is `und`, and
@@ -422,6 +441,39 @@ final class QuickTimeTrackListTests: XCTestCase {
             }
         }
         XCTAssertEqual(next, numbers.count, "every track numbered")
+        try Data(data).write(to: url)
+    }
+
+    /// Adds an `elng` box holding `tag` at the end of track `track`'s `mdia`
+    /// (counting from 0), as Apple's own writer stores a full tag — ffmpeg
+    /// never writes one. The movie header must come after the media (as
+    /// ffmpeg writes a MOV), so no media offset moves; the sizes of `moov`,
+    /// the `trak` and its `mdia` grow by the box.
+    private func addExtendedLanguage(to url: URL, track: Int, tag: String) throws {
+        var data = [UInt8](try Data(contentsOf: url))
+        func children(_ start: Int, _ end: Int) -> [(type: String, start: Int, data: Int, end: Int)] {
+            var result: [(type: String, start: Int, data: Int, end: Int)] = []
+            var offset = start
+            while offset + 8 <= end {
+                let size = Int(data[offset..<offset + 4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
+                guard size >= 8, offset + size <= end else { break }
+                let type = String(bytes: data[offset + 4..<offset + 8], encoding: .isoLatin1) ?? ""
+                result.append((type, offset, offset + 8, offset + size))
+                offset += size
+            }
+            return result
+        }
+        let top = children(0, data.count)
+        let movie = try XCTUnwrap(top.first { $0.type == "moov" })
+        XCTAssertTrue(top.contains { $0.type == "mdat" && $0.start < movie.start }, "the movie header follows the media")
+        let trak = children(movie.data, movie.end).filter { $0.type == "trak" }[track]
+        let media = try XCTUnwrap(children(trak.data, trak.end).first { $0.type == "mdia" })
+        let added = box("elng", [0, 0, 0, 0] + Array(tag.utf8) + [0])
+        data.insert(contentsOf: added, at: media.end)
+        for start in [movie.start, trak.start, media.start] {
+            let size = Int(data[start..<start + 4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }) + added.count
+            data.replaceSubrange(start..<start + 4, with: (0..<4).reversed().map { UInt8((size >> ($0 * 8)) & 0xFF) })
+        }
         try Data(data).write(to: url)
     }
 
@@ -686,6 +738,43 @@ final class QuickTimeTrackListTests: XCTestCase {
         let (mkv, _) = try await remux(source, to: folder.appendingPathComponent("out.mkv"), .mkv,
                                        ffmpeg: ffmpeg, ffprobe: ffprobe)
         XCTAssertEqual(try audioLanguages(ffprobe, mkv), ["dut", "mon", "glg", "ga-Latg", "aze"], "out.mkv: ffprobe")
+    }
+
+    /// The stand-in review of round 5's `el-both.mov`, with real tools: a MOV
+    /// track with number 0 (English) and an `elng` that is not a language
+    /// tag. AVFoundation reads it as English (`eng`); round 5 read the damaged
+    /// tag instead, so MP4 got `und`, MOV no language and Matroska the damaged
+    /// text noted "kept as the source had it". Now every output gets English,
+    /// and the note says the full tag was ignored and is not kept.
+    func test_aDamagedFullTagLeavesTheNumbersLanguage() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — damaged elng check")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-badelng-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("damaged.mov")
+        XCTAssertEqual(try run(ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4",
+                                        "-map", "0:a", "-metadata:s:a:0", "language=eng", "-c:a", "aac", "-f", "mov",
+                                        source.path]).status, 0, "making damaged.mov")
+        try addExtendedLanguage(to: source, track: 0, tag: "en_GB!x?a12")
+        if let apple = try await MediaTools.appleAudioLanguages(of: source) {
+            XCTAssertEqual(apple.map(\.code), ["eng"], "AVFoundation reads the number")
+        }
+        let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: source)
+        XCTAssertEqual(probed.streams.map(\.language), ["en"])
+        let note = "Stream #0: The source also records a full language tag for this track, “en_GB!x?a12”, which is "
+            + "not a valid language tag, so it is ignored and not kept; the language is taken from the track's old "
+            + "language field (“eng”)."
+        for (name, container) in [("out.mov", ContainerFormat.mov), ("out.mp4", .mp4), ("out.mkv", .mkv)] {
+            let (output, notes) = try await remux(source, to: folder.appendingPathComponent(name), container,
+                                                  ffmpeg: ffmpeg, ffprobe: ffprobe)
+            XCTAssertEqual(notes, [note], name)
+            XCTAssertEqual(try audioLanguages(ffprobe, output), ["eng"], "\(name): ffprobe")
+            if container != .mkv, let apple = try await MediaTools.appleAudioLanguages(of: output) {
+                XCTAssertEqual(apple.map(\.description), ["eng/nil"], "\(name): AVFoundation")
+            }
+        }
     }
 
     /// MOV files written by APPLE'S OWN tools (`avconvert`, which ships with

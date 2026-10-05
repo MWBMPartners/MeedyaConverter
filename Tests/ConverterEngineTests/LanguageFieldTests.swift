@@ -46,14 +46,15 @@ final class LanguageFieldTests: XCTestCase {
         stored: String? = nil,
         edited: String? = nil,
         fromQuickTimeNumber: Bool = false,
+        ignored: IgnoredFullLanguageTag? = nil,
         to container: ContainerFormat?,
         replacement: Bool = false,
         keepSource: Bool = true
     ) -> TrackLanguage.LanguageWrite {
         TrackLanguage.languageWrite(
             streamNumber: 2, edited: edited, sourceLanguage: source, sourceUnrecognised: unrecognised,
-            sourceStoredText: stored, sourceReadFromQuickTimeNumber: fromQuickTimeNumber, container: container,
-            isReplacement: replacement, keepsSourceMetadata: keepSource
+            sourceStoredText: stored, sourceReadFromQuickTimeNumber: fromQuickTimeNumber, ignoredFullTag: ignored,
+            container: container, isReplacement: replacement, keepsSourceMetadata: keepSource
         )
     }
 
@@ -483,14 +484,45 @@ final class LanguageFieldTests: XCTestCase {
             XCTAssertEqual(write(tag, stored: "", to: .mov).action, .clear)
             XCTAssertEqual(write(tag, stored: "", to: .ogg).action, .write(tag))
         }
-        // A full tag that is not a language at all, over an old field that
-        // holds nothing — or something else: the text is written, so "kept"
-        // is true; it is left to be copied only when the old field says it.
-        XCTAssertEqual(write("und", unrecognised: "1234", stored: "", to: .mkv).action, .write("1234"))
-        XCTAssertEqual(write("und", unrecognised: "1234", stored: "eng", to: .mkv).action, .write("1234"))
-        XCTAssertEqual(write("und", unrecognised: "1234", stored: "1234", to: .mkv).action, .copySource)
+        // (A full tag that is not a language tag is never used — the probe
+        // ignores it and keeps the old field's reading; see
+        // `test_aDamagedFullTagIsIgnoredAndSaidSo`. Round 5 pinned writing
+        // such a tag's text here, which the stand-in review of round 5 found
+        // replaced a valid `eng`.)
         // "Not known" itself needs nothing written but `und`.
         XCTAssertEqual(write("und", stored: "", to: .mkv), .init(action: .write("und"), note: nil))
+    }
+
+    /// A full language tag that is not a language tag (`en_GB!x?a12`) is
+    /// IGNORED by the probe, so the old field's language is written as it
+    /// would be with no full tag, and the note says the full tag was ignored
+    /// and is not kept — never that the damaged text was "kept as the source
+    /// had it" (the stand-in review of round 5: a damaged tag replaced a
+    /// valid `eng`). Said after whatever else is said, or on its own; not
+    /// for an edited language, nor when the source's metadata is dropped.
+    func test_aDamagedFullTagIsIgnoredAndSaidSo() {
+        let damaged = IgnoredFullLanguageTag.notATag("en_GB!x?a12")
+        let ignoredFromEng = "The source also records a full language tag for this track, “en_GB!x?a12”, which is "
+            + "not a valid language tag, so it is ignored and not kept; the language is taken from the track's old "
+            + "language field (“eng”)."
+        for (container, code) in [(ContainerFormat.mkv, "eng"), (.mp4, "eng"), (.mov, "eng"), (.mpegTS, "eng")] {
+            XCTAssertEqual(write("en", stored: "eng", ignored: damaged, to: container),
+                           .init(action: .write(code), note: "Stream #2: " + ignoredFromEng), "\(container)")
+        }
+        // After another note for the same track.
+        XCTAssertEqual(write("en-GB", stored: "eng", ignored: damaged, to: .mp4).note,
+                       "Stream #2: this file type can only store the language, so “GB” in “en-GB” is not saved "
+                           + "(written as “eng”). " + ignoredFromEng)
+        // An old field that holds no language: nothing is written (as with no
+        // full tag at all), and the note says so.
+        XCTAssertEqual(write(nil, ignored: damaged, to: .mkv), .init(
+            action: .copySource,
+            note: "Stream #2: The source also records a full language tag for this track, “en_GB!x?a12”, which is "
+                + "not a valid language tag, so it is ignored and not kept; the track's old language field gives no "
+                + "language."
+        ))
+        XCTAssertNil(write("en", stored: "eng", edited: "de", ignored: damaged, to: .mkv).note, "the person set it")
+        XCTAssertNil(write("en", stored: "eng", ignored: damaged, to: .mkv, keepSource: false).note)
     }
 
     /// An MP4 holding an old QuickTime number (2) is read as Apple's players

@@ -247,6 +247,33 @@ final class MatroskaTrackListTests: XCTestCase {
         ).map(\.language), withText.map(\.language))
     }
 
+    /// A full tag that is not a well-formed language tag — damaged text, or
+    /// text with a control character — never replaces the old field: the
+    /// old field's reading stands, and the stream records the ignored tag
+    /// (for the job's note). The stand-in review of round 5 found
+    /// `en_GB!x?a12` over a valid `eng` turned into "not known".
+    func test_aDamagedFullTagNeverOverridesTheOldField() throws {
+        let bytes = file(info("mkvmerge v101.0 ('Time To Turn') 64-bit")
+            + tracks(track(1, type: 2, language: "eng", full: "en_GB!x?a12")
+                     + track(2, type: 2, language: "und", full: "1#3")
+                     + track(3, type: 2, language: "eng", full: "en\u{01}-GB")
+                     + track(4, type: 2, language: "eng", full: "en-GB"))
+            + cluster)
+        let probed = [stream(0, .audio, language: "en"), stream(1, .audio), stream(2, .audio, language: "en"),
+                      stream(3, .audio, language: "en")]
+        var withText = probed
+        for index in [0, 2, 3] { withText[index].languageAsStored = "eng" }
+        let streams = FFmpegProbe.applyingMatroskaFullLanguageTags(
+            to: withText, fileURL: try scratch(bytes), formatName: "matroska,webm", statisticsWritingApplication: nil
+        )
+        XCTAssertEqual(streams.map(\.language), ["en", nil, "en", "en-GB"], "only a real tag replaces the old field")
+        XCTAssertEqual(streams.map(\.unrecognisedLanguage), [nil, nil, nil, nil])
+        XCTAssertEqual(streams.map(\.languageAsStored), ["eng", nil, "eng", "eng"], "what ffmpeg copies, unchanged")
+        XCTAssertEqual(streams.map(\.ignoredFullLanguageTag),
+                       [.notATag("en_GB!x?a12"), .notATag("1#3"), .notATag("en\u{FFFD}-GB"), nil],
+                       "a control character is damage: the tag is ignored, the character shown as �")
+    }
+
     /// When the track list cannot be read, a file whose writer may have
     /// written full tags has its tracks marked; one written by ffmpeg is not.
     func test_anUnreadableTrackListMarksTheTracksUnlessFFmpegWroteTheFile() throws {
@@ -419,6 +446,61 @@ final class MatroskaTrackListTests: XCTestCase {
         let tracks = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["tracks"] as? [[String: Any]] ?? []
         return tracks.filter { $0["type"] as? String == "audio" }
             .map { ($0["properties"] as? [String: Any])?["language"] as? String }
+    }
+
+    /// The stand-in review of round 5, with real tools: mkvmerge writes `eng`
+    /// and `en-GB` for an English (UK) track; with the full tag damaged in
+    /// the file (`e?-GB`, same length), mkvmerge itself reads the track as
+    /// `eng` — and so must the converter. Round 5 wrote the damaged text
+    /// into Matroska ("kept as the source had it") and nothing into MP4 and
+    /// MOV. Now each output gets `eng`, and the note says the full tag was
+    /// ignored and not kept. Read back with ffprobe, mkvmerge and Apple's
+    /// AVFoundation. Skipped without the tools — FAILED in CI without them.
+    func test_aDamagedFullTagLeavesTheOldFieldsLanguage() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe"),
+              let mkvmerge = MediaTools.find("mkvmerge") else {
+            try MediaTools.missing("ffmpeg, ffprobe or mkvmerge not installed")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-damaged-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let plain = folder.appendingPathComponent("plain.mkv")
+        XCTAssertEqual(try run(ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=0.4",
+                                        "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4", "-map", "0", "-map", "1",
+                                        "-c:v", "mpeg4", "-c:a", "aac", plain.path]).status, 0, "making the source")
+        let tagged = folder.appendingPathComponent("tagged.mkv")
+        XCTAssertLessThan(try run(mkvmerge, ["-q", "-o", tagged.path, "--language", "1:en-GB", plain.path]).status, 2)
+        // Damage the full tag in place: LanguageBCP47 (22 B5 9D), size 5.
+        var bytes = [UInt8](try Data(contentsOf: tagged))
+        let field: [UInt8] = [0x22, 0xB5, 0x9D, 0x85] + Array("en-GB".utf8)
+        let at = try XCTUnwrap((0...(bytes.count - field.count)).first { Array(bytes[$0..<$0 + field.count]) == field })
+        bytes.replaceSubrange(at + 4..<at + 9, with: Array("e?-GB".utf8))
+        let damaged = folder.appendingPathComponent("damaged.mkv")
+        try Data(bytes).write(to: damaged)
+        XCTAssertEqual(try mkvmergeAudioLanguages(mkvmerge, damaged), ["eng"], "mkvmerge reads the old field")
+
+        let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: damaged)
+        let audio = try XCTUnwrap(probed.streams.first { $0.streamType == .audio })
+        XCTAssertEqual(audio.language, "en")
+        XCTAssertEqual(audio.ignoredFullLanguageTag, .notATag("e?-GB"))
+        let note = "Stream #1: The source also records a full language tag for this track, “e?-GB”, which is not a "
+            + "valid language tag, so it is ignored and not kept; the language is taken from the track's old language "
+            + "field (“eng”)."
+        for (name, container) in [("out.mkv", ContainerFormat.mkv), ("out.mp4", .mp4), ("out.mov", .mov)] {
+            var profile = container == .mkv ? EncodingProfile.remuxToMKV : EncodingProfile.remuxToMP4
+            profile.containerFormat = container
+            let output = folder.appendingPathComponent(name)
+            var config = EncodingJobConfig(inputURL: damaged, outputURL: output, profile: profile)
+            config.sourceStreams = probed.streams
+            XCTAssertEqual(try run(ffmpeg, ["-v", "error"] + config.buildArguments()).status, 0, "encoding \(name)")
+            XCTAssertEqual(config.trackWritingNotes(), [note], name)
+            XCTAssertEqual(try audioLanguages(ffprobe, output), ["eng"], "\(name): ffprobe")
+            if container == .mkv {
+                XCTAssertEqual(try mkvmergeAudioLanguages(mkvmerge, output), ["eng"], "\(name): mkvmerge")
+            } else if let apple = try await MediaTools.appleAudioLanguages(of: output) {
+                XCTAssertEqual(apple.map(\.code), ["eng"], "\(name): AVFoundation")
+            }
+        }
     }
 
     /// The fourth independent review's case: a language with NO three-letter

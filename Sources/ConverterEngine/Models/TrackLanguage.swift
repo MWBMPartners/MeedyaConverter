@@ -838,6 +838,9 @@ extension TrackLanguage {
     ///     source's own Macintosh language NUMBER in a QuickTime movie (a MOV
     ///     — `MediaStream.languageFromQuickTimeNumber`). Only then is a `sve`
     ///     or `iri` the source holds kept in a MOV output.
+    ///   - ignoredFullTag: A full language tag the source records that the
+    ///     probe did NOT use, and why (`MediaStream.ignoredFullLanguageTag`)
+    ///     — the language comes from the old field — said in a note.
     ///   - container: The output container.
     ///   - isReplacement: The output stream comes from a separate file
     ///     (a tone-mapped subtitle), so ffmpeg has nothing to copy from:
@@ -852,6 +855,55 @@ extension TrackLanguage {
         sourceStoredText: String? = nil,
         fullTagUnknown: Bool = false,
         sourceReadFromQuickTimeNumber: Bool = false,
+        ignoredFullTag: IgnoredFullLanguageTag? = nil,
+        container: ContainerFormat?,
+        isReplacement: Bool,
+        keepsSourceMetadata: Bool
+    ) -> LanguageWrite {
+        let decided = decidedLanguageWrite(
+            streamNumber: streamNumber, edited: edited, sourceLanguage: sourceLanguage,
+            sourceUnrecognised: sourceUnrecognised, sourceStoredText: sourceStoredText, fullTagUnknown: fullTagUnknown,
+            sourceReadFromQuickTimeNumber: sourceReadFromQuickTimeNumber, container: container,
+            isReplacement: isReplacement, keepsSourceMetadata: keepsSourceMetadata
+        )
+        // A full tag the probe ignored (damaged, or too long to read) is
+        // said whatever else happens to the track — unless the person set
+        // the language, or the source's metadata is not kept at all. It is
+        // never kept: ffmpeg writes neither Matroska's full-tag field nor
+        // MP4's `elng`.
+        guard let ignoredFullTag, edited == nil, keepsSourceMetadata else { return decided }
+        let oldField = [sourceStoredText, sourceUnrecognised, sourceLanguage].compactMap { $0 }.first { !$0.isEmpty }
+        let sentence = ignoredFullTagSentence(ignoredFullTag, oldField: oldField)
+        return LanguageWrite(
+            action: decided.action,
+            note: decided.note.map { $0 + " " + sentence } ?? "Stream #\(streamNumber): " + sentence
+        )
+    }
+
+    /// The sentence for a full language tag the probe did not use: what it
+    /// was, that it is ignored and not kept, and where the language comes
+    /// from instead.
+    static func ignoredFullTagSentence(_ ignored: IgnoredFullLanguageTag, oldField: String?) -> String {
+        let what: String
+        switch ignored {
+        case .notATag(let text):
+            what = "The source also records a full language tag for this track, “\(text)”, which is not a valid "
+                + "language tag"
+        }
+        let instead = oldField.map { "the language is taken from the track's old language field (“\($0)”)" }
+            ?? "the track's old language field gives no language"
+        return what + ", so it is ignored and not kept; " + instead + "."
+    }
+
+    /// `languageWrite` without the ignored-full-tag sentence (see there).
+    private static func decidedLanguageWrite(
+        streamNumber: Int,
+        edited: String?,
+        sourceLanguage: String?,
+        sourceUnrecognised: String?,
+        sourceStoredText: String?,
+        fullTagUnknown: Bool,
+        sourceReadFromQuickTimeNumber: Bool,
         container: ContainerFormat?,
         isReplacement: Bool,
         keepsSourceMetadata: Bool
@@ -905,9 +957,13 @@ extension TrackLanguage {
             let fix = " Set the right language in the stream editor if you know it."
             if storage != .unchecked, storage != .quickTimeList, storage.keeps(raw) {
                 // Left for ffmpeg to copy only when what it copies IS that
-                // text; a Matroska full tag's text is not in the old field
-                // ffmpeg copies (which may say only `und`, copied as
-                // nothing), so there it is written.
+                // text. It is not for an MP4's old QuickTime number: Apple's
+                // players read 2 as "``b" (no language) while ffmpeg copies
+                // its label `ger`, which would make the track German — so
+                // the text is written. (Round 5 wrote a Matroska full tag's
+                // unrecognised text here; since the stand-in review of round
+                // 5 a full tag that is not a language tag is never used —
+                // `MediaStream.ignoredFullLanguageTag` — so that case is gone.)
                 let copiesRaw = (sourceStoredText ?? raw) == raw
                 return LanguageWrite(
                     action: isReplacement || !copiesRaw ? .write(raw) : .copySource,

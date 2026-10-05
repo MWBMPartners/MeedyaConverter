@@ -245,6 +245,17 @@ public enum MatrixEncoding: String, Codable, Sendable {
     case mpegSurround = "mpeg_surround"
 }
 
+// MARK: - IgnoredFullLanguageTag
+
+/// Why a file's full language tag was not used (`MediaStream
+/// .ignoredFullLanguageTag`).
+public enum IgnoredFullLanguageTag: Codable, Sendable, Equatable {
+    /// Not a well-formed language tag, as the language policy's reader reads
+    /// it (`en_GB!x?a12`), or holding control characters: the text as the
+    /// file gives it, each control character shown as "�".
+    case notATag(String)
+}
+
 // MARK: - MediaStream
 
 /// Represents a single stream (video, audio, subtitle, or data) within a media file.
@@ -341,6 +352,18 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// round 5 found a Matroska track's `sve` kept in a MOV as "the source's
     /// own QuickTime code".
     public var languageFromQuickTimeNumber: Bool?
+
+    /// A full language tag the file records for this track — Matroska's
+    /// `LanguageBCP47`, or a MOV / MP4 track's `elng` — that was NOT used,
+    /// and why: it is not a well-formed language tag. `language` then comes
+    /// from the old field, as if there were no full tag — a damaged full tag
+    /// never overrides a valid old field (COMPAT-030) — and the job's notes
+    /// say so. `nil` when there is no full tag, when it was used, and for
+    /// streams described before this existed. Added after the stand-in
+    /// review of round 5 found a damaged tag (`en_GB!x?a12`) replacing a
+    /// valid `eng`: the output held the damaged text under the note "kept
+    /// as the source had it".
+    public var ignoredFullLanguageTag: IgnoredFullLanguageTag?
 
     /// User-facing title/label for this stream (e.g., "Director's Commentary").
     public var title: String?
@@ -457,6 +480,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         languageAsStored: String? = nil,
         languageFullTagUnknown: Bool? = nil,
         languageFromQuickTimeNumber: Bool? = nil,
+        ignoredFullLanguageTag: IgnoredFullLanguageTag? = nil,
         title: String? = nil,
         isDefault: Bool = false,
         isForced: Bool = false,
@@ -494,6 +518,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.languageAsStored = languageAsStored
         self.languageFullTagUnknown = languageFullTagUnknown
         self.languageFromQuickTimeNumber = languageFromQuickTimeNumber
+        self.ignoredFullLanguageTag = ignoredFullLanguageTag
         self.title = title
         self.isDefault = isDefault
         self.isForced = isForced
