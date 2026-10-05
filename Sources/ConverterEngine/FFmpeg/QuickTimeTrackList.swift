@@ -35,8 +35,22 @@
 // MP4 and MOV (TRACK-070). Apple writes one (`zh-Hant` beside a packed
 // `zho`); ffmpeg neither writes nor reads it.
 //
+// WHICH FILES THE NUMBERS ARE MACINTOSH LANGUAGES IN: only QuickTime movies.
+// Apple's players read a number below 0x400 as a Macintosh language only
+// when the file is a QuickTime movie — its `ftyp` box names the brand
+// `qt  `, as the main brand or a compatible one, or it has no `ftyp` box at
+// all (an old QuickTime movie). In any other MP4 they read the number as the
+// ISO base media format says every value is read: three packed letters,
+// which for a number below 0x400 always begin with a backtick and are never
+// a language (2 is "``b", not German) — and 0 is `und`. Checked with
+// AVFoundation on 5 Oct 2026, rewriting only the `ftyp` box of one file that
+// holds every number from 0 to 151 (the stand-in review of round 5 found
+// the converter read an MP4's 2 as German and 5 as Swedish, which Apple's
+// players do not).
+//
 // This reads, for each track, its handler type, the `mdhd` number and the
-// `elng` tag, so `FFmpegProbe` can read each language as Apple's players do
+// `elng` tag, and whether the file is a QuickTime movie, so `FFmpegProbe`
+// can read each language as Apple's players do
 // (`FFmpegProbe.applyingQuickTimeLanguages`). Until the fourth independent
 // review of the language policy work the converter read ffprobe's text
 // only: a MOV's Traditional-Chinese `chi` was read as plain Chinese, so a
@@ -45,8 +59,9 @@
 //
 // WHAT IT CANNOT DO
 // -----------------
-// * It reads only the first `moov` box, and inside it only `trak` → `mdia`
-//   → `hdlr`, `mdhd` and `elng`, seeking over everything else — it never
+// * It reads only the `ftyp` box and the first `moov` box, and inside it
+//   only `trak` → `mdia` → `hdlr`, `mdhd` and `elng`, seeking over
+//   everything else — it never
 //   reads the sample tables or the media. A movie header that is compressed
 //   (`cmov`, from very old QuickTime) or damaged makes it answer `nil`:
 //   nothing is changed, never guessed.
@@ -100,8 +115,16 @@ public struct QuickTimeTrackList: Sendable, Equatable {
     /// The tracks in the file's order.
     public let tracks: [Track]
 
-    public init(tracks: [Track]) {
+    /// Whether Apple's players read this file as a QuickTime movie — its
+    /// `ftyp` box names `qt  ` (as the main brand or a compatible one), or it
+    /// has no `ftyp` box before its movie header — and so read a language
+    /// number below 0x400 as a Macintosh language (see the file header).
+    /// `false` for any other MP4.
+    public let isQuickTimeFile: Bool
+
+    public init(tracks: [Track], isQuickTimeFile: Bool = true) {
         self.tracks = tracks
+        self.isQuickTimeFile = isQuickTimeFile
     }
 
     // MARK: - Limits
@@ -146,17 +169,37 @@ public struct QuickTimeTrackList: Sendable, Equatable {
     }
 
     /// The walk: the top-level boxes until the first `moov`, then its tracks.
+    /// The first `ftyp` box on the way says whether the file is a QuickTime
+    /// movie; one too large to be real makes the list unreadable.
     private static func read(from source: some ByteSource, effort: inout Effort) -> QuickTimeTrackList? {
         var offset: UInt64 = 0
+        var brands: [String]?
         while offset < source.size, effort.boxesVisited < boxLimit {
             guard let box = boxHeader(in: source, at: offset, end: source.size) else { return nil }
             effort.boxesVisited += 1
+            if box.type == "ftyp", brands == nil {
+                guard box.end - box.dataStart <= smallBoxLimit,
+                      let body = source.bytes(at: box.dataStart, count: Int(box.end - box.dataStart)) else { return nil }
+                brands = fileTypeBrands(body)
+            }
             if box.type == "moov" {
-                return tracks(inMovie: box, source: source, effort: &effort).map(QuickTimeTrackList.init(tracks:))
+                let isQuickTime = brands.map { $0.contains("qt  ") } ?? true
+                return tracks(inMovie: box, source: source, effort: &effort)
+                    .map { QuickTimeTrackList(tracks: $0, isQuickTimeFile: isQuickTime) }
             }
             offset = box.end
         }
         return nil
+    }
+
+    /// An `ftyp` body's brands: the main brand (4 bytes), then — after the
+    /// 4-byte minor version — each compatible brand (4 bytes each).
+    private static func fileTypeBrands(_ body: [UInt8]) -> [String] {
+        var brands: [String] = []
+        for start in stride(from: 0, to: body.count - 3, by: 4) where start != 4 {
+            brands.append(String(bytes: body[start..<start + 4], encoding: .isoLatin1) ?? "")
+        }
+        return brands
     }
 
     /// Every track in a `moov` box, or `nil` when the box is damaged, holds

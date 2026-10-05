@@ -481,6 +481,32 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("und", stored: "", to: .mkv), .init(action: .write("und"), note: nil))
     }
 
+    /// An MP4 holding an old QuickTime number (2) is read as Apple's players
+    /// read it there — "``b", no language — while ffprobe, and so ffmpeg's
+    /// copy, says `ger`. The unrecognised text is WRITTEN, never left for
+    /// ffmpeg to copy: copying would make the track German in the output
+    /// under a note saying "kept as the source had it". Into MP4, "``b"
+    /// packs back to the same number 2; MOV stores no language. A number
+    /// Apple reads as `und` (0, which ffprobe calls `eng`) is written as
+    /// `und`, and MOV clears it rather than copy `eng` in.
+    func test_anMP4NumberIsNeverCopiedAsFFmpegsLabel() {
+        let kept = "Stream #2: the file's language “``b” is not a language code; kept as the source had it. "
+            + "Set the right language in the stream editor if you know it."
+        XCTAssertEqual(write("und", unrecognised: "``b", stored: "ger", to: .mp4), .init(action: .write("``b"), note: kept))
+        XCTAssertEqual(write("und", unrecognised: "``b", stored: "ger", to: .mkv), .init(action: .write("``b"), note: kept))
+        XCTAssertEqual(write("und", unrecognised: "``b", stored: "ger", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: the file's language “``b” is not a language code, and this file type (QuickTime) can only "
+                + "store the languages on its old list, so no language is stored. Set the right language in the "
+                + "stream editor if you know it."
+        ))
+        XCTAssertEqual(write("und", stored: "eng", to: .mp4), .init(action: .write("und"), note: nil))
+        XCTAssertEqual(write("und", stored: "eng", to: .mov), .init(action: .clear, note: nil))
+        // ffprobe's own text, when that IS the unrecognised value, is left
+        // for ffmpeg to copy, as before.
+        XCTAssertEqual(write("und", unrecognised: "english", stored: "english", to: .mkv).action, .copySource)
+    }
+
     /// With no file type known nothing can be promised: the code is written
     /// as before, and anything else becomes `und`, saying why.
     func test_anUnknownFileTypeWritesCodesOrUnd() {

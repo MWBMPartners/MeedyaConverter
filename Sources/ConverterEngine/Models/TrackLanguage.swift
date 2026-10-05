@@ -330,13 +330,17 @@ extension TrackLanguage {
     //     Dutch as `dut` — so they left every output with no language and
     //     no note. The rest, 95–127, Apple reads as no language (`und`).
     //
-    // The same table READS a MOV or MP4 source: given the number a track
-    // stores (`QuickTimeTrackList`), its language is what Apple's players
-    // read (`quickTimeLanguage(number:label:)`), so a MOV-to-MOV remux keeps
-    // `chi`, `aze`, `mon`, `sve` and `iri`, and a MOV-to-MKV remux writes
-    // what they mean (`zh-Hant`, `sv` …). Until the fourth independent review
-    // a source's `chi` was read as plain Chinese whatever its number, so a
-    // MOV-to-MOV remux of a Traditional-Chinese track stored no language.
+    // The same table READS a QuickTime movie (a MOV): given the number a
+    // track stores (`QuickTimeTrackList`), its language is what Apple's
+    // players read (`quickTimeLanguage(number:label:)`), so a MOV-to-MOV
+    // remux keeps the numbers ffmpeg writes — 19 `chi`, 49 `aze`, 57 `mon`,
+    // 5 `sve`, 35 `iri` — and a MOV-to-MKV remux writes what they mean
+    // (`zh-Hant`, `sv` …). Until the fourth independent review a source's
+    // `chi` was read as plain Chinese whatever its number, so a MOV-to-MOV
+    // remux of a Traditional-Chinese track stored no language. It does NOT
+    // read an MP4 (a file whose brands do not name QuickTime): Apple's
+    // players read a number there as packed letters
+    // (`mp4Reading(ofNumber:)`).
     //
     // A language the list has only in one of these ways stores no language,
     // and the note says why (`quickTimeGapWords`).
@@ -488,6 +492,46 @@ extension TrackLanguage {
     public static func quickTimeLanguage(number: UInt16, label: String) -> String? {
         guard let entry = quickTimeNumbers.first(where: { $0.number == number }), entry.label == label else { return nil }
         return appleMeaning(of: entry)
+    }
+
+    /// ffmpeg 9.0.1's label for language number `number` below 0x400 —
+    /// what ffprobe reports for it — or `""` where it has none (34, 58,
+    /// 95–127, 139 and above). For matching a track to ffprobe's stream.
+    static func quickTimeLabel(ofNumber number: UInt16) -> String {
+        quickTimeNumbers.first(where: { $0.number == number })?.label ?? ""
+    }
+
+    /// What Apple's players read a language NUMBER below 0x400 as in an
+    /// MP4 — a file whose brands do not name QuickTime
+    /// (`QuickTimeTrackList.isQuickTimeFile`) — or `nil` without the
+    /// policy's data. Not as a Macintosh language: as the three packed
+    /// letters every MP4 language is (five bits each, plus 0x60), which for
+    /// such a number always begin with a backtick and are never a language
+    /// code — 2 is "``b", 5 "``e", 35 "`ac" — except 0, which they read as
+    /// `und`. The one exception: for the nine numbers whose Macintosh
+    /// language carries a script or region (`appleTag` — 19, 33, 49, 50,
+    /// 57, 58, 84, 146, 150), AVFoundation still gives that extended tag,
+    /// and that is read. Measured with AVFoundation on 5 Oct 2026 for every
+    /// number from 0 to 151 and for 152, 200, 500, 1000 and 1023 (re-checked
+    /// by `QuickTimeTrackListTests.test_mp4NumbersAreReadAsApplesPlayersReadThem`).
+    ///
+    /// So such a track is "not known" or an unrecognised value — never the
+    /// German, Swedish or Irish that ffprobe's label (`ger`, `sve`, `iri`)
+    /// would make it. Such files break the MP4 standard (they hold
+    /// QuickTime numbers); the stand-in review of round 5 found the
+    /// converter reading them with the Macintosh table, which Apple's
+    /// players do not.
+    static func mp4Reading(ofNumber number: UInt16) -> Reading? {
+        guard policy != nil, number < 0x400 else { return nil }
+        if let entry = quickTimeNumbers.first(where: { $0.number == number }), entry.appleTag != nil,
+           let tag = appleMeaning(of: entry) {
+            return Reading(language: tag, unrecognised: nil)
+        }
+        if number == 0 { return Reading(language: "und", unrecognised: nil) }
+        let letters = [10, 5, 0].map { UInt8(0x60 + ((number >> UInt16($0)) & 0x1F)) }
+        // Letters 0x60–0x7F are ASCII; DEL (0x7F) is removed, as from any
+        // text the probe reads.
+        return read(fileValue: MetadataSanitizer.sanitize(String(bytes: letters, encoding: .ascii) ?? ""))
     }
 
     /// The language tag Apple's players read QuickTime-list entry `entry`

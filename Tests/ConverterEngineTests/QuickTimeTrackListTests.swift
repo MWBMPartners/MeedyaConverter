@@ -69,6 +69,11 @@ final class QuickTimeTrackListTests: XCTestCase {
 
     private let ftyp: [UInt8] = [0, 0, 0, 20] + Array("ftypqt  ".utf8) + [0, 0, 2, 0] + Array("qt  ".utf8)
 
+    /// An `ftyp` box with main brand `major` and compatible brands `compatible`.
+    private func fileType(_ major: String, _ compatible: [String]) -> [UInt8] {
+        box("ftyp", Array(major.utf8) + [0, 0, 2, 0] + Array(compatible.joined().utf8))
+    }
+
     /// A MOV like ffmpeg's: video; audio with Macintosh number 19 (`chi`);
     /// audio with packed `swe` and a full tag; a subtitle track.
     private var movie: [UInt8] {
@@ -91,6 +96,27 @@ final class QuickTimeTrackListTests: XCTestCase {
             .init(handler: "sbtl", languageCode: 0, extendedLanguage: nil)
         ])
         XCTAssertEqual(list.tracks.map(\.hasMacintoshLanguageNumber), [false, true, false, true])
+    }
+
+    /// Whether the file is a QuickTime movie — where Apple's players read a
+    /// number below 0x400 as a Macintosh language — is its `ftyp` box's
+    /// brands: `qt  ` as the main brand or a compatible one, or no `ftyp`
+    /// box before the movie header at all (an old QuickTime movie). Any
+    /// other is an MP4. A file-type box too large to be real: unreadable.
+    func test_theFileTypeSaysWhetherItIsAQuickTimeMovie() {
+        let movieHeader = box("moov", trak(hdlr("soun") + mdhd(2)))
+        let cases: [(String, [UInt8], Bool)] = [
+            ("ffmpeg's MOV", ftyp, true),
+            ("MP4", fileType("isom", ["isom", "iso2", "mp41"]), false),
+            ("M4A", fileType("M4A ", ["M4A ", "isom"]), false),
+            ("MP4 brand, QuickTime compatible", fileType("isom", ["isom", "qt  "]), true),
+            ("QuickTime brand only", fileType("qt  ", ["isom"]), true),
+            ("no ftyp", [], true)
+        ]
+        for (name, head, quickTime) in cases {
+            XCTAssertEqual(QuickTimeTrackList.read(bytes: head + movieHeader)?.isQuickTimeFile, quickTime, name)
+        }
+        XCTAssertNil(QuickTimeTrackList.read(bytes: box("ftyp", [UInt8](repeating: 0x61, count: 5000)) + movieHeader))
     }
 
     /// The movie header after a large media box with a 64-bit size, as a
@@ -268,6 +294,33 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(streams.map(\.languageFullTagUnknown), [Bool?](repeating: nil, count: 8), "read: nothing marked")
     }
 
+    /// In an MP4 (no QuickTime brand) a number below 0x400 is read as Apple's
+    /// players read it THERE: packed letters that are no language — 2 is
+    /// "``b", not ffprobe's German `ger`; 5 is not Swedish — 0 is `und`, and
+    /// nine numbers give AVFoundation's extended tag (19 `zh-Hant`). The
+    /// stand-in review of round 5 found an MP4's 2, 5 and 35 read as German,
+    /// Swedish and Irish. ffprobe's text stays as what ffmpeg copies.
+    func test_anMP4sNumbersAreReadAsApplesPlayersReadThem() throws {
+        let bytes = fileType("isom", ["isom", "iso2", "mp41"]) + box("moov",
+            trak(hdlr("soun") + mdhd(0)) + trak(hdlr("soun") + mdhd(2)) + trak(hdlr("soun") + mdhd(5))
+            + trak(hdlr("soun") + mdhd(19)) + trak(hdlr("soun") + mdhd(35)) + trak(hdlr("soun") + mdhd(34))
+            + trak(hdlr("soun") + mdhd(packed("swe"))))
+        let labels: [String?] = ["eng", "ger", "sve", "chi", "iri", nil, "swe"]
+        let probed = labels.enumerated().map { stream($0.offset, .audio, language: $0.element) }
+        let streams = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(bytes),
+                                                             formatName: "mov,mp4,m4a,3gp,3g2,mj2")
+        XCTAssertEqual(streams.map(\.language), ["und", "und", "und", "zh-Hant", "und", "und", "sv"])
+        XCTAssertEqual(streams.map(\.unrecognisedLanguage), [nil, "``b", "``e", nil, "`ac", "`ab", nil])
+        XCTAssertEqual(streams.map(\.languageAsStored), ["eng", "ger", "sve", "chi", "iri", "", "swe"], "what ffmpeg copies")
+        // The same numbers in a QuickTime movie: the Macintosh languages.
+        let quickTime = ftyp + bytes.dropFirst(fileType("isom", ["isom", "iso2", "mp41"]).count)
+        XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(Array(quickTime)),
+                                                              formatName: "mov,mp4,m4a,3gp,3g2,mj2").map(\.language),
+                       ["en", "de", "sv", "zh-Hant", "ga", "nl", "sv"])
+        XCTAssertEqual(TrackLanguage.mp4Reading(ofNumber: 1000), TrackLanguage.Reading(language: "und", unrecognised: "`h"),
+                       "DEL (0x7F) is removed, as from any text the probe reads")
+    }
+
     /// A track list that cannot be read at all — here an `elng` box larger
     /// than any real one — leaves ffprobe's readings, marks every real track
     /// (not cover art), and the job's notes say a fuller language may not
@@ -397,6 +450,71 @@ final class QuickTimeTrackListTests: XCTestCase {
             .map { "\($0.0.number) “\($0.0.label)”: table \($0.0.appleCode)/\($0.0.appleTag ?? "nil"), Apple \($0.1)" }
         XCTAssertEqual(mismatches, [], "what Apple's players read differs from TrackLanguage.quickTimeNumbers")
         print("QuickTime numbers: \(table.count) read back by AVFoundation, \(mismatches.count) mismatches")
+    }
+
+    /// Which files the numbers are Macintosh languages in, against Apple's
+    /// own reader: one file with an audio track for every number from 0 to
+    /// 151 and five above (152, 200, 500, 1000, 1023), in four forms that
+    /// differ ONLY in the `ftyp` box — ffmpeg's MOV (`qt  `), an MP4
+    /// (`isom`), an MP4 brand with `qt  ` compatible, and no `ftyp` at all.
+    /// For every track the probe must read what AVFoundation reads: the
+    /// Macintosh language in the three QuickTime forms, and in the MP4 the
+    /// packed letters (no language) or the extended tag AVFoundation still
+    /// gives. The stand-in review of round 5 found an MP4's numbers read
+    /// with the Macintosh table (2 as German), which Apple does not do.
+    func test_mp4NumbersAreReadAsApplesPlayersReadThem() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — MP4 number check")
+        }
+        let policy = try XCTUnwrap(TrackLanguage.policy)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-mp4n-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let numbers = Array(UInt16(0)...151) + [152, 200, 500, 1000, 1023]
+        let made = folder.appendingPathComponent("made.mov")
+        var arguments = ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.1"]
+        for _ in numbers { arguments += ["-map", "0:a"] }
+        XCTAssertEqual(try run(ffmpeg, arguments + ["-c:a", "aac", "-f", "mov", made.path]).status, 0, "making made.mov")
+        try setLanguageNumbers(of: made, to: numbers)
+        let original = [UInt8](try Data(contentsOf: made))
+        XCTAssertEqual(Array(original[4..<12]), Array("ftypqt  ".utf8), "ffmpeg's MOV starts with a 20-byte ftyp")
+
+        // What Apple's players read: the extended tag, else the code — a
+        // code that starts with a backtick is packed letters, not a language.
+        func apples(_ read: MediaTools.AppleLanguage) -> (language: String?, unrecognised: String?) {
+            if let tag = read.tag { return (policy.canonicaliser.canonicalise(tag).canonical, nil) }
+            let code = (read.code ?? "").replacingOccurrences(of: "\u{7F}", with: "")
+            if code.isEmpty || code == "und" { return ("und", nil) }
+            if code.hasPrefix("`") { return ("und", code) }
+            return (policy.reader.read(code), nil)
+        }
+        let forms: [(name: String, type: String, major: String, compatible: String, quickTime: Bool)] = [
+            ("qt.mov", "ftyp", "qt  ", "qt  ", true), ("isom.mov", "ftyp", "isom", "isom", false),
+            ("isom-qt.mov", "ftyp", "isom", "qt  ", true), ("no-ftyp.mov", "free", "qt  ", "qt  ", true)
+        ]
+        var checked = 0
+        for form in forms {
+            var bytes = original
+            bytes.replaceSubrange(4..<12, with: Array((form.type + form.major).utf8))
+            bytes.replaceSubrange(16..<20, with: Array(form.compatible.utf8))
+            let url = folder.appendingPathComponent(form.name)
+            try Data(bytes).write(to: url)
+            XCTAssertEqual(QuickTimeTrackList.read(url: url)?.isQuickTimeFile, form.quickTime, form.name)
+            guard let apple = try await MediaTools.appleAudioLanguages(of: url) else {
+                try MediaTools.missing("AVFoundation is not available here")
+            }
+            let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: url).streams.filter { $0.streamType == .audio }
+            XCTAssertEqual(probed.count, numbers.count, form.name)
+            XCTAssertEqual(apple.count, numbers.count, form.name)
+            let mismatches = zip(numbers, zip(probed, apple)).compactMap { number, pair -> String? in
+                let want = apples(pair.1)
+                let got = (pair.0.language ?? "und", pair.0.unrecognisedLanguage)
+                return want == got ? nil : "\(form.name) \(number): Apple \(pair.1) → \(want), probe \(got)"
+            }
+            XCTAssertEqual(mismatches, [], "the probe reads differently from Apple's players")
+            checked += numbers.count
+        }
+        print("MP4 numbers: \(checked) tracks in \(forms.count) file types read back by AVFoundation")
     }
 
     /// The fourth independent review's carried-over case, end to end: a MOV

@@ -1184,10 +1184,15 @@ extension FFmpegProbe {
     /// * a full tag in the track's `elng` box wins over its old field, as
     ///   Matroska's `LanguageBCP47` does (TRACK-070) — Apple's own writer
     ///   stores `zh-Hant` there beside a plain `zho`;
-    /// * otherwise an old Macintosh language NUMBER is read as Apple's
-    ///   players read it (`TrackLanguage.quickTimeLanguage(number:label:)`):
-    ///   19 `chi` is `zh-Hant`, 33 `chi` is `zh-Hans`, 5 `sve` is `sv` — and
-    ///   34, which ffprobe gives no text for, is `nl`;
+    /// * otherwise, in a QuickTime movie (`QuickTimeTrackList
+    ///   .isQuickTimeFile`), an old Macintosh language NUMBER is read as
+    ///   Apple's players read it (`TrackLanguage.quickTimeLanguage(number:
+    ///   label:)`): 19 `chi` is `zh-Hant`, 33 `chi` is `zh-Hans`, 5 `sve` is
+    ///   `sv` — and 34, which ffprobe gives no text for, is `nl`;
+    /// * in any other MP4 such a number is read as Apple's players read it
+    ///   THERE — as packed letters that are no language (2 is "``b", not
+    ///   German; 0 is `und`), or the extended tag AVFoundation still gives
+    ///   for nine numbers (`TrackLanguage.mp4Reading(ofNumber:)`);
     /// * three packed letters (an MP4's `chi`, an Apple-written MOV's `aze`)
     ///   are left as ffprobe read them — they mean exactly what they say.
     ///
@@ -1207,7 +1212,7 @@ extension FFmpegProbe {
     /// that reading. Not a MOV / MP4 file (`formatName`): unchanged.
     static func applyingQuickTimeLanguages(to streams: [MediaStream], fileURL: URL, formatName: String?) -> [MediaStream] {
         guard let formatName, formatName.contains("mov") || formatName.contains("mp4") else { return streams }
-        guard let matched = QuickTimeTrackList.read(url: fileURL)?.streamsMatched(to: streams) else {
+        guard let list = QuickTimeTrackList.read(url: fileURL), let matched = list.streamsMatched(to: streams) else {
             return markingFullLanguageUnknown(streams)
         }
         return streams.map { stream in
@@ -1222,13 +1227,24 @@ extension FFmpegProbe {
             }
             // ffprobe's text must be ffmpeg's label for the number — `""`
             // where it has none (34, 58, 139–151, which Apple's players
-            // still read as a language): the check that the track and the
-            // stream really are the same.
-            guard track.hasMacintoshLanguageNumber, let number = track.languageCode,
-                  let meaning = TrackLanguage.quickTimeLanguage(number: number, label: stream.languageAsStored ?? "")
-            else { return stream }
-            updated.language = meaning
-            updated.unrecognisedLanguage = nil
+            // still read as a language in a MOV): the check that the track
+            // and the stream really are the same.
+            guard track.hasMacintoshLanguageNumber, let number = track.languageCode else { return stream }
+            let label = stream.languageAsStored ?? ""
+            let reading: TrackLanguage.Reading
+            if list.isQuickTimeFile {
+                // A QuickTime movie: the Macintosh language.
+                guard let meaning = TrackLanguage.quickTimeLanguage(number: number, label: label) else { return stream }
+                reading = TrackLanguage.Reading(language: meaning, unrecognised: nil)
+            } else {
+                // Any other MP4: as Apple's players read it there — packed
+                // letters, not a Macintosh language (`mp4Reading(ofNumber:)`).
+                guard label == TrackLanguage.quickTimeLabel(ofNumber: number),
+                      let read = TrackLanguage.mp4Reading(ofNumber: number) else { return stream }
+                reading = read
+            }
+            updated.language = reading.language
+            updated.unrecognisedLanguage = reading.unrecognised
             // A number ffmpeg has no label for: ffprobe gave no text, so
             // ffmpeg copies NOTHING (see `MediaStream.languageAsStored`).
             if updated.languageAsStored == nil { updated.languageAsStored = "" }
