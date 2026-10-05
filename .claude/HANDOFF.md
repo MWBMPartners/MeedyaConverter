@@ -72,9 +72,9 @@ with the old code planted back.
 | L3 | Macintosh number table applied to MP4 | Done — `93df9ae` | 628 tracks in four `ftyp` forms agree with AVFoundation; `n152.mp4` 0 mismatches; 6 failures |
 | L4 | 15 numbers ffmpeg has no label for were lost | Done — `0f3e567` | `qt11.mov` 34/140/58 kept in MP4/MKV, Dutch in MOV; 119 numbers, 0 mismatches; 16 failures |
 | L5 | `sve` exception keyed on text, not on a MOV source | Done — `7949fbd` | `svx.mkv` to MOV: no language, true note; 1 failure |
-| L6 | Docs overstated what MOV-to-MOV keeps | Done — docs commit | CHANGELOG and Architecture name 19, 49, 57, 5, 35 and say 33 and 50 cannot be |
+| L6 | Docs overstated what MOV-to-MOV keeps | Done — `2b55ecc` | CHANGELOG and Architecture name 19, 49, 57, 5, 35 and say 33 and 50 cannot be |
 | L7, L8 | Dead branch / impossible test; "has no three-letter code" | Done — `ddbd230` | 3 and 16 failures |
-| N1–N4 | Table indent; 2 lint warnings; this CI record; one attachment note per job | Done — `0f3e567`, `74b7a71`, docs commit, `0d371e9` | 16 failures for N4 |
+| N1–N4 | Table indent; 2 lint warnings; this CI record; one attachment note per job | Done — `0f3e567`, `74b7a71`, `2b55ecc`, `0d371e9` | 16 failures for N4 |
 
 New in the engine: `MediaStream.ignoredFullLanguageTag` (a full tag not used,
 and why), `MediaStream.languageFromQuickTimeNumber` (only a MOV's own number
