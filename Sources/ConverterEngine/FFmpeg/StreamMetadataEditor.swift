@@ -529,8 +529,8 @@ public struct StreamMetadataEditor: Sendable {
         case .fits, .notATag:
             return nil
         case .noThreeLetterCode(let canonical):
-            return "This file type can only store three-letter language codes, and “\(canonical)” has none, "
-                + "so it will be saved as “und” (not known)."
+            return "This file type can only store language codes from the older three-letter list (ISO 639-2), "
+                + "and “\(canonical)” is not on it, so it will be saved as “und” (not known)."
         case .losesParts(let lost, _):
             let words = TrackLanguage.onlyStoresWords(TrackLanguage.languageFieldStorage(for: container))
             return words.prefix(1).uppercased() + words.dropFirst() + ", so “\(lost)” will not be saved."

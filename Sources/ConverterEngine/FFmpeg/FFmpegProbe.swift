@@ -1188,7 +1188,7 @@ extension FFmpegProbe {
                 }
                 // ffprobe gave no text for the old field: it said `und`,
                 // which ffprobe hides — mkvmerge writes `und` there for a
-                // language with no three-letter code (`abq`, `pnb`) and for
+                // language with no ISO 639-2 code (`abq`, `pnb`) and for
                 // `und-Latn`, `und-419`, `und-x-foo`. So ffmpeg copies
                 // NOTHING, and that is recorded as an EMPTY text, not left
                 // as `nil` (which would mean "not known — take `language`

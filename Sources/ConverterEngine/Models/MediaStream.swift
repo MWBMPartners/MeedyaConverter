@@ -321,7 +321,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// An EMPTY text means "ffmpeg copies nothing": a Matroska track whose
     /// language comes from its full tag (`LanguageBCP47`) while its old
     /// field says only `und`, which ffprobe hides — mkvmerge does that for
-    /// a language with no three-letter code (`abq`, `pnb`) and for tags
+    /// a language with no ISO 639-2 code (`abq`, `pnb`) and for tags
     /// such as `und-Latn`. Leaving it `nil` there made the converter take
     /// `language` as the text ffmpeg copies, so `abq` was noted "kept as
     /// the source had it" while the output held no language (found in the

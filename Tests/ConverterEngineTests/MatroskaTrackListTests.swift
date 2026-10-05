@@ -598,8 +598,8 @@ final class MatroskaTrackListTests: XCTestCase {
             let (output, notes) = try convert(name, profile)
             XCTAssertEqual(try audioLanguages(ffprobe, output), ["abq", "pnb", "und", "und", "und"], "\(name): ffprobe")
             XCTAssertEqual(notes, [
-                "Stream #1: language “abq” has no three-letter code, so “abq” is written into the field as it is, " + because,
-                "Stream #2: language “pnb” has no three-letter code, so “pnb” is written into the field as it is, " + because,
+                "Stream #1: language “abq” has no code on the older three-letter list (ISO 639-2), so “abq” is written into the field as it is, " + because,
+                "Stream #2: language “pnb” has no code on the older three-letter list (ISO 639-2), so “pnb” is written into the field as it is, " + because,
                 "Stream #3: this file type can only store the language, so “x-foo” in “und-x-foo” is not saved "
                     + "(written as “und”).",
                 "Stream #4: this file type can only store the language, so “Latn” in “und-Latn” is not saved "

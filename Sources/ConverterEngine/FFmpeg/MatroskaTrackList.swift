@@ -12,7 +12,7 @@
 // language policy says a reader MUST ignore the old field when the full tag
 // is present (TRACK-070). ffprobe does not: ffmpeg 9.0.1 reads only the old
 // field. mkvmerge (MKVToolNix, since version 51) writes both — and for a
-// language with no three-letter code of its own, the old field gets the
+// language with no ISO 639-2 code of its own, the old field gets the
 // nearest one: Cantonese `yue`, Mandarin `cmn` and Min Nan `nan` all become
 // `chi`, Canadian French `fr-CA` becomes `fre`. So a file made by mkvmerge
 // probed as three tracks of "Chinese" and one of "French"; a remux wrote

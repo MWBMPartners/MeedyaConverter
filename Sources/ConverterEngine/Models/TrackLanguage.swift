@@ -614,7 +614,8 @@ extension TrackLanguage {
             case fits
             /// What was set is not a language tag at all (written `und`).
             case notATag
-            /// A real language with no three-letter code (written `und`).
+            /// A real language with no code on the older three-letter list,
+            /// ISO 639-2 (written `und`).
             case noThreeLetterCode(canonical: String)
             /// A three-letter field keeps only the language: `lost` (the
             /// region, script …) of `canonical` is not stored.
@@ -1042,7 +1043,11 @@ extension TrackLanguage {
         } else if code == nil, form == .quickTimeList {
             reason = "language “\(canonical)” is not on the QuickTime list of languages this file type can store"
         } else if code == nil {
-            reason = "language “\(canonical)” has no three-letter code"
+            // "No code on the older three-letter list", not "no three-letter
+            // code": `abq` and `yue` ARE three letters (ISO 639-3) — what
+            // they lack is a code on ISO 639-2, the list these fields take
+            // (the stand-in review of round 5).
+            reason = "language “\(canonical)” has no code on the older three-letter list (ISO 639-2)"
         } else {
             reason = "language “\(canonical)” cannot be written to this file type's three-letter language field "
                 + "without losing “\(lost ?? "")”"
@@ -1153,10 +1158,9 @@ extension TrackLanguage {
         case .threeCharacterPieces:
             return "this file type can only store codes of exactly three letters"
         case .quickTimeList:
-            if let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == value }) {
-                return "this file type (QuickTime) would store “\(value)” as the code Apple's players read as "
-                    + "\(other.languageName)"
-            }
+            // (Round 5 had a branch here for `sve`/`iri` arriving as text
+            // that is not a language — impossible, as both are registered
+            // codes; removed after the stand-in review of round 5.)
             return "this file type (QuickTime) can only store the languages on its old list"
         case .nothing:
             return "this file type has no place for a track's language"
@@ -1188,8 +1192,8 @@ extension TrackLanguage {
         case .noThreeLetterCode(let canonical):
             return LanguageWrite(
                 action: action,
-                note: "\(stream): this file type can only store three-letter language codes, and “\(canonical)” has "
-                    + "none, so \(unknownWords)."
+                note: "\(stream): this file type can only store language codes from the older three-letter list "
+                    + "(ISO 639-2), and “\(canonical)” is not on it, so \(unknownWords)."
             )
         case .losesParts(let lost, let canonical):
             return LanguageWrite(

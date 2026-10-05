@@ -506,7 +506,8 @@ extension ConverterEngineTests {
         )
         XCTAssertEqual(
             StreamMetadataEditor.storageNote(for: "yue", in: .mkv),
-            "This file type can only store three-letter language codes, and “yue” has none, so it will be saved as “und” (not known)."
+            "This file type can only store language codes from the older three-letter list (ISO 639-2), and “yue” is "
+                + "not on it, so it will be saved as “und” (not known)."
         )
         XCTAssertNil(StreamMetadataEditor.storageNote(for: "en-GB", in: .ogg))
         XCTAssertNil(StreamMetadataEditor.storageNote(for: "de", in: .mkv))

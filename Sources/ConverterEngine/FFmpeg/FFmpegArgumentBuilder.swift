@@ -1190,7 +1190,7 @@ public struct FFmpegArgumentBuilder: Sendable {
                 // bibliographic three-letter code for Matroska, terminology
                 // for MP4, the QuickTime list's entry for MOV, the full tag
                 // for Ogg — EXCEPT where that would lose what the source had
-                // (a language with no three-letter code, an unrecognised
+                // (a language with no ISO 639-2 code, an unrecognised
                 // value, a region in Matroska): then the source's own text is
                 // kept, but only where this file type's writer really stores
                 // it; otherwise `und`, with a note saying why. THREE

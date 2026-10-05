@@ -9,7 +9,7 @@
 // rule that a copy or conversion never loses what the source had
 // (COMPAT-030) — `TrackLanguage.languageWrite`. The independent review of
 // the language policy work found the first build wrote `und` over:
-//   * valid languages with no three-letter code (`yue`, `cmn`, `nan`);
+//   * valid languages with no ISO 639-2 code (`yue`, `cmn`, `nan`);
 //   * values it could not recognise (`english`, `xx-bogus`).
 // Both are now left for ffmpeg to copy, with a note in the job's log — but
 // ONLY where the output's writer really stores the text as it is. The second
@@ -66,7 +66,7 @@ final class LanguageFieldTests: XCTestCase {
             for container: ContainerFormat in [.mkv, .mp4] {
                 let result = write(tag, to: container)
                 XCTAssertEqual(result.action, .copySource, "\(tag) in \(container)")
-                XCTAssertEqual(result.note, "Stream #2: language “\(tag)” has no three-letter code; kept as the source had it.")
+                XCTAssertEqual(result.note, "Stream #2: language “\(tag)” has no code on the older three-letter list (ISO 639-2); kept as the source had it.")
             }
         }
     }
@@ -338,11 +338,15 @@ final class LanguageFieldTests: XCTestCase {
         // Text the source did not give as a language never becomes one: an
         // unrecognised value is not copied into MOV, where Apple's players
         // read every entry as a language.
-        XCTAssertEqual(write("und", unrecognised: "sve", to: .mov), .init(
+        // (Round 5 tested an unrecognised `sve` here — an impossible input,
+        // `sve` being a registered code. A reachable one: an MP4's old
+        // QuickTime number 5, which Apple reads there as "``e" while ffmpeg
+        // would copy `sve` — Swedish to Apple in a MOV. It is cleared.)
+        XCTAssertEqual(write("und", unrecognised: "``e", stored: "sve", to: .mov), .init(
             action: .clear,
-            note: "Stream #2: the file's language “sve” is not a language code, and this file type (QuickTime) would "
-                + "store “sve” as the code Apple's players read as Swedish, so no language is stored. Set the right "
-                + "language in the stream editor if you know it."
+            note: "Stream #2: the file's language “``e” is not a language code, and this file type (QuickTime) can "
+                + "only store the languages on its old list, so no language is stored. Set the right language in the "
+                + "stream editor if you know it."
         ))
 
         // The table itself: never `sve` or `iri`; the three with their script.
@@ -408,7 +412,7 @@ final class LanguageFieldTests: XCTestCase {
     /// is; a region is cut with a note.
     func test_transportStreamKeepsThreeLetterCodes() {
         XCTAssertEqual(write("yue", to: .mpegTS).action, .copySource)
-        XCTAssertEqual(write("yue", to: .mpegTS).note, "Stream #2: language “yue” has no three-letter code; kept as the source had it.")
+        XCTAssertEqual(write("yue", to: .mpegTS).note, "Stream #2: language “yue” has no code on the older three-letter list (ISO 639-2); kept as the source had it.")
         XCTAssertEqual(write("de", to: .mpegTS), .init(action: .write("deu"), note: nil))
         XCTAssertEqual(write("fr-CA", stored: "fr-CA", to: .mpegTS).action, .write("fra"))
     }
@@ -434,7 +438,7 @@ final class LanguageFieldTests: XCTestCase {
     func test_aSourceFieldThatSaysLessIsNotCopied() {
         XCTAssertEqual(write("yue", stored: "chi", to: .mkv), .init(
             action: .write("yue"),
-            note: "Stream #2: language “yue” has no three-letter code, so “yue” is written into the field as it is, "
+            note: "Stream #2: language “yue” has no code on the older three-letter list (ISO 639-2), so “yue” is written into the field as it is, "
                 + "because copying the source's own field (“chi”) would not keep it."
         ))
         XCTAssertEqual(write("yue", stored: "chi", to: .mp4).action, .write("yue"))
@@ -459,7 +463,7 @@ final class LanguageFieldTests: XCTestCase {
             for container: ContainerFormat in [.mkv, .mp4, .mpegTS] {
                 XCTAssertEqual(write(tag, stored: "", to: container), .init(
                     action: .write(tag),
-                    note: "Stream #2: language “\(tag)” has no three-letter code, so “\(tag)” is written into the field "
+                    note: "Stream #2: language “\(tag)” has no code on the older three-letter list (ISO 639-2), so “\(tag)” is written into the field "
                         + "as it is, " + because
                 ), "\(tag) in \(container)")
             }
@@ -576,8 +580,8 @@ final class LanguageFieldTests: XCTestCase {
         XCTAssertEqual(write("fr", edited: "en-GB", to: .ogg), .init(action: .write("en-GB"), note: nil))
         XCTAssertEqual(write("fr", edited: "yue", to: .mp4), .init(
             action: .write("und"),
-            note: "Stream #2: this file type can only store three-letter language codes, and “yue” has none, "
-                + "so the language is written as “und” (not known)."
+            note: "Stream #2: this file type can only store language codes from the older three-letter list "
+                + "(ISO 639-2), and “yue” is not on it, so the language is written as “und” (not known)."
         ))
         XCTAssertEqual(write("fr", edited: "de", to: .mkv), .init(action: .write("ger"), note: nil))
         // `und-GB`: it is the REGION that cannot be stored (the round-2
