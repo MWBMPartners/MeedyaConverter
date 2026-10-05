@@ -5,8 +5,8 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-10-04 (language policy block below — round 5) · VERSION 0.1.0
-Previous: 2026-10-04 (language policy round 4) · round 3 · round 2 · round 1 · 2026-09-25 14:55
+**Last updated:** 2026-10-05 (language policy block below — round 6) · VERSION 0.1.0
+Previous: 2026-10-04 (language policy round 5) · round 4 · round 3 · round 2 · round 1 · 2026-09-25 14:55
 
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`
 
@@ -24,13 +24,31 @@ unchanged by this work.
 | 1 | `5d2223c..28efa6f` — 15, round 1 | a fresh Opus agent standing in for Codex (out of allowance) | not clean | round 2 |
 | 2 | `28efa6f..59f8667` — 17, round 2 + the core `aaaa585` copy sweep | the same kind of stand-in | not clean: 3 must-fix, 4 should-fix, minors | round 3 |
 | 3 | `59f8667..e497c3b` — 10, round 3 | the same kind of stand-in | not clean: 1 must-fix, 3 should-fix, 4 minor | round 4 |
-| 4 | `e497c3b..6dfc16a` — 9, round 4 | the same kind of stand-in | not clean: 1 serious and 1 medium finding (both in older code), wording | round 5 (below) |
+| 4 | `e497c3b..6dfc16a` — 9, round 4 | the same kind of stand-in | not clean: 1 serious and 1 medium finding (both in older code), wording | round 5 |
+| 5 | `6dfc16a..bbf2cd8` — 6, round 5 | the same kind of stand-in | not clean: 1 medium, 8 low, 4 nits; 2 older faults filed as #542 and #543 | round 6 (below) |
 
-Commits after `6dfc16a` are not yet reviewed.
+Commits after `bbf2cd8` are not yet reviewed.
+
+**Next steps for this work (from here on it is run from this repository's own
+sessions — nothing more is run from the MeedyaDL session):**
+1. Review the commits after `bbf2cd8` — by Codex if it has allowance;
+   otherwise by a fresh agent with no memory of building them, named in the
+   table above as a stand-in.
+2. The review loop now STOPS when a review finds no high or medium problem.
+   Low findings, wording points and older faults become GitHub issues, not
+   new rounds.
+3. Still open: #540 (remux to MKV without "map all streams" drops fonts),
+   #542 ("map all streams" with ASS subtitles fails MP4/MOV/MPEG-TS/AVI
+   jobs), #543 (Matroska H.264 into AVI fails), and the known limit that a
+   Swedish or Irish track in a MOV written by Apple's own tools (packed
+   `swe`/`gle`) gets no language on a MOV-to-MOV remux.
 
 **CI record for this branch** (`gh run list --branch wip/bcp47-language-policy`):
-passed at `28efa6f`, `a5abc22`, `59f8667`, `e497c3b` and `6dfc16a` (run
-37230989543 — the first run that included the real-tool tests). FAILED at `67c41ca`
+passed at `28efa6f`, `a5abc22`, `59f8667`, `e497c3b`, `6dfc16a` (run
+37230989543 — the first run that included the real-tool tests) and `bbf2cd8`
+(run 37253638215, "CI Build & Test": macos-15-arm64, Swift 6.1.2, ffmpeg
+9.0.1, real tools required — the QuickTime tests included). Round 6 has not
+been through CI. FAILED at `67c41ca`
 (round 1, fixed by `28efa6f`) and at `7271ae8`: round 3's `590371a` gave the
 quality preview a main-actor closure that it passes to
 `AttachedPictures.copyPictures`, and Swift 6.1 on the runner refused it
@@ -39,7 +57,56 @@ this Mac let it through. `e497c3b` moved the call into a `nonisolated` helper,
 and CI passed there. Lesson: this Mac's compiler is newer and more lenient than
 CI's — keep Swift 6.1's strict concurrency rules in mind.
 
-### ROUND 5 — fixes from the FOURTH independent review — DONE; not yet independently reviewed
+### ROUND 6 — fixes from the stand-in review of round 5 — DONE; not yet independently reviewed
+
+The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r6.md`
+(scratch). Every finding was reproduced with the reviewer's own media first
+(ffmpeg 9.0.1, MKVToolNix 101, AVFoundation), and every fix was shown red
+with the old code planted back.
+
+| # | Finding | Status | Proof |
+|---|---|---|---|
+| M1 | A damaged full tag overrode a valid old field | Done — `996df79` | `pairs-bad.mkv` track 11 and `el-both.mov` now `eng` everywhere, with a true note; 26 failures with the old code |
+| L1 | Over-long full tag cut into a different tag | Done — `308dad7` | the 331-character `elng` is ignored, `eng` kept, noted; 11 failures with the old cut |
+| L2 | File and memory reads disagreed; unreadable list said nothing | Done — `b4da012` | `e0-empty.mov` MOV-to-MOV keeps `zh-Hant`; an unreadable list is noted; 4 and 3 failures |
+| L3 | Macintosh number table applied to MP4 | Done — `93df9ae` | 628 tracks in four `ftyp` forms agree with AVFoundation; `n152.mp4` 0 mismatches; 6 failures |
+| L4 | 15 numbers ffmpeg has no label for were lost | Done — `0f3e567` | `qt11.mov` 34/140/58 kept in MP4/MKV, Dutch in MOV; 119 numbers, 0 mismatches; 16 failures |
+| L5 | `sve` exception keyed on text, not on a MOV source | Done — `7949fbd` | `svx.mkv` to MOV: no language, true note; 1 failure |
+| L6 | Docs overstated what MOV-to-MOV keeps | Done — docs commit | CHANGELOG and Architecture name 19, 49, 57, 5, 35 and say 33 and 50 cannot be |
+| L7, L8 | Dead branch / impossible test; "has no three-letter code" | Done — `ddbd230` | 3 and 16 failures |
+| N1–N4 | Table indent; 2 lint warnings; this CI record; one attachment note per job | Done — `0f3e567`, `74b7a71`, docs commit, `0d371e9` | 16 failures for N4 |
+
+New in the engine: `MediaStream.ignoredFullLanguageTag` (a full tag not used,
+and why), `MediaStream.languageFromQuickTimeNumber` (only a MOV's own number
+keeps `sve`/`iri`), `QuickTimeTrackList.isQuickTimeFile` (from `ftyp`: `qt  `
+as main or compatible brand, or no `ftyp` — measured with AVFoundation),
+`TrackListText` (one text reader for both track lists; over 256 bytes is
+refused), `TrackLanguage.mp4Reading(ofNumber:)`, and 15 more rows in
+`quickTimeNumbers` (119). The note for "ffmpeg copies nothing" now says the
+old field is one "which ffmpeg reads as holding no language".
+
+Checks on the final code: the three builds exit 0; the local harness, 15
+engine suites, 1084 tests, 0 failures, 0 skipped; the policy suites 15 tests,
+290 of 290 cases, 409 checks; `check_copies.py` exit 0 (6 copies at core
+`aaaa585`); `actionlint` exit 0; SwiftLint on every changed file 0 errors, 12
+warnings, all on lines older than round 5. The stand-in reviewer's 20 planted
+faults, on the final code (4 re-aimed where round 6 rewrote their lines —
+P3a, P3b, P3i, P3k), all caught; with none set, 136 tests, 0 failures:
+P1a 13, P1b 12, P1c 2, P2a 35, P2b 5, P2c 2, P3a 45, P3b 12, P3c 3, P3d 1,
+P3e 2, P3f 1, P3g 2, P3h 1, P3i 2, P3j 19, P3k 4, P3l 6, P3m 2, P3n 1.
+
+**Found, not fixed (raise, do not fix here):** the engine's job-notice stream
+keeps only the newest 64 notes (`EncodingEngine.jobNotices`,
+`bufferingNewest(64)`), so a job with more notes than that can lose some
+from the app's Activity Log if the reader falls behind (standard error still
+gets them). Seen with a 152-track test file.
+
+**NOT verified:** `swift test` and Swift 6.1 on round 6's code (not pushed;
+CI is the check); whether AVFoundation on CI's macOS 15 reads an MP4's
+numbers exactly as this Mac's does (`test_mp4NumbersAreReadAsApplesPlayersReadThem`
+will say).
+
+### ROUND 5 — fixes from the FOURTH independent review — DONE; reviewed by the stand-in review of round 5
 
 The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r5.md`
 and `converter-r5-carryover.md` (scratch). Guiding rule unchanged: never lose
@@ -78,7 +145,7 @@ against this clone; ffmpeg 9.0.1, MKVToolNix 101, AVFoundation):
 | R5-4 | Wording: `sve`/`iri` are Serili/Rigwe's codes; the Serili-to-MOV note true; CI ffmpeg 9.0.1; `zh-Hans` example (4) | #531 | Done — code in `aaa3544`, docs in `1277f6a` | the reviewer's `serili.mkv` to MOV: note now "“sve” is on that list, but Apple's players read it as Swedish, not as Serili" (was "not on it"); output has no language (ffprobe none, AVFoundation `und`) |
 | R5-5 | `.gitattributes`: `-text -filter -working-tree-encoding -ident`; comment says exactly what overrides (carry-over 2, with the lead's correction) | #531 | Done — `3f5105d` | proved in a throwaway clone (its own config), then deleted; `check_copies.py` exit 0 |
 | R5-6 | Handoff: review 4 in the table; this block (6) | #531 | Done — `1277f6a` and the `docs(handoff)` commit after it | |
-| R5-7 | Independent review of round 5 | — | Queued — orchestrator | see the review-history table above |
+| R5-7 | Independent review of round 5 | — | Done — stand-in review 5 (`6dfc16a..bbf2cd8`), not clean | acted on in round 6 |
 
 **What round 5 changed, in one place** (details in the commit messages):
 - An EMPTY `MediaStream.languageAsStored` means "ffmpeg copies nothing";
@@ -143,12 +210,11 @@ against this clone; ffmpeg 9.0.1, MKVToolNix 101, AVFoundation):
   exit 0, 6 copies match at core `aaaa585`. `SHELLCHECK_OPTS=--severity=error
   actionlint` (1.7.12): exit 0, no output.
 
-**NOT verified:** `swift test` itself, and Swift 6.1's concurrency checking
-(this Mac has 6.4; the new code adds no closures across actors — the
-reader's closures are non-escaping — and only `Sendable` statics; CI is the
-check); whether `/usr/bin/avconvert` behaves the same on CI's macOS (the
-test compares the probe with AVFoundation, whatever avconvert writes); the
-SwiftUI editor (its warning text comes from the engine, which is tested).
+**NOT verified (at the time):** `swift test` itself, and Swift 6.1's
+concurrency checking — since done: CI run 37253638215 at `bbf2cd8`
+(macos-15-arm64, Swift 6.1.2, real tools required) passed, the QuickTime
+tests included; still not verified: the SwiftUI editor (its warning text
+comes from the engine, which is tested).
 
 **Known limits found in round 5 (raise, do not fix here):**
 - Matroska-to-Matroska without "map all streams" still drops fonts silently
@@ -158,7 +224,9 @@ SwiftUI editor (its warning text comes from the engine, which is tested).
   writer cannot store packed letters, and `sve`/`iri` are never written for
   a language from elsewhere (round 4's decision). Noted truthfully.
 - Macintosh numbers ffmpeg has no label for (34, 58, 95–127, 139–151) are
-  not read (ffprobe gives no language, and ffmpeg cannot write them).
+  not read. (The reason given here — "ffmpeg cannot write them" — was wrong:
+  Matroska and MP4 store their languages and MOV can store Dutch as `dut`.
+  Round 6 reads the fifteen Apple reads as a language; 95–127 are none.)
 
 ### ROUND 4 — fixes from the THIRD independent review — DONE; reviewed by review 4
 

@@ -367,22 +367,46 @@ log says so — and says it truly (`TrackLanguage.languageWrite`,
   how every other program reads them; so they are never written for Swedish
   or Irish from elsewhere (a MOV source's own `sve` is kept on a MOV-to-MOV
   remux, with a note), and a Serili track going to MOV gets no language and a
-  note saying Apple's players would read `sve` as Swedish. Every number of
-  the table is re-checked with AVFoundation
+  note saying Apple's players would read `sve` as Swedish. The table also
+  holds the fifteen numbers ffmpeg has NO label for but Apple reads as a
+  language (34 Dutch, 58 Mongolian, 139–151 Galician, Breton and others —
+  119 rows in all); they were lost from every output until round 6. Every
+  number of the table is re-checked with AVFoundation
   (`QuickTimeTrackListTests.test_quickTimeNumbersAreWhatApplesPlayersRead`),
   and every entry written (`test_movCodesAreWhatApplesPlayersRead`);
-- a MOV or MP4 SOURCE is read the same way (`QuickTimeTrackList`,
+- a MOV SOURCE is read the same way (`QuickTimeTrackList`,
   `FFmpegProbe.applyingQuickTimeLanguages`): the file's own track list gives
-  each track's language number and its `elng` full tag; a full tag wins (as
-  Matroska's does), a Macintosh number is read as Apple's players read it,
-  and three packed letters (an MP4's, or an Apple-written MOV's) mean what
-  they say. So a MOV-to-MOV remux keeps `chi`, `aze`, `mon`, `sve` and
-  `iri`, and MOV-to-Matroska writes what they mean (`zh-Hant`, `sv` …). The
-  fourth review found a MOV's Traditional-Chinese `chi` read as plain
-  Chinese — so a MOV-to-MOV remux stored no language — and its Swedish
-  `sve` as Serili. A bounded read (only `moov` → `trak` → `mdia`, at most
-  65,536 boxes and 1,024 tracks); where it cannot be read or matched,
-  ffprobe's reading stands;
+  each track's language number, its `elng` full tag, and whether the file
+  is a QuickTime movie at all. A full tag wins (as Matroska's does) when it
+  is a real language tag; three packed letters (an MP4's, or an
+  Apple-written MOV's) mean what they say; and a number below 0x400 is a
+  Macintosh language ONLY in a QuickTime movie — `qt  ` as the main or a
+  compatible brand, or no `ftyp` box at all, which is exactly when Apple's
+  players read it so (measured by rewriting only the `ftyp` box). In any
+  other MP4 Apple reads such a number as packed letters that are no
+  language (2 is "``b", not German; 0 is `und`), plus an extended tag for
+  nine numbers, and so does the converter (`TrackLanguage
+  .mp4Reading(ofNumber:)`). So a MOV-to-MOV remux keeps the numbers ffmpeg
+  writes — 19 `chi` (Traditional Chinese), 49 `aze` (Azerbaijani in
+  Cyrillic), 57 `mon` (Mongolian in Mongolian script), 5 `sve` (Swedish)
+  and 35 `iri` (Irish) — and Dutch as `dut`; 33 (Simplified Chinese) and 50
+  (Azerbaijani in Arabic script) still cannot be stored in a MOV and get no
+  language, with a note. A source's own `sve`/`iri` is kept only when it is
+  a MOV's own number (`MediaStream.languageFromQuickTimeNumber`).
+  MOV-to-Matroska writes what they mean (`zh-Hant`, `sv` …). The fourth
+  review found a MOV's Traditional-Chinese `chi` read as plain Chinese — so
+  a MOV-to-MOV remux stored no language — and its Swedish `sve` as Serili.
+  A bounded read (only `ftyp`, then `moov` → `trak` → `mdia`, at most 65,536
+  boxes and 1,024 tracks); where it cannot be read or matched, ffprobe's
+  reading stands and the log says a fuller language may not have been read;
+- a FULL language tag (Matroska's `LanguageBCP47`, a MOV/MP4 `elng`) is
+  used only when it is a real, well-formed language tag of at most 256
+  bytes (`FFmpegProbe.fullLanguageTag`). A damaged one, one with control
+  characters, or a longer one is IGNORED — never read as "not known" over
+  a valid old field, never cut to a shorter, different tag — and the log
+  says it was ignored and is not kept (`MediaStream.ignoredFullLanguageTag`).
+  The stand-in review of round 5 found a damaged tag replacing a valid
+  `eng`, and a 331-character tag cut to 64 characters and written;
 - a track's language gets, in this order: the policy's code where it loses
   nothing (`deu` → `ger` in Matroska is a correction; MOV gets the QuickTime
   list's entry Apple's players read as the same language, `ger`, and `chi`
@@ -418,11 +442,13 @@ log says so — and says it truly (`TrackLanguage.languageWrite`,
 - other attachments — fonts, and BMP or WebP pictures, which ffmpeg's
   Matroska reader gives as plain attachments rather than cover art — are kept
   only in Matroska (`AttachedPictures.holdsAttachments`). Into any other file
-  type they are never mapped and are left out with a note, with or without
-  "map all streams": the fourth review found them making ffmpeg refuse MP4,
-  M4A and MOV jobs, turning into a `bin_data` stream in MPEG-TS and vanishing
-  from WebM without a word. (Remux to MKV without "map all streams" still
-  does not choose them: #540.)
+  type they are never mapped and are left out with ONE note listing them
+  all, with or without "map all streams": the fourth review found them
+  making ffmpeg refuse MP4, M4A and MOV jobs, turning into a `bin_data`
+  stream in MPEG-TS and vanishing from WebM without a word. (Remux to MKV
+  without "map all streams" still does not choose them: #540. "Map all
+  streams" with ASS subtitles to MP4, MOV, MPEG-TS or AVI still fails the
+  job: #542.)
 
 The job's notes reach the app's Activity Log through `EncodingEngine
 .jobNotices`, the command-line tool's standard error, a pipeline's log lines

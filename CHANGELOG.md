@@ -180,14 +180,22 @@
   `iri`, Apple reads as Swedish and Irish but are the registered codes of
   two other languages, Serili and Rigwe, which is how every other program
   reads them), Cantonese, … — can't be stored in a MOV file: the track is
-  given no language at all, and the job's log says why. A MOV or MP4 file
-  being converted is now read the way Apple's players read it, too — by the
+  given no language at all, and the job's log says why. A MOV file being
+  converted is now read the way Apple's players read it, too — by the
   number the file stores, not ffmpeg's name for it, and from its full
-  language tag where it has one — so a MOV-to-MOV copy no longer loses
-  Traditional Chinese, Azerbaijani, Mongolian, Swedish or Irish stored with
-  the old QuickTime codes, and a MOV-to-MKV copy writes what they mean
-  (`zh-Hant`, Swedish, Irish). MOV also keeps no track role but "default" —
-  commentary, SDH and the rest are lost; #541 will make the log say so.
+  language tag where it has a valid one — so a MOV-to-MOV copy keeps
+  Traditional Chinese, Azerbaijani in Cyrillic, Mongolian in Mongolian
+  script, Swedish and Irish stored with the codes ffmpeg writes, and a
+  MOV-to-MKV copy writes what they mean (`zh-Hant`, Swedish, Irish).
+  Simplified Chinese and Azerbaijani in Arabic script, which ffmpeg's MOV
+  writer cannot store, still get no language in a MOV, with a note. The
+  fifteen QuickTime language numbers ffmpeg has no name for — Dutch,
+  Galician, Afrikaans, Breton, Scottish Gaelic and others — are read too:
+  MP4 and MKV keep them, and a MOV keeps Dutch. An MP4 (not a MOV) is read
+  as Apple's players read it there: an old QuickTime number in an MP4 is no
+  language to them, so it is no longer taken as German, Swedish and so on.
+  MOV also keeps no track role but "default" — commentary, SDH and the rest
+  are lost; #541 will make the log say so.
 - **Cover art in a file type that can't hold it** (WebM, MOV, MPEG-TS,
   MPEG-PS, AVI, Ogg, FLV, AIFF, CAF, W64/RF64, MXF, 3GP) is now left out on
   purpose, with a line in the job's log, and so is cover art in an output
@@ -204,7 +212,8 @@
 
 ### Fixed
 
-- **A Matroska track whose language has no three-letter code lost it**:
+- **A Matroska track whose language has no code on the older three-letter
+  list (ISO 639-2) lost it**:
   mkvmerge writes "und" in the old language field for Abaza (`abq`),
   Western Panjabi (`pnb`) and tags such as `und-Latn`, keeping the real
   language only in the full tag. Matroska, MP4 and MPEG-TS outputs came out
@@ -216,12 +225,44 @@
   streams" on: MP4, M4A and MOV jobs from a Matroska file with an attached
   font, or a BMP or WebP picture, were refused by ffmpeg; MPEG-TS turned the
   font into a stray data stream. Attachments are now left out of anything
-  but Matroska, with a note — with "map all streams" or without.
-- **A MOV-to-MOV copy lost Traditional Chinese, Azerbaijani, Mongolian,
-  Swedish and Irish** stored with the old QuickTime codes (and a remux to MP4
-  or MKV turned the Swedish into Serili): the MOV's languages were read by
-  ffmpeg's names for them, not as Apple's players read them. They are now
-  read as Apple does, and kept.
+  but Matroska, with one note per job listing them — with "map all
+  streams" or without.
+- **A MOV-to-MOV copy lost Traditional Chinese, Azerbaijani in Cyrillic,
+  Mongolian in Mongolian script, Swedish and Irish** stored with the old
+  QuickTime codes ffmpeg writes (and a remux to MP4 or MKV turned the Swedish
+  into Serili): the MOV's languages were read by ffmpeg's names for them,
+  not as Apple's players read them. They are now read as Apple does, and
+  kept. (Simplified Chinese and Azerbaijani in Arabic script still cannot be
+  stored in a MOV; the log says so.)
+- **A damaged full language tag replaced a valid language**: a Matroska or
+  MOV track whose old language field said English, but whose full tag was
+  damaged, came out with the damaged text (or no language), while the log
+  said it was "kept as the source had it". A full tag is now used only when
+  it is a real language tag; otherwise the old field's language is kept, and
+  the log says the full tag was ignored.
+- **A very long full language tag was cut short** — into a different tag —
+  and written as the track's language. A tag longer than the converter reads
+  (256 bytes) is now ignored, with a note, never cut.
+- **One malformed MOV track could cost another track its language**: an
+  empty full-tag box on one track made the whole track list unreadable when
+  read from disk, so a Traditional-Chinese track came out with no language.
+  Fixed; and when a MOV or MP4 track list really cannot be read, the log now
+  says a fuller language may not have been read.
+- **Fifteen QuickTime language numbers were lost from every output** —
+  Dutch, Galician, Afrikaans, Breton, Scottish Gaelic, Mongolian and others
+  that ffmpeg has no name for but Apple's players read. They are now kept
+  (MOV keeps Dutch; MP4 and MKV keep them all; MOV says why it cannot store
+  the rest).
+- **An MP4 holding old QuickTime language numbers was read as a MOV**, so
+  its tracks were taken as German, Swedish, Irish … where Apple's players
+  read no language. It is now read as Apple reads it.
+- **A Matroska track marked `sve` with a Swedish full tag went into a MOV as
+  `sve`**, noted as "the source's own QuickTime code". Only a MOV's own
+  Swedish or Irish is kept that way now; anything else gets no language in a
+  MOV, with the reason.
+- The log said a language such as `abq` "has no three-letter code" — but
+  `abq` is three letters; it now says it has no code on the older
+  three-letter list (ISO 639-2). The stream editor's warning says the same.
 - **MOV outputs kept a language the log said was not stored**: given no
   value, ffmpeg copied the source's own — Cantonese, Mandarin and Min Nan
   from mkvmerge files came out as "Chinese" (which Apple's players read as
