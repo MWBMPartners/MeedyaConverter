@@ -75,10 +75,10 @@ against this clone; ffmpeg 9.0.1, MKVToolNix 101, AVFoundation):
 | R5-1 | Matroska full tag over an old field that says `und` is written (1) | #531 | Done — `34bafc9` | real mkvmerge file → MKV/MP4/TS/MOV/Ogg, ffprobe + mkvmerge + AVFoundation; old code planted: 13, 12, 2 failures |
 | R5-2 | Attachments never fail a non-Matroska job; noted with or without map-all (2) | #531, #540 | Done — `3f080a2` | font + BMP + WebP to MP4 (both modes), MOV, MPEG-TS; old code planted: 35, 7 failures |
 | R5-3 | MOV/MP4 sources read as Apple's players read them (carry-over 1) | #531 | Done — `aaa3544` | `QuickTimeTrackList` reads `mdhd` numbers and `elng`; all 104 labelled numbers checked with AVFoundation, 0 mismatches; MOV→MOV/MP4/MKV read back with ffprobe + AVFoundation; 7 planted faults caught |
-| R5-4 | Wording: `sve`/`iri` are Serili/Rigwe's codes; the Serili-to-MOV note true; CI ffmpeg 9.0.1; `zh-Hans` example (4) | #531 | Done — code in `aaa3544`, docs in the last `docs:` commit | the reviewer's `serili.mkv` to MOV: note now "“sve” is on that list, but Apple's players read it as Swedish, not as Serili" (was "not on it"); output has no language (ffprobe none, AVFoundation `und`) |
+| R5-4 | Wording: `sve`/`iri` are Serili/Rigwe's codes; the Serili-to-MOV note true; CI ffmpeg 9.0.1; `zh-Hans` example (4) | #531 | Done — code in `aaa3544`, docs in `1277f6a` | the reviewer's `serili.mkv` to MOV: note now "“sve” is on that list, but Apple's players read it as Swedish, not as Serili" (was "not on it"); output has no language (ffprobe none, AVFoundation `und`) |
 | R5-5 | `.gitattributes`: `-text -filter -working-tree-encoding -ident`; comment says exactly what overrides (carry-over 2, with the lead's correction) | #531 | Done — `3f5105d` | proved in a throwaway clone (its own config), then deleted; `check_copies.py` exit 0 |
-| R5-6 | Handoff: review 4 in the table; this block (6) | #531 | Done — the last `docs:` commit | |
-| R5-7 | Independent review of round 5 | — | Queued — orchestrator | commits after `6dfc16a` are not yet reviewed |
+| R5-6 | Handoff: review 4 in the table; this block (6) | #531 | Done — `1277f6a` and the `docs(handoff)` commit after it | |
+| R5-7 | Independent review of round 5 | — | Queued — orchestrator | see the review-history table above |
 
 **What round 5 changed, in one place** (details in the commit messages):
 - An EMPTY `MediaStream.languageAsStored` means "ffmpeg copies nothing";
@@ -213,7 +213,7 @@ a restart; get each finished step somewhere lasting when that is allowed.
 | R4-6 | Test: the saved picture list is always replaced (6) | #531 | Done — `889677d` | real `EncodingEngine.encode`, picture copy refused by a stand-in; the review's M15 now fails it (2 failures) |
 | R4-7 | Ogg: an unregistered language is noted (7) | #531 | Done — `1d2db82` | unit + tool test (`xx-bogus` to Ogg Opus); planted fault caught (3 failures) |
 | R4-8 | Handoff (no push claims; review table; CI record; `sve`) and docs (8) | #531 | Done — `48e60ba` and the last `docs:` commit | CHANGELOG, Architecture, `.OpenAI/MEMORY.md` |
-| R4-9 | Independent review of round 4 (W13) | — | Queued — orchestrator | commits after `e497c3b` are not yet reviewed |
+| R4-9 | Independent review of round 4 (W13) | — | Done — review 4 (`e497c3b..6dfc16a`), not clean | acted on in round 5 |
 
 **CI now includes the real-tool tests.** From round 4's `ci:` commit on, the
 build-and-test job (`build.yml`) runs `brew install ffmpeg mkvtoolnix` and
