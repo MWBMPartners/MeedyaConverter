@@ -39,7 +39,8 @@ sessions — nothing more is run from the MeedyaDL session):**
    new rounds.
 3. Still open: #540 (remux to MKV without "map all streams" drops fonts),
    #542 ("map all streams" with ASS subtitles fails MP4/MOV/MPEG-TS/AVI
-   jobs), #543 (Matroska H.264 into AVI fails), and the known limit that a
+   jobs), #543 (Matroska H.264 into AVI fails), #544 (a long job can lose
+   notes, because only the newest 64 are kept), and the known limit that a
    Swedish or Irish track in a MOV written by Apple's own tools (packed
    `swe`/`gle`) gets no language on a MOV-to-MOV remux.
 
