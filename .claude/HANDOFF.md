@@ -5,8 +5,8 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-10-04 (language policy block below — round 4) · VERSION 0.1.0
-Previous: 2026-09-28 (language policy round 3) · round 2 · round 1 · 2026-09-25 14:55
+**Last updated:** 2026-10-04 (language policy block below — round 5) · VERSION 0.1.0
+Previous: 2026-10-04 (language policy round 4) · round 3 · round 2 · round 1 · 2026-09-25 14:55
 
 ## 🌐 LANGUAGE POLICY (MWBM-MEDIA-LANG) — branch `wip/bcp47-language-policy`
 
@@ -23,12 +23,14 @@ unchanged by this work.
 |---|---|---|---|---|
 | 1 | `5d2223c..28efa6f` — 15, round 1 | a fresh Opus agent standing in for Codex (out of allowance) | not clean | round 2 |
 | 2 | `28efa6f..59f8667` — 17, round 2 + the core `aaaa585` copy sweep | the same kind of stand-in | not clean: 3 must-fix, 4 should-fix, minors | round 3 |
-| 3 | `59f8667..e497c3b` — 10, round 3 | the same kind of stand-in | not clean: 1 must-fix, 3 should-fix, 4 minor | round 4 (below) |
+| 3 | `59f8667..e497c3b` — 10, round 3 | the same kind of stand-in | not clean: 1 must-fix, 3 should-fix, 4 minor | round 4 |
+| 4 | `e497c3b..6dfc16a` — 9, round 4 | the same kind of stand-in | not clean: 1 serious and 1 medium finding (both in older code), wording | round 5 (below) |
 
-Commits after `e497c3b` are not yet reviewed.
+Commits after `6dfc16a` are not yet reviewed.
 
 **CI record for this branch** (`gh run list --branch wip/bcp47-language-policy`):
-passed at `28efa6f`, `a5abc22`, `59f8667` and `e497c3b`. FAILED at `67c41ca`
+passed at `28efa6f`, `a5abc22`, `59f8667`, `e497c3b` and `6dfc16a` (run
+37230989543 — the first run that included the real-tool tests). FAILED at `67c41ca`
 (round 1, fixed by `28efa6f`) and at `7271ae8`: round 3's `590371a` gave the
 quality preview a main-actor closure that it passes to
 `AttachedPictures.copyPictures`, and Swift 6.1 on the runner refused it
@@ -37,7 +39,128 @@ this Mac let it through. `e497c3b` moved the call into a `nonisolated` helper,
 and CI passed there. Lesson: this Mac's compiler is newer and more lenient than
 CI's — keep Swift 6.1's strict concurrency rules in mind.
 
-### ROUND 4 — fixes from the THIRD independent review — DONE; not yet independently reviewed
+### ROUND 5 — fixes from the FOURTH independent review — DONE; not yet independently reviewed
+
+The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r5.md`
+and `converter-r5-carryover.md` (scratch). Guiding rule unchanged: never lose
+or damage what the source had (COMPAT-030), never silently turn a value into
+a different language (COMPAT-040), and the job's notes must be true.
+
+**Reproduced before fixing** (the fourth reviewer's tools and media, rebuilt
+against this clone; ffmpeg 9.0.1, MKVToolNix 101, AVFoundation):
+- mkvmerge writes `und` in Matroska's old field for Abaza `abq`, Western
+  Panjabi `pnb`, `und-x-foo`, `und-Latn`, `und-419`; ffprobe hides `und`,
+  so the probe stored no text and the converter took the full tag to be what
+  ffmpeg copies. `abq`/`pnb` came out of Matroska, MP4 and MPEG-TS with no
+  language (MP4 `und`, AVFoundation `und`), the three `und-…` tags out of
+  Matroska with none — all noted "kept as the source had it".
+- With "map all streams", a Matroska file's font, or a BMP or WebP picture
+  (ffmpeg's Matroska reader gives those as plain ATTACHMENTS, not cover art)
+  made ffmpeg refuse MP4, M4V, M4A and MOV jobs (exit 234, "Could not find
+  tag for codec none"); MPEG-TS turned the font into `bin_data`; WebM
+  dropped it without a word; without "map all streams" nothing said they
+  were left out.
+- MOV-to-MOV of `chi`/`aze`/`mon`/`sve`/`iri` tracks: all five lost (round 4's
+  known limit); MOV-to-MP4 wrote `sve`/`iri`, which Apple reads in an MP4 as
+  Serili and Rigwe. New facts (4 Oct, writing every number 0–151 into a MOV,
+  and exporting with Apple's `avconvert`): ffmpeg's labels are SHARED —
+  number 33 (Simplified Chinese) is `chi` too, 50 (Azerbaijani, Arabic
+  script) `aze`, 84 (Malay, Arabic script) `may` — and Apple's own MOV
+  writer stores PACKED letters (`aze`, `sve`, read literally) plus an `elng`
+  box (`zh-Hant` beside a plain `zho`). So reading by ffprobe's label, or by
+  the file's brand, would be wrong; the NUMBER has to be read.
+
+| # | Task (brief item) | Issue | Status | Notes |
+|---|---|---|---|---|
+| R5-1 | Matroska full tag over an old field that says `und` is written (1) | #531 | Done — `34bafc9` | real mkvmerge file → MKV/MP4/TS/MOV/Ogg, ffprobe + mkvmerge + AVFoundation; old code planted: 13, 12, 2 failures |
+| R5-2 | Attachments never fail a non-Matroska job; noted with or without map-all (2) | #531, #540 | Done — `3f080a2` | font + BMP + WebP to MP4 (both modes), MOV, MPEG-TS; old code planted: 35, 7 failures |
+| R5-3 | MOV/MP4 sources read as Apple's players read them (carry-over 1) | #531 | Done — `aaa3544` | `QuickTimeTrackList` reads `mdhd` numbers and `elng`; all 104 labelled numbers checked with AVFoundation, 0 mismatches; MOV→MOV/MP4/MKV read back with ffprobe + AVFoundation; 7 planted faults caught |
+| R5-4 | Wording: `sve`/`iri` are Serili/Rigwe's codes; the Serili-to-MOV note true; CI ffmpeg 9.0.1; `zh-Hans` example (4) | #531 | Done — code in `aaa3544`, docs in the last `docs:` commit | the reviewer's `serili.mkv` to MOV: note now "“sve” is on that list, but Apple's players read it as Swedish, not as Serili" (was "not on it"); output has no language (ffprobe none, AVFoundation `und`) |
+| R5-5 | `.gitattributes`: `-text -filter -working-tree-encoding -ident`; comment says exactly what overrides (carry-over 2, with the lead's correction) | #531 | Done — `3f5105d` | proved in a throwaway clone (its own config), then deleted; `check_copies.py` exit 0 |
+| R5-6 | Handoff: review 4 in the table; this block (6) | #531 | Done — the last `docs:` commit | |
+| R5-7 | Independent review of round 5 | — | Queued — orchestrator | commits after `6dfc16a` are not yet reviewed |
+
+**What round 5 changed, in one place** (details in the commit messages):
+- An EMPTY `MediaStream.languageAsStored` means "ffmpeg copies nothing";
+  the probe sets it when a Matroska (or MOV/MP4 `elng`) full tag gives the
+  language and ffprobe gave no text. `TrackLanguage.languageWrite` never
+  leaves such a field to be copied: the tag is written as text where the
+  file type keeps it (Matroska, MP4/TS for `abq`), else the code with a note.
+- `AttachedPictures.holdsAttachments`: attachment streams go only into
+  Matroska; anywhere else they are left out with a note (the same
+  `pictureDecisions` the command and the notes share). Matroska without
+  map-all is unchanged (#540 stays open).
+- `QuickTimeTrackList` (new, bounded: `moov` → `trak` → `mdia` → `hdlr`,
+  `mdhd`, `elng`; ≤ 65,536 boxes, ≤ 1,024 tracks, bodies ≤ 4 KiB) and
+  `FFmpegProbe.applyingQuickTimeLanguages`: an `elng` full tag wins; a
+  Macintosh number is read with `TrackLanguage.quickTimeNumbers` (every
+  number ffmpeg labels, with AVFoundation's reading); packed letters stand.
+  Writing is unchanged (`chi` only for `zh-Hant`, never `sve`/`iri` for
+  Swedish/Irish from elsewhere), but a MOV source's own `sve`/`iri` is kept
+  on MOV-to-MOV, with a note. `quickTimeListEntries` is now derived from the
+  number table (same 101 labels, checked by a test).
+- Notes: Swedish/Irish to MOV say `sve`/`iri` are what other programs read
+  as Serili/Rigwe; a Serili track to MOV says `sve` is on the list but Apple
+  reads it as Swedish (it said "not on it").
+
+**Verified (round 5, 4–5 Oct), and how:**
+- Every "before" reproduced on `6dfc16a`'s code with the reviewer's tools
+  (`cmp.py`, `cov.sh`, the AVFoundation reader, rebuilt against this clone)
+  and read back with ffprobe, mkvmerge and AVFoundation; every "after" the
+  same way: `abq`/`pnb` to MKV/MP4/TS (none → `abq`, `pnb`; mkvmerge `abq`,
+  `pnb`; AVFoundation `abq`, `pnb`), `und-x-foo`/`und-Latn`/`und-419` to MKV
+  (none → the tag as text; mkvmerge `und`), MOV and Ogg unchanged; a font and
+  BMP/WebP attachments to MP4 (both modes), M4V, M4A, MOV, WebM, TS (exit 234
+  or silently lost → OK, each noted), MKV unchanged; MOV `chi`/`aze`/`mon`/
+  `sve`/`iri` to MOV (all lost → all kept, AVFoundation `zh-Hant`, `az-Cyrl`,
+  `mn-Mong`, `swe`, `gle` as the source), to MP4 (`sve`/`iri` → `swe`/`gle`),
+  to MKV (`zh-Hant`, `az-Cyrl`, `mn-Mong`, `swe`, `gle`); number 33 to MOV
+  (none, true note) and MKV (`zh-Hans`); the reviewer's Serili file to MOV
+  (no language; the note now true).
+- Builds: `swift build --target MediaLanguagePolicy`, `ConverterEngine`,
+  `meedya-convert` exit 0 (only the known linker search-path and
+  PerceptualHasher deprecation warnings).
+- Local harness (Xcode's XCTest by path — never `swift test`) on the final
+  code: the 15 engine suites (QuickTimeTrackListTests added), 1068 tests, 0
+  failures; policy suites 15 tests, 290 of 290 conformance cases, 409
+  checks, 0 failures. `test_quickTimeNumbersAreWhatApplesPlayersRead`: 104
+  numbers, 0 mismatches; `test_movCodesAreWhatApplesPlayersRead`: 98
+  entries, 0 mismatches.
+- Planted faults, each caught and every file restored by checksum: round 5's
+  own (the old code for each item) — item 1 ×3 (13, 12, 2 failures), item 2
+  ×2 (35, 7), item 3 ×7 (12, 8, 3, 2, 6, 18, 2). The fourth reviewer's
+  `plant.py` (A–K, adapted to this clone; G planted on the number table that
+  replaced its line), on the final code: all 11 caught — A 6, B 38, C 1, D 11,
+  E 3, F 3, G 12, H 7, I 2, J 7, K 3 (on `6dfc16a` the reviewer had A 5, B 31,
+  C 1, D 11, E 3, F 3, G 6, H 7, I 2, J 1, K 3). Round 4's `faultplant.py`
+  (the third review's 14): all caught — M2 8, M3 3, M4 6, M5 15, M6 33, M8 3,
+  M9 1, M10 1, M11 4, M13 1, M15 2 as written; M1 (its pattern now matches
+  the QuickTime step too) planted on the Matroska line — 25; M12 and M14 on
+  round 4's lines — 23 and 7.
+- `.gitattributes`: proved in a throwaway clone (its own config; deleted):
+  every override the comment names changes the copy, nothing else does.
+- `GITHUB_TOKEN=$(gh auth token) python3 scripts/media-lang/check_copies.py`:
+  exit 0, 6 copies match at core `aaaa585`. `SHELLCHECK_OPTS=--severity=error
+  actionlint` (1.7.12): exit 0, no output.
+
+**NOT verified:** `swift test` itself, and Swift 6.1's concurrency checking
+(this Mac has 6.4; the new code adds no closures across actors — the
+reader's closures are non-escaping — and only `Sendable` statics; CI is the
+check); whether `/usr/bin/avconvert` behaves the same on CI's macOS (the
+test compares the probe with AVFoundation, whatever avconvert writes); the
+SwiftUI editor (its warning text comes from the engine, which is tested).
+
+**Known limits found in round 5 (raise, do not fix here):**
+- Matroska-to-Matroska without "map all streams" still drops fonts silently
+  (#540).
+- A Swedish or Irish track in a MOV written by Apple's own tools (packed
+  `swe`/`gle`) still gets no language on a MOV-to-MOV remux: ffmpeg's MOV
+  writer cannot store packed letters, and `sve`/`iri` are never written for
+  a language from elsewhere (round 4's decision). Noted truthfully.
+- Macintosh numbers ffmpeg has no label for (34, 58, 95–127, 139–151) are
+  not read (ffprobe gives no language, and ffmpeg cannot write them).
+
+### ROUND 4 — fixes from the THIRD independent review — DONE; reviewed by review 4
 
 The lead's decisions (FINAL) are in the orchestrator's `brief-converter-r4.md`
 (scratch). Guiding rule unchanged: never lose or damage what the source had
@@ -98,9 +221,11 @@ sets `MEEDYA_REQUIRE_MEDIA_TOOLS=1` for `swift test`, so a green CI run
 INCLUDES ContainerLanguageToolTests, TrackPreservationToolTests and
 MatroskaTrackListTests' real-tool tests — they FAIL, not skip, if a tool or
 an encoder they need is missing (`MediaToolSupport.swift`). Two things to
-know: CI gets Homebrew's CURRENT `ffmpeg` formula (newer than this Mac's
-9.0.1, which is `ffmpeg-full`), and that formula has no libvorbis (the Ogg
-Vorbis row of the Ogg title test is then passed over; the Opus row runs).
+know: CI gets whatever Homebrew's `ffmpeg` formula is at the time — in run
+37230989543 (at `6dfc16a`) that was 9.0.1, the same version as this Mac's
+`ffmpeg-full` 9.0.1 (it may move ahead of this Mac later) — and that
+formula's ffmpeg has no libvorbis (the Ogg Vorbis row of the Ogg title test
+is then passed over; the Opus row runs).
 The dev-build, beta/alpha and release workflows still SKIP these tests: they
 do not set the variable (a release bundles its own ffmpeg). Whether it works
 on the runner shows only in a CI run that includes the `ci:` commit
@@ -171,7 +296,10 @@ Traditional-Chinese track now stores NO language, with a true note, where
 round 3 kept `chi`. Telling the two apart needs the source's container
 (its `ftyp` brand is `qt  ` for QuickTime) — a question for whoever takes #541
 or #532. The same holds for `aze`/`mon`, and for `sve`/`iri` (a Swedish or
-Irish MOV loses its language on a MOV-to-MOV remux).
+Irish MOV loses its language on a MOV-to-MOV remux). **Resolved in round 5**
+(R5-3) — and the brand turned out NOT to be enough: Apple's own MOV writer
+stores packed letters, and several numbers share a label, so the file's own
+language NUMBER is read instead (`QuickTimeTrackList`).
 
 ### ROUND 3 — fixes from the SECOND independent review (28 Sept) — DONE; reviewed by review 3
 

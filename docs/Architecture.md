@@ -355,23 +355,47 @@ log says so — and says it truly (`TrackLanguage.languageWrite`,
   source's `chi` or `eng` in; now "no language" is always a clear (checked by
   `ContainerLanguageToolTests.test_anEmptyValueClearsTheField`);
 - MOV's list is read as APPLE'S players read it
-  (`TrackLanguage.quickTimeCodesByTag`): the file stores an old Macintosh
-  language number, and Apple reads `chi` as Traditional Chinese (`zh-Hant`),
-  `aze` as Azerbaijani in Cyrillic, `mon` as Mongolian in Mongolian script —
-  so each is written only for that tag, and plain `zh`, `zh-Hans`, `az` and
-  `mn` store no language, with a note saying why. `sve` and `iri` (Swedish,
-  Irish to Apple) are not language codes, so no other program can read them
-  back; they are never written. Every entry written is re-checked with
-  AVFoundation (`test_movCodesAreWhatApplesPlayersRead`);
+  (`TrackLanguage.quickTimeNumbers`, `quickTimeCodesByTag`): the file stores
+  an old Macintosh language NUMBER, ffprobe reports ffmpeg's label for it,
+  and Apple reads the number — 19 `chi` as Traditional Chinese (`zh-Hant`),
+  33 (also `chi`) as Simplified, 49 `aze` as Azerbaijani in Cyrillic, 57
+  `mon` as Mongolian in Mongolian script. ffmpeg writes `chi` as 19, `aze` as
+  49 and `mon` as 57, so each is written only for that tag, and plain `zh`,
+  `zh-Hans`, `az` and `mn` store no language, with a note saying why. Apple
+  reads 5 `sve` and 35 `iri` as Swedish and Irish, but `sve` and `iri` are
+  the registered codes of two other languages, Serili and Rigwe, which is
+  how every other program reads them; so they are never written for Swedish
+  or Irish from elsewhere (a MOV source's own `sve` is kept on a MOV-to-MOV
+  remux, with a note), and a Serili track going to MOV gets no language and a
+  note saying Apple's players would read `sve` as Swedish. Every number of
+  the table is re-checked with AVFoundation
+  (`QuickTimeTrackListTests.test_quickTimeNumbersAreWhatApplesPlayersRead`),
+  and every entry written (`test_movCodesAreWhatApplesPlayersRead`);
+- a MOV or MP4 SOURCE is read the same way (`QuickTimeTrackList`,
+  `FFmpegProbe.applyingQuickTimeLanguages`): the file's own track list gives
+  each track's language number and its `elng` full tag; a full tag wins (as
+  Matroska's does), a Macintosh number is read as Apple's players read it,
+  and three packed letters (an MP4's, or an Apple-written MOV's) mean what
+  they say. So a MOV-to-MOV remux keeps `chi`, `aze`, `mon`, `sve` and
+  `iri`, and MOV-to-Matroska writes what they mean (`zh-Hant`, `sv` …). The
+  fourth review found a MOV's Traditional-Chinese `chi` read as plain
+  Chinese — so a MOV-to-MOV remux stored no language — and its Swedish
+  `sve` as Serili. A bounded read (only `moov` → `trak` → `mdia`, at most
+  65,536 boxes and 1,024 tracks); where it cannot be read or matched,
+  ffprobe's reading stands;
 - a track's language gets, in this order: the policy's code where it loses
   nothing (`deu` → `ger` in Matroska is a correction; MOV gets the QuickTime
   list's entry Apple's players read as the same language, `ger`, and `chi`
   for `zh-Hant`); else the source's own text, left for ffmpeg to copy, only
   where this file type stores it exactly and it still reads as the same
   language once stored (`yue` in MP4 or Matroska, `fr-CA` in Matroska; never
-  a `chi` that would become Traditional Chinese in MOV); else the
-  language's own tag as text where that is stored exactly (needed for
-  mkvmerge files, whose old field says `chi` for Cantonese); else the code
+  a `chi` that would become Traditional Chinese in MOV), and never where
+  ffmpeg would copy nothing (a Matroska full tag whose old field says only
+  `und` — mkvmerge does that for Abaza `abq`, Western Panjabi `pnb` and
+  `und-Latn`; the fourth review found those lost under "kept as the source
+  had it"); else the language's own tag as text where that is stored exactly
+  (needed for mkvmerge files, whose old field says `chi` for Cantonese, or
+  `und` for Abaza); else the code
   with the region cut (`fr-CA` → `fra` in MP4); else `und` — or, where even
   that cannot be stored (MOV, the file types with no field), NO language, the
   field cleared — with a note. The tool is never left to cut a value
@@ -390,7 +414,15 @@ log says so — and says it truly (`TrackLanguage.languageWrite`,
   out, with a note (`AttachedPictures.mp4CoverArtCodecs`). A file type that
   cannot hold a picture — WebM, MOV, MPEG-TS, AVI, Ogg and others — and an
   output with no video leave it out, with a note
-  (`AttachedPictures.pictureSupport`).
+  (`AttachedPictures.pictureSupport`);
+- other attachments — fonts, and BMP or WebP pictures, which ffmpeg's
+  Matroska reader gives as plain attachments rather than cover art — are kept
+  only in Matroska (`AttachedPictures.holdsAttachments`). Into any other file
+  type they are never mapped and are left out with a note, with or without
+  "map all streams": the fourth review found them making ffmpeg refuse MP4,
+  M4A and MOV jobs, turning into a `bin_data` stream in MPEG-TS and vanishing
+  from WebM without a word. (Remux to MKV without "map all streams" still
+  does not choose them: #540.)
 
 The job's notes reach the app's Activity Log through `EncodingEngine
 .jobNotices`, the command-line tool's standard error, a pipeline's log lines
@@ -420,10 +452,13 @@ of track list, walked by position without copying, filler elements stepped
 over, at most 1,024 track entries; where it cannot be read and the file's
 writer may have written full tags, the log says a fuller language may be
 lost and no automatic title is made from the old code). MP4 gets its
-`mdhd` field, so the **terminology** code is written (`deu`); no `elng` box.
-MOV gets only the old QuickTime list, as Apple's players read it (above). So a region or script (`en-GB`,
-`zh-Hant`) that a person SETS cannot be stored in a structured field (the
-editor says so before Apply). It appears in words only in an automatic title,
+`mdhd` field, so the **terminology** code is written (`deu`); no `elng` box
+(ffmpeg neither writes nor reads one — MeedyaConverter reads it itself,
+above). MOV gets only the old QuickTime list, as Apple's players read it
+(above): it can store `zh-Hant`, `az-Cyrl` and `mn-Mong` (as `chi`, `aze`,
+`mon`), and no other script. So a region or script (`en-GB`, `zh-Hans`)
+that a person SETS cannot be stored in a structured field (the editor says
+so before Apply). It appears in words only in an automatic title,
 and only where one is written (above) — a track that already has a title
 keeps it and the region is not stored anywhere. An UNEDITED Matroska track
 keeps the source's full language as text (above). Writing the full tag needs

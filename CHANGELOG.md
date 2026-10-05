@@ -176,10 +176,17 @@
   Apple reads the list's Chinese entry as Traditional Chinese, so it is used
   only for Traditional Chinese (`zh-Hant`), and likewise Azerbaijani only in
   Cyrillic and Mongolian only in Mongolian script. Any other language —
-  Chinese without that script, Swedish and Irish (whose entries are not real
-  language codes, so no other program can read them back), Cantonese, … —
-  can't be stored in a MOV file: the track is given no language at all, and
-  the job's log says why. MOV also keeps no track role but "default" —
+  Chinese without that script, Swedish and Irish (whose entries, `sve` and
+  `iri`, Apple reads as Swedish and Irish but are the registered codes of
+  two other languages, Serili and Rigwe, which is how every other program
+  reads them), Cantonese, … — can't be stored in a MOV file: the track is
+  given no language at all, and the job's log says why. A MOV or MP4 file
+  being converted is now read the way Apple's players read it, too — by the
+  number the file stores, not ffmpeg's name for it, and from its full
+  language tag where it has one — so a MOV-to-MOV copy no longer loses
+  Traditional Chinese, Azerbaijani, Mongolian, Swedish or Irish stored with
+  the old QuickTime codes, and a MOV-to-MKV copy writes what they mean
+  (`zh-Hant`, Swedish, Irish). MOV also keeps no track role but "default" —
   commentary, SDH and the rest are lost; #541 will make the log say so.
 - **Cover art in a file type that can't hold it** (WebM, MOV, MPEG-TS,
   MPEG-PS, AVI, Ogg, FLV, AIFF, CAF, W64/RF64, MXF, 3GP) is now left out on
@@ -197,6 +204,24 @@
 
 ### Fixed
 
+- **A Matroska track whose language has no three-letter code lost it**:
+  mkvmerge writes "und" in the old language field for Abaza (`abq`),
+  Western Panjabi (`pnb`) and tags such as `und-Latn`, keeping the real
+  language only in the full tag. Matroska, MP4 and MPEG-TS outputs came out
+  with no language while the log said "kept as the source had it". The
+  language is now written (`abq`, `pnb`; MP4 and MPEG-TS, which hold only
+  three letters, get "not known" for the `und-…` tags, and the log says what
+  is not saved).
+- **Fonts and other attachments made a conversion fail** with "map all
+  streams" on: MP4, M4A and MOV jobs from a Matroska file with an attached
+  font, or a BMP or WebP picture, were refused by ffmpeg; MPEG-TS turned the
+  font into a stray data stream. Attachments are now left out of anything
+  but Matroska, with a note — with "map all streams" or without.
+- **A MOV-to-MOV copy lost Traditional Chinese, Azerbaijani, Mongolian,
+  Swedish and Irish** stored with the old QuickTime codes (and a remux to MP4
+  or MKV turned the Swedish into Serili): the MOV's languages were read by
+  ffmpeg's names for them, not as Apple's players read them. They are now
+  read as Apple does, and kept.
 - **MOV outputs kept a language the log said was not stored**: given no
   value, ffmpeg copied the source's own — Cantonese, Mandarin and Min Nan
   from mkvmerge files came out as "Chinese" (which Apple's players read as
