@@ -767,9 +767,9 @@ extension TrackLanguage {
     ///     EMPTY when ffmpeg copies nothing (a Matroska full tag whose old
     ///     field says only `und`): then nothing is left for ffmpeg to copy,
     ///     and a value that must be kept is written instead.
-    ///   - fullTagUnknown: The source is a Matroska file that may record a
-    ///     fuller language than its old field says, which could not be read
-    ///     (`MediaStream.languageFullTagUnknown`) — said in a note.
+    ///   - fullTagUnknown: The source is a Matroska, MOV or MP4 file that
+    ///     may record a fuller language than its old field says, which could
+    ///     not be read (`MediaStream.languageFullTagUnknown`) — said in a note.
     ///   - container: The output container.
     ///   - isReplacement: The output stream comes from a separate file
     ///     (a tone-mapped subtitle), so ffmpeg has nothing to copy from:
@@ -868,10 +868,13 @@ extension TrackLanguage {
         let sourceField = copiesNothing
             ? "the source's old field (which says only “und”, not known)"
             : "the source's own field (“\(copied)”)"
-        // A Matroska source whose fuller language tag could not be read
-        // (see `MediaStream.languageFullTagUnknown`): said on its own, or
-        // after whatever else is said about this stream.
-        let fullTagSentence = "The source may also record a fuller language tag for this track (with a region "
+        // A Matroska, MOV or MP4 source whose fuller language could not be
+        // read (see `MediaStream.languageFullTagUnknown`): said on its own,
+        // or after whatever else is said about this stream. "A fuller
+        // language", not "a fuller language tag": in a MOV it may be what
+        // the track's language NUMBER means to Apple's players (19 is
+        // Traditional Chinese), not a tag.
+        let fullTagSentence = "The source may also record a fuller language for this track (with a region "
             + "or script, say), which could not be read; if it does, that is not kept, and no automatic title is "
             + "made from the three-letter code “\(copied)”."
         func write(_ action: LanguageWrite.Action, _ note: String?) -> LanguageWrite {

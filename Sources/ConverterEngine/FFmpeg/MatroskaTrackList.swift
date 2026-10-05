@@ -430,12 +430,21 @@ protocol ByteSource {
 }
 
 /// Bytes from an open file, read only where asked.
+///
+/// A read of ZERO bytes gives an empty list, as `MemorySource` does.
+/// `FileHandle.read(upToCount: 0)` answers `nil`, and until the stand-in
+/// review of round 5 that `nil` was passed on: an 8-byte `elng` box (a
+/// header with no body) was "absent" when the bytes were in memory but made
+/// the WHOLE track list unreadable when read from a file — so another track
+/// of that file lost its language. The tests read the same bytes both ways
+/// (`QuickTimeTrackListTests.test_aFileAndMemoryReadTheSame`).
 struct FileSource: ByteSource {
     let handle: FileHandle
     let size: UInt64
 
     func bytes(at offset: UInt64, count: Int) -> [UInt8]? {
         guard count >= 0, offset <= size, UInt64(count) <= size - offset else { return nil }
+        if count == 0 { return [] }
         guard (try? handle.seek(toOffset: offset)) != nil,
               let data = try? handle.read(upToCount: count), data.count == count else { return nil }
         return [UInt8](data)

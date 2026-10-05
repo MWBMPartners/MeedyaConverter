@@ -139,6 +139,27 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(QuickTimeTrackList.read(bytes: bytes)).tracks.map(\.extendedLanguage), [nil, nil])
     }
 
+    /// The same bytes read from a FILE and from memory give the same list —
+    /// including an `elng` box with no body at all (8 bytes), and an empty
+    /// one. The stand-in review of round 5 found that a file read of zero
+    /// bytes answered `nil` (`FileHandle.read(upToCount: 0)`), so a bodiless
+    /// `elng` made the whole list unreadable from a file while memory read
+    /// it — and the file's OTHER tracks lost the language Apple reads. Only
+    /// memory was tested; this reads both.
+    func test_aFileAndMemoryReadTheSame() throws {
+        let cases: [(String, [UInt8])] = [
+            ("ffmpeg-like", movie),
+            ("bodiless elng", ftyp + box("moov", trak(hdlr("soun") + mdhd(19)) + trak(hdlr("soun") + mdhd(0) + box("elng", [])))),
+            ("empty elng", ftyp + box("moov", trak(hdlr("soun") + mdhd(19) + box("elng", [0, 0, 0, 0, 0])))),
+            ("empty moov", ftyp + box("moov", []))
+        ]
+        for (name, bytes) in cases {
+            let fromMemory = try XCTUnwrap(QuickTimeTrackList.read(bytes: bytes), name)
+            XCTAssertEqual(QuickTimeTrackList.read(url: try scratch(bytes)), fromMemory, "\(name): file and memory agree")
+        }
+        XCTAssertEqual(QuickTimeTrackList.read(url: try scratch(cases[1].1))?.tracks.map(\.languageCode), [19, 0])
+    }
+
     // MARK: - Matching ffprobe's streams
 
     private func stream(_ index: Int, _ type: StreamType, language: String? = nil, picture: Bool = false) -> MediaStream {
@@ -229,9 +250,56 @@ final class QuickTimeTrackListTests: XCTestCase {
         // Not a MOV / MP4 file: unchanged.
         XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: url, formatName: "matroska,webm")
             .map(\.language), probed.map(\.language))
-        // A track list that does not match ffprobe's streams: unchanged.
-        XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: Array(probed.prefix(2)), fileURL: url,
-                                                              formatName: "mov,mp4,m4a,3gp,3g2,mj2").map(\.language), ["zh", "zh"])
+        // A track list that does not match ffprobe's streams: ffprobe's
+        // readings stand, and each track is marked — the job's notes then say
+        // the source may record a fuller language that could not be read
+        // (the stand-in review of round 5: nothing was said).
+        let unmatched = FFmpegProbe.applyingQuickTimeLanguages(to: Array(probed.prefix(2)), fileURL: url,
+                                                               formatName: "mov,mp4,m4a,3gp,3g2,mj2")
+        XCTAssertEqual(unmatched.map(\.language), ["zh", "zh"])
+        XCTAssertEqual(unmatched.map(\.languageFullTagUnknown), [true, true])
+        XCTAssertEqual(streams.map(\.languageFullTagUnknown), [nil, nil, nil, nil, nil, nil], "read: nothing marked")
+    }
+
+    /// A track list that cannot be read at all — here an `elng` box larger
+    /// than any real one — leaves ffprobe's readings, marks every real track
+    /// (not cover art), and the job's notes say a fuller language may not
+    /// have been read. And a bodiless `elng` on one track, read from a FILE,
+    /// no longer costs another track its language (the stand-in review of
+    /// round 5's `e0-empty.mov`: Traditional Chinese read as plain `chi`).
+    func test_aTrackListThatCannotBeReadIsSaid() throws {
+        let huge = ftyp + box("moov", trak(hdlr("soun") + mdhd(19))
+                                  + trak(hdlr("soun") + mdhd(0) + box("elng", [0, 0, 0, 0] + [UInt8](repeating: 0x61, count: 5000))))
+        let probed = [stream(0, .audio, language: "chi"), stream(1, .audio, language: "eng"),
+                      stream(2, .video, picture: true)]
+        let format = "mov,mp4,m4a,3gp,3g2,mj2"
+        let unread = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(huge), formatName: format)
+        XCTAssertEqual(unread.map(\.language), ["zh", "en", nil], "ffprobe's readings stand")
+        XCTAssertEqual(unread.map(\.languageFullTagUnknown), [true, true, nil], "cover art is not a track")
+
+        var builder = FFmpegArgumentBuilder()
+        builder.inputURL = URL(fileURLWithPath: "/tmp/in.mov")
+        builder.outputURL = URL(fileURLWithPath: "/tmp/out.mov")
+        builder.sourceStreams = Array(unread.prefix(2))
+        builder.mapAllStreams = true
+        builder.audioPassthrough = true
+        builder.orderTracksCanonically = false
+        let gap = "Stream #0: this file type (QuickTime) can only store the languages on its old list; that list "
+            + "has Chinese only as “chi”, which Apple's players read as Chinese in Traditional script (“zh-Hant”), "
+            + "and “zh” does not say that, so no language is stored."
+        let mayBeFuller = "The source may also record a fuller language for this track (with a region or script, "
+            + "say), which could not be read; if it does, that is not kept, and no automatic title is made from "
+            + "the three-letter code “chi”."
+        XCTAssertEqual(builder.trackWritingNotes(), [
+            gap + " " + mayBeFuller,
+            "Stream #1: " + mayBeFuller.replacingOccurrences(of: "“chi”", with: "“eng”")
+        ])
+
+        let bodiless = ftyp + box("moov", trak(hdlr("soun") + mdhd(19)) + trak(hdlr("soun") + mdhd(0) + box("elng", [])))
+        let read = FFmpegProbe.applyingQuickTimeLanguages(to: Array(probed.prefix(2)), fileURL: try scratch(bodiless),
+                                                          formatName: format)
+        XCTAssertEqual(read.map(\.language), ["zh-Hant", "en"], "read from a file, as Apple's players read it")
+        XCTAssertEqual(read.map(\.languageFullTagUnknown), [nil, nil])
     }
 
     // MARK: - With the real tools

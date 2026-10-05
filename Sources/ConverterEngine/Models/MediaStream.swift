@@ -322,6 +322,12 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// Cantonese): the job's notes say so, and no automatic title is made
     /// from it. `nil` otherwise, and for streams described before this
     /// existed. Added in the language policy's third review round.
+    ///
+    /// Also `true` for a MOV or MP4 track whose file's own track list
+    /// (`QuickTimeTrackList`) could not be read or matched: its `elng` full
+    /// tag, and what its language NUMBER means to Apple's players (19 is
+    /// Traditional Chinese, though ffprobe says only `chi`), could not be
+    /// read either (since the stand-in review of round 5).
     public var languageFullTagUnknown: Bool?
 
     /// User-facing title/label for this stream (e.g., "Director's Commentary").

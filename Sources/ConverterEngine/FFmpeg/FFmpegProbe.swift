@@ -1155,7 +1155,16 @@ extension FFmpegProbe {
         }
         let writer = list?.writingApplication ?? statisticsWritingApplication
         guard MatroskaTrackList.mayHoldFullLanguageTags(writtenBy: writer) else { return streams }
-        return streams.map { stream in
+        return markingFullLanguageUnknown(streams)
+    }
+
+    /// `streams` with every real track (video, audio, subtitles — not cover
+    /// art) marked `languageFullTagUnknown`: the file's own track list could
+    /// not be read or matched, so a fuller language it records could not be
+    /// read either. The job's notes then say so, and no automatic title is
+    /// made from the old field's code.
+    static func markingFullLanguageUnknown(_ streams: [MediaStream]) -> [MediaStream] {
+        streams.map { stream in
             guard stream.streamType == .video || stream.streamType == .audio || stream.streamType == .subtitle,
                   stream.disposition?.isAttachedPicture != true else { return stream }
             var updated = stream
@@ -1188,10 +1197,18 @@ extension FFmpegProbe {
     /// stored no language, and a MOV's Swedish `sve` read as Serili.
     ///
     /// When the track list cannot be read or matched to ffprobe's streams,
-    /// nothing is changed. Not a MOV / MP4 file (`formatName`): unchanged.
+    /// ffprobe's readings stand — and every real track is marked
+    /// `languageFullTagUnknown`, so the job's notes say the source may
+    /// record a fuller language that could not be read (as for Matroska).
+    /// Until the stand-in review of round 5 nothing was said: a MOV whose
+    /// list could not be read had its Traditional-Chinese track (number 19)
+    /// read as plain Chinese from ffprobe's `chi`, and the note gave only
+    /// that reading. Not a MOV / MP4 file (`formatName`): unchanged.
     static func applyingQuickTimeLanguages(to streams: [MediaStream], fileURL: URL, formatName: String?) -> [MediaStream] {
-        guard let formatName, formatName.contains("mov") || formatName.contains("mp4"),
-              let matched = QuickTimeTrackList.read(url: fileURL)?.streamsMatched(to: streams) else { return streams }
+        guard let formatName, formatName.contains("mov") || formatName.contains("mp4") else { return streams }
+        guard let matched = QuickTimeTrackList.read(url: fileURL)?.streamsMatched(to: streams) else {
+            return markingFullLanguageUnknown(streams)
+        }
         return streams.map { stream in
             guard let track = matched[stream.streamIndex] else { return stream }
             var updated = stream

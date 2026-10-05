@@ -290,7 +290,7 @@ final class MatroskaTrackListTests: XCTestCase {
         let titles = zip(args, args.dropFirst()).filter { $0.1.hasPrefix("title=") }.map(\.1)
         XCTAssertEqual(titles, ["title=English"], "only the unmarked track is named")
         XCTAssertEqual(builder.trackWritingNotes(), [
-            "Stream #1: The source may also record a fuller language tag for this track (with a region or script, "
+            "Stream #1: The source may also record a fuller language for this track (with a region or script, "
                 + "say), which could not be read; if it does, that is not kept, and no automatic title is made from "
                 + "the three-letter code “chi”."
         ])

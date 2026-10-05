@@ -78,8 +78,9 @@ public struct QuickTimeTrackList: Sendable, Equatable {
         /// header. Below 0x400 it is a Macintosh language number; otherwise
         /// three packed letters (0x7FFF: not specified).
         public let languageCode: UInt16?
-        /// The full tag from `elng`, or `nil` when the box is absent, empty,
-        /// or not valid UTF-8.
+        /// The full tag from `elng`, or `nil` when the box is absent, empty
+        /// (even with no body at all — read from a file or from memory
+        /// alike, see `FileSource`), or not valid UTF-8.
         public let extendedLanguage: String?
 
         public init(handler: String?, languageCode: UInt16?, extendedLanguage: String?) {
