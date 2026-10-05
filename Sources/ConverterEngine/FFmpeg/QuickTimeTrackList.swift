@@ -95,13 +95,19 @@ public struct QuickTimeTrackList: Sendable, Equatable {
         public let languageCode: UInt16?
         /// The full tag from `elng`, or `nil` when the box is absent, empty
         /// (even with no body at all — read from a file or from memory
-        /// alike, see `FileSource`), or not valid UTF-8.
+        /// alike, see `FileSource`), not valid UTF-8, or longer than
+        /// `TrackListText.maximumBytes` (`extendedLanguageTooLong`).
         public let extendedLanguage: String?
+        /// Whether the `elng` tag is longer than this reader reads: then it
+        /// counts as absent, never cut to a shorter — different — tag.
+        public let extendedLanguageTooLong: Bool
 
-        public init(handler: String?, languageCode: UInt16?, extendedLanguage: String?) {
+        public init(handler: String?, languageCode: UInt16?, extendedLanguage: String?,
+                    extendedLanguageTooLong: Bool = false) {
             self.handler = handler
             self.languageCode = languageCode
             self.extendedLanguage = extendedLanguage
+            self.extendedLanguageTooLong = extendedLanguageTooLong
         }
 
         /// Whether `languageCode` is a Macintosh language number (below
@@ -231,7 +237,7 @@ public struct QuickTimeTrackList: Sendable, Equatable {
     private static func track(in trak: BoxHeader, source: some ByteSource, effort: inout Effort) -> Track? {
         var handler: String?
         var code: UInt16?
-        var full: String?
+        var full: TrackListText?
         var damaged = false
         let walked = forEachChild(of: trak, source: source, effort: &effort) { media, effort in
             guard media.type == "mdia" else { return true }
@@ -257,7 +263,7 @@ public struct QuickTimeTrackList: Sendable, Equatable {
                     code = UInt16(body[at]) << 8 | UInt16(body[at + 1])
                 case "elng" where full == nil:
                     // FullBox (4), then the tag up to a NUL.
-                    full = body.count > 4 ? text(body[4...]) : nil
+                    full = body.count > 4 ? TrackListText(body[4...]) : .absent
                 default:
                     break
                 }
@@ -265,7 +271,9 @@ public struct QuickTimeTrackList: Sendable, Equatable {
             }
             return inner && !damaged
         }
-        return walked && !damaged ? Track(handler: handler, languageCode: code, extendedLanguage: full) : nil
+        guard walked, !damaged else { return nil }
+        return Track(handler: handler, languageCode: code, extendedLanguage: full?.value,
+                     extendedLanguageTooLong: full == .tooLong)
     }
 
     // MARK: - Matching ffprobe's streams
@@ -344,16 +352,5 @@ public struct QuickTimeTrackList: Sendable, Equatable {
             offset = child.end
         }
         return true
-    }
-
-    /// A string's text: the bytes up to the first NUL, as UTF-8, spaces
-    /// trimmed, at most 256 bytes — or `nil` when that is empty or not valid
-    /// UTF-8, so damaged text is treated as absent rather than read as
-    /// something else.
-    private static func text(_ data: ArraySlice<UInt8>) -> String? {
-        let used = data.prefix { $0 != 0 }.prefix(256)
-        guard let decoded = String(bytes: used, encoding: .utf8) else { return nil }
-        let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

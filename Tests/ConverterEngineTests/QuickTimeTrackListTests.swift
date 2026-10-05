@@ -165,7 +165,28 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(QuickTimeTrackList.read(bytes: bytes)).tracks.map(\.extendedLanguage), [nil, nil])
     }
 
-    /// The same bytes read from a FILE and from memory give the same list —
+    /// A full tag longer than the reader reads (256 bytes) is refused —
+    /// counted as absent and marked too long — never cut to a shorter tag,
+    /// which would be a different, valid one. The stand-in review of round 5
+    /// found a 331-character `elng` cut to 64 characters (`…-abcdefgh-ab`)
+    /// and written as the language.
+    func test_aFullTagLongerThanTheReaderReadsIsRefusedNotCut() throws {
+        let long = "en-GB-x-" + Array(repeating: "abcdefgh", count: 36).joined(separator: "-")
+        let longest = String(long.prefix(TrackListText.maximumBytes))
+        let bytes = ftyp + box("moov", trak(hdlr("soun") + mdhd(0) + elng(long))
+                                   + trak(hdlr("soun") + mdhd(0) + elng(longest)))
+        let tracks = try XCTUnwrap(QuickTimeTrackList.read(bytes: bytes)).tracks
+        XCTAssertEqual(tracks.map(\.extendedLanguage), [nil, longest], "256 bytes is read whole; more is not read")
+        XCTAssertEqual(tracks.map(\.extendedLanguageTooLong), [true, false])
+
+        let probed = [stream(0, .audio, language: "eng"), stream(1, .audio, language: "eng")]
+        let streams = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(bytes),
+                                                             formatName: "mov,mp4,m4a,3gp,3g2,mj2")
+        XCTAssertEqual(streams.map(\.language), ["en", TrackLanguage.read(fileValue: longest).language])
+        XCTAssertEqual(streams.map(\.ignoredFullLanguageTag), [.tooLong(maximumBytes: 256), nil])
+    }
+
+    /// The same bytes read from a FILE and from memory give the same list —    /// The same bytes read from a FILE and from memory give the same list —
     /// including an `elng` box with no body at all (8 bytes), and an empty
     /// one. The stand-in review of round 5 found that a file read of zero
     /// bytes answered `nil` (`FileHandle.read(upToCount: 0)`), so a bodiless
@@ -774,6 +795,38 @@ final class QuickTimeTrackListTests: XCTestCase {
             if container != .mkv, let apple = try await MediaTools.appleAudioLanguages(of: output) {
                 XCTAssertEqual(apple.map(\.description), ["eng/nil"], "\(name): AVFoundation")
             }
+        }
+    }
+
+    /// The stand-in review of round 5's 331-character `elng` (which Apple's
+    /// AVFoundation reads whole), with real tools: round 5 cut it to 64
+    /// characters, a different valid tag, and wrote that into Matroska as
+    /// the language. Now it is refused, the number's English is kept in
+    /// every output, and the note says why.
+    func test_aFullTagLongerThanTheReaderReadsIsIgnored() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — long elng check")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-longelng-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("long.mov")
+        XCTAssertEqual(try run(ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4",
+                                        "-map", "0:a", "-metadata:s:a:0", "language=eng", "-c:a", "aac", "-f", "mov",
+                                        source.path]).status, 0, "making long.mov")
+        let long = "en-GB-x-" + Array(repeating: "abcdefgh", count: 36).joined(separator: "-")
+        try addExtendedLanguage(to: source, track: 0, tag: long)
+        if let apple = try await MediaTools.appleAudioLanguages(of: source) {
+            XCTAssertEqual(apple.map(\.tag), [long], "AVFoundation reads the whole tag")
+        }
+        let note = "Stream #0: The source also records a full language tag for this track that is longer than 256 "
+            + "bytes, more than this converter reads, so it is ignored and not kept; the language is taken from the "
+            + "track's old language field (“eng”)."
+        for (name, container) in [("out.mkv", ContainerFormat.mkv), ("out.mp4", .mp4), ("out.mov", .mov)] {
+            let (output, notes) = try await remux(source, to: folder.appendingPathComponent(name), container,
+                                                  ffmpeg: ffmpeg, ffprobe: ffprobe)
+            XCTAssertEqual(notes, [note], name)
+            XCTAssertEqual(try audioLanguages(ffprobe, output), ["eng"], "\(name): ffprobe — never a cut tag")
         }
     }
 

@@ -521,6 +521,13 @@ final class LanguageFieldTests: XCTestCase {
                 + "not a valid language tag, so it is ignored and not kept; the track's old language field gives no "
                 + "language."
         ))
+        // Longer than the reader reads: refused, never cut, and said so.
+        XCTAssertEqual(write("en", stored: "eng", ignored: .tooLong(maximumBytes: 256), to: .mkv), .init(
+            action: .write("eng"),
+            note: "Stream #2: The source also records a full language tag for this track that is longer than 256 "
+                + "bytes, more than this converter reads, so it is ignored and not kept; the language is taken from "
+                + "the track's old language field (“eng”)."
+        ))
         XCTAssertNil(write("en", stored: "eng", edited: "de", ignored: damaged, to: .mkv).note, "the person set it")
         XCTAssertNil(write("en", stored: "eng", ignored: damaged, to: .mkv, keepSource: false).note)
     }

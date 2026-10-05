@@ -68,14 +68,21 @@ public struct MatroskaTrackList: Sendable, Equatable {
         /// The old `Language` field's text, or `nil` when the element is
         /// absent (RFC 9559's default is then `eng`, which ffprobe reports).
         public let language: String?
-        /// `LanguageBCP47`, the full tag, or `nil` when absent.
+        /// `LanguageBCP47`, the full tag, or `nil` when absent — and when it
+        /// is longer than `TrackListText.maximumBytes`
+        /// (`languageBCP47TooLong`).
         public let languageBCP47: String?
+        /// Whether `LanguageBCP47` is longer than this reader reads: then it
+        /// counts as absent, never cut to a shorter — different — tag.
+        public let languageBCP47TooLong: Bool
 
-        public init(number: UInt64?, type: UInt64?, language: String?, languageBCP47: String?) {
+        public init(number: UInt64?, type: UInt64?, language: String?, languageBCP47: String?,
+                    languageBCP47TooLong: Bool = false) {
             self.number = number
             self.type = type
             self.language = language
             self.languageBCP47 = languageBCP47
+            self.languageBCP47TooLong = languageBCP47TooLong
         }
     }
 
@@ -225,11 +232,13 @@ public struct MatroskaTrackList: Sendable, Equatable {
             }
             fields.addCounts(to: &effort)
             guard !fields.isDamaged else { return nil }
+            let fullText = full.map { TrackListText(body[$0]) } ?? .absent
             result.append(Track(
                 number: number.flatMap { unsigned(body[$0]) },
                 type: type.flatMap { unsigned(body[$0]) },
-                language: language.flatMap { text(body[$0]) },
-                languageBCP47: full.flatMap { text(body[$0]) }
+                language: language.flatMap { TrackListText(body[$0]).value },
+                languageBCP47: fullText.value,
+                languageBCP47TooLong: fullText == .tooLong
             ))
         }
         return entries.isDamaged ? nil : result
@@ -245,7 +254,7 @@ public struct MatroskaTrackList: Sendable, Equatable {
         }
         children.addCounts(to: &effort)
         guard !children.isDamaged, let found else { return nil }
-        return text(body[found])
+        return TrackListText(body[found]).value
     }
 
     // MARK: - Matching ffprobe's streams
@@ -408,15 +417,49 @@ public struct MatroskaTrackList: Sendable, Equatable {
         return data.reduce(0) { ($0 << 8) | UInt64($1) }
     }
 
-    /// A string element's text: the bytes up to the first NUL, as UTF-8,
-    /// spaces trimmed, at most 256 bytes — or `nil` when that is empty or
-    /// not valid UTF-8 (a language tag or a program's name never is), so
-    /// damaged text is treated as absent rather than read as something else.
-    private static func text(_ data: ArraySlice<UInt8>) -> String? {
-        let used = data.prefix { $0 != 0 }.prefix(256)
-        guard let decoded = String(bytes: used, encoding: .utf8) else { return nil }
+}
+
+// MARK: - Text fields
+
+/// A text field of a track list (a language, a full language tag, a
+/// program's name): the bytes up to the first NUL, as UTF-8, spaces
+/// trimmed. Shared by `MatroskaTrackList` and `QuickTimeTrackList`.
+///
+/// Text LONGER than `maximumBytes` is `tooLong` — refused, never cut. Until
+/// the stand-in review of round 5 it was cut (to 256 bytes here, then to 64
+/// characters by the probe), and a cut full tag is itself a valid tag that
+/// is NOT the file's: `en-GB-x-abcdefgh-…-abcdefgh` became `…-ab` and was
+/// written into outputs as "the language". Empty or invalid UTF-8 text is
+/// `absent`, so damaged text is never read as something else.
+enum TrackListText: Equatable {
+    /// No text: none, empty, or not valid UTF-8.
+    case absent
+    /// The text.
+    case text(String)
+    /// Longer than `maximumBytes`.
+    case tooLong
+
+    /// The most bytes of text read. No real language tag comes near it.
+    static let maximumBytes = 256
+
+    init(_ data: ArraySlice<UInt8>) {
+        let used = data.prefix { $0 != 0 }
+        guard used.count <= Self.maximumBytes else {
+            self = .tooLong
+            return
+        }
+        guard let decoded = String(bytes: used, encoding: .utf8) else {
+            self = .absent
+            return
+        }
         let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        self = trimmed.isEmpty ? .absent : .text(trimmed)
+    }
+
+    /// The text, or `nil` when absent or too long.
+    var value: String? {
+        if case .text(let text) = self { return text }
+        return nil
     }
 }
 

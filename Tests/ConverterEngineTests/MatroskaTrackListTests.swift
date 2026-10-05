@@ -274,6 +274,25 @@ final class MatroskaTrackListTests: XCTestCase {
                        "a control character is damage: the tag is ignored, the character shown as �")
     }
 
+    /// A full tag longer than the reader reads (256 bytes) is refused — the
+    /// old field's language stands — never cut to a shorter, different tag
+    /// (the stand-in review of round 5: cut to 64 characters, and written).
+    func test_aFullTagLongerThanTheReaderReadsIsRefusedNotCut() throws {
+        let long = "en-GB-x-" + Array(repeating: "abcdefgh", count: 36).joined(separator: "-")
+        let bytes = file(info("mkvmerge v101.0 ('Time To Turn') 64-bit")
+            + tracks(track(1, type: 2, language: "eng", full: long)) + cluster)
+        let list = try XCTUnwrap(MatroskaTrackList.read(bytes: bytes))
+        XCTAssertEqual(list.tracks, [.init(number: 1, type: 2, language: "eng", languageBCP47: nil, languageBCP47TooLong: true)])
+        var probed = [stream(0, .audio, language: "en")]
+        probed[0].languageAsStored = "eng"
+        let streams = FFmpegProbe.applyingMatroskaFullLanguageTags(
+            to: probed, fileURL: try scratch(bytes), formatName: "matroska,webm", statisticsWritingApplication: nil
+        )
+        XCTAssertEqual(streams.map(\.language), ["en"])
+        XCTAssertEqual(streams.map(\.ignoredFullLanguageTag), [.tooLong(maximumBytes: 256)])
+        XCTAssertEqual(streams.map(\.languageAsStored), ["eng"])
+    }
+
     /// When the track list cannot be read, a file whose writer may have
     /// written full tags has its tracks marked; one written by ffmpeg is not.
     func test_anUnreadableTrackListMarksTheTracksUnlessFFmpegWroteTheFile() throws {

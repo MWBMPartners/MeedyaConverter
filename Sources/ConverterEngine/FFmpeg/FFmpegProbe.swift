@@ -1109,7 +1109,12 @@ extension FFmpegProbe {
     /// and whose full tag was damaged came out with the damaged text, noted
     /// "kept as the source had it", while MKVToolNix and Apple's AVFoundation
     /// both read the source as English.
-    static func fullLanguageTag(_ text: String?) -> FullLanguageTagReading {
+    ///
+    /// A tag longer than the reader reads (`tooLong`) is ignored too —
+    /// refused, never cut: a cut tag is a different, valid one. Until the
+    /// stand-in review of round 5 it was cut to 64 characters and written.
+    static func fullLanguageTag(_ text: String?, tooLong: Bool = false) -> FullLanguageTagReading {
+        if tooLong { return .ignored(.tooLong(maximumBytes: TrackListText.maximumBytes)) }
         guard let text, !text.isEmpty else { return .absent }
         let clean = MetadataSanitizer.sanitize(text)
         guard clean == text else {
@@ -1120,7 +1125,7 @@ extension FFmpegProbe {
             }))
             return .ignored(.notATag(shown))
         }
-        let reading = TrackLanguage.read(fileValue: String(clean.prefix(64)))
+        let reading = TrackLanguage.read(fileValue: clean)
         guard reading.unrecognised == nil else { return .ignored(.notATag(clean)) }
         return .tag(reading.language)
     }
@@ -1170,7 +1175,7 @@ extension FFmpegProbe {
             return streams.map { stream in
                 guard let track = matched[stream.streamIndex] else { return stream }
                 var updated = stream
-                switch fullLanguageTag(track.languageBCP47) {
+                switch fullLanguageTag(track.languageBCP47, tooLong: track.languageBCP47TooLong) {
                 case .absent:
                     return stream
                 case .ignored(let why):
@@ -1260,7 +1265,7 @@ extension FFmpegProbe {
         return streams.map { stream in
             guard let track = matched[stream.streamIndex] else { return stream }
             var updated = stream
-            switch fullLanguageTag(track.extendedLanguage) {
+            switch fullLanguageTag(track.extendedLanguage, tooLong: track.extendedLanguageTooLong) {
             case .absent:
                 break
             case .ignored(let why):

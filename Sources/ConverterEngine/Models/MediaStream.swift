@@ -254,6 +254,10 @@ public enum IgnoredFullLanguageTag: Codable, Sendable, Equatable {
     /// it (`en_GB!x?a12`), or holding control characters: the text as the
     /// file gives it, each control character shown as "�".
     case notATag(String)
+    /// Longer than the most a track-list reader reads (`maximumBytes` —
+    /// `TrackListText.maximumBytes`): refused, never cut to a shorter tag,
+    /// which would be a different one.
+    case tooLong(maximumBytes: Int)
 }
 
 // MARK: - MediaStream
@@ -355,7 +359,8 @@ public struct MediaStream: Identifiable, Codable, Sendable {
 
     /// A full language tag the file records for this track — Matroska's
     /// `LanguageBCP47`, or a MOV / MP4 track's `elng` — that was NOT used,
-    /// and why: it is not a well-formed language tag. `language` then comes
+    /// and why: it is not a well-formed language tag, or it is longer than
+    /// the converter reads (refused, never cut). `language` then comes
     /// from the old field, as if there were no full tag — a damaged full tag
     /// never overrides a valid old field (COMPAT-030) — and the job's notes
     /// say so. `nil` when there is no full tag, when it was used, and for

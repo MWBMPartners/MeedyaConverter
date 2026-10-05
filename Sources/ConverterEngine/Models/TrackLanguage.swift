@@ -889,6 +889,9 @@ extension TrackLanguage {
         case .notATag(let text):
             what = "The source also records a full language tag for this track, “\(text)”, which is not a valid "
                 + "language tag"
+        case .tooLong(let maximumBytes):
+            what = "The source also records a full language tag for this track that is longer than \(maximumBytes) "
+                + "bytes, more than this converter reads"
         }
         let instead = oldField.map { "the language is taken from the track's old language field (“\($0)”)" }
             ?? "the track's old language field gives no language"
