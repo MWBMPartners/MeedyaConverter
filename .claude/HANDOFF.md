@@ -5,7 +5,7 @@
 **Purpose:** crash-safe resume point. If a session ends unexpectedly, read this
 first to pick up exactly where we left off. Updated after each completed task.
 
-**Last updated:** 2026-09-25 14:55 · VERSION 0.1.0
+**Last updated:** 2026-10-05 · VERSION 0.1.0
 
 ## 📍 CURRENT STATE — 2026-09-23, updated through 25 Sept (read this first)
 
@@ -96,6 +96,19 @@ then the changes land as NEW commits on top, before commit 6.
   **An Opus builder is fixing all 9 in the MAIN tree** (not pushed until
   reviewed). The fixes then need a Fable re-review (the loop runs until a round is
   clean).
+
+### ⏫ JUMPED THE QUEUE — owner request, 5 Oct (run these BEFORE the table below)
+
+The owner asked for three new tasks to run as soon as possible, ahead of where the
+work had got to (#505 revision, #508 review fixes, Codex round 2 — all Mac-side and
+unaffected). Tasks Q1 and Q3 overlap almost entirely, so they are done as **one
+research pass with two reports** (W7: bundled, and said so).
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| Q1 | **Review the instructions** (standing rules, device `CLAUDE.md` / `AGENTS.md`, agents, saved prompts) against three Anthropic posts. Find: lines that push the model to "think more"; rules that hand out work one step at a time or never say what done looks like; rules that stop for confirmation without needing to. Quote, impact, smallest change. **Safety / permission / destructive-action approval rules listed separately for the owner to decide.** Propose a rule: every long run ends with **Blocked on me / Changed / Found**. | In progress (cloud, 5 Oct) | **Report only: change nothing until the owner has seen it.** The owner's message had a cut-off line, "Also find…", whose rest is missing: ask. |
+| Q2 | **"Does it look AI-made?" polish audit, and fix what is found.** Asked as a website check (preview domain, page titles, social previews, 404 page, sitemap, script bundle size…). **This repo has no website**: the only web page is the local API viewer `docs/api/swagger-ui/index.html`, never deployed. So it is adapted to the native app: empty, loading and error states; accessibility labels; leftover debug output; files that shouldn't ship; window sizes; consistency; and **controls that look like they work but don't** (the house recurring defect). Owner also wants it as a standing rule for this repo **and** every project, checked regularly and automatically. | Queued after Q1 | Visual checks need a Mac with the app running: NOT RUN in a cloud session. |
+| Q3 | **Audit the instructions line by line against Anthropic's live guidance** (prompting best-practices page + the page for the model in use). One verdict per line: DELETE / KEEP / REWRITE. Every DELETE quotes Anthropic's own sentence; no quote = KEEP. Flag verify-twice rules, "only flag big issues", "don't overthink", role padding and stale examples. **Never touch a truth rule.** List the five missing instructions with paste-ready wording. Honest counts; unchecked items marked NOT RUN. | Bundled with Q1 | **Report only.** The owner said "my instructions are below" but none followed; the repo and device files are used instead. |
 
 ### ▶ Newest position — 25 Sept 14:55 (read before anything else in this block)
 

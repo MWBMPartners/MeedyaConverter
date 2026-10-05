@@ -114,6 +114,11 @@
   `@AppStorage` + `.onChange`, as `DiscIdentifyView` already did. #507 filed for a
   MINOR: `.incomplete` MeedyaDB readiness is collapsed into a Bool, so a
   half-configured setup reports "wasn't requested" when it was.
+- **QUEUE JUMP, 5 Oct (owner):** three tasks run before everything else — Q1 review the
+  instructions against three Anthropic posts (report only), Q2 a "does it look AI-made?"
+  polish audit adapted to the native app (this repo has no website), Q3 a line-by-line
+  DELETE/KEEP/REWRITE audit against Anthropic's live guidance (report only). Q1 and Q3
+  are one research pass. Details in `.claude/HANDOFF.md` → "JUMPED THE QUEUE".
 - **CI CANCELS ITSELF ON EVERY PUSH (W16).** `build.yml` has `cancel-in-progress: true`
   grouped by branch, so a follow-up push — even docs-only — kills the run in flight.
   On 2026-09-21 that cancelled runs 353, 355 and 358 (355's tests never finished).
