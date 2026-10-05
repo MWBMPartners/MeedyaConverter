@@ -465,7 +465,7 @@ final class MatroskaTrackListTests: XCTestCase {
         XCTAssertEqual(audio.map(\.language), tags, "the full tags win")
         XCTAssertEqual(audio.map(\.languageAsStored), ["", "", "", "", ""], "ffmpeg copies nothing")
 
-        let because = "because copying the source's old field (which says only “und”, not known) would not keep it."
+        let because = "because copying the source's old field (which ffmpeg reads as holding no language) would not keep it."
         func convert(_ name: String, _ profile: EncodingProfile) throws -> (URL, [String]) {
             let output = folder.appendingPathComponent(name)
             var profile = profile

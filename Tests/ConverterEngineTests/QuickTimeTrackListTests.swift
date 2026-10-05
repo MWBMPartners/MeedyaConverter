@@ -203,9 +203,12 @@ final class QuickTimeTrackListTests: XCTestCase {
             (57, "mon", "mn-Mong"), (83, "may", "ms"), (84, "may", "ms-Arab"), (138, "jav", "jv"),
             // A label that is not ffmpeg's for that number: not matched with
             // certainty, so nothing is read.
-            (33, "eng", nil), (19, "zho", nil),
-            // Numbers ffmpeg has no label for are not read.
-            (34, "", nil), (95, "", nil), (151, "", nil)
+            (33, "eng", nil), (19, "zho", nil), (34, "dut", nil),
+            // Numbers ffmpeg has NO label for (ffprobe gives no text) are
+            // still read as Apple's players read them (the stand-in review of
+            // round 5: they were not read at all); 95–127 Apple reads as none.
+            (34, "", "nl"), (58, "", "mn"), (140, "", "gl"), (146, "", "ga-Latg"), (150, "", "az"),
+            (151, "", "non"), (95, "", nil), (127, "", nil)
         ]
         for (number, label, expected) in cases {
             XCTAssertEqual(TrackLanguage.quickTimeLanguage(number: number, label: label), expected, "\(number) “\(label)”")
@@ -231,8 +234,9 @@ final class QuickTimeTrackListTests: XCTestCase {
     }
 
     /// The probe reads each language as Apple's players do: a Macintosh
-    /// number by the table, a full tag over the old field, packed letters as
-    /// they are. ffprobe's text stays as what ffmpeg copies.
+    /// number by the table (also one ffmpeg has no label for), a full tag
+    /// over the old field, packed letters as they are. ffprobe's text stays
+    /// as what ffmpeg copies — empty where ffprobe gave none.
     func test_theProbeReadsLanguagesAsApplesPlayersDo() throws {
         let bytes = ftyp + box("moov",
             trak(hdlr("soun") + mdhd(19))                            // chi: Traditional
@@ -240,13 +244,16 @@ final class QuickTimeTrackListTests: XCTestCase {
             + trak(hdlr("soun") + mdhd(5))                           // sve: Swedish
             + trak(hdlr("soun") + mdhd(packed("sve")))               // packed sve: Serili
             + trak(hdlr("soun") + mdhd(packed("zho")) + elng("zh-Hant")) // Apple's own writer
-            + trak(hdlr("soun") + mdhd(0x7FFF) + elng("en-GB")))     // no number, a full tag
+            + trak(hdlr("soun") + mdhd(0x7FFF) + elng("en-GB"))      // no number, a full tag
+            + trak(hdlr("soun") + mdhd(34))                          // no label: Dutch
+            + trak(hdlr("soun") + mdhd(100)))                        // no label, no language
         let url = try scratch(bytes)
         let probed = [stream(0, .audio, language: "chi"), stream(1, .audio, language: "chi"), stream(2, .audio, language: "sve"),
-                      stream(3, .audio, language: "sve"), stream(4, .audio, language: "zho"), stream(5, .audio)]
+                      stream(3, .audio, language: "sve"), stream(4, .audio, language: "zho"), stream(5, .audio),
+                      stream(6, .audio), stream(7, .audio)]
         let streams = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: url, formatName: "mov,mp4,m4a,3gp,3g2,mj2")
-        XCTAssertEqual(streams.map(\.language), ["zh-Hant", "zh-Hans", "sv", "sve", "zh-Hant", "en-GB"])
-        XCTAssertEqual(streams.map(\.languageAsStored), ["chi", "chi", "sve", "sve", "zho", ""], "what ffmpeg copies")
+        XCTAssertEqual(streams.map(\.language), ["zh-Hant", "zh-Hans", "sv", "sve", "zh-Hant", "en-GB", "nl", nil])
+        XCTAssertEqual(streams.map(\.languageAsStored), ["chi", "chi", "sve", "sve", "zho", "", "", nil], "what ffmpeg copies")
         // Not a MOV / MP4 file: unchanged.
         XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: url, formatName: "matroska,webm")
             .map(\.language), probed.map(\.language))
@@ -258,7 +265,7 @@ final class QuickTimeTrackListTests: XCTestCase {
                                                                formatName: "mov,mp4,m4a,3gp,3g2,mj2")
         XCTAssertEqual(unmatched.map(\.language), ["zh", "zh"])
         XCTAssertEqual(unmatched.map(\.languageFullTagUnknown), [true, true])
-        XCTAssertEqual(streams.map(\.languageFullTagUnknown), [nil, nil, nil, nil, nil, nil], "read: nothing marked")
+        XCTAssertEqual(streams.map(\.languageFullTagUnknown), [Bool?](repeating: nil, count: 8), "read: nothing marked")
     }
 
     /// A track list that cannot be read at all — here an `elng` box larger
@@ -380,7 +387,8 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(try run(ffmpeg, arguments + ["-c:a", "aac", "-f", "mov", output.path]).status, 0, "making numbers.mov")
         try setLanguageNumbers(of: output, to: table.map(\.number))
 
-        XCTAssertEqual(try audioLanguages(ffprobe, output), table.map { Optional($0.label) }, "ffprobe gives ffmpeg's labels")
+        XCTAssertEqual(try audioLanguages(ffprobe, output), table.map { $0.label.isEmpty ? nil : $0.label },
+                       "ffprobe gives ffmpeg's labels, and nothing for the 15 numbers it has none for")
         guard let apple = try await MediaTools.appleAudioLanguages(of: output) else {
             try MediaTools.missing("AVFoundation is not available here")
         }
@@ -435,14 +443,7 @@ final class QuickTimeTrackListTests: XCTestCase {
         }
 
         func convert(_ input: URL, _ name: String, _ container: ContainerFormat) async throws -> (URL, [String]) {
-            let output = folder.appendingPathComponent(name)
-            var profile = container == .mkv ? EncodingProfile.remuxToMKV : EncodingProfile.remuxToMP4
-            profile.containerFormat = container
-            profile.orderTracksCanonically = false
-            var config = EncodingJobConfig(inputURL: input, outputURL: output, profile: profile)
-            config.sourceStreams = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: input).streams
-            XCTAssertEqual(try run(ffmpeg, ["-v", "error"] + config.buildArguments()).status, 0, "encoding \(name)")
-            return (output, config.trackWritingNotes())
+            try await remux(input, to: folder.appendingPathComponent(name), container, ffmpeg: ffmpeg, ffprobe: ffprobe)
         }
 
         // The probe reads them as Apple does.
@@ -485,6 +486,84 @@ final class QuickTimeTrackListTests: XCTestCase {
                            + "(“zh-Hant”), and “zh-Hans” is not that, so no language is stored.")
         let (simplifiedMKV, _) = try await convert(simplified, "simplified-out.mkv", .mkv)
         XCTAssertEqual(try audioLanguages(ffprobe, simplifiedMKV).first, "zh-Hans")
+    }
+
+    /// Remuxes `input` to `output` (`container`) with MeedyaConverter's own
+    /// arguments, in the source's track order: the output, and the job's
+    /// notes.
+    private func remux(_ input: URL, to output: URL, _ container: ContainerFormat, ffmpeg: String,
+                       ffprobe: String) async throws -> (URL, [String]) {
+        var profile = container == .mkv ? EncodingProfile.remuxToMKV : EncodingProfile.remuxToMP4
+        profile.containerFormat = container
+        profile.orderTracksCanonically = false
+        var config = EncodingJobConfig(inputURL: input, outputURL: output, profile: profile)
+        config.sourceStreams = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: input).streams
+        XCTAssertEqual(try run(ffmpeg, ["-v", "error"] + config.buildArguments()).status, 0,
+                       "encoding \(output.lastPathComponent)")
+        return (output, config.trackWritingNotes())
+    }
+
+    /// The stand-in review of round 5: Apple's players read fifteen numbers
+    /// ffmpeg has NO label for (ffprobe gives no language) — here 34 Dutch,
+    /// 58 Mongolian, 140 Galician, 146 Irish in the old Gaelic script and
+    /// 150 Azerbaijani — and every output of such a MOV had no language and
+    /// no note. Now they are read as Apple reads them, so MP4 and Matroska
+    /// keep each language, MOV keeps Dutch (as `dut`), and MOV's notes say
+    /// why it cannot store the others. Read back with ffprobe and
+    /// AVFoundation.
+    func test_numbersFFmpegHasNoLabelForKeepTheirLanguage() async throws {
+        guard let ffmpeg = MediaTools.find("ffmpeg"), let ffprobe = MediaTools.find("ffprobe") else {
+            try MediaTools.missing("ffmpeg/ffprobe not installed — unlabelled QuickTime number check")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meedya-qtgap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("gaps.mov")
+        var arguments = ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.4"]
+        for _ in 0..<5 { arguments += ["-map", "0:a"] }
+        XCTAssertEqual(try run(ffmpeg, arguments + ["-c:a", "aac", "-f", "mov", source.path]).status, 0, "making gaps.mov")
+        try setLanguageNumbers(of: source, to: [34, 58, 140, 146, 150])
+        XCTAssertEqual(try audioLanguages(ffprobe, source), [nil, nil, nil, nil, nil], "ffprobe gives no language for any")
+        if let apple = try await MediaTools.appleAudioLanguages(of: source) {
+            XCTAssertEqual(apple.map(\.description), ["nld/nil", "mon/mn", "glg/nil", "gle/ga-Latg", "aze/az"],
+                           "the source, as Apple's players read it")
+        }
+        let probed = try await FFmpegProbe(ffprobePath: ffprobe).analyze(url: source).streams.filter { $0.streamType == .audio }
+        XCTAssertEqual(probed.map(\.language), ["nl", "mn", "gl", "ga-Latg", "az"])
+
+        // MOV → MOV: Dutch as `dut` (number 4, which Apple reads as Dutch);
+        // the others cannot be stored, each with the reason.
+        let (mov, movNotes) = try await remux(source, to: folder.appendingPathComponent("out.mov"), .mov,
+                                              ffmpeg: ffmpeg, ffprobe: ffprobe)
+        XCTAssertEqual(try audioLanguages(ffprobe, mov), ["dut", nil, nil, nil, nil], "out.mov: ffprobe")
+        if let read = try await MediaTools.appleAudioLanguages(of: mov) {
+            XCTAssertEqual(read.map(\.code), ["nld", "und", "und", "und", "und"], "out.mov: AVFoundation")
+        }
+        let onlyTheList = "this file type (QuickTime) can only store the languages on its old list"
+        XCTAssertEqual(movNotes, [
+            "Stream #1: \(onlyTheList); that list has Mongolian only as “mon”, which Apple's players read as Mongolian "
+                + "in Mongolian script (“mn-Mong”), and “mn” does not say that, so no language is stored.",
+            "Stream #2: \(onlyTheList), and “gl” is not on it, so no language is stored.",
+            "Stream #3: \(onlyTheList); that list has Irish only as “iri”, which Apple's players read as Irish but "
+                + "other programs read as Rigwe, the language that code is registered for, so no language is stored.",
+            "Stream #4: \(onlyTheList); that list has Azerbaijani only as “aze”, which Apple's players read as "
+                + "Azerbaijani in Cyrillic script (“az-Cyrl”), and “az” does not say that, so no language is stored."
+        ])
+
+        // MOV → MP4: every language, the script of `ga-Latg` noted as not saved.
+        let (mp4, mp4Notes) = try await remux(source, to: folder.appendingPathComponent("out.mp4"), .mp4,
+                                              ffmpeg: ffmpeg, ffprobe: ffprobe)
+        XCTAssertEqual(try audioLanguages(ffprobe, mp4), ["nld", "mon", "glg", "gle", "aze"], "out.mp4: ffprobe")
+        if let read = try await MediaTools.appleAudioLanguages(of: mp4) {
+            XCTAssertEqual(read.map(\.code), ["nld", "mon", "glg", "gle", "aze"], "out.mp4: AVFoundation")
+        }
+        XCTAssertEqual(mp4Notes, ["Stream #3: this file type can only store the language, so “Latg” in “ga-Latg” is not "
+                                  + "saved (written as “gle”)."])
+
+        // MOV → Matroska: every language; `ga-Latg` as text.
+        let (mkv, _) = try await remux(source, to: folder.appendingPathComponent("out.mkv"), .mkv,
+                                       ffmpeg: ffmpeg, ffprobe: ffprobe)
+        XCTAssertEqual(try audioLanguages(ffprobe, mkv), ["dut", "mon", "glg", "ga-Latg", "aze"], "out.mkv: ffprobe")
     }
 
     /// MOV files written by APPLE'S OWN tools (`avconvert`, which ships with

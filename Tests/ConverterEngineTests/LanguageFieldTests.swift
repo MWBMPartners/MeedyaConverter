@@ -441,7 +441,7 @@ final class LanguageFieldTests: XCTestCase {
     /// The tag is written as text wherever the file type keeps it; MOV still
     /// cannot, and clears; Ogg still writes the whole tag.
     func test_aSourceFieldThatHoldsNothingIsNotLeftToBeCopied() {
-        let because = "because copying the source's old field (which says only “und”, not known) would not keep it."
+        let because = "because copying the source's old field (which ffmpeg reads as holding no language) would not keep it."
         for tag in ["abq", "pnb"] {
             for container: ContainerFormat in [.mkv, .mp4, .mpegTS] {
                 XCTAssertEqual(write(tag, stored: "", to: container), .init(

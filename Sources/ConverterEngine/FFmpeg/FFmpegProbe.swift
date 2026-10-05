@@ -1186,7 +1186,8 @@ extension FFmpegProbe {
     ///   stores `zh-Hant` there beside a plain `zho`;
     /// * otherwise an old Macintosh language NUMBER is read as Apple's
     ///   players read it (`TrackLanguage.quickTimeLanguage(number:label:)`):
-    ///   19 `chi` is `zh-Hant`, 33 `chi` is `zh-Hans`, 5 `sve` is `sv`;
+    ///   19 `chi` is `zh-Hant`, 33 `chi` is `zh-Hans`, 5 `sve` is `sv` — and
+    ///   34, which ffprobe gives no text for, is `nl`;
     /// * three packed letters (an MP4's `chi`, an Apple-written MOV's `aze`)
     ///   are left as ffprobe read them — they mean exactly what they say.
     ///
@@ -1219,10 +1220,18 @@ extension FFmpegProbe {
                 if updated.languageAsStored == nil { updated.languageAsStored = "" }
                 return updated
             }
-            guard track.hasMacintoshLanguageNumber, let number = track.languageCode, let label = stream.languageAsStored,
-                  let meaning = TrackLanguage.quickTimeLanguage(number: number, label: label) else { return stream }
+            // ffprobe's text must be ffmpeg's label for the number — `""`
+            // where it has none (34, 58, 139–151, which Apple's players
+            // still read as a language): the check that the track and the
+            // stream really are the same.
+            guard track.hasMacintoshLanguageNumber, let number = track.languageCode,
+                  let meaning = TrackLanguage.quickTimeLanguage(number: number, label: stream.languageAsStored ?? "")
+            else { return stream }
             updated.language = meaning
             updated.unrecognisedLanguage = nil
+            // A number ffmpeg has no label for: ffprobe gave no text, so
+            // ffmpeg copies NOTHING (see `MediaStream.languageAsStored`).
+            if updated.languageAsStored == nil { updated.languageAsStored = "" }
             return updated
         }
     }

@@ -317,9 +317,18 @@ extension TrackLanguage {
     //     remux, where the output says exactly what the source said.
     //   * Every other number with a label reads the same in both: `ger` is
     //     German, `hr ` Croatian, `nor` Norwegian.
-    //   * Numbers with no label in ffmpeg's list (34, 58, 95–127, 139–151)
-    //     come out of ffprobe as no language at all, and ffmpeg cannot write
-    //     them. They are not read here.
+    //   * Fifteen numbers have NO label in ffmpeg's list, yet Apple's players
+    //     read each as a language: 34 Dutch, 58 Mongolian (`mn`), 139–151
+    //     Sundanese, Galician, Afrikaans, Breton, Inuktitut, Scottish Gaelic,
+    //     Manx, Irish in the old Gaelic script (`ga-Latg`), Tongan, Ancient
+    //     Greek, Kalaallisut, Azerbaijani (`az`) and Old Norse. ffprobe gives
+    //     no language for them, so ffmpeg copies none; they are in the table
+    //     with an EMPTY label, and read as Apple reads them. Until the
+    //     stand-in review of round 5 they were not read — "ffmpeg cannot
+    //     write them" was the reason given, but Matroska and MP4 store
+    //     their languages (`dut`/`nld`, `glg`, `mon` …) and MOV can store
+    //     Dutch as `dut` — so they left every output with no language and
+    //     no note. The rest, 95–127, Apple reads as no language (`und`).
     //
     // The same table READS a MOV or MP4 source: given the number a track
     // stores (`QuickTimeTrackList`), its language is what Apple's players
@@ -332,11 +341,12 @@ extension TrackLanguage {
     // A language the list has only in one of these ways stores no language,
     // and the note says why (`quickTimeGapWords`).
 
-    /// One number of the QuickTime language list that ffmpeg gives a label
-    /// (see above): the number a file stores, ffmpeg 9.0.1's label for it
-    /// (`mov_mdhd_language_map` in its `isom.c` — what ffprobe reports), and
-    /// what Apple's AVFoundation reads it as: `languageCode` (ISO 639-2/T)
-    /// and, where it gives one, `extendedLanguageTag` (BCP 47).
+    /// One number of the QuickTime language list that Apple's players read
+    /// as a language (see above): the number a file stores, ffmpeg 9.0.1's
+    /// label for it (`mov_mdhd_language_map` in its `isom.c` — what ffprobe
+    /// reports; EMPTY for the fifteen it has none for), and what Apple's
+    /// AVFoundation reads it as: `languageCode` (ISO 639-2/T) and, where it
+    /// gives one, `extendedLanguageTag` (BCP 47).
     struct QuickTimeLanguageNumber: Sendable {
         let number: UInt16
         let label: String
@@ -351,13 +361,14 @@ extension TrackLanguage {
         }
     }
 
-    /// Every number ffmpeg 9.0.1 gives a label, with Apple's reading of it —
-    /// measured, not assumed (see above), and re-checked against
-    /// AVFoundation by `ContainerLanguageToolTests
+    /// Every number Apple's players read as a language, with ffmpeg 9.0.1's
+    /// label and Apple's reading — the 104 ffmpeg labels and the 15 it does
+    /// not (empty label) — measured, not assumed (see above), and re-checked
+    /// against AVFoundation by `QuickTimeTrackListTests
     /// .test_quickTimeNumbersAreWhatApplesPlayersRead`. Four labels end in a
     /// space (`hr `, `fo `, `sr `, `pa `).
     static let quickTimeNumbers: [QuickTimeLanguageNumber] = [
-.init(0, "eng", "eng", nil), .init(1, "fra", "fra", nil), .init(2, "ger", "deu", nil),
+        .init(0, "eng", "eng", nil), .init(1, "fra", "fra", nil), .init(2, "ger", "deu", nil),
         .init(3, "ita", "ita", nil), .init(4, "dut", "nld", nil), .init(5, "sve", "swe", nil),
         .init(6, "spa", "spa", nil), .init(7, "dan", "dan", nil), .init(8, "por", "por", nil),
         .init(9, "nor", "nor", nil), .init(10, "heb", "heb", nil), .init(11, "jpn", "jpn", nil),
@@ -368,7 +379,8 @@ extension TrackLanguage {
         .init(24, "lit", "lit", nil), .init(25, "pol", "pol", nil), .init(26, "hun", "hun", nil),
         .init(27, "est", "est", nil), .init(28, "lav", "lav", nil), .init(29, "smi", "smi", nil),
         .init(30, "fo ", "fao", nil), .init(31, "per", "fas", nil), .init(32, "rus", "rus", nil),
-        .init(33, "chi", "zho", "zh-Hans"), .init(35, "iri", "gle", nil), .init(36, "alb", "sqi", nil),
+        .init(33, "chi", "zho", "zh-Hans"), .init(34, "", "nld", nil), .init(35, "iri", "gle", nil),
+        .init(36, "alb", "sqi", nil),
         .init(37, "ron", "ron", nil), .init(38, "ces", "ces", nil), .init(39, "slk", "slk", nil),
         .init(40, "slv", "slv", nil), .init(41, "yid", "yid", nil), .init(42, "sr ", "srp", nil),
         .init(43, "mac", "mkd", nil), .init(44, "bul", "bul", nil), .init(45, "ukr", "ukr", nil),
@@ -376,7 +388,7 @@ extension TrackLanguage {
         .init(49, "aze", "aze", "az-Cyrl"), .init(50, "aze", "aze", "az-Arab"), .init(51, "arm", "hye", nil),
         .init(52, "geo", "kat", nil), .init(53, "mol", "mol", nil), .init(54, "kir", "kir", nil),
         .init(55, "tgk", "tgk", nil), .init(56, "tuk", "tuk", nil), .init(57, "mon", "mon", "mn-Mong"),
-        .init(59, "pus", "pus", nil), .init(60, "kur", "kur", nil), .init(61, "kas", "kas", nil),
+        .init(58, "", "mon", "mn"), .init(59, "pus", "pus", nil), .init(60, "kur", "kur", nil), .init(61, "kas", "kas", nil),
         .init(62, "snd", "snd", nil), .init(63, "tib", "bod", nil), .init(64, "nep", "nep", nil),
         .init(65, "san", "san", nil), .init(66, "mar", "mar", nil), .init(67, "ben", "ben", nil),
         .init(68, "asm", "asm", nil), .init(69, "guj", "guj", nil), .init(70, "pa ", "pan", nil),
@@ -391,17 +403,24 @@ extension TrackLanguage {
         .init(128, "wel", "cym", nil), .init(129, "baq", "eus", nil), .init(130, "cat", "cat", nil),
         .init(131, "lat", "lat", nil), .init(132, "que", "que", nil), .init(133, "grn", "grn", nil),
         .init(134, "aym", "aym", nil), .init(135, "tat", "tat", nil), .init(136, "uig", "uig", nil),
-        .init(137, "dzo", "dzo", nil), .init(138, "jav", "jav", nil)
+        .init(137, "dzo", "dzo", nil), .init(138, "jav", "jav", nil), .init(139, "", "sun", nil),
+        .init(140, "", "glg", nil), .init(141, "", "afr", nil), .init(142, "", "bre", nil),
+        .init(143, "", "iku", nil), .init(144, "", "gla", nil), .init(145, "", "glv", nil),
+        .init(146, "", "gle", "ga-Latg"), .init(147, "", "ton", nil), .init(148, "", "grc", nil),
+        .init(149, "", "kal", nil), .init(150, "", "aze", "az"), .init(151, "", "non", nil)
     ]
 
     /// The strings ffmpeg's MOV writer accepts as a language, in the order of
     /// its QuickTime list: each label once, in number order (`chi` is 19,
     /// not 33). Several are not ISO 639-2 codes of the language they stand
     /// for (`sve`, `iri`, `chi`'s Traditional script), and four end in a
-    /// space.
+    /// space. The numbers with no label are not here: ffmpeg cannot write
+    /// them.
     static let quickTimeListEntries: [String] = {
         var labels: [String] = []
-        for entry in quickTimeNumbers where !labels.contains(entry.label) { labels.append(entry.label) }
+        for entry in quickTimeNumbers where !entry.label.isEmpty && !labels.contains(entry.label) {
+            labels.append(entry.label)
+        }
         return labels
     }()
 
@@ -460,8 +479,9 @@ extension TrackLanguage {
 
     /// The language a MOV or MP4 track with QuickTime language NUMBER
     /// `number` has, as Apple's players read it (`zh-Hant` for 19, `zh-Hans`
-    /// for 33, `sv` for 5) — or `nil` when the number has no label, `label`
-    /// (ffprobe's text for the track) is not ffmpeg's label for that number
+    /// for 33, `sv` for 5, `nl` for 34) — or `nil` when Apple's players read
+    /// the number as no language, `label` (ffprobe's text for the track, or
+    /// `""` where ffprobe gave none) is not ffmpeg's label for that number
     /// (then the track and the number were not matched with certainty, and
     /// nothing is changed), or without the policy's data. For the probe
     /// (`FFmpegProbe.applyingQuickTimeLanguages`).
@@ -476,7 +496,7 @@ extension TrackLanguage {
     /// on the list, or without the policy's data. What a value written into
     /// a MOV will be read back as (`meaningOnceStored`).
     static func quickTimeMeaning(ofEntry entry: String) -> String? {
-        guard let first = quickTimeNumbers.first(where: { $0.label == entry }) else { return nil }
+        guard !entry.isEmpty, let first = quickTimeNumbers.first(where: { $0.label == entry }) else { return nil }
         return appleMeaning(of: first)
     }
 
@@ -858,15 +878,18 @@ extension TrackLanguage {
         let copied = sourceStoredText ?? source
         // ffmpeg copies NOTHING (see `MediaStream.languageAsStored`): a
         // Matroska track whose full tag is `abq`, `pnb` or `und-Latn` while
-        // its old field says only `und`. Then step 2 below ("leave it for
-        // ffmpeg to copy") can never keep the language, and step 3 writes the
-        // tag as text. The fourth independent review found `abq` and `pnb`
-        // gone from Matroska, MP4 and MPEG-TS outputs under the note "kept
-        // as the source had it", because the empty field was taken to say
-        // `abq`.
+        // its old field says only `und`, or a MOV track whose language
+        // number ffmpeg has no label for (34 Dutch, 140 Galician …). Then
+        // step 2 below ("leave it for ffmpeg to copy") can never keep the
+        // language, and step 3 writes the tag as text. The fourth
+        // independent review found `abq` and `pnb` gone from Matroska, MP4
+        // and MPEG-TS outputs under the note "kept as the source had it",
+        // because the empty field was taken to say `abq`. The words say
+        // what is true of both: ffmpeg reads the old field as holding no
+        // language (they said "says only “und”", untrue for a MOV number).
         let copiesNothing = copied.isEmpty
         let sourceField = copiesNothing
-            ? "the source's old field (which says only “und”, not known)"
+            ? "the source's old field (which ffmpeg reads as holding no language)"
             : "the source's own field (“\(copied)”)"
         // A Matroska, MOV or MP4 source whose fuller language could not be
         // read (see `MediaStream.languageFullTagUnknown`): said on its own,
