@@ -305,6 +305,28 @@ public enum AttachedPictures {
         }
     }
 
+    /// ONE line for every attachment left out of a file type that is not
+    /// Matroska (`LeftOutReason.attachmentNotHeld`), or `nil` when there are
+    /// none: a single attachment as `leftOutNote` says it; several listed in
+    /// one line. Until the stand-in review of round 5 each had its own line,
+    /// so a release with 30 fonts gave 30 near-identical lines in the log.
+    static func attachmentsLeftOutNote(
+        _ attachments: [(streamIndex: Int, fileName: String?, mimeType: String?)],
+        container: ContainerFormat
+    ) -> String? {
+        guard let first = attachments.first else { return nil }
+        guard attachments.count > 1 else {
+            return leftOutNote(streamIndex: first.streamIndex, reason: .attachmentNotHeld(
+                container: container, fileName: first.fileName, mimeType: first.mimeType
+            ))
+        }
+        let list = attachments.map {
+            "stream #\($0.streamIndex), " + attachmentWords(fileName: $0.fileName, mimeType: $0.mimeType).dropLast()
+        }
+        return "Only a Matroska file can hold attachments, so these \(attachments.count) are left out of this "
+            + "\(container.displayName) file: " + list.joined(separator: "; ") + "."
+    }
+
     /// What an attachment stream is, in words for a note, ending in a full
     /// stop: "a font attached to the file (“f.ttf”, font/ttf)." or "a picture
     /// attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a

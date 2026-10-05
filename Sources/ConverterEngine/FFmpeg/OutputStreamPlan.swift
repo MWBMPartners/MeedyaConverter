@@ -556,8 +556,21 @@ extension FFmpegArgumentBuilder {
         // `AttachedPictures`). The round-2 build said a Matroska picture
         // with no copy became "a one-frame picture track" even when the
         // output had no video and ffmpeg dropped it.
+        // Other attachments (fonts …) a file type cannot hold: one line for
+        // all of them (`AttachedPictures.attachmentsLeftOutNote`).
+        var attachments: [(streamIndex: Int, fileName: String?, mimeType: String?)] = []
+        var attachmentContainer: ContainerFormat?
         for picture in pictures.leftOut {
-            notes.append(AttachedPictures.leftOutNote(streamIndex: picture.sourceStreamIndex, reason: picture.reason))
+            if case .attachmentNotHeld(let held, let fileName, let mimeType) = picture.reason {
+                attachments.append((picture.sourceStreamIndex, fileName, mimeType))
+                attachmentContainer = held
+            } else {
+                notes.append(AttachedPictures.leftOutNote(streamIndex: picture.sourceStreamIndex, reason: picture.reason))
+            }
+        }
+        if let attachmentContainer,
+           let note = AttachedPictures.attachmentsLeftOutNote(attachments, container: attachmentContainer) {
+            notes.append(note)
         }
         return notes
     }

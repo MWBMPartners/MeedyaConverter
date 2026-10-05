@@ -374,14 +374,12 @@ final class TrackPreservationToolTests: XCTestCase {
             let (output, config) = try await convert(film, to: row.name, profile: profile, mapAll: row.mapAll)
             XCTAssertEqual(try streams(output).map(\.type), ["video", "audio"], "\(row.name): nothing else is written")
             XCTAssertEqual(config.trackWritingNotes(), [
-                "Stream #2 is a font attached to the file (“f.ttf”, font/ttf).",
-                "Stream #3 is a picture attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a plain "
-                    + "attachment, not as cover art.",
-                "Stream #4 is a picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain "
-                    + "attachment, not as cover art."
-            ].map {
-                $0 + " Only a Matroska file can hold attachments, so it is left out of this \(row.container.displayName) file."
-            }, row.name)
+                "Only a Matroska file can hold attachments, so these 3 are left out of this \(row.container.displayName) file: "
+                + "stream #2, a font attached to the file (“f.ttf”, font/ttf); stream #3, a picture attached to the "
+                + "file (“c.bmp”, image/bmp) that ffmpeg reads as a plain attachment, not as cover art; stream #4, a "
+                + "picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain attachment, not "
+                + "as cover art."
+            ], row.name)
         }
 
         // Matroska with "map all streams" still copies all three.

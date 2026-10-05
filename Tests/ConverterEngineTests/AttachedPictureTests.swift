@@ -339,13 +339,15 @@ final class AttachedPictureTests: XCTestCase {
     func test_attachmentsAreLeftOutOfEveryOtherFileTypeWithANote() {
         for output in ["/tmp/out.mp4", "/tmp/out.m4v", "/tmp/out.mov", "/tmp/out.webm", "/tmp/out.ts", "/tmp/out.avi"] {
             let container = ContainerFormat.from(fileExtension: (output as NSString).pathExtension)?.displayName ?? "?"
+            // ONE line for all of them (the stand-in review of round 5: a
+            // line each made 30 near-identical lines for 30 fonts).
             let expected = [
-                "Stream #2 is a font attached to the file (“f.ttf”, font/ttf).",
-                "Stream #3 is a picture attached to the file (“c.bmp”, image/bmp) that ffmpeg reads as a plain "
-                    + "attachment, not as cover art.",
-                "Stream #4 is a picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain "
-                    + "attachment, not as cover art."
-            ].map { $0 + " Only a Matroska file can hold attachments, so it is left out of this \(container) file." }
+                "Only a Matroska file can hold attachments, so these 3 are left out of this \(container) file: "
+                + "stream #2, a font attached to the file (“f.ttf”, font/ttf); stream #3, a picture attached to the "
+                + "file (“c.bmp”, image/bmp) that ffmpeg reads as a plain attachment, not as cover art; stream #4, a "
+                + "picture attached to the file (“f.webp”, image/webp) that ffmpeg reads as a plain attachment, not "
+                + "as cover art."
+            ]
             for mapAll in [true, false] {
                 var builder = remux(filmWithAttachments, to: output)
                 builder.mapAllStreams = mapAll
@@ -373,6 +375,14 @@ final class AttachedPictureTests: XCTestCase {
         XCTAssertEqual(AttachedPictures.holdsAttachments(in: .mkv), true)
         XCTAssertEqual(AttachedPictures.holdsAttachments(in: .webm), false)
         XCTAssertNil(AttachedPictures.holdsAttachments(in: nil))
+    }
+
+    /// A single attachment left out keeps the one-sentence form.
+    func test_aSingleAttachmentLeftOutIsOneSentence() {
+        let note = AttachedPictures.attachmentsLeftOutNote([(2, "f.ttf", "font/ttf")], container: .mp4)
+        XCTAssertEqual(note, "Stream #2 is a font attached to the file (“f.ttf”, font/ttf). Only a Matroska file can "
+                           + "hold attachments, so it is left out of this \(ContainerFormat.mp4.displayName) file.")
+        XCTAssertNil(AttachedPictures.attachmentsLeftOutNote([], container: .mp4))
     }
 
     /// The words for an attachment with no name or type, or another kind of
