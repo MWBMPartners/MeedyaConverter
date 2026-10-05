@@ -1258,6 +1258,7 @@ public struct FFmpegArgumentBuilder: Sendable {
             sourceUnrecognised: source?.unrecognisedLanguage,
             sourceStoredText: source?.languageAsStored,
             fullTagUnknown: source?.languageFullTagUnknown == true,
+            sourceReadFromQuickTimeNumber: source?.languageFromQuickTimeNumber == true,
             container: container,
             isReplacement: entry.isReplacement,
             keepsSourceMetadata: writesSourceDerivedStreamMetadata

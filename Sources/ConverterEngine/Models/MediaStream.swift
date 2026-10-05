@@ -330,6 +330,18 @@ public struct MediaStream: Identifiable, Codable, Sendable {
     /// read either (since the stand-in review of round 5).
     public var languageFullTagUnknown: Bool?
 
+    /// `true` when the probe read this track's language from its own old
+    /// Macintosh language NUMBER in a QuickTime movie — a MOV
+    /// (`QuickTimeTrackList.isQuickTimeFile`) — as Apple's players read it
+    /// (5 `sve` is Swedish). A MOV output keeps such a track's `sve` or
+    /// `iri` (Serili and Rigwe to every other program) only then, because
+    /// the output then says exactly what the source said
+    /// (`TrackLanguage.languageWrite`). `nil` otherwise, and for streams
+    /// described before this existed. Added after the stand-in review of
+    /// round 5 found a Matroska track's `sve` kept in a MOV as "the source's
+    /// own QuickTime code".
+    public var languageFromQuickTimeNumber: Bool?
+
     /// User-facing title/label for this stream (e.g., "Director's Commentary").
     public var title: String?
 
@@ -444,6 +456,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         unrecognisedLanguage: String? = nil,
         languageAsStored: String? = nil,
         languageFullTagUnknown: Bool? = nil,
+        languageFromQuickTimeNumber: Bool? = nil,
         title: String? = nil,
         isDefault: Bool = false,
         isForced: Bool = false,
@@ -480,6 +493,7 @@ public struct MediaStream: Identifiable, Codable, Sendable {
         self.unrecognisedLanguage = unrecognisedLanguage
         self.languageAsStored = languageAsStored
         self.languageFullTagUnknown = languageFullTagUnknown
+        self.languageFromQuickTimeNumber = languageFromQuickTimeNumber
         self.title = title
         self.isDefault = isDefault
         self.isForced = isForced

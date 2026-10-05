@@ -834,6 +834,10 @@ extension TrackLanguage {
     ///   - fullTagUnknown: The source is a Matroska, MOV or MP4 file that
     ///     may record a fuller language than its old field says, which could
     ///     not be read (`MediaStream.languageFullTagUnknown`) — said in a note.
+    ///   - sourceReadFromQuickTimeNumber: The language was read from the
+    ///     source's own Macintosh language NUMBER in a QuickTime movie (a MOV
+    ///     — `MediaStream.languageFromQuickTimeNumber`). Only then is a `sve`
+    ///     or `iri` the source holds kept in a MOV output.
     ///   - container: The output container.
     ///   - isReplacement: The output stream comes from a separate file
     ///     (a tone-mapped subtitle), so ffmpeg has nothing to copy from:
@@ -847,6 +851,7 @@ extension TrackLanguage {
         sourceUnrecognised: String?,
         sourceStoredText: String? = nil,
         fullTagUnknown: Bool = false,
+        sourceReadFromQuickTimeNumber: Bool = false,
         container: ContainerFormat?,
         isReplacement: Bool,
         keepsSourceMetadata: Bool
@@ -995,13 +1000,19 @@ extension TrackLanguage {
             //    it: `chi` copied in for plain `zh` would become Traditional
             //    Chinese there.
             //    Never when ffmpeg copies nothing (`copiesNothing`).
-            if !copiesNothing, storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical {
-                // MOV, and the source's own `sve` or `iri` (a MOV's Swedish
-                // or Irish): kept, because the output then says exactly what
-                // the source said — but never written for Swedish or Irish
-                // from anywhere else, so the note says why this is different.
-                if storage == .quickTimeList,
-                   let other = quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == copied }) {
+            //    MOV, and `sve` or `iri` (Swedish or Irish to Apple's players,
+            //    Serili or Rigwe to everyone else): only a MOV source's OWN
+            //    number (`sourceReadFromQuickTimeNumber`) is kept — the output
+            //    then says exactly what the source said. Until the stand-in
+            //    review of round 5 this went by the copied text alone, so a
+            //    Matroska track whose old field said `sve` and whose full tag
+            //    said `sv` went into a MOV as `sve`, noted as "the source's
+            //    own QuickTime code".
+            let otherLanguage = storage == .quickTimeList
+                ? quickTimeEntriesNamingAnotherLanguage.first(where: { $0.entry == copied }) : nil
+            if !copiesNothing, storage.keeps(copied), meaningOnceStored(copied, in: storage) == canonical,
+               otherLanguage == nil || sourceReadFromQuickTimeNumber {
+                if let other = otherLanguage {
                     return write(
                         isReplacement ? .write(copied) : .copySource,
                         "\(stream): the source's own QuickTime code “\(copied)” is kept as it was. Apple's players read it as "

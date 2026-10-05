@@ -1245,6 +1245,9 @@ extension FFmpegProbe {
             }
             updated.language = reading.language
             updated.unrecognisedLanguage = reading.unrecognised
+            // Only a QuickTime movie's number is a Macintosh language (see
+            // `MediaStream.languageFromQuickTimeNumber`).
+            if list.isQuickTimeFile { updated.languageFromQuickTimeNumber = true }
             // A number ffmpeg has no label for: ffprobe gave no text, so
             // ffmpeg copies NOTHING (see `MediaStream.languageAsStored`).
             if updated.languageAsStored == nil { updated.languageAsStored = "" }

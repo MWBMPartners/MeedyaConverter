@@ -280,6 +280,8 @@ final class QuickTimeTrackListTests: XCTestCase {
         let streams = FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: url, formatName: "mov,mp4,m4a,3gp,3g2,mj2")
         XCTAssertEqual(streams.map(\.language), ["zh-Hant", "zh-Hans", "sv", "sve", "zh-Hant", "en-GB", "nl", nil])
         XCTAssertEqual(streams.map(\.languageAsStored), ["chi", "chi", "sve", "sve", "zho", "", "", nil], "what ffmpeg copies")
+        XCTAssertEqual(streams.map(\.languageFromQuickTimeNumber), [true, true, true, nil, nil, nil, true, nil],
+                       "read from a QuickTime movie's own number")
         // Not a MOV / MP4 file: unchanged.
         XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: url, formatName: "matroska,webm")
             .map(\.language), probed.map(\.language))
@@ -312,6 +314,8 @@ final class QuickTimeTrackListTests: XCTestCase {
         XCTAssertEqual(streams.map(\.language), ["und", "und", "und", "zh-Hant", "und", "und", "sv"])
         XCTAssertEqual(streams.map(\.unrecognisedLanguage), [nil, "``b", "``e", nil, "`ac", "`ab", nil])
         XCTAssertEqual(streams.map(\.languageAsStored), ["eng", "ger", "sve", "chi", "iri", "", "swe"], "what ffmpeg copies")
+        XCTAssertEqual(streams.map(\.languageFromQuickTimeNumber), [Bool?](repeating: nil, count: 7),
+                       "an MP4's numbers are not Macintosh languages")
         // The same numbers in a QuickTime movie: the Macintosh languages.
         let quickTime = ftyp + bytes.dropFirst(fileType("isom", ["isom", "iso2", "mp41"]).count)
         XCTAssertEqual(FFmpegProbe.applyingQuickTimeLanguages(to: probed, fileURL: try scratch(Array(quickTime)),

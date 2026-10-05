@@ -45,13 +45,15 @@ final class LanguageFieldTests: XCTestCase {
         unrecognised: String? = nil,
         stored: String? = nil,
         edited: String? = nil,
+        fromQuickTimeNumber: Bool = false,
         to container: ContainerFormat?,
         replacement: Bool = false,
         keepSource: Bool = true
     ) -> TrackLanguage.LanguageWrite {
         TrackLanguage.languageWrite(
             streamNumber: 2, edited: edited, sourceLanguage: source, sourceUnrecognised: unrecognised,
-            sourceStoredText: stored, container: container, isReplacement: replacement, keepsSourceMetadata: keepSource
+            sourceStoredText: stored, sourceReadFromQuickTimeNumber: fromQuickTimeNumber, container: container,
+            isReplacement: replacement, keepsSourceMetadata: keepSource
         )
     }
 
@@ -313,10 +315,20 @@ final class LanguageFieldTests: XCTestCase {
         // A MOV source's own Swedish (`sve`, number 5, read as `sv`) is kept
         // on a MOV-to-MOV remux — the output says what the source said — and
         // the note says how others read it.
-        XCTAssertEqual(write("sv", stored: "sve", to: .mov), .init(
+        XCTAssertEqual(write("sv", stored: "sve", fromQuickTimeNumber: true, to: .mov), .init(
             action: .copySource,
             note: "Stream #2: the source's own QuickTime code “sve” is kept as it was. Apple's players read it as "
                 + "Swedish, but other programs read it as Serili, the language that code is registered for."
+        ))
+        // …but only a MOV's own number: a Matroska track whose old field says
+        // `sve` and whose full tag says `sv` is Swedish from elsewhere, so it
+        // gets no language and the reason (the stand-in review of round 5:
+        // it was kept as `sve`, "the source's own QuickTime code").
+        XCTAssertEqual(write("sv", stored: "sve", to: .mov), .init(
+            action: .clear,
+            note: "Stream #2: this file type (QuickTime) can only store the languages on its old list; that list has "
+                + "Swedish only as “sve”, which Apple's players read as Swedish but other programs read as Serili, "
+                + "the language that code is registered for, so no language is stored."
         ))
         // …but never copied where it would say Serili: MP4 and Matroska get
         // Swedish's own code.
