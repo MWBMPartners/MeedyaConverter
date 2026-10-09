@@ -441,3 +441,51 @@ Closed captions are a separate preservation requirement from text/image subtitle
 Acceptance fixtures must cover embedded 608, embedded 708 with multiple services and 608 compatibility data, discrete caption carriage, ordinary subtitles alongside captions, delayed caption appearance, track reordering, and unsupported backend cases. Run the caption acceptance matrix for both MP4 and MOV outputs. Verify that excluding ordinary subtitles leaves both caption standards intact, explicitly excluding one leaves the other intact, coexistence preserves both, all services retain commands/timing, no unwanted text track is created, and failure paths disclose unmet preservation requirements.
 
 Technical reference points: [FFmpeg format documentation](https://www.ffmpeg.org/ffmpeg-formats.html) describes 608/708 raw-caption carriage and extraction; [FFmpeg ATSC A/53 parsing API](https://www.ffmpeg.org/doxygen/5.1/atsc__a53_8h.html) identifies encoded caption payload parsing. These are research starting points, not proof that every muxer/backend supports every native MP4 caption path.
+
+## Configurable content-aware duplicate detection and preferred-track selection
+
+Explore duplicate detection during multi-source assembly, with particular attention to audio, subtitles and closed captions. Compare media content independently of descriptive metadata, then separately determine whether omission is safe and which equivalent representation the user prefers. Similar content is not sufficient proof of redundancy.
+
+### User controls and selection contract
+
+Provide explicit modes: disabled/keep all selected tracks; detect and recommend only; and opt-in automatic consolidation of proven, safely interchangeable duplicates. Recommendation mode may assist selection, but must not remove tracks. Make preferred-track policies configurable, with per-job overrides, per-group decisions and protected/keep-both selections. Show the effective mode in the assembly preview and reproducible job plan; persist it without silently changing existing workflows.
+
+Expose independently configurable equivalence thresholds and quality preferences. A user may prefer lossless audio, immersive features, a particular channel layout, compatibility, language/role, or a specific source. Display why a candidate ranks higher, the comparison method and coverage, evidence of equivalence, timing differences, retained metadata and relationships, and the reason each proposed omission is safe. Resolve ties deterministically using the configured source/track priority rather than an undocumented heuristic.
+
+Existing explicit selection/order instructions take precedence unless the user authorizes consolidation for that job. Closed captions retain their stronger preservation rule: keep both CEA-608 and CEA-708 unless explicitly excluded. Enabling general audio/subtitle deduplication does not authorize caption removal or cross-standard collapse. A caption exclusion requires an explicit caption-specific choice identifying the affected track/service/standard; the preview must expose it.
+
+### Comparison pipeline and evidence levels
+
+1. Inspect characteristics to shortlist candidates: media type, duration, codec, channel/sample configuration, language and semantic role. Missing or inconsistent metadata is uncertainty, not grounds for ignoring otherwise plausible candidates. Codec, bitrate and titles alone never prove duplication.
+2. Compare full encoded media payload and required codec configuration while ignoring irrelevant container packaging/descriptive metadata. Account for packetization differences; a naive hash of whole files or packet-boundary serialization is insufficient. Track timestamp/priming/edit information separately.
+3. Where useful, compare complete decoded audio samples, subtitle events or native caption semantics using a documented, reproducible comparison representation. Decoder configuration, sample precision, channel ordering, trims and alignment must be recorded. Lossy normalization, downmixing or resampling can establish similarity but cannot prove original-signal identity. Decode/analyze for comparison without changing the selected output encoding.
+4. Use fingerprints, correlation, aligned multi-window analysis or normalized text as candidate discovery for different encodings, volume changes or offsets. Sampling/fingerprints cannot prove full-track identity. Escalate candidates to complete comparison before claiming equivalence; report unresolved differences, coverage, thresholds and confidence.
+5. Check semantic interchangeability on the output timeline independently of content. Equal content with different delays, stretches, edits, missing sections, service sets or video associations can serve different editions and must not be silently collapsed.
+
+Keep evidence labels distinct: encoded identity, decoded identity, semantic equivalence, probable similarity and insufficient evidence. Exact-content matches can still have incompatible timing/roles. Automatic consolidation requires full comparison and all configured interchangeability checks; approximate matches remain recommendations pending an explicit user decision.
+
+For subtitles compare event text, timing, overlaps, styling, positioning, forced cues and accessibility/SDH information. Normalized dialogue matching does not establish equality of presentation or completeness. For bitmap subtitles compare presentation and timing rather than treating OCR text as proof. For native captions compare services/channels, commands, timing, positioning, styling and accessibility semantics without converting retained output to a text subtitle format. Matching visible dialogue across CEA-608 and CEA-708 does not make either standard disposable.
+
+### Ranking the best equivalent representation
+
+Rank only within a proven equivalence group and compatible semantic role, using the user's policy. For audio consider lossless/lossy status, channel layout, object/immersive features, source lineage, effective fidelity, completeness, synchronization and evidence of clipping, corruption or missing content. Treat sample rate, bit depth and bitrate as characteristics rather than universal quality scores: upsampling, padding, transcoded lossless files and cross-codec bitrate differences can make nominally larger values misleading. A remux workflow must not transcode solely to manufacture a higher-ranked representation.
+
+A stereo mix, surround mix, commentary, audio description, alternate-language recording or different immersive presentation may be a distinct intended option. Preserve these when equivalence is unproven. Retain a required compatibility fallback even when it reproduces the same programme as a higher-fidelity primary track. User preference for best quality does not override a declared playback profile or protected fallback requirement; expose conflicts for resolution.
+
+For subtitles/captions consider completeness, correct alignment, preserved presentation and accessibility semantics, with configurable preferences. Forced-only, full dialogue, SDH and alternative caption services have distinct purposes. Neither a format name nor a greater cue count alone establishes superiority.
+
+### Consolidation, provenance and relationships
+
+Consolidate at planning time so omitted tracks are not needlessly muxed. Preserve survivor ordering according to the effective user selection policy, and assign stable identities independently of source/output indexes. Archive descriptive metadata and source provenance from every consolidated candidate; resolve conflicting language/role/flags through documented policy or review rather than silently merging contradictory values.
+
+Redirect incoming fallback, alternate-group, subtitle-follower, forced-subtitle and video/edition associations to the survivor only when the relationship remains valid. Revalidate the graph, including dangling references, cycles where prohibited, incompatible roles and loss of required alternatives. Do not remove a track if a protected relationship cannot be preserved. Store each decision, evidence, policy version and source-to-survivor mapping in the job report. Support reversing the planned decision before execution; later restoration requires the original sources or an explicitly retained recovery copy.
+
+### Discovery and acceptance gates
+
+Prototype candidate indexing and cached content signatures before committing to a backend. Bind cache keys to source-content identity, selected track, parser/decoder versions and analysis configuration; invalidate on changes. Keep analysis local by default, cancellable and resource-bounded. Report scan costs/coverage and avoid treating interrupted or partial analysis as proof of equality.
+
+Use synthetic/licensed fixtures covering identical payloads with different metadata/packaging, packetization differences, differing priming/offsets, duplicate lossless representations, re-encoded similar audio, stereo/surround and immersive distinctions, commentary sharing long music segments, silence/repeated sections, inserted/deleted scenes, subtitles with equal text but different timing/styles/SDH/forced cues, bitmap/OCR false matches, and both caption standards with multiple services. Include required fallback references, protected selections, conflicting metadata, cache invalidation and source reordering.
+
+Acceptance must demonstrate that disabled/recommend-only modes never omit tracks; automatic mode requires complete equivalence and safe-role/timeline/relationship checks; configured ranking and ties are reproducible; caption exclusions require explicit caption-specific choices; uncertain matches remain reviewable; output survivors preserve original media and valid relationships; and every decision is explained in the preview/report. Benchmark time, memory and disk cost separately from correctness.
+
+Reference: [FFmpeg streamhash](https://ffmpeg.org/ffmpeg-formats.html#streamhash) provides per-stream content hashing but ignores timestamps, so timeline equivalence needs separate verification. [Chromaprint](https://acoustid.org/chromaprint) is a candidate audio-fingerprinting technology to evaluate, not proof of complete soundtrack equivalence.
