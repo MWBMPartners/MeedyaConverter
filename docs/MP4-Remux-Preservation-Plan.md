@@ -2,9 +2,9 @@
 
 # Multi-source MP4 remux and preservation plan
 
-Status: development requirements and findings from the 2026-10-06 Tangled remux workflow. This is a core MeedyaConverter use case: assemble selected versions of a film and selected audio tracks into one MP4, without re-encoding, while retaining timing, codec features, stereo interpretation and useful library metadata.
+Status: generic development requirements and technical findings, updated 2026-10-09. This is a core MeedyaConverter use case: assemble selected versions of a film and selected audio tracks into one MP4, without re-encoding, while retaining timing, codec features, stereo interpretation and useful library metadata. Subler-style tagging and track relationship editing are part of the intended planning scope.
 
-This document records observed behaviour and proposed acceptance criteria. It does not assert that these capabilities are implemented in MeedyaConverter. The initial two-video remux was completed and checked; the additional 4K and combined jobs were still in progress when these notes were drafted. Playback compatibility was not tested.
+This document records observed tool behaviour and proposed acceptance criteria without identifying any converted media, filenames or source locations. It does not assert that these capabilities are implemented in MeedyaConverter. Successful structural and sampled checks are distinguished from unresolved findings. Playback compatibility, full-file payload equality and exhaustive HDR10+ validation require additional testing.
 
 ## Development context
 
@@ -72,7 +72,7 @@ Acceptance must compare effective presentation timing as well as first-packet ti
 
 Distinguish image layout, codec multiview structure, container signalling and player interpretation.
 
-Observed in the completed output:
+Observed signalling patterns, suitable for synthetic regression fixtures:
 
 | Track | Source interpretation | Output signalling observed |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ Validate `st3d`, `vexu`, HEVC configuration and multiview dependencies directly 
 
 ## HDR, Dolby Vision and codec configuration
 
-The 4K inputs were HEVC Main 10, BT.2020 primaries, PQ transfer and BT.2020 non-constant matrix. Probing showed Dolby Vision profile 8, level 6, RPU present, enhancement layer absent, base layer present and compatibility ID 1. One input also exposed mastering display and content-light metadata. These are input observations; the ongoing jobs still require output verification.
+The 4K inputs were HEVC Main 10, BT.2020 primaries, PQ transfer and BT.2020 non-constant matrix. Probing showed Dolby Vision profile 8, level 6, RPU present, enhancement layer absent, base layer present and compatibility ID 1. One input also exposed mastering display and content-light metadata. The completed 4K merge matched the compared stream properties and sampled compressed packets. This does not establish exhaustive preservation of dynamic metadata throughout every frame.
 
 Preserve and verify:
 
@@ -113,7 +113,7 @@ Proposed metadata policy:
 - Retain an option to export Kodi NFO sidecars. Embedding Kodi XML in a custom MP4 tag is archival preservation; it does not establish that Kodi will ingest it as an NFO or populate its library from it.
 - Parse XML without external entity/network resolution; enforce size limits and preserve original bytes separately from normalized parsing.
 
-The experiment found duplicate canonical tags when existing `mdta` fields and new iTunes fields overlapped: ffprobe reported `Tangled;Tangled`. Resolve namespaces and precedence deliberately. The local repair retained overlapping original values under `source_` keys and wrote one canonical conventional value. Production should use a structured metadata model with idempotent writes, rather than depend on a reader's concatenation rules.
+The experiment found duplicate canonical tags when existing `mdta` fields and new iTunes fields overlapped: ffprobe reported `Example Title;Example Title`. Resolve namespaces and precedence deliberately. The local repair retained overlapping original values under `source_` keys and wrote one canonical conventional value. Production should use a structured metadata model with idempotent writes, rather than depend on a reader's concatenation rules.
 
 `-movflags +use_metadata_tags` affected cover handling in this workflow: a mapped attached picture was not retained as expected. Cover art was then inserted as `covr`, retaining its compressed image bytes. Artwork is not an alternative playable video track; order/count verification should treat it separately. Test MIME type, image bytes, dimensions, multiple-cover policy and readback.
 
@@ -121,7 +121,7 @@ Global movie tags do not replace per-track titles/languages/dispositions. Preser
 
 ## Execution, caching and recovery
 
-Reading three large inputs and writing the output concurrently on the same G: volume was slow. Byte-for-byte staging to a separate C: volume improved remux throughput in this session, but introduced substantial copy time and temporary storage. The full pipeline cost matters more than FFmpeg's instantaneous speed.
+Reading several large inputs and writing an output concurrently on the same storage volume can be slow. Byte-for-byte staging to a separate device can improve remux throughput, but introduces copy time and temporary storage. The full pipeline cost matters more than FFmpeg's instantaneous speed.
 
 Plan I/O by physical device and available space, not merely drive letters. Bound concurrent jobs, estimate temporary plus output space, allow cancellation, and show staging/muxing/post-processing/verification as distinct stages. Do not describe FFmpeg's media timestamp progress as overall completion.
 
@@ -155,7 +155,7 @@ Use synthetic or licensed fixtures in the repository; do not commit the movie, i
 2. Build-specific capability checks and a command planner that never silently falls back to transcoding.
 3. Shared timing representation and semantic verification, including priming/edit-list preservation.
 4. Stereo/HDR/DV inspection and target-profile validation.
-5. Structured metadata mapping, original XML/archive fields, artwork and chapter policy.
+5. Structured metadata mapping, original XML/archive fields, artwork and chapter policy; native track relationships and alternate-group editing.
 6. Transactional execution, reusable staging/cache, recovery and reproducible command exports.
 7. Cross-container integration fixtures and target-player testing, followed by UI completion reporting.
 
@@ -168,4 +168,204 @@ Use synthetic or licensed fixtures in the repository; do not commit the movie, i
 - [Kodi NFO documentation](https://kodi.wiki/view/NFO_files): library sidecar conventions; custom MP4 archival tags are a separate mechanism.
 
 Re-check tool implementation and target-player behaviour when versions change. Preserve the distinction between observations from this workflow and requirements for future development.
+
+## Generic evidence classes and verification limits
+
+The technical observations should be reproduced with synthetic fixtures. They are not a claim that any particular user file has passed comprehensive verification.
+
+| Scenario | Observed behaviour | Development implication |
+| --- | --- | --- |
+| Multi-video stereo assembly | Source offsets and leading audio skips required edit-list repairs; native stereo boxes could differ by layout | Validate timing semantics and actual stereo boxes separately from payload copying |
+| Multiple 4K alternatives | Compared properties/configuration and sampled video/audio payloads could be retained | Extend checks to dynamic HDR data across the full timeline and real target players |
+| Remux through a previously repaired intermediate | Another mux could lose leading trims; one source packet count could differ | Revalidate every pipeline edge; an intermediate's prior verification is not transferable proof |
+| Native multitrack MKV to MP4 | Compared properties, declared counts, metadata and sampled packets could pass with disclosed native flag limitations | Native retention and archival preservation need separate statuses |
+| Single-video MKV with timed-text conversion | Full mux could fail at trailer despite reaching the end; a header/timing repair enabled a validated retry | Preflight serialization, own process exit status, and distinguish subtitle conversion from stream copy |
+| SBS video | `st3d` mode 2 plus Apple `vexu/eyes/stri` value 3 could be written | Inspect both families of boxes and keep left/right semantics explicit |
+| Multiview/VR video | Apple `vexu/eyes/stri` value 3 could exist without `st3d` | Absence of one signalling family is not proof of absent stereo; test codec views and device compatibility |
+
+Successful sampled checks do not resolve an earlier unresolved output, prove full-file equality or establish playback compatibility. Persist every output's own evidence and current failure/limitation state.
+
+Metadata finalization can retain all JPEG/PNG attachment entries, including multiple covers, and embed source manifests globally and per track. Use each source's exact XML when present. If a source lacks XML, inherited metadata from an explicitly selected authority must be identified by provenance; it must not be presented as that source's attachment.
+
+Do not commit movie media, embedded artwork, unredacted source manifests or private paths. Use synthetic fixture descriptions and sanitized diagnostic samples.
+
+## Native flags, track properties and archival values
+
+The user specifically requested forced, original and other track flags. An argument such as `-disposition original` is not proof that the target container wrote a corresponding flag.
+
+For FFmpeg revision `151814650f`, the MP4 track-kind mapping in `libavformat/isom.c` includes hearing-impaired/captions, commentary, visual-impaired/descriptions, dub and forced-subtitle roles. It has no mapping for `original`. The session archived the complete original disposition dictionary, tags and side data in each track's metadata and a global source manifest, then checked supported native roles separately.
+
+MP4 track enabled state and Matroska default-track preference are different semantics. With no source video marked default, this muxer enabled the first MP4 video; ffprobe exposed that as default. This difference was reported. Do not disable every video merely to make a boolean comparison pass, or equate an archived flag with a player-enforced flag.
+
+Requirements:
+
+- Represent original/default/forced/enabled/dub/commentary/accessibility properties separately, with native format semantics.
+- Model language and extended BCP-47 language, names and alternate groups independently of movie tags.
+- Keep original stream IDs, Matroska TrackUIDs, source time bases and unknown properties in the manifest, while assigning valid new MP4 track IDs.
+- Display each property's status: natively retained, semantically translated, archived only, changed by selected policy or unsupported/unretained.
+- Compare track title to MP4's `name`/handler representation as appropriate; a missing `title` key in ffprobe is not necessarily a missing track name.
+- Reject impossible promises to retain every cross-container property literally. Present concrete losses/translation choices before execution.
+
+The chosen manifest uses a distinct preservation namespace (`com.meedya.preservation`), separate from conventional iTunes metadata. Define and version its schema; include tool versions, source authority, selected tracks, repair decisions and hashes. Track-level preservation metadata must remain associated with the correct track after reorder/delete/import.
+
+## Subtitles and the Subler handoff
+
+Subtitle selection is per job: exclude all, retain supported formats directly, or explicitly convert selected tracks. Sources can contain many SubRip and PGS tracks, or only a single English SDH SubRip track. Conversion to MP4 `mov_text` must be explicitly selected while unrelated video/audio remains stream-copied.
+
+SubRip is not directly stream-copyable into this MP4 muxer. Timed-text conversion must preserve cue text, timing, language and supported formatting/accessibility roles, with an explicit report of unsupported styling. TX3G/`mov_text` and WebVTT are distinct choices with different target-player support. Bitmap PGS/VobSub handling must state whether the backend supports muxing, requires OCR or cannot represent the stream; OCR is not lossless. Burn-in changes video and must never be an implicit fallback.
+
+Timed text can contain empty gap samples, so MP4 sample counts need not equal source subtitle cue counts. Verify semantic cues rather than requiring identical packet counts across a conversion. Do not count a chapter text/data track as an accidentally retained subtitle.
+
+Support adding subtitles to an already prepared MP4 without rebuilding unrelated video/audio unnecessarily. Preserve existing stereo/HDR/configuration boxes, edit lists, artwork, custom metadata and track-reference relationships during this later operation. Define an Apple/Subler handoff profile and round-trip tests; the session did not perform an actual Subler round trip.
+
+## Subler-style fallback and track relationship editing
+
+The user wants one integrated tool that performs the tagging, muxing and track-management work currently split between Windows CLI tools and Subler on macOS. Subler has no official Windows version. The reviewed Windows alternatives cover subsets: MetaX movie tagging, Mp3tag broad tag fields, MP4Forge muxing/track properties, and GPAC/MP4Box lower-level box/track operations. Their documentation did not establish complete GUI parity with Subler, particularly for fallback relationships and this workflow's TrueHD/multiview/custom-metadata combination. Treat this as a product requirement, not a blanket claim that every alternative lacks every related feature.
+
+An audio fallback is a relationship to equivalent content in a more compatible format. Merely including TrueHD, E-AC-3, AAC or stereo tracks does not create that relationship. The outputs in this session did not explicitly configure Apple audio-fallback links.
+
+Plan explicit first-class models and UI for:
+
+- Audio fallback relationships, including the applicable `tref/fall` reference, verified against target documentation and parser behaviour.
+- Alternate-group membership and enabled/default selection, separately from fallback.
+- Audio-to-subtitle selection followers (`folw`), forced-subtitle associations (`forc` where applicable), chapter references and other supported track relationships.
+- Language, edition, commentary/accessibility identity and content equivalence when choosing a fallback. The same language alone is insufficient to establish equivalence.
+- Existing compatible tracks as fallback candidates; generating a new AAC/stereo fallback only under an explicit conversion choice.
+- Preservation/remapping of references after track ID changes, reordering, replacement, import and removal.
+
+Validate reference direction, type, target existence, media/content compatibility and documented constraints. Detect self-references, dangling targets and unsupported cycles. Do not assume every player follows Apple references or that a valid reference makes TrueHD playable. Display native relationship readback and target-player test status separately.
+
+Apple's alternate-group guidance requires same-type group members and describes enabled-track selection. Implement this as a target profile, not an unqualified rule for every MP4 consumer. A fallback track should share the intended content timeline, including priming/trims/offsets; a structurally valid reference to misaligned audio is still a defective output.
+
+GPAC documents generic `-ref`, grouping, enabled state, language, edit-list, tag and `vexu` operations. Investigate it as an engine capability alongside FFmpeg and metadata libraries, using pinned versions and preservation tests. A GUI wrapper need not expose every capability of its underlying tool. No tool should rewrite unfamiliar boxes without reporting the preservation outcome.
+
+### Relationship direction and identity model
+
+Use logical track identities in the job plan and resolve them to actual output track IDs only after the final selection/order is established. File-global tag strings are not a substitute for native track references.
+
+| Logical source | Logical target | Native relationship | Intended meaning |
+| --- | --- | --- | --- |
+| Primary audio | Equivalent compatible audio | `tref/fall` where supported by the target profile | Use equivalent content in a supported format when the primary format is unavailable |
+| Selected audio | Preferred subtitle track | `tref/folw` | Follow audio selection with the appropriate subtitle selection |
+| Full/mixed subtitle track | Paired forced-only subtitle track | `tref/forc` | Identify the associated forced-only subset |
+| Referencing media track | Chapter text track | `tref/chap` | Associate chapter information |
+
+Confirm each backend's reference direction and target restrictions by writing and independently reading a synthetic fixture. In particular, `forc` is a relationship between subtitle tracks; it is distinct from an all-samples-forced display flag or individual forced-sample markers such as `frcd`. Apple's guidance also describes directing `folw` to a forced-only member when a subtitle pair is the preferred choice. [Forced-subtitle pairing](https://developer.apple.com/documentation/quicktime-file-format/referencing_a_related_forced_subtitle_track)
+
+A proposed engine model contains `TrackNode` (logical ID, source identity, kind, language, content/edition identity and timeline), `RelationshipEdge` (type, source/target logical IDs, native representation, provenance and validation status), and `AlternateGroup` (same-purpose members, target-profile selection policy and enabled state). An audio conversion records its content derivation and alignment before it becomes an eligible fallback.
+
+Apply ID mapping transactionally when writing. If a referenced track is removed, the user must choose a replacement or remove the relationship; never leave a dangling native reference. Reordering must not change relationship meaning. Preserve unknown references/boxes when their meaning and ID mapping can safely be retained; otherwise disclose the unresolved mapping instead of copying opaque bytes with stale IDs. Import relationships from existing MP4/MOV as well as creating new ones; archive their original representation in cross-container exports that cannot express them.
+
+Acceptance includes a simulated unsupported-primary codec, same-language tracks from different editions, offset/priming mismatches, an explicitly created stereo fallback, mixed/full plus forced-only subtitle pairs, track deletion/replacement, changed track IDs and unknown references. Structural tests should read the native box graph independently; behavioural tests should verify actual target-player selection. Compatibility is a profile-specific result, not a consequence of merely writing `fall`.
+
+## Trailer failure caused by incompatible codec-private wrappers
+
+A full remux reached the end of media and then failed with `Error writing trailer: Invalid data found when processing input`. ffprobe could not read the resulting MP4 header (`invalid size 0 in stsd`). A four-second remux reproduced the failure, which should have been caught before the large job.
+
+Inspection found two format-wrapper issues:
+
+1. The TrueHD track used Matroska `A_QUICKTIME` with a 74-byte `mlpa` MP4 sample-entry wrapper in CodecPrivate. The MP4 muxer's TrueHD writer expected configuration derived from TrueHD access-unit/major-sync data, not that wrapper.
+2. The ALAC CodecPrivate was 44 bytes: a valid 24-byte ALAC configuration plus a trailing 20-byte `btrt` box. The demuxer wrapped this into a 56-byte `alac` atom, rather than the normal 36-byte configuration atom.
+
+A temporary copy was normalized: the TrueHD identifier became `A_TRUEHD`, the incompatible wrapper was removed, and its configuration was rebuilt from encoded data; ALAC retained its valid 24-byte configuration and removed the trailing wrapper box. This changed container headers, not the compressed audio. The original MKV remained untouched.
+
+The experiment replaced shortened/removed EBML fields with same-total-length Void elements so existing offsets remained valid. That shortcut must not become a general repair algorithm. Production should use a validated Matroska parser/writer, handle variable-length sizes and unknown-size segments, recalculate affected CRCs when present, and verify seeking/cues and decoded configuration. Repairs must be codec-specific and evidence-based; never strip arbitrary extradata that might contain required Dolby/codec information.
+
+After normalization, the short MP4 had a readable trailer and the expected TrueHD, ALAC and timed-text tracks. Other MKVs in this session already had native TrueHD and valid 24-byte ALAC private data, so the repair was not applied to them.
+
+## ALAC lacing, timing reconstruction and first-packet loss
+
+A normalized source still produced non-monotonic ALAC DTS warnings. Groups of laced packets lacked distinct demuxed timestamps. Decoding packet samples showed 4,096 samples per normal packet at 48 kHz and 1,912 samples in the final packet. The source declared 70,518 packets and a 43 ms start offset. These are fixture values, not ALAC-wide constants.
+
+The retry assigned packet timestamps from cumulative encoded sample counts, retained the 2,064-sample initial offset, and used the shorter final duration. A `setts` bitstream filter changed timestamps/durations without re-encoding the ALAC payload. The short test had no non-monotonic DTS warnings; sampled payload hashes matched. The full retry then passed the implemented property/count/sample checks.
+
+A separate remux through an intermediate had one fewer ALAC packet than its input. The refreshed jobs used `-copyinkf`, and their checked source-declared counts matched. Investigate first-packet/key-marking behaviour rather than assuming a missing packet is harmless. A later successful remux does not retroactively resolve an earlier packet-count discrepancy.
+
+Development requirements:
+
+- Detect repeated/non-monotonic DTS and distinguish timestamp quantization, lacing gaps, discontinuities and actual content edits.
+- Obtain per-packet sample counts from validated codec parsing/decoding or trustworthy sample tables; handle variable-size final and intermediate packets.
+- Preserve the initial offset and explicit stretch/discontinuity policy; sample-cadence reconstruction must not erase an intentional timing transform.
+- Verify start, cumulative samples, last packet, effective end and packet counts before accepting a repair.
+- Bound repair to the affected track; archive the exact original timing and repair expression.
+- Never hardcode this session's frame length, last duration, packet count or stream index into production.
+
+## Metadata, attachment and HDR details added by the later jobs
+
+Sources can contain several covers, in mixed JPEG/PNG formats. Duplicate image content may be intentional and was not silently deduplicated. Preserve ordering, MIME type, source attachment ID/name, description and image bytes, and expose a user-selectable artwork policy. An XML attachment is migrated into metadata, not copied as an unsupported playable track. Retain raw unsupported attachments in an explicit archive/sidecar only under a selected policy.
+
+In this session, FFmpeg image extraction wrote a cover file but continued scanning media rather than terminating as expected with the selected frame limit. MKVToolNix attachment extraction accessed the resources directly and avoided that unnecessary work. Use attachment-aware extraction rather than treating every attached image as an ordinary timed video stream.
+
+The XML supplied complete cast entries, whereas some source movie tags contained truncated cast text. Prefer the explicitly selected authoritative complete metadata, retain conflicting originals in provenance, and never treat an ellipsis as a full cast list. Field-level source authority matters: original XML, source MP4 `iTunMOVI`, a lookup provider and user edits may carry complementary or conflicting values.
+
+Support raw and interpreted creation timestamps, encoder/writing-application tags, track statistics, original identifiers and unknown fields. Some container-generated properties necessarily change during remuxing; archive originals and identify newly generated values rather than pretending they are identical. Statistic tags can be stale and are evidence to corroborate against actual sample tables, not an unconditional source of truth.
+
+MP4 mastering-display fields have finite quantization. Later checks allowed their representational precision (coordinates at 1/50,000 and luminance at 1/10,000 where applicable), instead of rejecting every non-identical rational string. Preserve exact source values in provenance while comparing native values within the relevant field's encoding precision. Specify thresholds per field; do not hide substantial HDR changes behind a generic tolerance.
+
+### Kodi-preserving metadata pipeline
+
+Support Kodi NFO sidecars and MKV XML attachments as explicit metadata sources, alongside existing MP4 fields, lookup providers and manual edits. Keep raw-source preservation and normalized interoperability as parallel outputs. [Kodi movie NFO fields](https://kodi.wiki/view/NFO_files/Movies)
+
+1. **Inventory and capture:** identify the selected metadata authority, XML root/schema context, declared encoding and original bytes. Capture attachment/sidecar identity and a checksum before parsing. Preserve existing MP4 namespaces and per-track metadata separately.
+2. **Parse safely:** disable external entity/network resolution, bound document size/depth, preserve repeated elements, namespaces, attributes and unknown nodes. Do not silently discard a provider's IDs, rating scales/defaults or nested cast data.
+3. **Normalize with provenance:** use typed values and ordered arrays for titles, plot/outline/tagline, release dates, genres, countries, studios, directors/writers/producers, cast names/roles/order/thumbnails, provider-specific unique IDs, ratings/votes, sets/collections, tags, editions, artwork and trailers. Record the source and user override for every canonical field. Retain Kodi user-state fields such as play count, last played, user rating and resume separately from descriptive movie metadata, with an explicit export policy.
+4. **Write interoperable fields:** map supported values to conventional MP4/iTunes tags, `iTunMOVI` cast/crew plist and artwork, or suitable Matroska tags for that target. Track names/roles/languages belong at track level. Keep unavailable cast roles, alternate IDs, collections and other rich Kodi fields in the preservation model rather than flattening them destructively into one comma-separated string.
+5. **Archive the raw XML:** embed the original bytes under a versioned, documented custom namespace together with encoding, format, checksum and source authority. UTF-8 text may be a text field; other encodings/binary resources need an explicitly typed binary or base64 representation with enough information for byte-exact reconstruction. Do not normalize whitespace, CRLF, ordering or an XML declaration in the original archival copy. Keep normalized XML, if generated, as a distinct artifact.
+6. **Optionally export NFO:** generate a valid target-version Kodi NFO from the normalized model, or restore the original bytes under the selected round-trip policy. Follow Kodi's file naming/schema expectations. Custom embedded XML does not imply Kodi will read it from MP4. Native movie tags, embedded archival XML and an actual Kodi-consumed NFO are three different deliverables.
+7. **Read back and report:** verify raw bytes/checksum, canonical values, provider-ID namespaces/default selection, full cast/crew ordering, cover bytes and native track metadata. Classify each field as mapped, archived, inherited, excluded or unsupported. A second write with unchanged inputs must not create duplicate tags, covers or metadata groups.
+
+Preserve `<uniqueid>` provider types and default attributes rather than collapsing all IDs into an ambiguous `id`. Empty, absent and explicitly cleared fields require distinct merge semantics. When metadata changes, update the normalized source-of-truth and selected exported representations consistently; retain the immutable original snapshot and record changes instead of overwriting historical evidence.
+
+Define import/export profiles for movie versus episodic metadata, including season/episode/show fields and appropriate NFO root elements. Validate the specific profile against the chosen Kodi version; do not copy movie fields mechanically into an episode document. Do not infer film/edition identity or relationships solely from filenames or matching titles.
+
+Treat metadata and relationship editing as transactional operations on the same preservation model. A tag-only edit must leave audio/video configuration, stereo/HDR boxes, sample tables, edit lists, unknown metadata and native relationships intact. A track mutation must remap relationships and remove/update track-specific archived manifests appropriately. Test both directions: later subtitle insertion preserves movie XML/tags and native references, and later tagging preserves the subtitle/fallback graph.
+
+## Job lifecycle and command-export lessons
+
+The logs demonstrated that FFmpeg can emit `progress=end` after a failing trailer write. A completion detector based only on that string was insufficient. The engine must own the child process, obtain its exit status, validate the finalized container, finish metadata work, then run required verification. Only then may it show completed/verified or publish the final output name.
+
+Use explicit job states: inventory, awaiting required choice, preflight, staging/normalization, muxing, finalizing, verifying, completed, failed, cancelled and completed-with-declared-limitations. Persist a job manifest and recoverable state across app restarts; a background process existing independently of the chat/UI is not a complete monitoring design. Stage progress, throughput and ETA must reflect the remaining pipeline; a 101-minute timestamp at 1x does not include copying or verification time.
+
+Keep each queued job's failure state independent and define whether the queue continues after a failed item. Capture the actual exception and last useful tool diagnostics. Retries must preserve prior failed output separately, regenerate commands/provenance, and require successful preflight for the diagnosed failure. Do not silently convert or drop the troublesome codec to make a retry finish.
+
+The CLI argument list grew large enough that embedding the complete source manifest as a command-line argument failed on Windows. Write bulky metadata through a file/API or post-processing stage, with explicit limits, rather than relying on shell/OS command-length limits. Pass argument arrays to child processes; export properly escaped PowerShell and POSIX commands for humans. Metadata containing apostrophes, Unicode, dollar signs or newlines must remain data, not executable shell text.
+
+Python's platform-default encoding failed on Unicode JSON in this workflow. Use explicit UTF-8 for saved plans/reports and UTF-8-with-BOM-aware reading when importing PowerShell-produced files. Require reproducible commands to include staging/header normalization, timestamp filters, metadata insertion and verification, not just the final FFmpeg invocation.
+
+Validate output paths before execution: escaped punctuation can make a filename look like a directory plus a hidden file. A matching source filename may exist in a nearby directory rather than the supplied location; source substitution must be disclosed and the requested output destination respected. Production should present candidate resolution explicitly when source identity is ambiguous and never silently pick a different edition. Preserve sources and existing completed files by default.
+
+## Planning coverage and acceptance backlog
+
+This matrix converts the complete discussion into development work. Existing code must be audited against these requirements; this document is not evidence that any row is already implemented.
+
+| Area | Required behaviour | Minimum acceptance evidence |
+| --- | --- | --- |
+| Ordered multi-source assembly | Repeated sources, exact selected track order, independent movie/track metadata authority | Five-video plus 51-audio synthetic assembly; IDs and lineage remain correct |
+| Stream-copy policy | Explicit copy/convert/exclude decision per stream; TrueHD and codec extensions retained where muxable | Build-specific codec matrix; no silent audio/video transcode or dropped stream |
+| Header validation | Detect incompatible sample-entry wrappers and malformed private data before a large mux | Short fixture reproduces trailer failure; constrained repair passes and original source hash stays unchanged |
+| Timing preservation | Priming, trims, offsets, rational stretch, edit sequences and end padding | Delayed AAC below priming; 256-sample skips; negative PTS; differing movie/media scales; original MP4 edits |
+| Timestamp repair | Track-specific, justified reconstruction with variable sample counts and original offset | Laced ALAC fixture with repeated PTS, shorter last packet and declared stretch/discontinuity cases |
+| Stereo/multiview | Correct source interpretation and native box/codec validation | SBS left/right ordering, `st3d=2`, `vexu/stri`, Matroska block stereo and actual multiview layer/view associations |
+| HDR/Dolby Vision | Native configuration, static fields and dynamic payload validation | Profile 8 RPU case, static quantization, HDR10+ samples across the timeline, unsupported-profile reporting |
+| Native flags and archival metadata | Semantically accurate roles/default/enabled state, complete unknown-property provenance | Native round trip plus archived `original`; no false native-preserved status |
+| Subtitles | Explicit exclusion or authorized timed-text conversion and later MP4 insertion | SDH/forced, cue timings/text/styles, empty gap samples, bitmap/OCR distinction |
+| Subler-style relationships | Fallback, alternates, followers, forced-subtitle and chapter relationships | Valid/remapped references, dangling/self/cyclic rejection as appropriate, equivalent synchronized content and player tests |
+| Movie tagging | Comprehensive iTunes/custom metadata, authority/conflict resolution, raw Kodi XML | Complete cast/crew, IDs, exact XML hash, namespace collision and idempotent update tests |
+| Artwork/attachments | Multiple JPEG/PNG entries, direct extraction, explicit unsupported-attachment policy | Byte hashes, MIME/dimensions/order, duplicate art, source IDs/names and no unnecessary full-media scan |
+| Container editing | Transactional updates and preservation of unfamiliar boxes/references | Trailing/fast-start/fragmented/extended-size cases, offsets/CRC checks, rollback and no unintended media changes |
+| Execution and recovery | Resource-aware queue, staging/cache, process-owned completion and useful retries | Exit failure despite `progress=end`, trailer failure, cancellation, disk pressure, restart and independent job failure |
+| Verification/reporting | Separate sampled, exhaustive, semantic and player-tested evidence | Track/frame/sample counts, head/middle/tail checks, full-payload option and explicit limitations |
+| Cross-platform experience | Integrated Windows/macOS workflow with transparent backend capabilities | Unicode/long-command cases, source/output ambiguity, equivalent metadata/relationship readback and Subler interoperability |
+
+Prioritize the preservation model and verification gates before broadening the GUI. Add a track-relationship editor alongside tagging and assembly, backed by the shared timeline model. Create implementation issues with these acceptance criteria when scheduling work; do not substitute a long documentation list for an actionable backlog or claim that roadmap coverage implies delivery.
+
+## Additional primary references
+
+- [FFmpeg pinned MP4 role mapping](https://github.com/FFmpeg/FFmpeg/blob/151814650f/libavformat/isom.c) and [MOV/MP4 writer](https://github.com/FFmpeg/FFmpeg/blob/151814650f/libavformat/movenc.c): native disposition mapping and version-specific configuration writing.
+- [FFmpeg bitstream filter documentation](https://ffmpeg.org/ffmpeg-bitstream-filters.html#setts): timestamp/duration transformations are distinct from payload re-encoding.
+- [Subler official feature list](https://subler.org/): macOS muxing, subtitles, movie tagging and metadata lookup.
+- [Apple audio fallback association](https://developer.apple.com/documentation/avfoundation/avassettrack/associationtype/audiofallback): compatible alternative audio relationship.
+- [Apple alternate-group preparation](https://developer.apple.com/documentation/quicktime-file-format/preparing_sound_and_subtitle_alternate_groups_for_use_with_apple_devices): enabled state, same-type alternates and audio/subtitle follower relationships.
+- [GPAC MP4Box general operations](https://wiki.gpac.io/MP4Box/mp4box-gen-opts/): generic track references, groups, roles, names, language, edits, iTunes tags and multiview extensions.
+- [MP4Forge documented features](https://github.com/jessielw/MP4Forge), [Mp3tag field mappings](https://docs.mp3tag.de/mapping/) and [MetaX](https://www.danhinsley.com/metax/metax.html): Windows tools cover portions of the intended integrated workflow; documentation alone does not demonstrate full parity or preservation of these files.
 
