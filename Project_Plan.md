@@ -21,6 +21,8 @@ The requirements cover ordered track selection; TrueHD and codec-header validati
 
 These are proposed development requirements and acceptance criteria, not claims of implemented feature support. Derive implementation tasks and regression fixtures from the linked coverage matrix. Preserve cross-platform capability differences explicitly and keep player-tested compatibility separate from structural/sample verification.
 
+Use the [exploration and expansion programme](docs/MP4-Remux-Preservation-Plan.md#exploration-and-expansion-programme) to plan discovery work. Establish preservation previews and safe-editing contracts first, then prioritize edition-aware synchronization and incremental MP4 editing. The programme also defines capability inspection, metadata round trips, track relationship editing, compatibility testing, verification levels, reproducible job bundles, reusable assembly recipes and temporary-storage management, with bounded prototypes and acceptance gates before implementation commitments.
+
 ---
 
 ## 🏗️ Technical Architecture
