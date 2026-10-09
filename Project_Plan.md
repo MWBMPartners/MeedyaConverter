@@ -13,6 +13,18 @@ MeedyaConverter is a professional-grade, cross-platform media conversion applica
 
 ---
 
+## Preservation and track-assembly planning requirements
+
+Treat lossless multi-source track assembly and Subler-style tagging/track editing as a core planning use case alongside transcoding and streaming. Consult [the preservation and track-relationship development requirements](docs/MP4-Remux-Preservation-Plan.md) before scoping remuxing, metadata, timeline handling, backend integration or job-completion behaviour.
+
+The requirements cover ordered track selection; TrueHD and codec-header validation; audio priming, offsets and explicit stretch; stereoscopic/MV-HEVC and HDR/Dolby Vision signalling; native versus archived track flags; Kodi XML/NFO and conventional/custom metadata; artwork and subtitle handoff; audio fallback, alternate groups, subtitle followers and forced-subtitle/chapter references; and transactional execution with independently verified results.
+
+These are proposed development requirements and acceptance criteria, not claims of implemented feature support. Derive implementation tasks and regression fixtures from the linked coverage matrix. Preserve cross-platform capability differences explicitly and keep player-tested compatibility separate from structural/sample verification.
+
+Use the [exploration and expansion programme](docs/MP4-Remux-Preservation-Plan.md#exploration-and-expansion-programme) to plan discovery work. Establish preservation previews and safe-editing contracts first, then prioritize edition-aware synchronization and incremental MP4 editing. The programme also defines capability inspection, metadata round trips, track relationship editing, compatibility testing, verification levels, reproducible job bundles, reusable assembly recipes and temporary-storage management, with bounded prototypes and acceptance gates before implementation commitments.
+
+---
+
 ## 🏗️ Technical Architecture
 
 ### Platform Strategy

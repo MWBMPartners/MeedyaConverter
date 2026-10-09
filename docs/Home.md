@@ -12,6 +12,7 @@ MeedyaConverter supports 16+ video codecs, 30+ audio codecs, 25+ container forma
 
 | Section | Description |
 | ------- | ----------- |
+| [Preservation and Track Relationships](MP4-Remux-Preservation-Plan.md) | Proposed development requirements for lossless assembly, metadata/Kodi, stereo/HDR, fallback relationships and verification |
 | [Getting Started](Getting-Started) | Installation, first encode, basic workflow |
 | [User Guide](User-Guide) | Profiles, HDR, containers, streaming, pipelines, scheduling, and all features |
 | [CLI Reference](CLI-Reference) | `meedya-convert` commands, options, batch scripting |
