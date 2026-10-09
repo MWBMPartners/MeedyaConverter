@@ -369,3 +369,58 @@ Prioritize the preservation model and verification gates before broadening the G
 - [GPAC MP4Box general operations](https://wiki.gpac.io/MP4Box/mp4box-gen-opts/): generic track references, groups, roles, names, language, edits, iTunes tags and multiview extensions.
 - [MP4Forge documented features](https://github.com/jessielw/MP4Forge), [Mp3tag field mappings](https://docs.mp3tag.de/mapping/) and [MetaX](https://www.danhinsley.com/metax/metax.html): Windows tools cover portions of the intended integrated workflow; documentation alone does not demonstrate full parity or preservation of these files.
 
+## Exploration and expansion programme
+
+These are proposed discovery workstreams, not implemented capabilities or fixed delivery commitments. Start with a preservation preview and a safe-editing contract, then prioritize edition-aware synchronization and incremental MP4 editing. Use the results to select backends and define implementation issues with measurable acceptance criteria.
+
+### Foundation: preservation preview and safe-editing contract
+
+Before execution, show each selected track, metadata field and relationship with its planned result: copied, converted, semantically translated, archived only, intentionally excluded, changed or unsupported. Explain the reason and target-profile implication; distinguish an untested assumption from a validated capability. Include storage needs, expensive rewrites and the chosen verification level.
+
+Define an invariant set for edits to existing media: unrelated encoded payloads, codec configuration, stereo/HDR signalling, timing and relationships must survive. Tag-only changes must not silently alter track selection or timing. Subtitle insertion must preserve existing metadata and references. An operation that cannot meet the selected contract must expose a different plan before writing.
+
+Discovery deliverable: a synthetic multi-track fixture, a proposed preservation-report schema and a mock preview covering unsupported native flags, authorized subtitle conversion, metadata conflicts and fallback relationships. Acceptance: every change is accounted for, the preview matches the actual report, and cancellation leaves the source intact.
+
+### Priority 1: edition-aware synchronization
+
+Explore matching audio and subtitles across different editions using multiple content anchors. Estimate offset and rational scale, detect cut differences/discontinuities, and propose piecewise mappings with confidence and uncertainty. Frame rate, matching titles and total duration are evidence rather than sufficient alignment rules.
+
+Investigate audio fingerprints/correlation, scene or frame features, subtitle-text anchors and manual correction. Identify failures with silence, reordered scenes, repeated music, alternate dialogue, accessibility narration and missing sections. Share the timeline model in the engine/Core layer; keep discovery and user decisions visible in the UI.
+
+Discovery deliverable: a bounded prototype on synthetic timelines containing constant delay, uniform drift, inserted/deleted segments and ambiguous anchors. Acceptance: measured alignment error at the beginning/middle/end, explicit unresolved intervals, editable anchors, and no timing modification without selecting the alignment plan. Report whether a chosen transform can be expressed through container timing or requires an explicit media conversion; never imply that arbitrary audio time stretching is always stream-copyable.
+
+### Priority 2: incremental MP4 editing
+
+Compare validated libraries/backends for tag, artwork, subtitle and relationship edits. Determine when reserved metadata space, a trailing movie box or other layout permits avoiding a full media rewrite, and when relocation, changed offsets, fragmentation or newly inserted samples makes a safe rewrite necessary.
+
+Prototype a transactional editor with layout preflight, size/offset checks, a recovery journal or temporary output, and independently read-back invariants. Metadata-only edits and adding new media samples are different cost classes. A faster path is acceptable only if it satisfies the preservation contract.
+
+Discovery deliverable: a capability matrix and benchmarks for representative synthetic layouts and file sizes. Acceptance: unchanged unrelated payload hashes and semantic properties, valid offsets/references, bounded temporary space, successful rollback after interruption, and accurate advance disclosure of a full rewrite.
+
+### Further exploration workstreams
+
+| Workstream | Exploration question | Concrete discovery output and acceptance |
+| --- | --- | --- |
+| Container/backend capability explorer | Which codec features, timing constructs, metadata and relationships can each pinned backend actually retain? | Versioned capability matrix with synthetic probes; distinguish supported, translated, archived, unsupported and untested; preview container-switch consequences |
+| MP4 inspection and repair | Can complex boxes, edits and references be explained without requiring users to inspect hex? | Read-only inspector and reversible repair proposals; show evidence and affected invariants; refuse speculative repairs |
+| Metadata round-trip tooling | Can Kodi NFO, MP4/iTunes/custom and Matroska metadata be reconciled without losing unknown values? | Typed model plus import/export fixtures; exact raw-source recovery, provenance/conflict UI, correct provider IDs, and idempotent writes |
+| Track relationship editor | Can users understand and safely change fallback, alternate and subtitle associations? | Accessible visual graph plus table editor; inspect native readback, validate equivalence/alignment, and preserve meaning after reorder/replacement/removal |
+| Target compatibility profiles and lab | What works in each chosen player/device/version, beyond structural validity? | Small licensed/synthetic fixtures and versioned results for Apple playback, Kodi/Plex and other selected targets; separate verified playback from documentation assumptions |
+| Verification levels | What assurance can users choose at an acceptable cost? | Quick structural, sampled payload, exhaustive payload and semantic/playback levels; specify coverage, normalization, duration estimates and remaining uncertainty |
+| Reproducible job bundles | Can another machine repeat or diagnose a job without exposing or embedding the source media? | Versioned plan with source fingerprints, mappings, commands, repairs, tool versions and reports; validate relocation and capability changes; configurable redaction |
+| Reusable assembly recipes | Can repeated selection/tagging/fallback policies be reused safely across different inputs? | Parameterized recipes matched by inspected properties; preview ambiguous/missing matches; never bind solely to a previous stream index or filename |
+| Temporary-file management | How can staging, caches and recovery data remain useful without consuming storage indefinitely? | Space estimates, job-owned cache manifests, retention rules and deliberate cleanup; preserve sources, active-job files and necessary rollback data |
+
+The relationship graph is a view of the same engine model as the table/CLI, not a second source of truth. Accessibility and scriptability should accompany the visual design.
+
+### Discovery gates and execution order
+
+1. Audit live engine/GUI/CLI call sites and shared Core interfaces against the coverage matrix; identify dormant or duplicate code before selecting integration points.
+2. Define the preservation contract, relationship identities, metadata provenance and verification-report schemas.
+3. Build synthetic fixtures and reproduce relevant backend successes/failures; record pinned versions and comparison criteria.
+4. Run bounded edition-alignment and incremental-editing prototypes independently, with explicit scope and resource budgets.
+5. Review correctness, uncertainty, portability, performance and maintenance/licensing constraints before selecting a production backend.
+6. Convert the results into implementation issues, milestones and regression tests; scope Windows/macOS parity explicitly rather than assuming shared APIs imply identical behaviour.
+7. Deliver a narrow integrated workflow first: inspect, select, preview, execute, verify and edit later without losing previously preserved properties.
+
+A prototype must not be shipped merely because one test file works. Each discovery output should include the question answered, fixture coverage, measured result, unresolved cases and a go/no-go recommendation. Any live-media operation remains subject to the selected copy/conversion and preservation policy.
